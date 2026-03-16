@@ -7,6 +7,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -35,7 +36,9 @@ func RunTx(ctx context.Context, db *sql.DB, fn TxFunc) error {
 
 	if err := fn(ctx, q); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			return fmt.Errorf("db: rollback after error (%v): %w", err, rbErr)
+			// Preserve both the original function error and the rollback
+			// error so that errors.Is works against either one.
+			return errors.Join(err, fmt.Errorf("db: rollback: %w", rbErr))
 		}
 		return err
 	}
@@ -65,7 +68,9 @@ func RunTxWith(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn TxFunc) 
 
 	if err := fn(ctx, q); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			return fmt.Errorf("db: rollback after error (%v): %w", err, rbErr)
+			// Preserve both the original function error and the rollback
+			// error so that errors.Is works against either one.
+			return errors.Join(err, fmt.Errorf("db: rollback: %w", rbErr))
 		}
 		return err
 	}

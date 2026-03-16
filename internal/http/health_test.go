@@ -10,12 +10,12 @@ import (
 	"testing"
 )
 
-// mockDB implements a minimal DB mock for health check testing.
-type mockDB struct {
+// mockPinger implements the Pinger interface for health check testing.
+type mockPinger struct {
 	pingErr error
 }
 
-func (m *mockDB) PingContext(_ context.Context) error {
+func (m *mockPinger) PingContext(_ context.Context) error {
 	return m.pingErr
 }
 
@@ -43,7 +43,11 @@ func TestHealthHandler(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			logger := slog.New(slog.NewJSONHandler(discard{}, nil))
-			handler := newTestHealthHandler(logger, tc.pingErr)
+			mock := &mockPinger{pingErr: tc.pingErr}
+
+			// Exercise the real production handler path with an
+			// interface-backed dependency instead of duplicated test logic.
+			handler := NewHealthHandler(logger, mock)
 
 			req := httptest.NewRequest(http.MethodGet, "/health", nil)
 			rec := httptest.NewRecorder()
@@ -67,25 +71,6 @@ func TestHealthHandler(t *testing.T) {
 				t.Errorf("Content-Type = %q, want %q", ct, "application/json")
 			}
 		})
-	}
-}
-
-// newTestHealthHandler creates a health handler with a mock pinger.
-func newTestHealthHandler(logger *slog.Logger, pingErr error) http.HandlerFunc {
-	mock := &mockDB{pingErr: pingErr}
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-
-		if err := mock.PingContext(ctx); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "unhealthy"})
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
 	}
 }
 

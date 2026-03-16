@@ -275,6 +275,72 @@ func TestPanicRollback(t *testing.T) {
 	}
 }
 
+// TestRunTxRollbackPreservesOriginalError verifies that when the function
+// inside RunTx returns an error AND the subsequent rollback also fails, the
+// combined error still matches the original error via errors.Is. This is
+// critical for callers that use sentinel errors for control flow.
+func TestRunTxRollbackPreservesOriginalError(t *testing.T) {
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, migrationsDir)
+
+	ctx := context.Background()
+
+	// errSimulated is the sentinel error returned by the TxFunc.
+	var errSimulated = errors.New("simulated application failure")
+
+	// To force a rollback failure we start a transaction, then kill the
+	// underlying connection from inside the TxFunc by issuing a KILL on
+	// the connection's thread_id. This makes the subsequent Rollback()
+	// fail with a driver-level error.
+	err := db.RunTx(ctx, sqlDB, func(ctx context.Context, q *db.Queries) error {
+		// Obtain the connection thread id and kill it so that the
+		// subsequent Rollback fails.
+		var connID int64
+		row := sqlDB.QueryRowContext(ctx, "SELECT CONNECTION_ID()")
+		if scanErr := row.Scan(&connID); scanErr != nil {
+			// If we can't get the connection ID (edge case), fall back to
+			// simply closing the pool to invalidate the connection.
+			sqlDB.Close()
+			return errSimulated
+		}
+		// Kill the current connection from a separate session.
+		if _, killErr := sqlDB.ExecContext(ctx, fmt.Sprintf("KILL %d", connID)); killErr != nil {
+			// Not all connections may be killable; close pool as fallback.
+			sqlDB.Close()
+		}
+		return errSimulated
+	})
+
+	if err == nil {
+		t.Fatal("expected an error from RunTx, got nil")
+	}
+
+	// The key assertion: the original error must still be matchable
+	// regardless of whether the rollback also failed.
+	if !errors.Is(err, errSimulated) {
+		t.Errorf("errors.Is(err, errSimulated) = false; combined error: %v", err)
+	}
+}
+
+// TestRunTxRollbackErrorJoinSemantics is a unit-level test that verifies the
+// errors.Join semantics used by RunTx without needing a real database. It
+// directly checks that when errors.Join combines the original error and a
+// rollback error, both are matchable via errors.Is.
+func TestRunTxRollbackErrorJoinSemantics(t *testing.T) {
+	errOriginal := errors.New("application error")
+	errRollback := errors.New("rollback failed")
+
+	// Simulate what RunTx does when both fn and Rollback fail.
+	combined := errors.Join(errOriginal, fmt.Errorf("db: rollback: %w", errRollback))
+
+	if !errors.Is(combined, errOriginal) {
+		t.Errorf("errors.Is(combined, errOriginal) = false; want true\ncombined: %v", combined)
+	}
+	if !errors.Is(combined, errRollback) {
+		t.Errorf("errors.Is(combined, errRollback) = false; want true\ncombined: %v", combined)
+	}
+}
+
 // --- Helpers ---
 
 func assertTablesExist(t *testing.T, sqlDB *sql.DB, tables []string) {
