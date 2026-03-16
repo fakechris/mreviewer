@@ -1,0 +1,50 @@
+{
+  "featureId": "foundation-runtime-surface",
+  "reviewedAt": "2026-03-16T11:45:00.000Z",
+  "commitId": "821535255d1b12552f0785ac024e85eb180ce715",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid greenfield bootstrap that covers all expected behaviors: Go module with cmd/ingress + internal/ layout, YAML+env config loading with correct precedence, structured JSON logging with request-scoped request_id, GET /health on port 3100 with MySQL connectivity check, and graceful shutdown on SIGTERM/SIGINT. Code is clean, well-structured, and follows Go conventions. The commit includes 16 files totaling ~1004 lines with comprehensive table-driven tests. Two non-blocking issues found: (1) the health handler test duplicates handler logic instead of exercising the real NewHealthHandler function, and (2) database.Open does not call db.Ping to verify connectivity at startup.",
+    "issues": [
+      {
+        "file": "internal/http/health_test.go",
+        "line": 78,
+        "severity": "non_blocking",
+        "description": "The newTestHealthHandler function re-implements the health handler logic inline (lines 78-91) instead of calling the actual NewHealthHandler from health.go. This means the test validates the mock handler's behavior, not the production handler. If someone changes NewHealthHandler (e.g., adds new response fields, changes error logging), the tests would still pass on stale logic. The test should inject a mock *sql.DB (or use an interface) into the real NewHealthHandler to verify actual production code paths including logging.FromContext integration."
+      },
+      {
+        "file": "internal/database/database.go",
+        "line": 18,
+        "severity": "non_blocking",
+        "description": "sql.Open only validates the DSN string format — it does not establish or verify a network connection. The service can start successfully even if MySQL is completely unreachable. Adding a db.PingContext(ctx) call after sql.Open would fail fast on startup when the database is unavailable, which is generally better for production deployments. The health endpoint will catch this eventually, but startup-time verification is a best practice."
+      },
+      {
+        "file": "internal/server/server_test.go",
+        "line": 32,
+        "severity": "non_blocking",
+        "description": "Both shutdown tests (TestGracefulShutdown at line 32, TestGracefulShutdown_WithRequests at line 63) rely on time.Sleep to wait for the server to start listening. This is fragile and can cause flaky tests under load. A more robust approach would be to either expose the server's listener address after binding or use a ready channel. However, port 0 allocation and 100-200ms sleeps make this unlikely to flake in practice."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The health handler accepts *sql.DB directly rather than an interface, making it harder to test with mocks. The test works around this by re-implementing the handler inline. AGENTS.md says 'Treat GitLab and provider integrations as adapters behind interfaces' but does not explicitly mention database health checks. A convention about preferring interface-based dependencies for testability could prevent future test duplication.",
+      "evidence": "internal/http/health.go:20 takes *sql.DB; internal/http/health_test.go:78-91 duplicates handler logic with a mockDB that is never passed to NewHealthHandler."
+    },
+    {
+      "area": "conventions",
+      "observation": "The discard io.Writer type is duplicated across two test packages (internal/http and internal/server). Go 1.25 provides io.Discard from the standard library which could be used instead, or a shared test helper could be added.",
+      "evidence": "internal/http/health_test.go:93-95 and internal/server/server_test.go:82-84 both define identical 'type discard struct{}' with the same Write method."
+    },
+    {
+      "area": "skills",
+      "observation": "Worker followed the go-backend skill procedure correctly: read mission docs, inspected existing code, wrote tests alongside implementation, ran gofmt, ran targeted and full test suites, and recorded verification in handoff. skillFeedback.followedProcedure is true with no deviations. The skill procedure says 'write failing tests first' (TDD), but the transcript shows tests and implementation were created in the same step rather than strictly test-first. This is a minor deviation that didn't impact quality.",
+      "evidence": "Transcript skeleton shows Create calls for config.go and config_test.go in the same batch, then logging.go and logging_test.go together, etc. Handoff skillFeedback confirms followedProcedure:true."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature passes review. The implementation correctly bootstraps the service runtime with all required capabilities: Go module scaffold, YAML+env config with env precedence, structured JSON logging with request-scoped fields, GET /health on port 3100 with MySQL health check, and graceful shutdown. Code quality is high with clean package boundaries, proper error handling, and comprehensive table-driven tests (14 test cases across 5 test files). Three non-blocking issues identified: (1) health handler test doesn't exercise the real production handler, (2) database.Open doesn't verify connectivity at startup, (3) shutdown tests use time.Sleep for synchronization. None of these are blocking — the feature fulfills all expectedBehavior items and verification steps from the feature spec."
+}

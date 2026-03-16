@@ -32,6 +32,12 @@ Environment variables, external dependencies, and setup notes.
 - `.env` is gitignored and should contain placeholders until the user provides live values.
 - Use mocked GitLab/provider endpoints by default unless a feature explicitly requires live integration.
 
+## Testcontainers-go workaround
+
+- The Ryuk reaper container must be disabled (`TESTCONTAINERS_RYUK_DISABLED=true`) due to Docker Hub registry pull issues in this environment.
+- The `internal/db/dbtest` helper sets this automatically via `t.Setenv`.
+- Workers creating new testcontainers-based test helpers should use the same pattern or import `dbtest`.
+
 ## Important clarification
 
 - Source docs may still mention PostgreSQL.

@@ -1,0 +1,68 @@
+{
+  "featureId": "foundation-db-and-persistence-core",
+  "reviewedAt": "2026-03-16T12:15:00Z",
+  "commitId": "9023db5",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid persistence foundation. All 11 core tables are created in a single reversible Goose migration with correct foreign keys, unique constraints, indexes, and utf8mb4 collation on InnoDB. The down migration drops tables in reverse dependency order. sqlc is correctly configured for MySQL with appropriate type overrides (JSON→json.RawMessage, bigint→int64, timestamp→time.Time). 8 query files cover CRUD for all tables. The RunTx/RunTxWith transaction helpers correctly wrap callbacks in begin/rollback/commit with panic recovery and error propagation. Six integration tests using testcontainers-go with MySQL 8.4 thoroughly validate migration round-trips and transactional rollback/commit semantics including panic recovery.",
+    "issues": [
+      {
+        "file": "internal/db/tx.go",
+        "line": 22,
+        "severity": "non_blocking",
+        "description": "RunTx always uses nil TxOptions (default isolation level). This is fine for the foundation but later features requiring specific isolation levels (e.g., SERIALIZABLE for scheduler claiming) will need to use RunTxWith. Consider documenting this in a code comment for future workers."
+      },
+      {
+        "file": "internal/db/tx.go",
+        "line": 37,
+        "severity": "non_blocking",
+        "description": "When rollback fails after an fn error, the returned error wraps the rollback error as the outer error and the original fn error as context in the format string. This means errors.Is(err, originalErr) will NOT match the original error — callers will only see the rollback error via errors.Is/As. Consider swapping: wrap the original error and log the rollback failure, or use a multi-error approach (e.g., errors.Join)."
+      },
+      {
+        "file": "internal/db/dbtest/testdb.go",
+        "line": 86,
+        "severity": "non_blocking",
+        "description": "MigrationsDir() fallback returns '../../../../migrations' which is fragile and depends on the test file's nesting depth. Currently all tests use the hardcoded 'const migrationsDir = ../../migrations' in db_test.go instead. The helper's fallback path is unused and potentially misleading. Consider removing it or documenting that callers should always pass an explicit path."
+      },
+      {
+        "file": "migrations/001_create_core_tables.sql",
+        "line": 4,
+        "severity": "non_blocking",
+        "description": "The gitlab_instances.url column is VARCHAR(2048) but the unique key uk_url uses a prefix index of 255 characters: UNIQUE KEY uk_url (url(255)). This means two different URLs that share the same first 255 characters would violate the unique constraint. For most GitLab instance URLs this is fine, but it's worth noting as a design trade-off."
+      },
+      {
+        "file": "internal/db/queries/hook_events.sql",
+        "line": 3,
+        "severity": "non_blocking",
+        "description": "InsertHookEvent accepts 11 parameters including nullable gitlab_instance_id, project_id, and mr_iid. The generated Go code uses sql.NullInt64 for these in the model but the insert params will accept int64 directly (since sqlc doesn't know the caller intent). Callers will need to pass zero values or use raw SQL for truly nullable inserts. This is a known sqlc pattern and acceptable for now."
+      },
+      {
+        "file": "internal/db/queries/review_runs.sql",
+        "line": 3,
+        "severity": "non_blocking",
+        "description": "InsertReviewRun includes hook_event_id as a parameter but it's nullable in the schema. The sqlc-generated param type will be int64 (not sql.NullInt64) because the INSERT column list includes it unconditionally. Callers passing 0 will insert 0 rather than NULL, which could fail FK constraint if hook_events has no row with id=0. Future features should handle this by using a separate query or passing sql.NullInt64 via a sqlc override."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The testcontainers-go Ryuk reaper had to be disabled via TESTCONTAINERS_RYUK_DISABLED=true due to Docker Hub registry pull issues. This is handled transparently in the dbtest helper, but other workers creating new test helpers may encounter the same issue and waste time debugging it.",
+      "evidence": "internal/db/dbtest/testdb.go:28 sets t.Setenv('TESTCONTAINERS_RYUK_DISABLED', 'true'). Handoff discoveredIssues documents this. Not mentioned in AGENTS.md or .factory/library/environment.md."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The sqlc configuration includes timestamp and datetime type overrides (mapping to time.Time) in sqlc.yaml that are not visible in the git diff's sqlc.yaml but ARE present in the current file on disk. This means the file was likely edited after the commit or the diff was of a different version. The current sqlc.yaml has 4 overrides while the committed version in the diff shows only 2 (json and bigint). This discrepancy is minor — the timestamp/datetime overrides just make the generated code cleaner.",
+      "evidence": "Current sqlc.yaml has overrides for json, bigint, timestamp, datetime. Git diff for commit 9023db5 shows only json and bigint overrides in the new sqlc.yaml."
+    },
+    {
+      "area": "conventions",
+      "observation": "The worker followed TDD guidance from the skill (write failing tests first for failure modes) by implementing comprehensive transactional rollback tests. The test pattern of using raw SQL for prerequisite data insertion (insertTestInstance, insertTestProject, etc.) outside the tested transaction is a good pattern that should be documented for future workers implementing tests against this schema.",
+      "evidence": "internal/db/db_test.go helper functions at lines 235-280 use raw sqlDB.Exec for setup data."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The persistence foundation is well-implemented and passes review. All 11 core tables are created with proper MySQL 8.4 conventions (InnoDB, utf8mb4, foreign keys, indexes, unique constraints). The reversible migration is correctly ordered for both up and down operations. sqlc generation produces clean type-safe Go code. The RunTx/RunTxWith transaction helpers properly handle errors and panics with rollback. Six integration tests using testcontainers-go thoroughly validate the migration lifecycle and transactional integrity. Non-blocking issues found: (1) rollback-after-error wrapping loses the original error for errors.Is callers, (2) MigrationsDir() helper has a fragile fallback path, (3) nullable FK columns in INSERT queries may need special handling by future callers. No blocking issues found."
+}
