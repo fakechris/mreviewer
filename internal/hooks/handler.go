@@ -112,18 +112,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- 4. Parse event metadata ---
-	parsed := parseWebhookPayload(payload, eventType, hookSource)
+	// --- 4. Determine if this is a merge request event ---
+	// For system hooks, the header is always "System Hook" regardless of the
+	// actual event kind, so we must inspect the payload's object_kind.
+	isMREvent := IsMergeRequestEventType(eventType)
+	if !isMREvent && IsSystemHookHeader(eventType) {
+		isMREvent = IsMergeRequestPayload(payload)
+	}
 
-	// If the event type is not a merge request event, accept it but do not
-	// create any downstream records beyond audit.
-	if !isMergeRequestEvent(parsed.EventType) {
+	if !isMREvent {
+		// Not an MR event: accept for audit but do not create downstream records.
+		parsed := parseWebhookPayload(payload, eventType, hookSource)
 		l.InfoContext(ctx, "non-MR event accepted, no action taken",
 			"delivery_key", deliveryKey,
 			"event_type", parsed.EventType,
 		)
-		// Still insert a hook_event for audit trail; ignore insert errors for
-		// non-MR events since the audit log below is the primary record.
 		if insertErr := h.insertHookEventSafe(ctx, l, deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
 			l.WarnContext(ctx, "failed to insert hook_event for non-MR event",
 				"delivery_key", deliveryKey,
@@ -135,9 +138,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 5. Insert hook_event record transactionally ---
+	// --- 5. Normalize the MR event ---
+	normalized, normErr := NormalizeWebhook(payload, eventType, hookSource)
+	if normErr != nil {
+		l.ErrorContext(ctx, "failed to normalize webhook payload",
+			"delivery_key", deliveryKey,
+			"error", normErr,
+		)
+		h.writeAuditLog(ctx, deliveryKey, hookSource, "rejected", "normalization_error", eventType)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to normalize payload"})
+		return
+	}
+
+	// Build parsed event from normalized data for hook_event insertion.
+	parsed := parsedEvent{
+		EventType: normalized.EventType,
+		Action:    normalized.Action,
+		ProjectID: normalized.ProjectID,
+		MRIID:     normalized.MRIID,
+		HeadSHA:   normalized.HeadSHA,
+	}
+
+	// --- 6. Insert hook_event record ---
 	if err := h.insertHookEventSafe(ctx, l, deliveryKey, hookSource, parsed, payload, "verified", ""); err != nil {
-		// If the error is a duplicate key violation, treat as dedup.
 		if isDuplicateKeyError(err) {
 			l.InfoContext(ctx, "duplicate delivery key on insert, acknowledging",
 				"delivery_key", deliveryKey,
@@ -155,15 +178,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 6. Audit the successful receipt ---
+	// --- 7. Audit the successful receipt ---
 	h.writeAuditLog(ctx, deliveryKey, hookSource, "verified", "", parsed.EventType)
 
 	l.InfoContext(ctx, "webhook accepted",
 		"delivery_key", deliveryKey,
-		"event_type", parsed.EventType,
-		"action", parsed.Action,
-		"mr_iid", parsed.MRIID,
-		"project_id", parsed.ProjectID,
+		"event_type", normalized.EventType,
+		"action", normalized.Action,
+		"mr_iid", normalized.MRIID,
+		"project_id", normalized.ProjectID,
+		"head_sha", normalized.HeadSHA,
+		"head_sha_deferred", normalized.HeadSHADeferred,
+		"is_draft", normalized.IsDraft,
+		"hook_source", normalized.HookSource,
+		"trigger_type", normalized.TriggerType,
+		"idempotency_key", normalized.IdempotencyKey,
 	)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
@@ -301,14 +330,10 @@ func parseWebhookPayload(payload json.RawMessage, headerEventType, hookSource st
 }
 
 // isMergeRequestEvent returns true for GitLab merge request event types.
+// Deprecated: use IsMergeRequestEventType and IsSystemHookHeader instead for
+// proper system hook handling. Kept for backward compatibility with existing tests.
 func isMergeRequestEvent(eventType string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(eventType))
-	switch normalized {
-	case "merge_request", "merge request hook":
-		return true
-	default:
-		return false
-	}
+	return IsMergeRequestEventType(eventType)
 }
 
 // detectHookSource identifies whether the webhook is from a project, group,
