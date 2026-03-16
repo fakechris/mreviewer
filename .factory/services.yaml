@@ -1,0 +1,34 @@
+commands:
+  install: go mod tidy
+  typecheck: go test -run '^$' ./...
+  build: go build ./...
+  test: go test -p 5 ./...
+  lint: ./.factory/bin/golangci-lint run --timeout 5m
+
+services:
+  mysql:
+    start: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose up -d mysql
+    stop: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose stop mysql
+    healthcheck: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose exec -T mysql mysqladmin ping -h 127.0.0.1 -P 3306 -umreviewer -pmreviewer_password
+    port: 3306
+    depends_on: []
+
+  redis:
+    start: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose up -d redis
+    stop: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose stop redis
+    healthcheck: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose exec -T redis redis-cli -p 6379 ping
+    port: 6380
+    depends_on: []
+
+  api:
+    start: PORT=3100 MYSQL_PORT=3306 REDIS_PORT=6380 go run ./cmd/ingress
+    stop: pids=$(lsof -ti :3100); [ -z "$pids" ] || kill $pids
+    healthcheck: curl -sf http://127.0.0.1:3100/health
+    port: 3100
+    depends_on: [mysql, redis]
+
+  worker:
+    start: MYSQL_PORT=3306 REDIS_PORT=6380 go run ./cmd/worker
+    stop: pids=$(pgrep -f 'go run ./cmd/worker' || true); [ -z "$pids" ] || kill $pids
+    healthcheck: pgrep -f 'go run ./cmd/worker' >/dev/null
+    depends_on: [mysql, redis]
