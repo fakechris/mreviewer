@@ -46,6 +46,7 @@ Testing surface: HTTP API endpoints via curl against localhost:3100.
 - The API service runs on port 3100 with MySQL on port 3306 and Redis on port 6380.
 - Multiple curl-based validators can run concurrently against the same service.
 - Do NOT run goose down/up while the API service is running — it will break health checks and other endpoint tests.
+- For shutdown validation, run a compiled binary from `.factory/run/ingress` rather than `go run`, because `go run` does not reliably forward SIGTERM to the child Go process in this environment.
 - Use `curl -sf` for simple checks and `curl -v` when headers/status codes matter.
 - All log output from the service goes to /tmp/mreviewer-api.log.
 

@@ -21,14 +21,14 @@ services:
     depends_on: []
 
   api:
-    start: test -d ./cmd/ingress && PORT=3100 MYSQL_PORT=3306 REDIS_PORT=6380 go run ./cmd/ingress || echo 'cmd/ingress not initialized yet'
+    start: test -d ./cmd/ingress && mkdir -p ./.factory/run && go build -o ./.factory/run/ingress ./cmd/ingress && PORT=3100 MYSQL_PORT=3306 REDIS_PORT=6380 ./.factory/run/ingress || echo 'cmd/ingress not initialized yet'
     stop: pids=$(lsof -ti :3100); [ -z "$pids" ] || kill $pids
     healthcheck: test -d ./cmd/ingress && curl -sf http://127.0.0.1:3100/health || echo 'cmd/ingress not initialized yet'
     port: 3100
     depends_on: [mysql, redis]
 
   worker:
-    start: test -d ./cmd/worker && MYSQL_PORT=3306 REDIS_PORT=6380 go run ./cmd/worker || echo 'cmd/worker not initialized yet'
-    stop: pids=$(pgrep -f 'go run ./cmd/worker' || true); [ -z "$pids" ] || kill $pids
-    healthcheck: test -d ./cmd/worker && pgrep -f 'go run ./cmd/worker' >/dev/null || echo 'cmd/worker not initialized yet'
+    start: test -d ./cmd/worker && mkdir -p ./.factory/run && go build -o ./.factory/run/worker ./cmd/worker && MYSQL_PORT=3306 REDIS_PORT=6380 ./.factory/run/worker || echo 'cmd/worker not initialized yet'
+    stop: pids=$(pgrep -f './.factory/run/worker' || true); [ -z "$pids" ] || kill $pids
+    healthcheck: test -d ./cmd/worker && pgrep -f './.factory/run/worker' >/dev/null || echo 'cmd/worker not initialized yet'
     depends_on: [mysql, redis]
