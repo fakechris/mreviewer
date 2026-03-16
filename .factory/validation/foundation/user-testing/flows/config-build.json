@@ -1,0 +1,75 @@
+{
+  "groupId": "config-build",
+  "testedAt": "2026-03-17T00:15:00Z",
+  "isolation": {
+    "repoRoot": "/Users/chris/workspace/mreviewer",
+    "configFile": "/Users/chris/workspace/mreviewer/config.yaml",
+    "sqlcConfig": "/Users/chris/workspace/mreviewer/sqlc.yaml",
+    "migrationsDir": "/Users/chris/workspace/mreviewer/migrations/"
+  },
+  "toolsUsed": ["go test", "go run", "sqlc generate", "go build"],
+  "assertions": [
+    {
+      "id": "VAL-FOUND-004",
+      "title": "Configuration loads from environment and YAML",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run go test -v ./internal/config/ -run .",
+          "expected": "All config unit tests pass, covering YAML-only, env-override, env-only, defaults, and partial override scenarios",
+          "observed": "All 8 tests passed (TestConfigPrecedence/5 subtests, TestConfigMissingYAML, TestConfigInvalidYAML, TestConfigAllEnvVars). Exit code 0."
+        },
+        {
+          "action": "Run PORT=3199 MYSQL_DSN=\"invalid:dsn\" go run ./cmd/ingress",
+          "expected": "Startup logs show port 3199 (from env) instead of YAML default 3100, and DB connection fails due to overridden invalid DSN",
+          "observed": "Logs show {\"port\":\"3199\"} confirming env override of PORT. DB open fails with 'invalid DSN: missing the slash separating the database name' confirming MYSQL_DSN override. Exit code 1 as expected."
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": [
+          "foundation/config-build/VAL-FOUND-004-unit-tests.txt",
+          "foundation/config-build/VAL-FOUND-004-env-override.txt"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-FOUND-007",
+      "title": "sqlc generated code compiles",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Install sqlc: go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest",
+          "expected": "sqlc binary installed successfully",
+          "observed": "Installed successfully to $(go env GOPATH)/bin/sqlc"
+        },
+        {
+          "action": "Run sqlc generate",
+          "expected": "Exit code 0, Go code generated in internal/db/ matching migration schema",
+          "observed": "Exit code 0, no errors. Clean generation."
+        },
+        {
+          "action": "Run go build ./...",
+          "expected": "Exit code 0, all packages including generated sqlc code compile without errors",
+          "observed": "Exit code 0, no errors. Full project compiles cleanly."
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": [
+          "foundation/config-build/VAL-FOUND-007-sqlc-generate.txt",
+          "foundation/config-build/VAL-FOUND-007-go-build.txt"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 2 assertions: 2 passed. VAL-FOUND-004 confirmed via 8 unit tests (YAML loading, env var precedence, defaults, all env var mappings) and a live startup test showing PORT and MYSQL_DSN env overrides. VAL-FOUND-007 confirmed via successful sqlc generate (exit 0) and go build ./... (exit 0)."
+}

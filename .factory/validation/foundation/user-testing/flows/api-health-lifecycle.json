@@ -1,0 +1,114 @@
+{
+  "groupId": "api-health-lifecycle",
+  "testedAt": "2026-03-17T00:20:30+08:00",
+  "isolation": {
+    "apiPort": 3100,
+    "testPort": 3199,
+    "mysqlPort": 3306,
+    "redisPort": 6380,
+    "configFile": "/Users/chris/workspace/mreviewer/config.yaml",
+    "logFile": "/tmp/mreviewer-api.log",
+    "testLogFile": "/tmp/mreviewer-test-3199.log",
+    "binarySource": "/Users/chris/workspace/mreviewer/cmd/ingress/main.go"
+  },
+  "toolsUsed": ["curl", "python3"],
+  "assertions": [
+    {
+      "id": "VAL-FOUND-001",
+      "title": "Health check endpoint responds",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "curl -v http://127.0.0.1:3100/health",
+          "expected": "HTTP 200 with JSON body containing {\"status\":\"ok\"}",
+          "observed": "HTTP/1.1 200 OK, Content-Type: application/json, body: {\"status\":\"ok\"}"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "GET /health -> 200, body {\"status\":\"ok\"}, Content-Length: 16, X-Request-Id header present",
+        "files": ["foundation/api-health-lifecycle/VAL-FOUND-001-health-check.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-FOUND-005",
+      "title": "Service starts and stops cleanly",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Build binary: go build -o /tmp/mreviewer-test-binary ./cmd/ingress",
+          "expected": "Binary compiles without errors",
+          "observed": "Binary compiled successfully (exit code 0)"
+        },
+        {
+          "action": "Start binary on port 3199: PORT=3199 /tmp/mreviewer-test-binary",
+          "expected": "Service starts, logs listening address",
+          "observed": "Logs show: 'configuration loaded' (port 3199), 'database connection pool initialized', 'server starting' (addr :3199)"
+        },
+        {
+          "action": "Verify health: curl -sf http://127.0.0.1:3199/health",
+          "expected": "HTTP 200 {\"status\":\"ok\"}",
+          "observed": "{\"status\":\"ok\"}"
+        },
+        {
+          "action": "Send SIGTERM: kill -TERM <GO_PID>",
+          "expected": "Graceful shutdown logs, process exits cleanly",
+          "observed": "Logs: 'server shutting down gracefully', 'server stopped cleanly', 'shutdown complete'. Process exited."
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "GET /health on :3199 -> 200",
+        "files": ["foundation/api-health-lifecycle/VAL-FOUND-005-startup-shutdown.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-FOUND-006",
+      "title": "Structured logging outputs valid JSON",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Read /tmp/mreviewer-api.log and check each line is valid JSON",
+          "expected": "All lines are valid JSON with time, level, msg fields",
+          "observed": "All 11 lines are valid JSON. All have time, level, msg fields."
+        },
+        {
+          "action": "curl -sf http://127.0.0.1:3100/health to generate request log",
+          "expected": "New log entry appears",
+          "observed": "New log line with request_id appeared in log file"
+        },
+        {
+          "action": "Check request_id in request-context log lines",
+          "expected": "request_id present in request-context logs",
+          "observed": "All 8 request-context lines have request_id (UUID format). 3 startup lines correctly omit request_id (not in request context)."
+        },
+        {
+          "action": "python3 JSON validation of entire log file",
+          "expected": "All lines parse as valid JSON",
+          "observed": "python3 json.loads() succeeded for all 11 lines (exit code 0)"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "GET /health -> 200 (to generate log output)",
+        "files": ["foundation/api-health-lifecycle/VAL-FOUND-006-structured-logging.txt"]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "go run does not properly forward SIGTERM to the child Go process, so graceful shutdown cannot be tested with go run. Must build binary and send SIGTERM directly to the Go process PID (identified via lsof).",
+      "resolved": true,
+      "resolution": "Built binary with go build, started directly, identified Go process PID with lsof -i :3199, sent SIGTERM to that PID.",
+      "affectedAssertions": ["VAL-FOUND-005"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 3 assertions: 3 passed, 0 failed. Health endpoint returns 200 with {\"status\":\"ok\"}, service starts/stops cleanly with proper graceful shutdown logging, and all log output is valid structured JSON with time/level/msg fields and request_id in request context."
+}
