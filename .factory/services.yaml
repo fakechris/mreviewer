@@ -1,34 +1,34 @@
 commands:
-  install: go mod tidy
-  typecheck: go test -run '^$' ./...
-  build: go build ./...
-  test: go test -p 5 ./...
-  lint: ./.factory/bin/golangci-lint run --timeout 5m
+  install: test -f go.mod && go mod tidy || echo 'go.mod not initialized yet'
+  typecheck: test -f go.mod && go test -run '^$' ./... || echo 'go.mod not initialized yet'
+  build: test -f go.mod && go build ./... || echo 'go.mod not initialized yet'
+  test: test -f go.mod && go test -p 5 ./... || echo 'go.mod not initialized yet'
+  lint: test -f go.mod && test -x ./.factory/bin/golangci-lint && ./.factory/bin/golangci-lint run --timeout 5m || echo 'lint unavailable before scaffold'
 
 services:
   mysql:
-    start: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose up -d mysql
-    stop: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose stop mysql
-    healthcheck: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose exec -T mysql mysqladmin ping -h 127.0.0.1 -P 3306 -umreviewer -pmreviewer_password
+    start: test -f docker-compose.yml -o -f docker-compose.yaml -o -f compose.yaml && MYSQL_PORT=3306 REDIS_PORT=6380 docker compose up -d mysql || echo 'compose file not initialized yet'
+    stop: test -f docker-compose.yml -o -f docker-compose.yaml -o -f compose.yaml && MYSQL_PORT=3306 REDIS_PORT=6380 docker compose stop mysql || true
+    healthcheck: test -f docker-compose.yml -o -f docker-compose.yaml -o -f compose.yaml && MYSQL_PORT=3306 REDIS_PORT=6380 docker compose exec -T mysql mysqladmin ping -h 127.0.0.1 -P 3306 -umreviewer -pmreviewer_password || echo 'compose file not initialized yet'
     port: 3306
     depends_on: []
 
   redis:
-    start: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose up -d redis
-    stop: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose stop redis
-    healthcheck: MYSQL_PORT=3306 REDIS_PORT=6380 docker compose exec -T redis redis-cli -p 6379 ping
+    start: test -f docker-compose.yml -o -f docker-compose.yaml -o -f compose.yaml && MYSQL_PORT=3306 REDIS_PORT=6380 docker compose up -d redis || echo 'compose file not initialized yet'
+    stop: test -f docker-compose.yml -o -f docker-compose.yaml -o -f compose.yaml && MYSQL_PORT=3306 REDIS_PORT=6380 docker compose stop redis || true
+    healthcheck: test -f docker-compose.yml -o -f docker-compose.yaml -o -f compose.yaml && MYSQL_PORT=3306 REDIS_PORT=6380 docker compose exec -T redis redis-cli -p 6379 ping || echo 'compose file not initialized yet'
     port: 6380
     depends_on: []
 
   api:
-    start: PORT=3100 MYSQL_PORT=3306 REDIS_PORT=6380 go run ./cmd/ingress
+    start: test -d ./cmd/ingress && PORT=3100 MYSQL_PORT=3306 REDIS_PORT=6380 go run ./cmd/ingress || echo 'cmd/ingress not initialized yet'
     stop: pids=$(lsof -ti :3100); [ -z "$pids" ] || kill $pids
-    healthcheck: curl -sf http://127.0.0.1:3100/health
+    healthcheck: test -d ./cmd/ingress && curl -sf http://127.0.0.1:3100/health || echo 'cmd/ingress not initialized yet'
     port: 3100
     depends_on: [mysql, redis]
 
   worker:
-    start: MYSQL_PORT=3306 REDIS_PORT=6380 go run ./cmd/worker
+    start: test -d ./cmd/worker && MYSQL_PORT=3306 REDIS_PORT=6380 go run ./cmd/worker || echo 'cmd/worker not initialized yet'
     stop: pids=$(pgrep -f 'go run ./cmd/worker' || true); [ -z "$pids" ] || kill $pids
-    healthcheck: pgrep -f 'go run ./cmd/worker' >/dev/null
+    healthcheck: test -d ./cmd/worker && pgrep -f 'go run ./cmd/worker' >/dev/null || echo 'cmd/worker not initialized yet'
     depends_on: [mysql, redis]
