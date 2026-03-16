@@ -1,0 +1,32 @@
+{
+  "object_kind": "merge_request",
+  "event_type": "merge_request",
+  "user": {
+    "id": 1,
+    "name": "Test User",
+    "username": "testuser"
+  },
+  "project": {
+    "id": 42,
+    "name": "test-repo",
+    "path_with_namespace": "test-group/test-repo",
+    "web_url": "https://gitlab.example.com/test-group/test-repo"
+  },
+  "object_attributes": {
+    "iid": 7,
+    "title": "Add new feature",
+    "description": "This MR adds a new feature",
+    "source_branch": "feature/new-thing",
+    "target_branch": "main",
+    "state": "opened",
+    "action": "open",
+    "work_in_progress": false,
+    "last_commit": {
+      "id": "abc123def456789012345678901234567890abcd",
+      "message": "Add new feature implementation",
+      "author_name": "Test User",
+      "author_email": "test@example.com"
+    },
+    "url": "https://gitlab.example.com/test-group/test-repo/-/merge_requests/7"
+  }
+}

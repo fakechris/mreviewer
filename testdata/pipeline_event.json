@@ -1,0 +1,14 @@
+{
+  "object_kind": "pipeline",
+  "object_attributes": {
+    "id": 999,
+    "ref": "main",
+    "status": "success",
+    "stages": ["build", "test", "deploy"]
+  },
+  "project": {
+    "id": 42,
+    "name": "test-repo",
+    "path_with_namespace": "test-group/test-repo"
+  }
+}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/mreviewer/mreviewer/internal/config"
 	"github.com/mreviewer/mreviewer/internal/database"
+	"github.com/mreviewer/mreviewer/internal/hooks"
 	apphttp "github.com/mreviewer/mreviewer/internal/http"
 	"github.com/mreviewer/mreviewer/internal/logging"
 	"github.com/mreviewer/mreviewer/internal/server"
@@ -52,6 +53,10 @@ func run() int {
 	// Build HTTP routes.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", apphttp.NewHealthHandler(logger, db))
+
+	// Webhook ingress handler.
+	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret)
+	mux.Handle("POST /webhook", webhookHandler)
 
 	// Wrap with request-id middleware.
 	handler := apphttp.RequestIDMiddleware(logger, mux)
