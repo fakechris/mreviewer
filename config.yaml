@@ -1,0 +1,16 @@
+# Default configuration for the MR review system.
+# Environment variables override all values below.
+
+app_env: development
+port: "3100"
+
+mysql_dsn: "mreviewer:mreviewer_password@tcp(127.0.0.1:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci"
+redis_addr: "127.0.0.1:6380"
+
+gitlab_base_url: "https://gitlab.example.com"
+gitlab_token: ""
+gitlab_webhook_secret: ""
+
+anthropic_base_url: "https://api.minimaxi.com/anthropic"
+anthropic_api_key: ""
+anthropic_model: "MiniMax-M2.5"
