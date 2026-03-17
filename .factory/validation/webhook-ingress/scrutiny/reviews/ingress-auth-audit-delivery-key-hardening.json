@@ -1,0 +1,21 @@
+{
+  "featureId": "ingress-auth-audit-delivery-key-hardening",
+  "reviewedAt": "2026-03-17T04:31:22Z",
+  "commitId": "b4b4b44f6b37130dd0aa94becb05556a595b8074",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Compared the original failed feature commit (`b9b236149e3d2e8398f3637d7d9d94c78b6e545c`) with the fix commit (`b4b4b44f6b37130dd0aa94becb05556a595b8074`). The fix directly addresses the prior blocking issue by updating `extractDeliveryKey` to prefer `X-Gitlab-Webhook-UUID` while retaining `X-Gitlab-Delivery` and `X-Gitlab-Event-UUID` fallbacks, and by expanding handler coverage to exercise header priority, cross-header deduplication, and audit-log correlation across the supported header variants. I did not find any remaining blocking or regression issues within the scope of this failure.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The shared service manifest still starts the ingress API without a webhook secret, so workers validating authenticated `/webhook` flows cannot rely on `.factory/services.yaml` alone and must supply a manual environment override.",
+      "evidence": "`.factory/services.yaml:24` launches `./.factory/run/ingress` with only `PORT`, `MYSQL_PORT`, and `REDIS_PORT`, while `config.yaml:12` leaves `gitlab_webhook_secret` empty. The fix handoff's `skillFeedback.deviations` records that the worker had to launch ingress manually with `GITLAB_WEBHOOK_SECRET=test-secret` to complete authenticated curl verification."
+    }
+  ],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/webhook-ingress/scrutiny/reviews/ingress-auth-audit.json",
+  "summary": "Pass: the fix removes the prior delivery-key extraction gap for GitLab 16.4+ by honoring `X-Gitlab-Webhook-UUID` first and preserving the existing fallback headers, and the new tests cover the expected deduplication and audit-correlation behavior. No blocking issues remain in scope; one shared-state services gap remains around starting the local ingress service with a usable webhook secret for authenticated validation."
+}

@@ -34,6 +34,7 @@ Architectural decisions and implementation patterns for this mission.
 ## Reliability guidance
 
 - Use transaction boundaries for multi-row state changes.
+- When `head_sha` is unavailable at webhook-ingest time, keep deferred trigger recovery context by linking `review_runs.hook_event_id` back to the stored `hook_events.payload`; later recovery should resolve the real SHA from that persisted payload instead of collapsing distinct deferred triggers onto one synthetic key.
 - Favor DB-backed correctness over Redis-backed coordination.
 - Retry-scheduled runs remain active work: `review_runs.status='failed'` with a due `next_retry_at` is still claimable by the scheduler, so lifecycle/cancellation logic must treat those rows like pending work until retries are exhausted or the run is cancelled.
 - All writeback actions must be idempotent and auditable.

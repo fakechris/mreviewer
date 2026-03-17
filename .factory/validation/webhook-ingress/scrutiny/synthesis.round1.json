@@ -1,0 +1,88 @@
+{
+  "milestone": "webhook-ingress",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -p 5 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "go test -run '^$' ./...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "./.factory/bin/golangci-lint run --timeout 5m",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 0,
+    "failed": 4,
+    "failedFeatures": [
+      "ingress-auth-audit",
+      "ingress-normalization-and-triggers",
+      "ingress-run-lifecycle",
+      "ingress-scheduler-and-retries"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "ingress-auth-audit",
+      "severity": "blocking",
+      "description": "Webhook delivery-key extraction only honors `X-Gitlab-Delivery` and legacy `X-Gitlab-Event-UUID`; on the mission's GitLab 16.4+ target, deliveries sent with `X-Gitlab-Webhook-UUID` fall back to synthetic keys, breaking reliable deduplication and audit correlation."
+    },
+    {
+      "featureId": "ingress-normalization-and-triggers",
+      "severity": "blocking",
+      "description": "The runtime ingress path never emits `hook_source=group` for real group merge-request webhooks because non-system hooks default to `project`, so production behavior does not match the feature's group/project/system normalization contract."
+    },
+    {
+      "featureId": "ingress-normalization-and-triggers",
+      "severity": "blocking",
+      "description": "Deferred head-SHA handling is only kept in memory: missing-SHA events persist neither the deferred intent nor a later lookup path, so distinct missing-SHA triggers can collapse onto the same synthetic idempotency key instead of being resolved later."
+    },
+    {
+      "featureId": "ingress-run-lifecycle",
+      "severity": "blocking",
+      "description": "Cancelling a running review run only flips database state; the scheduler still finishes `ProcessRun` and unconditionally writes `completed` or `failed`, so cancelled runs can continue into downstream work and overwrite the cancelled terminal state."
+    },
+    {
+      "featureId": "ingress-scheduler-and-retries",
+      "severity": "blocking",
+      "description": "Retry-scheduled runs are represented as `status='failed'` plus a due `next_retry_at`, but MR close/merge cancellation only targets `pending` and `running` rows, allowing retryable runs to be reclaimed and processed after the MR is closed or merged."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated `integrations.md` with the GitLab webhook delivery headers to honor for self-managed GitLab 16.4+ (`X-Gitlab-Delivery`, `X-Gitlab-Webhook-UUID`, legacy `X-Gitlab-Event-UUID`) and noted that project/group MR hooks share the same event header.",
+      "sourceFeature": "ingress-auth-audit"
+    },
+    {
+      "target": "library",
+      "description": "Updated `architecture.md` to record that retry-scheduled runs remain active work when stored as `failed` plus `next_retry_at`, so lifecycle/cancellation code must treat them like pending work.",
+      "sourceFeature": "ingress-scheduler-and-retries"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skill:go-backend",
+      "suggestion": "Clarify how strictly workers must follow the skill's test-first requirement and require `skillFeedback` to call out transcript-visible deviations when implementation files are created before failing tests.",
+      "evidence": "Feature `ingress-normalization-and-triggers` created `internal/hooks/normalize.go` before `internal/hooks/normalize_test.go` in the transcript skeleton while still reporting `skillFeedback.followedProcedure=true`, which makes scrutiny harder to evaluate consistently.",
+      "isSystemic": false
+    },
+    {
+      "target": "skill:go-integration",
+      "suggestion": "Add a note that adapter/handler integration tests may need an external `*_test` package when importing a sibling package would otherwise create an import cycle.",
+      "evidence": "Feature `ingress-run-lifecycle` had to move lifecycle handler coverage into `internal/hooks/handler_lifecycle_integration_test.go` with `package hooks_test` because importing `internal/runs` from the in-package handler tests caused an import cycle.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}

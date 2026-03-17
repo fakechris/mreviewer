@@ -1,0 +1,21 @@
+{
+  "featureId": "ingress-normalization-runtime-hardening",
+  "reviewedAt": "2026-03-17T04:31:33Z",
+  "commitId": "f670989f7c35a40220035db8984fd7a82f97e31e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Compared with the original failing implementation in 67bb3e6, the fix commit hardens both missed runtime paths: handler ingress now refines project-versus-group hook_source from payload markers before persistence, and deferred head-SHA events now derive discriminated idempotency keys while retaining hook_event linkage to the stored raw payload for later recovery.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The shared library now documents payload markers for distinguishing group MR webhooks, but it still does not record that deferred-head runs preserve recovery context through review_runs.hook_event_id pointing back to the stored hook_events.payload when head_sha is empty.",
+      "evidence": "internal/hooks/handler.go inserts hook_events and review_runs atomically; internal/hooks/handler_lifecycle_integration_test.go:368-405 asserts the stored payload retains deferred lookup fields and the created review_run keeps hook_event_id; .factory/library/architecture.md describes the webhook->run flow only at a high level."
+    }
+  ],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/webhook-ingress/scrutiny/reviews/ingress-normalization-and-triggers.json",
+  "summary": "Pass. Reviewing both the original failing diff and the fix diff shows the prior blocking issues are addressed: real group MR deliveries now persist as hook_source=group at runtime, and logically distinct missing-head triggers no longer collapse onto one synthetic deferred idempotency key. I did not find any remaining blocking regression in the reviewed scope."
+}

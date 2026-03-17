@@ -1,0 +1,15 @@
+{
+  "featureId": "ingress-cancellation-retry-hardening",
+  "reviewedAt": "2026-03-17T04:31:29Z",
+  "commitId": "060ba36",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix resolves the prior blocking cancellation gaps. Close/merge now cancels retry-scheduled runs and clears their retry schedule, while the scheduler reloads claimed runs before processing and uses running-only terminal updates so completed/failed writes no longer overwrite a persisted cancelled state. The added tests cover retry-scheduled lifecycle cancellation, cancellation during successful processing, cancellation during retryable failure handling, and exclusion of cancelled retry rows from later claims.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/webhook-ingress/scrutiny/reviews/ingress-run-lifecycle.json; /Users/chris/workspace/mreviewer/.factory/validation/webhook-ingress/scrutiny/reviews/ingress-scheduler-and-retries.json",
+  "summary": "Pass: commit 060ba36 adequately addresses the earlier cancellation hardening failures. Retry-scheduled runs are cancelled on close/merge, cancelled rows are no longer reclaimed, and in-flight terminal writes cannot overwrite a persisted cancelled state."
+}
