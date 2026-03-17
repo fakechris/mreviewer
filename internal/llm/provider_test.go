@@ -208,6 +208,50 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	}
 }
 
+func TestReviewedCleanPathBecomesFixed(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, projectID, mrID, runID := seedRun(t, ctx, q)
+	baseRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+	if err := activateSingleFinding(ctx, q, baseRun, mr, sameRunFinding(12)); err != nil {
+		t.Fatalf("activateSingleFinding: %v", err)
+	}
+
+	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook:reviewed-clean"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	newRunID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+	newRun, err := q.GetReviewRun(ctx, newRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun new: %v", err)
+	}
+
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}, map[string]struct{}{"src/service/foo.go": {}}, nil); err != nil {
+		t.Fatalf("persistFindings: %v", err)
+	}
+
+	findings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun: %v", err)
+	}
+	if findings[0].State != findingStateFixed {
+		t.Fatalf("state = %q, want fixed", findings[0].State)
+	}
+}
+
 func TestParserErrorStructuredResult(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
@@ -352,7 +396,7 @@ func TestNormalizeFinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMergeRequest: %v", err)
 	}
-	if err := persistFindings(ctx, q, run, mr, result); err != nil {
+	if err := persistFindings(ctx, q, run, mr, result, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 
@@ -563,7 +607,7 @@ func TestPersistFindingsCanonicalizesLegacyAnchorLabels(t *testing.T) {
 			CanonicalKey:  "equivalent-anchor-vocabulary",
 		}},
 	}
-	if err := persistFindings(ctx, q, run, mr, legacy); err != nil {
+	if err := persistFindings(ctx, q, run, mr, legacy, nil, nil); err != nil {
 		t.Fatalf("persistFindings legacy: %v", err)
 	}
 
@@ -610,7 +654,7 @@ func TestPersistFindingsCanonicalizesLegacyAnchorLabels(t *testing.T) {
 			CanonicalKey:  "equivalent-anchor-vocabulary",
 		}},
 	}
-	if err := persistFindings(ctx, q, secondRun, mr, current); err != nil {
+	if err := persistFindings(ctx, q, secondRun, mr, current, nil, nil); err != nil {
 		t.Fatalf("persistFindings current: %v", err)
 	}
 
@@ -693,7 +737,7 @@ func TestSameHeadDedupe(t *testing.T) {
 	}
 
 	result := ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12), sameRunFinding(12)}}
-	if err := persistFindings(ctx, q, run, mr, result); err != nil {
+	if err := persistFindings(ctx, q, run, mr, result, nil, nil); err != nil {
 		t.Fatalf("first persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -706,7 +750,7 @@ func TestSameHeadDedupe(t *testing.T) {
 	if err := q.UpdateFindingState(ctx, db.UpdateFindingStateParams{State: findingStateActive, ID: findings[0].ID}); err != nil {
 		t.Fatalf("UpdateFindingState active: %v", err)
 	}
-	if err := persistFindings(ctx, q, run, mr, result); err != nil {
+	if err := persistFindings(ctx, q, run, mr, result, nil, nil); err != nil {
 		t.Fatalf("second persistFindings: %v", err)
 	}
 
@@ -755,7 +799,7 @@ func TestNewHeadLastSeenUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReviewRun new: %v", err)
 	}
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}); err != nil {
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings new: %v", err)
 	}
 
@@ -790,7 +834,7 @@ func TestSemanticRelocation(t *testing.T) {
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
 	relocated := sameRunFinding(30)
 	relocated.AnchorSnippet = "return *ptr"
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}); err != nil {
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings relocated: %v", err)
 	}
 	active, err := q.ListActiveFindingsByMR(ctx, mrID)
@@ -828,7 +872,7 @@ func TestRelocationSupersedes(t *testing.T) {
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
 	relocated := sameRunFinding(30)
 	relocated.AnchorSnippet = "different snippet"
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}); err != nil {
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings relocated: %v", err)
 	}
 	oldFinding, err := q.GetReviewFinding(ctx, baseFindings[0].ID)
@@ -864,7 +908,7 @@ func TestSameRunDuplicateCollapse(t *testing.T) {
 	dupA := sameRunFinding(12)
 	dupB := sameRunFinding(12)
 	dupB.BodyMarkdown = "different wording"
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{dupA, dupB}}); err != nil {
+	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{dupA, dupB}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -934,7 +978,7 @@ func TestMissingFindingFixed(t *testing.T) {
 	remaining.CanonicalKey = "nil-deref:foo-service:reviewed-remaining"
 	remaining.Symbol = "(*Service).DoReviewedWork"
 	remaining.AnchorSnippet = "return *reviewedPtr"
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{remaining}}); err != nil {
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{remaining}}, map[string]struct{}{normalizePath(remaining.Path): {}}, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -969,7 +1013,7 @@ func TestMissingFindingStale(t *testing.T) {
 	reviewedOtherPath.CanonicalKey = "nil-deref:bar-service:stale-scope"
 	reviewedOtherPath.Symbol = "(*Service).DoOtherWork"
 	reviewedOtherPath.AnchorSnippet = "return *otherPtr"
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedOtherPath}}); err != nil {
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedOtherPath}}, map[string]struct{}{normalizePath(reviewedOtherPath.Path): {}}, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -999,7 +1043,7 @@ func TestMissingFindingNoReviewedScopeNoTransition(t *testing.T) {
 	}
 	newRunID, _ := res.LastInsertId()
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}); err != nil {
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -1036,7 +1080,7 @@ func TestDeletedFileFixed(t *testing.T) {
 	deleted.CanonicalKey = "deleted:nil-deref:foo-service"
 	deleted.NewLine = nil
 	deleted.OldLine = func() *int32 { v := int32(12); return &v }()
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{deleted}}); err != nil {
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{deleted}}, map[string]struct{}{normalizePath(deleted.Path): {}}, map[string]struct{}{normalizePath(deleted.Path): {}}); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
@@ -1109,7 +1153,7 @@ func TestMixedScopeMissingFindingStaysStale(t *testing.T) {
 	otherFinding.CanonicalKey = "nil-deref:bar-service"
 	otherFinding.Symbol = "(*Service).DoOtherWork"
 	otherFinding.AnchorSnippet = "return *otherPtr"
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", run.ID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{otherFinding}}); err != nil {
+	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", run.ID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{otherFinding}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings other: %v", err)
 	}
 	baseRows, err = q.ListFindingsByRun(ctx, runID)
@@ -1140,7 +1184,7 @@ secondActiveReady:
 	reviewedAbsentReplacement.CanonicalKey = otherFinding.CanonicalKey
 	reviewedAbsentReplacement.Symbol = otherFinding.Symbol
 	reviewedAbsentReplacement.AnchorSnippet = otherFinding.AnchorSnippet
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedAbsentReplacement}}); err != nil {
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedAbsentReplacement}}, map[string]struct{}{normalizePath(reviewedAbsentReplacement.Path): {}}, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 
@@ -1171,7 +1215,7 @@ func TestConfidenceThresholdFilter(t *testing.T) {
 	if _, err := q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{ProjectID: projectID, ConfidenceThreshold: 0.95, SeverityThreshold: "low", IncludePaths: json.RawMessage("[]"), ExcludePaths: json.RawMessage("[]"), Extra: json.RawMessage("{}")}); err != nil {
 		t.Fatalf("InsertProjectPolicy: %v", err)
 	}
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}); err != nil {
+	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -1199,7 +1243,7 @@ func TestSeverityThresholdFilter(t *testing.T) {
 	}
 	lowSeverity := sameRunFinding(12)
 	lowSeverity.Severity = "medium"
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{lowSeverity}}); err != nil {
+	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{lowSeverity}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -1215,7 +1259,7 @@ func TestSeverityThresholdFilter(t *testing.T) {
 }
 
 func activateSingleFinding(ctx context.Context, q *db.Queries, run db.ReviewRun, mr db.MergeRequest, finding ReviewFinding) error {
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", run.ID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{finding}}); err != nil {
+	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", run.ID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{finding}}, nil, nil); err != nil {
 		return err
 	}
 	findings, err := q.ListFindingsByRun(ctx, run.ID)

@@ -250,7 +250,8 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		_ = p.auditLogger.LogProviderCall(ctx, run, payload, response)
 	}
 
-	if err := persistFindings(ctx, p.queries, run, mergeRequest, response.Result); err != nil {
+	reviewedPaths, deletedPaths := reviewedScopeFromAssembly(assembled)
+	if err := persistFindings(ctx, p.queries, run, mergeRequest, response.Result, reviewedPaths, deletedPaths); err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist findings: %w", err))
 	}
 	if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
@@ -345,7 +346,7 @@ func validateReviewResult(result ReviewResult) error {
 	return nil
 }
 
-func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, result ReviewResult) error {
+func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, result ReviewResult, reviewedPaths, deletedPaths map[string]struct{}) error {
 	existing, err := queries.ListActiveFindingsByMR(ctx, mr.ID)
 	if err != nil {
 		return err
@@ -372,20 +373,7 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 			state:               evaluateFindingState(normalized, thresholds),
 		})
 	}
-	reviewedPaths := make(map[string]struct{}, len(persisted))
-	deletedPaths := make(map[string]struct{}, len(persisted))
 	matchedExistingIDs := make(map[int64]struct{})
-	for _, finding := range persisted {
-		switch finding.state {
-		case findingStateFiltered:
-			continue
-		case findingStateDeleted:
-			deletedPaths[finding.normalized.Path] = struct{}{}
-			reviewedPaths[finding.normalized.Path] = struct{}{}
-		default:
-			reviewedPaths[finding.normalized.Path] = struct{}{}
-		}
-	}
 
 	for _, finding := range persisted {
 		if finding.state == findingStateFiltered {
@@ -442,6 +430,22 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 	}
 
 	return nil
+}
+
+func reviewedScopeFromAssembly(assembled ctxpkg.AssemblyResult) (map[string]struct{}, map[string]struct{}) {
+	reviewedPaths := make(map[string]struct{}, len(assembled.Request.Changes))
+	deletedPaths := make(map[string]struct{})
+	for _, change := range assembled.Request.Changes {
+		path := normalizePath(change.Path)
+		if path == "" {
+			continue
+		}
+		reviewedPaths[path] = struct{}{}
+		if change.Status == "deleted" {
+			deletedPaths[path] = struct{}{}
+		}
+	}
+	return reviewedPaths, deletedPaths
 }
 
 type findingMatchDecision struct {
