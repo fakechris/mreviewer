@@ -523,10 +523,11 @@ func evaluateFindingState(finding normalizedFinding, thresholds findingThreshold
 func transitionMissingFinding(current db.ReviewFinding, reviewedPaths, deletedPaths map[string]struct{}) (string, bool, error) {
 	path := normalizePath(current.Path)
 	if _, ok := deletedPaths[path]; ok {
-		if current.AnchorKind == "old_line" {
+		canonicalAnchorKind := normalizeAnchorKind(current.AnchorKind)
+		if canonicalAnchorKind == "old_line" {
 			return nextFindingState(current.State, findingStateFixed)
 		}
-		if current.AnchorKind == "deleted" {
+		if canonicalAnchorKind == "deleted" {
 			return nextFindingState(current.State, findingStateFixed)
 		}
 	}
@@ -540,15 +541,6 @@ func transitionMissingFinding(current db.ReviewFinding, reviewedPaths, deletedPa
 		return "", false, nil
 	}
 	return nextFindingState(current.State, findingStateStale)
-}
-
-func markDeletedPathMatches(matched map[int64]struct{}, existing []db.ReviewFinding, path string) map[int64]struct{} {
-	for _, current := range existing {
-		if normalizePath(current.Path) == path {
-			matched[current.ID] = struct{}{}
-		}
-	}
-	return matched
 }
 
 func nextFindingState(current, next string) (string, bool, error) {

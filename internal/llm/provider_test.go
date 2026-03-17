@@ -252,6 +252,22 @@ func TestReviewedCleanPathBecomesFixed(t *testing.T) {
 	}
 }
 
+func TestReviewedScopeFromAssemblyIncludesReviewedCleanPaths(t *testing.T) {
+	assembled := ctxpkg.AssemblyResult{Request: ctxpkg.ReviewRequest{Changes: []ctxpkg.Change{{Path: "src/service/foo.go", Status: "modified"}, {Path: "src/service/bar.go", Status: "deleted"}}}}
+
+	reviewedPaths, deletedPaths := reviewedScopeFromAssembly(assembled)
+
+	if _, ok := reviewedPaths["src/service/foo.go"]; !ok {
+		t.Fatal("expected modified path to be marked reviewed even when no findings survive")
+	}
+	if _, ok := reviewedPaths["src/service/bar.go"]; !ok {
+		t.Fatal("expected deleted path to be marked reviewed")
+	}
+	if _, ok := deletedPaths["src/service/bar.go"]; !ok {
+		t.Fatal("expected deleted path to be marked deleted")
+	}
+}
+
 func TestParserErrorStructuredResult(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
