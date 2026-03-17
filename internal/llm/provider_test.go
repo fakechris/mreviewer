@@ -941,7 +941,12 @@ func TestMissingFindingStale(t *testing.T) {
 	}
 	newRunID, _ := res.LastInsertId()
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}); err != nil {
+	reviewedOtherPath := sameRunFinding(30)
+	reviewedOtherPath.Path = "src/service/bar.go"
+	reviewedOtherPath.CanonicalKey = "nil-deref:bar-service:stale-scope"
+	reviewedOtherPath.Symbol = "(*Service).DoOtherWork"
+	reviewedOtherPath.AnchorSnippet = "return *otherPtr"
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedOtherPath}}); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -950,6 +955,36 @@ func TestMissingFindingStale(t *testing.T) {
 	}
 	if findings[0].State != findingStateStale {
 		t.Fatalf("state = %q, want stale", findings[0].State)
+	}
+}
+
+func TestMissingFindingNoReviewedScopeNoTransition(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, mrID, runID := seedRun(t, ctx, q)
+	run, _ := q.GetReviewRun(ctx, runID)
+	mr, _ := q.GetMergeRequest(ctx, mrID)
+	if err := activateSingleFinding(ctx, q, run, mr, sameRunFinding(12)); err != nil {
+		t.Fatalf("activateSingleFinding: %v", err)
+	}
+
+	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: run.ProjectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook:no-reviewed-scope"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	newRunID, _ := res.LastInsertId()
+	newRun, _ := q.GetReviewRun(ctx, newRunID)
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}); err != nil {
+		t.Fatalf("persistFindings: %v", err)
+	}
+	findings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun: %v", err)
+	}
+	if findings[0].State != findingStateActive {
+		t.Fatalf("state = %q, want active", findings[0].State)
 	}
 }
 
