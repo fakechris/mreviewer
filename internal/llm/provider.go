@@ -345,21 +345,139 @@ func validateReviewResult(result ReviewResult) error {
 }
 
 func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, result ReviewResult) error {
+	existing, err := queries.ListActiveFindingsByMR(ctx, mr.ID)
+	if err != nil {
+		return err
+	}
+
+	seenInRun := make(map[string]struct{}, len(result.Findings))
+	persisted := make([]persistedFinding, 0, len(result.Findings))
 	for _, finding := range result.Findings {
 		normalized := normalizeFinding(finding)
-		var oldLine, newLine sql.NullInt32
-		if normalized.OldLine.Valid {
-			oldLine = normalized.OldLine
+		anchorFingerprint := computeAnchorFingerprint(normalized)
+		if _, ok := seenInRun[anchorFingerprint]; ok {
+			continue
 		}
-		if normalized.NewLine.Valid {
-			newLine = normalized.NewLine
-		}
-		_, err := queries.InsertReviewFinding(ctx, db.InsertReviewFindingParams{ReviewRunID: run.ID, MergeRequestID: mr.ID, Category: normalized.Category, Severity: normalized.Severity, Confidence: normalized.Confidence, Title: normalized.Title, BodyMarkdown: nullableString(normalized.BodyMarkdown), Path: normalized.Path, AnchorKind: normalized.AnchorKind, OldLine: oldLine, NewLine: newLine, AnchorSnippet: nullableString(normalized.AnchorSnippet), Evidence: nullableString(normalized.Evidence), SuggestedPatch: nullableString(normalized.SuggestedPatch), CanonicalKey: normalized.CanonicalKey, AnchorFingerprint: computeAnchorFingerprint(normalized), SemanticFingerprint: computeSemanticFingerprint(normalized), State: "new"})
+		seenInRun[anchorFingerprint] = struct{}{}
+		persisted = append(persisted, persistedFinding{
+			normalized:          normalized,
+			anchorFingerprint:   anchorFingerprint,
+			semanticFingerprint: computeSemanticFingerprint(normalized),
+		})
+	}
+
+	for _, finding := range persisted {
+		matched, err := matchExistingFinding(ctx, queries, run, existing, finding)
 		if err != nil {
 			return err
 		}
+		if matched.skipInsert {
+			continue
+		}
+
+		insertedID, err := insertFinding(ctx, queries, run, mr, finding)
+		if err != nil {
+			return err
+		}
+
+		if matched.supersedeID != 0 {
+			if err := queries.UpdateFindingState(ctx, db.UpdateFindingStateParams{
+				State:            "superseded",
+				MatchedFindingID: sql.NullInt64{Int64: insertedID, Valid: true},
+				ID:               matched.supersedeID,
+			}); err != nil {
+				return err
+			}
+		}
 	}
+
 	return nil
+}
+
+type findingMatchDecision struct {
+	skipInsert  bool
+	supersedeID int64
+}
+
+type persistedFinding struct {
+	normalized          normalizedFinding
+	anchorFingerprint   string
+	semanticFingerprint string
+}
+
+func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding) (findingMatchDecision, error) {
+	for _, current := range existing {
+		if current.AnchorFingerprint != finding.anchorFingerprint {
+			continue
+		}
+
+		if current.ReviewRunID == run.ID || (current.LastSeenRunID.Valid && current.LastSeenRunID.Int64 == run.ID) {
+			return findingMatchDecision{skipInsert: true}, nil
+		}
+
+		if current.ReviewRunID != run.ID {
+			if err := queries.UpdateFindingLastSeen(ctx, db.UpdateFindingLastSeenParams{
+				LastSeenRunID: sql.NullInt64{Int64: run.ID, Valid: true},
+				ID:            current.ID,
+			}); err != nil {
+				return findingMatchDecision{}, err
+			}
+			return findingMatchDecision{skipInsert: true}, nil
+		}
+	}
+
+	for _, current := range existing {
+		if current.SemanticFingerprint != finding.semanticFingerprint {
+			continue
+		}
+		if current.ReviewRunID == run.ID || (current.LastSeenRunID.Valid && current.LastSeenRunID.Int64 == run.ID) {
+			continue
+		}
+		if relocationMatches(current, finding.normalized) {
+			if err := queries.UpdateFindingLastSeen(ctx, db.UpdateFindingLastSeenParams{
+				LastSeenRunID: sql.NullInt64{Int64: run.ID, Valid: true},
+				ID:            current.ID,
+			}); err != nil {
+				return findingMatchDecision{}, err
+			}
+			return findingMatchDecision{skipInsert: true}, nil
+		}
+		return findingMatchDecision{supersedeID: current.ID}, nil
+	}
+
+	return findingMatchDecision{}, nil
+}
+
+func insertFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, finding persistedFinding) (int64, error) {
+	var oldLine, newLine sql.NullInt32
+	if finding.normalized.OldLine.Valid {
+		oldLine = finding.normalized.OldLine
+	}
+	if finding.normalized.NewLine.Valid {
+		newLine = finding.normalized.NewLine
+	}
+	result, err := queries.InsertReviewFinding(ctx, db.InsertReviewFindingParams{ReviewRunID: run.ID, MergeRequestID: mr.ID, Category: finding.normalized.Category, Severity: finding.normalized.Severity, Confidence: finding.normalized.Confidence, Title: finding.normalized.Title, BodyMarkdown: nullableString(finding.normalized.BodyMarkdown), Path: finding.normalized.Path, AnchorKind: finding.normalized.AnchorKind, OldLine: oldLine, NewLine: newLine, AnchorSnippet: nullableString(finding.normalized.AnchorSnippet), Evidence: nullableString(finding.normalized.Evidence), SuggestedPatch: nullableString(finding.normalized.SuggestedPatch), CanonicalKey: finding.normalized.CanonicalKey, AnchorFingerprint: finding.anchorFingerprint, SemanticFingerprint: finding.semanticFingerprint, State: "new"})
+	if err != nil {
+		return 0, err
+	}
+	insertedID, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return insertedID, nil
+}
+
+func relocationMatches(current db.ReviewFinding, candidate normalizedFinding) bool {
+	if normalizePath(current.Path) != candidate.Path {
+		return false
+	}
+	if current.AnchorKind != candidate.AnchorKind {
+		return false
+	}
+	if current.AnchorSnippet.Valid && candidate.AnchorSnippet != "" && current.AnchorSnippet.String != candidate.AnchorSnippet {
+		return false
+	}
+	return true
 }
 
 type normalizedFinding struct {

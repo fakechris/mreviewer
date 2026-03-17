@@ -479,6 +479,226 @@ func TestCanonicalKeyFallback(t *testing.T) {
 	}
 }
 
+func TestSameHeadDedupe(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, mrID, runID := seedRun(t, ctx, q)
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+
+	result := ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12), sameRunFinding(12)}}
+	if err := persistFindings(ctx, q, run, mr, result); err != nil {
+		t.Fatalf("first persistFindings: %v", err)
+	}
+	if err := persistFindings(ctx, q, run, mr, result); err != nil {
+		t.Fatalf("second persistFindings: %v", err)
+	}
+
+	findings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(findings))
+	}
+	if findings[0].LastSeenRunID.Valid {
+		t.Fatalf("last_seen_run_id = %+v, want invalid", findings[0].LastSeenRunID)
+	}
+	if findings[0].State != "new" {
+		t.Fatalf("state = %q, want new", findings[0].State)
+	}
+}
+
+func TestNewHeadLastSeenUpdate(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, projectID, mrID, runID := seedRun(t, ctx, q)
+	baseRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+	if err := persistFindings(ctx, q, baseRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}); err != nil {
+		t.Fatalf("persistFindings base: %v", err)
+	}
+
+	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	newRunID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+	newRun, err := q.GetReviewRun(ctx, newRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun new: %v", err)
+	}
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}); err != nil {
+		t.Fatalf("persistFindings new: %v", err)
+	}
+
+	active, err := q.ListActiveFindingsByMR(ctx, mrID)
+	if err != nil {
+		t.Fatalf("ListActiveFindingsByMR: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("active findings = %d, want 1", len(active))
+	}
+	if !active[0].LastSeenRunID.Valid || active[0].LastSeenRunID.Int64 != newRunID {
+		t.Fatalf("last_seen_run_id = %+v, want %d", active[0].LastSeenRunID, newRunID)
+	}
+	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun new: %v", err)
+	}
+	if len(newRunFindings) != 0 {
+		t.Fatalf("new run findings = %d, want 0", len(newRunFindings))
+	}
+}
+
+func TestSemanticRelocation(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, projectID, mrID, runID := seedRun(t, ctx, q)
+	baseRun, _ := q.GetReviewRun(ctx, runID)
+	mr, _ := q.GetMergeRequest(ctx, mrID)
+	if err := persistFindings(ctx, q, baseRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}); err != nil {
+		t.Fatalf("persistFindings base: %v", err)
+	}
+	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	newRunID, _ := res.LastInsertId()
+	newRun, _ := q.GetReviewRun(ctx, newRunID)
+	relocated := sameRunFinding(30)
+	relocated.AnchorSnippet = "return *ptr"
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}); err != nil {
+		t.Fatalf("persistFindings relocated: %v", err)
+	}
+	active, err := q.ListActiveFindingsByMR(ctx, mrID)
+	if err != nil {
+		t.Fatalf("ListActiveFindingsByMR: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("active findings = %d, want 1", len(active))
+	}
+	if !active[0].LastSeenRunID.Valid || active[0].LastSeenRunID.Int64 != newRunID {
+		t.Fatalf("last_seen_run_id = %+v, want %d", active[0].LastSeenRunID, newRunID)
+	}
+	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun new: %v", err)
+	}
+	if len(newRunFindings) != 0 {
+		t.Fatalf("new run findings = %d, want 0", len(newRunFindings))
+	}
+}
+
+func TestRelocationSupersedes(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, projectID, mrID, runID := seedRun(t, ctx, q)
+	baseRun, _ := q.GetReviewRun(ctx, runID)
+	mr, _ := q.GetMergeRequest(ctx, mrID)
+	if err := persistFindings(ctx, q, baseRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}); err != nil {
+		t.Fatalf("persistFindings base: %v", err)
+	}
+	baseFindings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun base: %v", err)
+	}
+	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	newRunID, _ := res.LastInsertId()
+	newRun, _ := q.GetReviewRun(ctx, newRunID)
+	relocated := sameRunFinding(30)
+	relocated.AnchorSnippet = "different snippet"
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}); err != nil {
+		t.Fatalf("persistFindings relocated: %v", err)
+	}
+	oldFinding, err := q.GetReviewFinding(ctx, baseFindings[0].ID)
+	if err != nil {
+		t.Fatalf("GetReviewFinding old: %v", err)
+	}
+	if oldFinding.State != "superseded" {
+		t.Fatalf("old state = %q, want superseded", oldFinding.State)
+	}
+	if !oldFinding.MatchedFindingID.Valid {
+		t.Fatal("expected matched_finding_id to be set")
+	}
+	newFinding, err := q.GetReviewFinding(ctx, oldFinding.MatchedFindingID.Int64)
+	if err != nil {
+		t.Fatalf("GetReviewFinding new: %v", err)
+	}
+	if newFinding.ReviewRunID != newRunID {
+		t.Fatalf("new finding review_run_id = %d, want %d", newFinding.ReviewRunID, newRunID)
+	}
+	if newFinding.State != "new" {
+		t.Fatalf("new state = %q, want new", newFinding.State)
+	}
+}
+
+func TestSameRunDuplicateCollapse(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, mrID, runID := seedRun(t, ctx, q)
+	run, _ := q.GetReviewRun(ctx, runID)
+	mr, _ := q.GetMergeRequest(ctx, mrID)
+	dupA := sameRunFinding(12)
+	dupB := sameRunFinding(12)
+	dupB.BodyMarkdown = "different wording"
+	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{dupA, dupB}}); err != nil {
+		t.Fatalf("persistFindings: %v", err)
+	}
+	findings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(findings))
+	}
+}
+
+func sameRunFinding(line int32) ReviewFinding {
+	return ReviewFinding{
+		Category:      "bug",
+		Severity:      "high",
+		Confidence:    0.91,
+		Title:         "Nil dereference",
+		BodyMarkdown:  "Dereference may panic.",
+		Path:          "src/service/foo.go",
+		AnchorKind:    "new_line",
+		NewLine:       &line,
+		AnchorSnippet: "return *ptr",
+		Evidence:      []string{"ptr may be nil"},
+		CanonicalKey:  "nil-deref:foo-service",
+		Symbol:        "(*Service).DoWork",
+	}
+}
+
 type captureTransport struct {
 	body         bytes.Buffer
 	header       http.Header
