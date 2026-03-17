@@ -132,6 +132,62 @@ func lifecyclePayload(action, state, headSHA string) string {
 	}`, action, state, lastCommit)
 }
 
+func lifecycleScopedPayload(action, state, headSHA, updatedAt, oldrev string, groupScoped bool) string {
+	lastCommit := ""
+	if headSHA != "" {
+		lastCommit = fmt.Sprintf(`,
+			"last_commit": {"id": %q}`, headSHA)
+	}
+
+	updatedAtField := ""
+	if updatedAt != "" {
+		updatedAtField = fmt.Sprintf(`,
+			"updated_at": %q,
+			"created_at": "2026-03-17T10:00:00Z"`, updatedAt)
+	}
+
+	oldrevField := ""
+	if oldrev != "" {
+		oldrevField = fmt.Sprintf(`,
+			"oldrev": %q`, oldrev)
+	}
+
+	groupFields := ""
+	if groupScoped {
+		groupFields = `,
+		"group_id": 24,
+		"group_path": "test-group",
+		"group_name": "Test Group"`
+	}
+
+	return fmt.Sprintf(`{
+		"object_kind": "merge_request",
+		"event_type": "merge_request",
+		"user": {"username": "testuser"},
+		"project": {
+			"id": 42,
+			"path_with_namespace": "test/repo",
+			"web_url": "https://gitlab.example.com/test/repo"
+		}%s,
+		"object_attributes": {
+			"iid": 7,
+			"action": %q,
+			"state": %q,
+			"title": "Add feature X",
+			"source_branch": "feature-x",
+			"target_branch": "main",
+			"url": "https://gitlab.example.com/test/repo/-/merge_requests/7"%s%s%s
+		}
+	}`,
+		groupFields,
+		action,
+		state,
+		updatedAtField,
+		oldrevField,
+		lastCommit,
+	)
+}
+
 func lifecycleProjectAndMergeRequest(t *testing.T, sqlDB *sql.DB) (db.Project, db.MergeRequest) {
 	t.Helper()
 	ctx := context.Background()
@@ -243,6 +299,165 @@ func TestUpdateCreatesNewHeadRun(t *testing.T) {
 
 	if mr.HeadSha != "fedcba654321" {
 		t.Errorf("expected merge_request head_sha to update to 'fedcba654321', got %q", mr.HeadSha)
+	}
+}
+
+func TestRuntimeProjectHookSource(t *testing.T) {
+	sqlDB := setupLifecycleTestDB(t)
+	handler := newLifecycleHandler(sqlDB)
+	ctx := context.Background()
+	deliveryKey := "runtime-project-source-1"
+
+	rec := postLifecycleWebhook(handler, lifecycleOpenPayload(), lifecycleHeaders(deliveryKey, "Merge Request Hook"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	hookEvent, err := db.New(sqlDB).GetHookEventByDeliveryKey(ctx, deliveryKey)
+	if err != nil {
+		t.Fatalf("GetHookEventByDeliveryKey: %v", err)
+	}
+	if hookEvent.HookSource != "project" {
+		t.Fatalf("expected hook_event hook_source=project, got %q", hookEvent.HookSource)
+	}
+
+	auditLogs, err := db.New(sqlDB).ListAuditLogsByDeliveryKey(ctx, deliveryKey)
+	if err != nil {
+		t.Fatalf("ListAuditLogsByDeliveryKey: %v", err)
+	}
+	if len(auditLogs) == 0 {
+		t.Fatal("expected at least one audit log row")
+	}
+	if auditLogs[0].HookSource != "project" {
+		t.Fatalf("expected audit hook_source=project, got %q", auditLogs[0].HookSource)
+	}
+}
+
+func TestRuntimeGroupHookSource(t *testing.T) {
+	sqlDB := setupLifecycleTestDB(t)
+	handler := newLifecycleHandler(sqlDB)
+	ctx := context.Background()
+	deliveryKey := "runtime-group-source-1"
+	payload := lifecycleScopedPayload("open", "opened", "abc123def456", "", "", true)
+
+	rec := postLifecycleWebhook(handler, payload, lifecycleHeaders(deliveryKey, "Merge Request Hook"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	hookEvent, err := db.New(sqlDB).GetHookEventByDeliveryKey(ctx, deliveryKey)
+	if err != nil {
+		t.Fatalf("GetHookEventByDeliveryKey: %v", err)
+	}
+	if hookEvent.HookSource != "group" {
+		t.Fatalf("expected hook_event hook_source=group, got %q", hookEvent.HookSource)
+	}
+
+	auditLogs, err := db.New(sqlDB).ListAuditLogsByDeliveryKey(ctx, deliveryKey)
+	if err != nil {
+		t.Fatalf("ListAuditLogsByDeliveryKey: %v", err)
+	}
+	if len(auditLogs) == 0 {
+		t.Fatal("expected at least one audit log row")
+	}
+	if auditLogs[0].HookSource != "group" {
+		t.Fatalf("expected audit hook_source=group, got %q", auditLogs[0].HookSource)
+	}
+}
+
+func TestDeferredHeadSHAPersistence(t *testing.T) {
+	sqlDB := setupLifecycleTestDB(t)
+	handler := newLifecycleHandler(sqlDB)
+	ctx := context.Background()
+	deliveryKey := "runtime-deferred-head-persistence-1"
+	payload := lifecycleScopedPayload("update", "opened", "", "2026-03-17T10:01:00Z", "old-head-sha", false)
+
+	rec := postLifecycleWebhook(handler, payload, lifecycleHeaders(deliveryKey, "Merge Request Hook"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	hookEvent, err := db.New(sqlDB).GetHookEventByDeliveryKey(ctx, deliveryKey)
+	if err != nil {
+		t.Fatalf("GetHookEventByDeliveryKey: %v", err)
+	}
+	if hookEvent.HeadSha != "" {
+		t.Fatalf("expected deferred hook_event head_sha to be empty, got %q", hookEvent.HeadSha)
+	}
+	if !strings.Contains(string(hookEvent.Payload), `"oldrev": "old-head-sha"`) {
+		t.Fatalf("expected stored payload to preserve deferred lookup fields, got %s", string(hookEvent.Payload))
+	}
+
+	_, mr := lifecycleProjectAndMergeRequest(t, sqlDB)
+	reviewRuns, err := db.New(sqlDB).ListReviewRunsByMR(ctx, mr.ID)
+	if err != nil {
+		t.Fatalf("ListReviewRunsByMR: %v", err)
+	}
+	if len(reviewRuns) != 1 {
+		t.Fatalf("expected 1 review run, got %d", len(reviewRuns))
+	}
+
+	run := reviewRuns[0]
+	if run.HeadSha != "" {
+		t.Fatalf("expected deferred review_run head_sha to be empty, got %q", run.HeadSha)
+	}
+	if !run.HookEventID.Valid || run.HookEventID.Int64 != hookEvent.ID {
+		t.Fatalf("expected review_run to retain hook_event_id=%d, got %v", hookEvent.ID, run.HookEventID)
+	}
+	if run.IdempotencyKey == "" {
+		t.Fatal("expected deferred review_run idempotency key to be populated")
+	}
+}
+
+func TestDeferredHeadSHAIdempotency(t *testing.T) {
+	sqlDB := setupLifecycleTestDB(t)
+	handler := newLifecycleHandler(sqlDB)
+	ctx := context.Background()
+
+	projectOpen := lifecycleScopedPayload("open", "opened", "", "2026-03-17T10:00:00Z", "", false)
+	groupOpen := lifecycleScopedPayload("open", "opened", "", "2026-03-17T10:00:00Z", "", true)
+	updateMissingHead := lifecycleScopedPayload("update", "opened", "", "2026-03-17T10:05:00Z", "previous-head-sha", false)
+
+	for _, tc := range []struct {
+		deliveryKey string
+		body        string
+	}{
+		{deliveryKey: "runtime-deferred-project-open-1", body: projectOpen},
+		{deliveryKey: "runtime-deferred-group-open-1", body: groupOpen},
+		{deliveryKey: "runtime-deferred-update-1", body: updateMissingHead},
+	} {
+		rec := postLifecycleWebhook(handler, tc.body, lifecycleHeaders(tc.deliveryKey, "Merge Request Hook"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("delivery %s: expected 200, got %d: %s", tc.deliveryKey, rec.Code, rec.Body.String())
+		}
+	}
+
+	_, mr := lifecycleProjectAndMergeRequest(t, sqlDB)
+	reviewRuns, err := db.New(sqlDB).ListReviewRunsByMR(ctx, mr.ID)
+	if err != nil {
+		t.Fatalf("ListReviewRunsByMR: %v", err)
+	}
+	if len(reviewRuns) != 2 {
+		t.Fatalf("expected 2 review runs (one logical open trigger, one later deferred update), got %d", len(reviewRuns))
+	}
+
+	keys := map[string]struct{}{}
+	for _, run := range reviewRuns {
+		if run.HeadSha != "" {
+			t.Fatalf("expected deferred review_run head_sha to stay empty, got %q", run.HeadSha)
+		}
+		keys[run.IdempotencyKey] = struct{}{}
+	}
+	if len(keys) != 2 {
+		t.Fatalf("expected distinct idempotency keys for distinct deferred triggers, got %d unique keys", len(keys))
+	}
+
+	var hookEventCount int
+	if err := sqlDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM hook_events WHERE project_id = ? AND mr_iid = ?", 42, 7).Scan(&hookEventCount); err != nil {
+		t.Fatalf("count hook_events: %v", err)
+	}
+	if hookEventCount != 3 {
+		t.Fatalf("expected 3 persisted hook_events for the posted deferred deliveries, got %d", hookEventCount)
 	}
 }
 

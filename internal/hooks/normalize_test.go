@@ -43,8 +43,37 @@ func projectHookPayload(action, headSHA string, isDraft bool) json.RawMessage {
 // use the same JSON structure but arrive with a different X-Gitlab-Event header
 // (still "Merge Request Hook" for MR events).
 func groupHookPayload(action, headSHA string, isDraft bool) json.RawMessage {
-	// Group hooks have identical structure to project hooks.
-	return projectHookPayload(action, headSHA, isDraft)
+	draft := "false"
+	if isDraft {
+		draft = "true"
+	}
+	lastCommit := ""
+	if headSHA != "" {
+		lastCommit = `,"last_commit":{"id":"` + headSHA + `"}`
+	}
+	return json.RawMessage(`{
+		"object_kind": "merge_request",
+		"event_type": "merge_request",
+		"group_id": 200,
+		"group_path": "mygroup",
+		"group_name": "My Group",
+		"object_attributes": {
+			"iid": 42,
+			"action": "` + action + `",
+			"title": "Add feature X",
+			"source_branch": "feature-x",
+			"target_branch": "main",
+			"state": "opened",
+			"draft": ` + draft + `,
+			"url": "https://gitlab.example.com/mygroup/myrepo/-/merge_requests/42"` + lastCommit + `
+		},
+		"project": {
+			"id": 100,
+			"path_with_namespace": "mygroup/myrepo",
+			"web_url": "https://gitlab.example.com/mygroup/myrepo"
+		},
+		"user": {"username": "johndoe"}
+	}`)
 }
 
 // systemHookPayload returns a system-level MR webhook payload. System hooks
@@ -142,7 +171,7 @@ func TestNormalizeProjectHook(t *testing.T) {
 func TestNormalizeGroupHook(t *testing.T) {
 	payload := groupHookPayload("open", "abc123def456", false)
 
-	ev, err := NormalizeWebhook(payload, "Merge Request Hook", "group")
+	ev, err := NormalizeWebhook(payload, "Merge Request Hook", "project")
 	if err != nil {
 		t.Fatalf("NormalizeWebhook: %v", err)
 	}

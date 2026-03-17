@@ -101,6 +101,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Project and group MR webhooks share the same X-Gitlab-Event header.
+	// Refine the request-level hint with payload markers before dedupe/audit.
+	hookSource = inferWebhookSource(payload, hookSource)
+
 	// --- 3. Check for duplicate delivery ---
 	if deliveryKey != "" {
 		existing, lookupErr := db.New(h.db).GetHookEventByDeliveryKey(ctx, deliveryKey)
@@ -158,6 +162,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to normalize payload"})
 		return
 	}
+	hookSource = normalized.HookSource
 
 	// Build parsed event from normalized data for hook_event insertion.
 	parsed := parsedEvent{

@@ -86,8 +86,17 @@ type NormalizedEvent struct {
 // and system webhook payloads. GitLab uses the same JSON structure for all
 // three hook types.
 type webhookPayload struct {
-	ObjectKind       string `json:"object_kind"`
-	EventType        string `json:"event_type"`
+	ObjectKind string `json:"object_kind"`
+	EventType  string `json:"event_type"`
+	GroupID    *int64 `json:"group_id"`
+	GroupPath  string `json:"group_path"`
+	GroupName  string `json:"group_name"`
+	Group      struct {
+		ID       int64  `json:"id"`
+		Name     string `json:"name"`
+		Path     string `json:"path"`
+		FullPath string `json:"full_path"`
+	} `json:"group"`
 	ObjectAttributes struct {
 		IID            int64  `json:"iid"`
 		Action         string `json:"action"`
@@ -95,6 +104,10 @@ type webhookPayload struct {
 		SourceBranch   string `json:"source_branch"`
 		TargetBranch   string `json:"target_branch"`
 		State          string `json:"state"`
+		CreatedAt      string `json:"created_at"`
+		UpdatedAt      string `json:"updated_at"`
+		ActionedAt     string `json:"actioned_at"`
+		OldRev         string `json:"oldrev"`
 		WorkInProgress bool   `json:"work_in_progress"`
 		Draft          bool   `json:"draft"`
 		URL            string `json:"url"`
@@ -147,11 +160,14 @@ func NormalizeWebhook(payload json.RawMessage, headerEventType, hookSource strin
 
 	// The hook source from detection may be overridden:
 	// - System hooks send the same MR payload structure as project hooks.
-	// - Group hooks also use the same structure.
+	// - Group hooks share the same MR event header as project hooks, so runtime
+	//   intake must inspect payload markers when present.
 	// We normalize hook_source but it does NOT affect the idempotency key.
-	normalizedHookSource := hookSource
-	if normalizedHookSource == "" {
-		normalizedHookSource = "project"
+	normalizedHookSource := resolveWebhookSource(raw, hookSource)
+
+	deferredDiscriminator := ""
+	if headSHADeferred {
+		deferredDiscriminator = computeDeferredHeadSHAKey(raw)
 	}
 
 	ev := NormalizedEvent{
@@ -175,9 +191,101 @@ func NormalizeWebhook(payload json.RawMessage, headerEventType, hookSource strin
 	}
 
 	// Compute idempotency key.
-	ev.IdempotencyKey = computeIdempotencyKey(instanceURL, raw.Project.ID, raw.ObjectAttributes.IID, headSHA, headSHADeferred, "webhook")
+	ev.IdempotencyKey = computeIdempotencyKey(instanceURL, raw.Project.ID, raw.ObjectAttributes.IID, headSHA, headSHADeferred, "webhook", deferredDiscriminator)
 
 	return ev, nil
+}
+
+type hookSourceProbe struct {
+	GroupID   *int64 `json:"group_id"`
+	GroupPath string `json:"group_path"`
+	GroupName string `json:"group_name"`
+	Group     struct {
+		ID       int64  `json:"id"`
+		Name     string `json:"name"`
+		Path     string `json:"path"`
+		FullPath string `json:"full_path"`
+	} `json:"group"`
+}
+
+func inferWebhookSource(payload json.RawMessage, fallback string) string {
+	var probe hookSourceProbe
+	if err := json.Unmarshal(payload, &probe); err != nil {
+		return normalizeWebhookSourceFallback(fallback)
+	}
+	return resolveWebhookSourceProbe(probe, fallback)
+}
+
+func resolveWebhookSource(raw webhookPayload, fallback string) string {
+	probe := hookSourceProbe{
+		GroupID:   raw.GroupID,
+		GroupPath: raw.GroupPath,
+		GroupName: raw.GroupName,
+	}
+	probe.Group.ID = raw.Group.ID
+	probe.Group.Name = raw.Group.Name
+	probe.Group.Path = raw.Group.Path
+	probe.Group.FullPath = raw.Group.FullPath
+	return resolveWebhookSourceProbe(probe, fallback)
+}
+
+func resolveWebhookSourceProbe(probe hookSourceProbe, fallback string) string {
+	normalizedFallback := normalizeWebhookSourceFallback(fallback)
+	if normalizedFallback == "system" || normalizedFallback == "group" {
+		return normalizedFallback
+	}
+	if hasGroupWebhookScope(probe) {
+		return "group"
+	}
+	return normalizedFallback
+}
+
+func normalizeWebhookSourceFallback(fallback string) string {
+	switch strings.ToLower(strings.TrimSpace(fallback)) {
+	case "system":
+		return "system"
+	case "group":
+		return "group"
+	default:
+		return "project"
+	}
+}
+
+func hasGroupWebhookScope(probe hookSourceProbe) bool {
+	return probe.GroupID != nil ||
+		probe.GroupPath != "" ||
+		probe.GroupName != "" ||
+		probe.Group.ID > 0 ||
+		probe.Group.Path != "" ||
+		probe.Group.FullPath != "" ||
+		probe.Group.Name != ""
+}
+
+func computeDeferredHeadSHAKey(raw webhookPayload) string {
+	payload, _ := json.Marshal(struct {
+		Action       string `json:"action"`
+		OldRev       string `json:"oldrev,omitempty"`
+		State        string `json:"state,omitempty"`
+		CreatedAt    string `json:"created_at,omitempty"`
+		UpdatedAt    string `json:"updated_at,omitempty"`
+		ActionedAt   string `json:"actioned_at,omitempty"`
+		SourceBranch string `json:"source_branch,omitempty"`
+		TargetBranch string `json:"target_branch,omitempty"`
+		URL          string `json:"url,omitempty"`
+	}{
+		Action:       raw.ObjectAttributes.Action,
+		OldRev:       raw.ObjectAttributes.OldRev,
+		State:        raw.ObjectAttributes.State,
+		CreatedAt:    raw.ObjectAttributes.CreatedAt,
+		UpdatedAt:    raw.ObjectAttributes.UpdatedAt,
+		ActionedAt:   raw.ObjectAttributes.ActionedAt,
+		SourceBranch: raw.ObjectAttributes.SourceBranch,
+		TargetBranch: raw.ObjectAttributes.TargetBranch,
+		URL:          raw.ObjectAttributes.URL,
+	})
+
+	hash := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", hash[:16])
 }
 
 // CITriggerInput holds the parameters for a CI-originated trigger.
@@ -208,7 +316,7 @@ func NormalizeCITrigger(input CITriggerInput) NormalizedEvent {
 		EventType:         "ci_trigger",
 	}
 
-	ev.IdempotencyKey = computeIdempotencyKey(input.GitLabInstanceURL, input.ProjectID, input.MRIID, input.HeadSHA, headSHADeferred, "ci")
+	ev.IdempotencyKey = computeIdempotencyKey(input.GitLabInstanceURL, input.ProjectID, input.MRIID, input.HeadSHA, headSHADeferred, "ci", "")
 
 	return ev
 }
@@ -217,12 +325,16 @@ func NormalizeCITrigger(input CITriggerInput) NormalizedEvent {
 // components that uniquely identify a logical review trigger:
 // gitlab_instance_url + project_id + mr_iid + head_sha + trigger_type.
 //
-// When head_sha is missing (deferred), the literal string "deferred" is used
-// to ensure these events still receive a stable key.
-func computeIdempotencyKey(instanceURL string, projectID, mrIID int64, headSHA string, headSHADeferred bool, triggerType string) string {
+// When head_sha is missing (deferred), a stable deferred discriminator can be
+// supplied so logically distinct missing-SHA events do not collapse onto the
+// same synthetic key.
+func computeIdempotencyKey(instanceURL string, projectID, mrIID int64, headSHA string, headSHADeferred bool, triggerType, deferredDiscriminator string) string {
 	shaComponent := headSHA
 	if headSHADeferred {
 		shaComponent = "deferred"
+		if deferredDiscriminator != "" {
+			shaComponent = "deferred:" + deferredDiscriminator
+		}
 	}
 
 	input := fmt.Sprintf("%s|%d|%d|%s|%s",
