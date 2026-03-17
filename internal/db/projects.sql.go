@@ -177,3 +177,39 @@ func (q *Queries) InsertProjectPolicy(ctx context.Context, arg InsertProjectPoli
 		arg.Extra,
 	)
 }
+
+const upsertGitlabInstance = `-- name: UpsertGitlabInstance :execresult
+INSERT INTO gitlab_instances (url, name) VALUES (?, ?)
+ON DUPLICATE KEY UPDATE name = VALUES(name)
+`
+
+type UpsertGitlabInstanceParams struct {
+	Url  string `json:"url"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) UpsertGitlabInstance(ctx context.Context, arg UpsertGitlabInstanceParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, upsertGitlabInstance, arg.Url, arg.Name)
+}
+
+const upsertProject = `-- name: UpsertProject :execresult
+INSERT INTO projects (gitlab_instance_id, gitlab_project_id, path_with_namespace, enabled)
+VALUES (?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE path_with_namespace = VALUES(path_with_namespace)
+`
+
+type UpsertProjectParams struct {
+	GitlabInstanceID  int64  `json:"gitlab_instance_id"`
+	GitlabProjectID   int64  `json:"gitlab_project_id"`
+	PathWithNamespace string `json:"path_with_namespace"`
+	Enabled           bool   `json:"enabled"`
+}
+
+func (q *Queries) UpsertProject(ctx context.Context, arg UpsertProjectParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, upsertProject,
+		arg.GitlabInstanceID,
+		arg.GitlabProjectID,
+		arg.PathWithNamespace,
+		arg.Enabled,
+	)
+}

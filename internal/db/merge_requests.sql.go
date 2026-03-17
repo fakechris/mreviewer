@@ -167,3 +167,48 @@ func (q *Queries) UpdateMergeRequestState(ctx context.Context, arg UpdateMergeRe
 	_, err := q.db.ExecContext(ctx, updateMergeRequestState, arg.State, arg.HeadSha, arg.ID)
 	return err
 }
+
+const upsertMergeRequest = `-- name: UpsertMergeRequest :execresult
+INSERT INTO merge_requests (
+    project_id, mr_iid, title, source_branch, target_branch,
+    author, state, is_draft, head_sha, web_url
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+    title = VALUES(title),
+    source_branch = VALUES(source_branch),
+    target_branch = VALUES(target_branch),
+    author = VALUES(author),
+    state = VALUES(state),
+    is_draft = VALUES(is_draft),
+    head_sha = VALUES(head_sha),
+    web_url = VALUES(web_url),
+    updated_at = CURRENT_TIMESTAMP
+`
+
+type UpsertMergeRequestParams struct {
+	ProjectID    int64  `json:"project_id"`
+	MrIid        int64  `json:"mr_iid"`
+	Title        string `json:"title"`
+	SourceBranch string `json:"source_branch"`
+	TargetBranch string `json:"target_branch"`
+	Author       string `json:"author"`
+	State        string `json:"state"`
+	IsDraft      bool   `json:"is_draft"`
+	HeadSha      string `json:"head_sha"`
+	WebUrl       string `json:"web_url"`
+}
+
+func (q *Queries) UpsertMergeRequest(ctx context.Context, arg UpsertMergeRequestParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, upsertMergeRequest,
+		arg.ProjectID,
+		arg.MrIid,
+		arg.Title,
+		arg.SourceBranch,
+		arg.TargetBranch,
+		arg.Author,
+		arg.State,
+		arg.IsDraft,
+		arg.HeadSha,
+		arg.WebUrl,
+	)
+}

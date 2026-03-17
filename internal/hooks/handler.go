@@ -25,19 +25,28 @@ const maxPayloadBytes = 1 << 20
 
 // Handler processes incoming GitLab webhook POST requests.
 type Handler struct {
-	logger *slog.Logger
-	db     *sql.DB
-	secret string
+	logger       *slog.Logger
+	db           *sql.DB
+	secret       string
+	runProcessor RunProcessor
+}
+
+// RunProcessor creates or cancels review runs for normalized MR events.
+// Implementations can optionally participate in an existing transaction by
+// using the provided querier.
+type RunProcessor interface {
+	ProcessEventWithQuerier(ctx context.Context, q db.Querier, ev NormalizedEvent, hookEventID int64) error
 }
 
 // NewHandler creates a webhook handler. The secret is the expected value of
 // the X-Gitlab-Token header. An empty secret causes all requests to be
 // rejected with 401.
-func NewHandler(logger *slog.Logger, database *sql.DB, secret string) *Handler {
+func NewHandler(logger *slog.Logger, database *sql.DB, secret string, runProcessor RunProcessor) *Handler {
 	return &Handler{
-		logger: logger,
-		db:     database,
-		secret: secret,
+		logger:       logger,
+		db:           database,
+		secret:       secret,
+		runProcessor: runProcessor,
 	}
 }
 
@@ -127,7 +136,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"delivery_key", deliveryKey,
 			"event_type", parsed.EventType,
 		)
-		if insertErr := h.insertHookEventSafe(ctx, l, deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+		if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
 			l.WarnContext(ctx, "failed to insert hook_event for non-MR event",
 				"delivery_key", deliveryKey,
 				"error", insertErr,
@@ -159,8 +168,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		HeadSHA:   normalized.HeadSHA,
 	}
 
-	// --- 6. Insert hook_event record ---
-	if err := h.insertHookEventSafe(ctx, l, deliveryKey, hookSource, parsed, payload, "verified", ""); err != nil {
+	// --- 6. Insert hook_event record and process run lifecycle atomically ---
+	err = db.RunTx(ctx, h.db, func(ctx context.Context, q *db.Queries) error {
+		hookEventID, err := h.insertHookEvent(ctx, q, deliveryKey, hookSource, parsed, payload, "verified", "")
+		if err != nil {
+			return err
+		}
+
+		if h.runProcessor == nil {
+			return nil
+		}
+
+		return h.runProcessor.ProcessEventWithQuerier(ctx, q, normalized, hookEventID)
+	})
+	if err != nil {
 		if isDuplicateKeyError(err) {
 			l.InfoContext(ctx, "duplicate delivery key on insert, acknowledging",
 				"delivery_key", deliveryKey,
@@ -221,19 +242,16 @@ func (h *Handler) extractDeliveryKey(r *http.Request) string {
 	return "synthetic-" + uuid.New().String()
 }
 
-// insertHookEventSafe inserts a hook_events row using direct queries. It
-// returns an error if the insert fails (e.g., duplicate key).
-func (h *Handler) insertHookEventSafe(
+// insertHookEvent inserts a hook_events row and returns its ID.
+func (h *Handler) insertHookEvent(
 	ctx context.Context,
-	l *slog.Logger,
+	q db.Querier,
 	deliveryKey, hookSource string,
 	parsed parsedEvent,
 	payload json.RawMessage,
 	outcome, rejectionReason string,
-) error {
-	q := db.New(h.db)
-
-	_, err := q.InsertHookEvent(ctx, db.InsertHookEventParams{
+) (int64, error) {
+	result, err := q.InsertHookEvent(ctx, db.InsertHookEventParams{
 		DeliveryKey:         deliveryKey,
 		HookSource:          hookSource,
 		EventType:           parsed.EventType,
@@ -247,13 +265,15 @@ func (h *Handler) insertHookEventSafe(
 		RejectionReason:     rejectionReason,
 	})
 	if err != nil {
-		l.ErrorContext(ctx, "insert hook_event failed",
-			"delivery_key", deliveryKey,
-			"error", err,
-		)
-		return err
+		return 0, err
 	}
-	return nil
+
+	hookEventID, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("insert hook_event: last insert id: %w", err)
+	}
+
+	return hookEventID, nil
 }
 
 // writeAuditLog writes an audit_logs row for the webhook verification outcome.

@@ -35,6 +35,10 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return sqlDB
 }
 
+func newTestHandler(sqlDB *sql.DB) *Handler {
+	return NewHandler(testLogger(), sqlDB, testWebhookKey, nil)
+}
+
 // postWebhook sends a POST request to the handler with the given headers and body.
 func postWebhook(handler http.Handler, body string, headers map[string]string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(body))
@@ -51,11 +55,20 @@ func mrOpenPayload(dlvID string) string {
 	return `{
 		"object_kind": "merge_request",
 		"event_type": "merge_request",
-		"project": {"id": 42, "path_with_namespace": "test/repo"},
+		"user": {"username": "testuser"},
+		"project": {
+			"id": 42,
+			"path_with_namespace": "test/repo",
+			"web_url": "https://gitlab.example.com/test/repo"
+		},
 		"object_attributes": {
 			"iid": 7,
 			"action": "open",
 			"state": "opened",
+			"title": "Add feature X",
+			"source_branch": "feature-x",
+			"target_branch": "main",
+			"url": "https://gitlab.example.com/test/repo/-/merge_requests/7",
 			"last_commit": {"id": "abc123def456"}
 		}
 	}`
@@ -80,7 +93,7 @@ func pipelinePayload() string {
 func TestWebhookAuth(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	secret := testWebhookKey
-	handler := NewHandler(testLogger(), sqlDB, secret)
+	handler := newTestHandler(sqlDB)
 
 	t.Run("valid token returns 200", func(t *testing.T) {
 		dlvID := "dk-valid-200"
@@ -150,7 +163,7 @@ func TestWebhookAuth(t *testing.T) {
 func TestMalformedJSON(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	secret := testWebhookKey
-	handler := NewHandler(testLogger(), sqlDB, secret)
+	handler := newTestHandler(sqlDB)
 
 	tests := []struct {
 		name string
@@ -190,7 +203,7 @@ func TestMalformedJSON(t *testing.T) {
 func TestDuplicateDeliveryKey(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	secret := testWebhookKey
-	handler := NewHandler(testLogger(), sqlDB, secret)
+	handler := newTestHandler(sqlDB)
 
 	dlvID := "dedup-test-1"
 	headers := map[string]string{
@@ -240,7 +253,7 @@ func TestDuplicateDeliveryKey(t *testing.T) {
 func TestIgnoreUnknownEvent(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	secret := testWebhookKey
-	handler := NewHandler(testLogger(), sqlDB, secret)
+	handler := newTestHandler(sqlDB)
 
 	tests := []struct {
 		name      string
@@ -314,7 +327,7 @@ func TestIgnoreUnknownEvent(t *testing.T) {
 func TestWebhookAuditLogging(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	secret := testWebhookKey
-	handler := NewHandler(testLogger(), sqlDB, secret)
+	handler := newTestHandler(sqlDB)
 
 	t.Run("accepted webhook has audit record", func(t *testing.T) {
 		dlvID := "audit-accepted-1"
@@ -451,7 +464,7 @@ func TestWebhookAuditLogging(t *testing.T) {
 func TestPayloadSizeLimit(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	secret := testWebhookKey
-	handler := NewHandler(testLogger(), sqlDB, secret)
+	handler := newTestHandler(sqlDB)
 
 	// Create a payload just over the limit.
 	bigPayload := `{"object_kind":"merge_request","data":"` + strings.Repeat("x", maxPayloadBytes) + `"}`

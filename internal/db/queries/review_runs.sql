@@ -31,3 +31,8 @@ SELECT * FROM review_runs
 WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
 ORDER BY created_at ASC
 LIMIT ?;
+
+-- name: ListReviewRunsByMR :many
+SELECT * FROM review_runs
+WHERE merge_request_id = ?
+ORDER BY created_at DESC;

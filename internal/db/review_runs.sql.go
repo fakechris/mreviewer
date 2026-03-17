@@ -170,6 +170,57 @@ func (q *Queries) ListPendingRuns(ctx context.Context, limit int32) ([]ReviewRun
 	return items, nil
 }
 
+const listReviewRunsByMR = `-- name: ListReviewRunsByMR :many
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at FROM review_runs
+WHERE merge_request_id = ?
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) ([]ReviewRun, error) {
+	rows, err := q.db.QueryContext(ctx, listReviewRunsByMR, mergeRequestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReviewRun{}
+	for rows.Next() {
+		var i ReviewRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.MergeRequestID,
+			&i.HookEventID,
+			&i.TriggerType,
+			&i.HeadSha,
+			&i.Status,
+			&i.ErrorCode,
+			&i.ErrorDetail,
+			&i.RetryCount,
+			&i.MaxRetries,
+			&i.NextRetryAt,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.ProviderLatencyMs,
+			&i.ProviderTokensTotal,
+			&i.IdempotencyKey,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateReviewRunCompleted = `-- name: UpdateReviewRunCompleted :exec
 UPDATE review_runs
 SET status = 'completed', completed_at = CURRENT_TIMESTAMP,

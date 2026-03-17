@@ -44,6 +44,7 @@ type Querier interface {
 	ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]ReviewFinding, error)
 	ListHookEventsByProjectMR(ctx context.Context, arg ListHookEventsByProjectMRParams) ([]HookEvent, error)
 	ListPendingRuns(ctx context.Context, limit int32) ([]ReviewRun, error)
+	ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) ([]ReviewRun, error)
 	UpdateCommentActionStatus(ctx context.Context, arg UpdateCommentActionStatusParams) error
 	UpdateFindingLastSeen(ctx context.Context, arg UpdateFindingLastSeenParams) error
 	UpdateFindingState(ctx context.Context, arg UpdateFindingStateParams) error
@@ -51,6 +52,9 @@ type Querier interface {
 	UpdateMergeRequestState(ctx context.Context, arg UpdateMergeRequestStateParams) error
 	UpdateReviewRunCompleted(ctx context.Context, arg UpdateReviewRunCompletedParams) error
 	UpdateReviewRunStatus(ctx context.Context, arg UpdateReviewRunStatusParams) error
+	UpsertGitlabInstance(ctx context.Context, arg UpsertGitlabInstanceParams) (sql.Result, error)
+	UpsertMergeRequest(ctx context.Context, arg UpsertMergeRequestParams) (sql.Result, error)
+	UpsertProject(ctx context.Context, arg UpsertProjectParams) (sql.Result, error)
 }
 
 var _ Querier = (*Queries)(nil)

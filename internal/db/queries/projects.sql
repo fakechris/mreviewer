@@ -1,3 +1,7 @@
+-- name: UpsertGitlabInstance :execresult
+INSERT INTO gitlab_instances (url, name) VALUES (?, ?)
+ON DUPLICATE KEY UPDATE name = VALUES(name);
+
 -- name: InsertGitlabInstance :execresult
 INSERT INTO gitlab_instances (url, name) VALUES (?, ?);
 
@@ -6,6 +10,11 @@ SELECT * FROM gitlab_instances WHERE id = ? LIMIT 1;
 
 -- name: GetGitlabInstanceByURL :one
 SELECT * FROM gitlab_instances WHERE url = ? LIMIT 1;
+
+-- name: UpsertProject :execresult
+INSERT INTO projects (gitlab_instance_id, gitlab_project_id, path_with_namespace, enabled)
+VALUES (?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE path_with_namespace = VALUES(path_with_namespace);
 
 -- name: InsertProject :execresult
 INSERT INTO projects (gitlab_instance_id, gitlab_project_id, path_with_namespace, enabled)
