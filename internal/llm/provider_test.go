@@ -849,7 +849,6 @@ func TestSemanticRelocation(t *testing.T) {
 	newRunID, _ := res.LastInsertId()
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
 	relocated := sameRunFinding(30)
-	relocated.AnchorSnippet = "return *ptr"
 	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings relocated: %v", err)
 	}
@@ -860,8 +859,53 @@ func TestSemanticRelocation(t *testing.T) {
 	if len(active) != 1 {
 		t.Fatalf("active findings = %d, want 1", len(active))
 	}
-	if !active[0].LastSeenRunID.Valid || active[0].LastSeenRunID.Int64 != newRunID {
-		t.Fatalf("last_seen_run_id = %+v, want %d", active[0].LastSeenRunID, newRunID)
+	if active[0].ReviewRunID != runID {
+		t.Fatalf("active finding review_run_id = %d, want base run %d", active[0].ReviewRunID, runID)
+	}
+	got, err := q.GetReviewFinding(ctx, active[0].ID)
+	if err != nil {
+		t.Fatalf("GetReviewFinding: %v", err)
+	}
+	if !got.LastSeenRunID.Valid || got.LastSeenRunID.Int64 != newRunID {
+		t.Fatalf("last_seen_run_id = %+v, want %d", got.LastSeenRunID, newRunID)
+	}
+	if got.State != findingStateActive {
+		t.Fatalf("state = %q, want active", got.State)
+	}
+	if got.Path != relocated.Path {
+		t.Fatalf("path = %q, want %q", got.Path, relocated.Path)
+	}
+	if got.AnchorKind != relocated.AnchorKind {
+		t.Fatalf("anchor_kind = %q, want %q", got.AnchorKind, relocated.AnchorKind)
+	}
+	if !got.NewLine.Valid || got.NewLine.Int32 != 12 {
+		t.Fatalf("new_line = %+v, want original line 12 until relocation line persistence is implemented", got.NewLine)
+	}
+	if got.OldLine.Valid {
+		t.Fatalf("old_line = %+v, want invalid", got.OldLine)
+	}
+	if !got.AnchorSnippet.Valid || got.AnchorSnippet.String != relocated.AnchorSnippet {
+		t.Fatalf("anchor_snippet = %+v, want %q", got.AnchorSnippet, relocated.AnchorSnippet)
+	}
+	wantAnchor := computeAnchorFingerprint(normalizeFinding(sameRunFinding(12)))
+	if got.AnchorFingerprint != wantAnchor {
+		t.Fatalf("anchor_fingerprint = %q, want original anchor %q", got.AnchorFingerprint, wantAnchor)
+	}
+	baseFindings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun base: %v", err)
+	}
+	if len(baseFindings) != 1 {
+		t.Fatalf("base run findings = %d, want 1", len(baseFindings))
+	}
+	if baseFindings[0].State != findingStateActive {
+		t.Fatalf("base state = %q, want active", baseFindings[0].State)
+	}
+	if baseFindings[0].ID != got.ID {
+		t.Fatalf("base finding id = %d, want relocated existing id %d", baseFindings[0].ID, got.ID)
+	}
+	if baseFindings[0].MatchedFindingID.Valid {
+		t.Fatalf("base matched_finding_id = %+v, want invalid", baseFindings[0].MatchedFindingID)
 	}
 }
 
@@ -891,25 +935,25 @@ func TestRelocationSupersedes(t *testing.T) {
 	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings relocated: %v", err)
 	}
+	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun new: %v", err)
+	}
+	if len(newRunFindings) != 0 {
+		t.Fatalf("new run findings = %d, want 0 when semantic relocation keeps existing row active", len(newRunFindings))
+	}
 	oldFinding, err := q.GetReviewFinding(ctx, baseFindings[0].ID)
 	if err != nil {
 		t.Fatalf("GetReviewFinding old: %v", err)
 	}
-	if oldFinding.State != "superseded" {
-		t.Fatalf("old state = %q, want superseded", oldFinding.State)
+	if oldFinding.State != findingStateActive {
+		t.Fatalf("old state = %q, want active", oldFinding.State)
 	}
-	if !oldFinding.MatchedFindingID.Valid {
-		t.Fatal("expected matched_finding_id to be set")
+	if oldFinding.MatchedFindingID.Valid {
+		t.Fatalf("matched_finding_id = %+v, want invalid", oldFinding.MatchedFindingID)
 	}
-	newFinding, err := q.GetReviewFinding(ctx, oldFinding.MatchedFindingID.Int64)
-	if err != nil {
-		t.Fatalf("GetReviewFinding new: %v", err)
-	}
-	if newFinding.ReviewRunID != newRunID {
-		t.Fatalf("new finding review_run_id = %d, want %d", newFinding.ReviewRunID, newRunID)
-	}
-	if newFinding.State != "new" {
-		t.Fatalf("new state = %q, want new", newFinding.State)
+	if !oldFinding.LastSeenRunID.Valid || oldFinding.LastSeenRunID.Int64 != newRunID {
+		t.Fatalf("last_seen_run_id = %+v, want %d", oldFinding.LastSeenRunID, newRunID)
 	}
 }
 
@@ -1135,7 +1179,7 @@ func TestDeletedAnchorCanonicalizationTriggersDeletedLifecycle(t *testing.T) {
 		t.Fatalf("evaluateFindingState() = %q, want %q", state, findingStateDeleted)
 	}
 	current := db.ReviewFinding{State: findingStateActive, Path: "src/service/foo.go", AnchorKind: "old_line"}
-	next, ok, err := transitionMissingFinding(current, map[string]struct{}{"src/service/foo.go": {}}, map[string]struct{}{"src/service/foo.go": {}})
+	next, ok, err := transitionMissingFinding(current, map[string]struct{}{"src/service/foo.go": {}}, map[string]struct{}{"src/service/foo.go": {}}, false)
 	if err != nil {
 		t.Fatalf("transitionMissingFinding: %v", err)
 	}

@@ -374,6 +374,7 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 		})
 	}
 	matchedExistingIDs := make(map[int64]struct{})
+	updatedLastSeenIDs := make(map[int64]struct{})
 
 	for _, finding := range persisted {
 		if finding.state == findingStateFiltered {
@@ -392,6 +393,7 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 		}
 		if matched.existingID != 0 {
 			matchedExistingIDs[matched.existingID] = struct{}{}
+			updatedLastSeenIDs[matched.existingID] = struct{}{}
 		}
 		if matched.skipInsert {
 			continue
@@ -417,7 +419,8 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 		if _, ok := matchedExistingIDs[current.ID]; ok {
 			continue
 		}
-		nextState, ok, err := transitionMissingFinding(current, reviewedPaths, deletedPaths)
+		_, seenThisRun := updatedLastSeenIDs[current.ID]
+		nextState, ok, err := transitionMissingFinding(current, reviewedPaths, deletedPaths, seenThisRun)
 		if err != nil {
 			return err
 		}
@@ -520,7 +523,7 @@ func evaluateFindingState(finding normalizedFinding, thresholds findingThreshold
 	return findingStateNew
 }
 
-func transitionMissingFinding(current db.ReviewFinding, reviewedPaths, deletedPaths map[string]struct{}) (string, bool, error) {
+func transitionMissingFinding(current db.ReviewFinding, reviewedPaths, deletedPaths map[string]struct{}, seenThisRun bool) (string, bool, error) {
 	path := normalizePath(current.Path)
 	if _, ok := deletedPaths[path]; ok {
 		canonicalAnchorKind := normalizeAnchorKind(current.AnchorKind)
@@ -531,7 +534,7 @@ func transitionMissingFinding(current db.ReviewFinding, reviewedPaths, deletedPa
 			return nextFindingState(current.State, findingStateFixed)
 		}
 	}
-	if current.LastSeenRunID.Valid {
+	if current.LastSeenRunID.Valid && !seenThisRun {
 		return "", false, nil
 	}
 	if _, ok := reviewedPaths[path]; ok {
@@ -606,9 +609,16 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
 			continue
 		}
 		if relocationMatches(current, finding.normalized) {
-			if err := queries.UpdateFindingLastSeen(ctx, db.UpdateFindingLastSeenParams{
-				LastSeenRunID: sql.NullInt64{Int64: run.ID, Valid: true},
-				ID:            current.ID,
+			if err := queries.UpdateFindingRelocation(ctx, db.UpdateFindingRelocationParams{
+				Path:                finding.normalized.Path,
+				AnchorKind:          finding.normalized.AnchorKind,
+				OldLine:             finding.normalized.OldLine,
+				NewLine:             finding.normalized.NewLine,
+				AnchorSnippet:       nullableString(finding.normalized.AnchorSnippet),
+				AnchorFingerprint:   finding.anchorFingerprint,
+				SemanticFingerprint: finding.semanticFingerprint,
+				LastSeenRunID:       sql.NullInt64{Int64: run.ID, Valid: true},
+				ID:                  current.ID,
 			}); err != nil {
 				return findingMatchDecision{}, err
 			}
@@ -644,9 +654,6 @@ func relocationMatches(current db.ReviewFinding, candidate normalizedFinding) bo
 		return false
 	}
 	if current.AnchorKind != candidate.AnchorKind {
-		return false
-	}
-	if current.AnchorSnippet.Valid && candidate.AnchorSnippet != "" && current.AnchorSnippet.String != candidate.AnchorSnippet {
 		return false
 	}
 	return true

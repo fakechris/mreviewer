@@ -226,6 +226,47 @@ func (q *Queries) UpdateFindingLastSeen(ctx context.Context, arg UpdateFindingLa
 	return err
 }
 
+const updateFindingRelocation = `-- name: UpdateFindingRelocation :exec
+UPDATE review_findings
+SET path = ?,
+    anchor_kind = ?,
+    old_line = ?,
+    new_line = ?,
+    anchor_snippet = ?,
+    anchor_fingerprint = ?,
+    semantic_fingerprint = ?,
+    last_seen_run_id = ?,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type UpdateFindingRelocationParams struct {
+	Path                string         `json:"path"`
+	AnchorKind          string         `json:"anchor_kind"`
+	OldLine             sql.NullInt32  `json:"old_line"`
+	NewLine             sql.NullInt32  `json:"new_line"`
+	AnchorSnippet       sql.NullString `json:"anchor_snippet"`
+	AnchorFingerprint   string         `json:"anchor_fingerprint"`
+	SemanticFingerprint string         `json:"semantic_fingerprint"`
+	LastSeenRunID       sql.NullInt64  `json:"last_seen_run_id"`
+	ID                  int64          `json:"id"`
+}
+
+func (q *Queries) UpdateFindingRelocation(ctx context.Context, arg UpdateFindingRelocationParams) error {
+	_, err := q.db.ExecContext(ctx, updateFindingRelocation,
+		arg.Path,
+		arg.AnchorKind,
+		arg.OldLine,
+		arg.NewLine,
+		arg.AnchorSnippet,
+		arg.AnchorFingerprint,
+		arg.SemanticFingerprint,
+		arg.LastSeenRunID,
+		arg.ID,
+	)
+	return err
+}
+
 const updateFindingState = `-- name: UpdateFindingState :exec
 UPDATE review_findings
 SET state = ?, matched_finding_id = ?, updated_at = CURRENT_TIMESTAMP

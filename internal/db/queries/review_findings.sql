@@ -19,6 +19,19 @@ UPDATE review_findings
 SET last_seen_run_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
+-- name: UpdateFindingRelocation :exec
+UPDATE review_findings
+SET path = ?,
+    anchor_kind = ?,
+    old_line = ?,
+    new_line = ?,
+    anchor_snippet = ?,
+    anchor_fingerprint = ?,
+    semantic_fingerprint = ?,
+    last_seen_run_id = ?,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;
+
 -- name: ListActiveFindingsByMR :many
 SELECT * FROM review_findings
 WHERE merge_request_id = ? AND state IN ('new', 'posted', 'active')
