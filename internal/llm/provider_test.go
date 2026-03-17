@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/rules"
+	"github.com/mreviewer/mreviewer/internal/scheduler"
 )
 
 func TestMiniMaxRequestShape(t *testing.T) {
@@ -34,6 +36,9 @@ func TestMiniMaxRequestShape(t *testing.T) {
 	response, err := provider.Review(context.Background(), request)
 	if err != nil {
 		t.Fatalf("Review: %v", err)
+	}
+	if response.Latency != 0 {
+		t.Fatalf("latency = %v, want 0 with fixed clock", response.Latency)
 	}
 	if response.Tokens != 42 {
 		t.Fatalf("tokens = %d, want 42", response.Tokens)
@@ -151,19 +156,25 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
 	provider := fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{{Category: "bug", Severity: "high", Confidence: 0.9, Title: "Issue", BodyMarkdown: "body", Path: "main.go", AnchorKind: "new"}}}, Model: "MiniMax-M2.5", Tokens: 77, Latency: 25 * time.Millisecond, ResponsePayload: map[string]any{"token": "secret", "content": "prompt body"}}}
 	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
 	run, err := q.GetReviewRun(ctx, runID)
 	if err != nil {
 		t.Fatalf("GetReviewRun: %v", err)
 	}
-	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
-		t.Fatalf("ClaimReviewRun: %v", err)
-	}
-	run, err = q.GetReviewRun(ctx, runID)
+	outcome, err := processor.ProcessRun(ctx, run)
 	if err != nil {
-		t.Fatalf("GetReviewRun: %v", err)
-	}
-	if err := processor.ProcessRun(ctx, run); err != nil {
 		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+	if outcome.ProviderLatencyMs != 25 {
+		t.Fatalf("outcome provider latency = %d, want 25", outcome.ProviderLatencyMs)
+	}
+	if outcome.ProviderTokensTotal != 77 {
+		t.Fatalf("outcome provider tokens = %d, want 77", outcome.ProviderTokensTotal)
 	}
 	findingRows, err := q.ListActiveFindingsByMR(ctx, mrID)
 	if err != nil {
@@ -194,6 +205,110 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	}
 	if projectID == 0 {
 		t.Fatal("expected seeded project")
+	}
+}
+
+func TestParserErrorStructuredResult(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title", Author: struct {
+		Username string "json:\"username\""
+	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
+	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
+	provider := fakeProvider{err: scheduler.NewTerminalError("parser_error", errors.New("unparseable provider output"))}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "parser_error" {
+		t.Fatalf("outcome status = %q, want parser_error", outcome.Status)
+	}
+	updatedRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if updatedRun.Status != "parser_error" {
+		t.Fatalf("status = %q, want parser_error", updatedRun.Status)
+	}
+	if err := q.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: outcome.Status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: runID}); err != nil {
+		t.Fatalf("UpdateReviewRunStatus: %v", err)
+	}
+	updatedRun, err = q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if updatedRun.Status != "parser_error" {
+		t.Fatalf("status = %q, want parser_error", updatedRun.Status)
+	}
+	actions, err := q.ListCommentActionsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListCommentActionsByRun: %v", err)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("comment actions = %d, want 1", len(actions))
+	}
+	if actions[0].ActionType != "summary_note" {
+		t.Fatalf("action type = %q, want summary_note", actions[0].ActionType)
+	}
+	if actions[0].Status != "pending" {
+		t.Fatalf("action status = %q, want pending", actions[0].Status)
+	}
+	findings, err := q.ListActiveFindingsByMR(ctx, run.MergeRequestID)
+	if err != nil {
+		t.Fatalf("ListActiveFindingsByMR: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("findings = %d, want 0", len(findings))
+	}
+}
+
+func TestSuccessfulRunPersistsProviderMetrics(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, mrID, runID := seedRun(t, ctx, q)
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		return scheduler.ProcessOutcome{Status: "completed", ProviderLatencyMs: 37, ProviderTokensTotal: 1234}, nil
+	})
+	svc := scheduler.NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, processor, scheduler.WithWorkerID("worker-metrics"))
+	processed, err := svc.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "completed" {
+		t.Fatalf("status = %q, want completed", run.Status)
+	}
+	if run.ProviderLatencyMs != 37 {
+		t.Fatalf("provider_latency_ms = %d, want 37", run.ProviderLatencyMs)
+	}
+	if run.ProviderTokensTotal != 1234 {
+		t.Fatalf("provider_tokens_total = %d, want 1234", run.ProviderTokensTotal)
+	}
+	findings, err := q.ListActiveFindingsByMR(ctx, mrID)
+	if err != nil {
+		t.Fatalf("ListActiveFindingsByMR: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("findings = %d, want 0", len(findings))
 	}
 }
 
@@ -243,6 +358,11 @@ type fakeProvider struct {
 }
 
 func (f fakeProvider) Review(context.Context, ctxpkg.ReviewRequest) (ProviderResponse, error) {
+	if f.err != nil {
+		f.response.Latency = 13 * time.Millisecond
+		f.response.Tokens = 21
+		f.response.Model = "MiniMax-M2.5"
+	}
 	return f.response, f.err
 }
 func (f fakeProvider) RequestPayload(ctxpkg.ReviewRequest) map[string]any {

@@ -25,12 +25,18 @@ var ErrNoClaimableRuns = errors.New("scheduler: no claimable runs")
 var errRunCancelled = errors.New("scheduler: run cancelled")
 
 type Processor interface {
-	ProcessRun(ctx context.Context, run db.ReviewRun) error
+	ProcessRun(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error)
 }
 
-type FuncProcessor func(ctx context.Context, run db.ReviewRun) error
+type ProcessOutcome struct {
+	Status              string
+	ProviderLatencyMs   int64
+	ProviderTokensTotal int64
+}
 
-func (f FuncProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) error {
+type FuncProcessor func(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error)
+
+func (f FuncProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error) {
 	return f(ctx, run)
 }
 
@@ -149,7 +155,7 @@ func WithRetryMaxDelay(delay time.Duration) Option {
 }
 
 func NewNoopProcessor(logger *slog.Logger) Processor {
-	return FuncProcessor(func(ctx context.Context, run db.ReviewRun) error {
+	return FuncProcessor(func(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error) {
 		if logger != nil {
 			logger.InfoContext(ctx, "scheduler processed run with noop processor",
 				"run_id", run.ID,
@@ -157,7 +163,7 @@ func NewNoopProcessor(logger *slog.Logger) Processor {
 				"retry_count", run.RetryCount,
 			)
 		}
-		return nil
+		return ProcessOutcome{}, nil
 	})
 }
 
@@ -274,11 +280,37 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		return err
 	}
 
-	err = s.processor.ProcessRun(ctx, run)
+	outcome, err := s.processor.ProcessRun(ctx, run)
 	if err == nil {
+		status := outcome.Status
+		if status == "" {
+			status = "completed"
+		}
+		if status == "parser_error" {
+			currentRun, err := db.New(s.db).GetReviewRun(ctx, run.ID)
+			if err != nil {
+				return fmt.Errorf("scheduler: reload run %d before parser_error completion: %w", run.ID, err)
+			}
+			if currentRun.Status == "cancelled" {
+				return nil
+			}
+			if currentRun.Status != "parser_error" {
+				return fmt.Errorf("scheduler: run %d expected parser_error status, got %q", run.ID, currentRun.Status)
+			}
+			if err := db.New(s.db).UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
+				return fmt.Errorf("scheduler: mark run %d parser_error: %w", run.ID, err)
+			}
+			s.logger.InfoContext(ctx, "completed review run with parser_error result",
+				"run_id", run.ID,
+				"worker_id", s.workerID,
+				"merge_request_id", run.MergeRequestID,
+				"retry_count", run.RetryCount,
+			)
+			return nil
+		}
 		updated, err := db.New(s.db).UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
-			ProviderLatencyMs:   0,
-			ProviderTokensTotal: 0,
+			ProviderLatencyMs:   outcome.ProviderLatencyMs,
+			ProviderTokensTotal: outcome.ProviderTokensTotal,
 			ID:                  run.ID,
 		})
 		if err != nil {

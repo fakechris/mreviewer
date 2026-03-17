@@ -199,8 +199,8 @@ func TestRetryBackoff(t *testing.T) {
 				idempotencyKey: tc.name,
 			})
 
-			processor := FuncProcessor(func(context.Context, db.ReviewRun) error {
-				return NewRetryableError("gitlab_unavailable", errors.New("temporary failure"))
+			processor := FuncProcessor(func(context.Context, db.ReviewRun) (ProcessOutcome, error) {
+				return ProcessOutcome{}, NewRetryableError("gitlab_unavailable", errors.New("temporary failure"))
 			})
 			svc := NewService(
 				testLogger(),
@@ -554,9 +554,9 @@ func TestCancelledRunNotReclaimed(t *testing.T) {
 	cancelMergeRequest(t, sqlDB, 100, 42, "close", "closed", "sha-not-reclaimed")
 
 	processorCalled := false
-	svc := NewService(testLogger(), sqlDB, FuncProcessor(func(context.Context, db.ReviewRun) error {
+	svc := NewService(testLogger(), sqlDB, FuncProcessor(func(context.Context, db.ReviewRun) (ProcessOutcome, error) {
 		processorCalled = true
-		return nil
+		return ProcessOutcome{}, nil
 	}), WithWorkerID("worker-a"))
 
 	processed, err := svc.RunOnce(context.Background())
@@ -588,7 +588,7 @@ type retryThenSucceedProcessor struct {
 	downstreamWrites map[int64]int
 }
 
-func (p *retryThenSucceedProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) error {
+func (p *retryThenSucceedProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -601,11 +601,11 @@ func (p *retryThenSucceedProcessor) ProcessRun(ctx context.Context, run db.Revie
 
 	p.attempts[run.ID]++
 	if p.attempts[run.ID] == 1 {
-		return NewRetryableError("gitlab_unavailable", errors.New("temporary failure"))
+		return ProcessOutcome{}, NewRetryableError("gitlab_unavailable", errors.New("temporary failure"))
 	}
 
 	p.downstreamWrites[run.ID]++
-	return nil
+	return ProcessOutcome{}, nil
 }
 
 func (p *retryThenSucceedProcessor) stats(runID int64) (attempts int, downstreamWrites int) {
@@ -629,12 +629,12 @@ func newBlockingProcessor(err error) *blockingProcessor {
 	}
 }
 
-func (p *blockingProcessor) ProcessRun(context.Context, db.ReviewRun) error {
+func (p *blockingProcessor) ProcessRun(context.Context, db.ReviewRun) (ProcessOutcome, error) {
 	p.once.Do(func() {
 		close(p.started)
 	})
 	<-p.releaseCh
-	return p.err
+	return ProcessOutcome{}, p.err
 }
 
 func (p *blockingProcessor) waitUntilStarted(t *testing.T) {
