@@ -1,0 +1,153 @@
+{
+  "groupId": "review-pipeline-core",
+  "testedAt": "2026-03-17T09:29:54.505549+00:00",
+  "surface": "cli",
+  "status": "pass",
+  "toolsUsed": [
+    "go test"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PIPELINE-001",
+      "status": "pass",
+      "evidence": "TestGetMergeRequest passed via `go test ./internal/gitlab -run TestGetMergeRequest$|TestGetMergeRequestVersions$|TestGetMergeRequestDiffsPagination$|TestDiffNotReadyRetry$ -v`. Output: === RUN   TestGetMergeRequest\n--- PASS: TestGetMergeRequest (0.00s)\n=== RUN   TestGetMergeRequestVersions\n--- PASS: TestGetMergeRequestVersions (0.00s)\n=== RUN   TestGetMergeRequestDiffsPagination\n--- PASS: TestGetMergeRequestDiffsPagination (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/gitlab\t0.555s"
+    },
+    {
+      "id": "VAL-PIPELINE-002",
+      "status": "pass",
+      "evidence": "TestGetMergeRequestVersions passed via `go test ./internal/gitlab -run TestGetMergeRequest$|TestGetMergeRequestVersions$|TestGetMergeRequestDiffsPagination$|TestDiffNotReadyRetry$ -v`. Output: === RUN   TestGetMergeRequestVersions\n--- PASS: TestGetMergeRequestVersions (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/gitlab\t0.555s"
+    },
+    {
+      "id": "VAL-PIPELINE-003",
+      "status": "pass",
+      "evidence": "TestGetMergeRequestDiffsPagination passed via `go test ./internal/gitlab -run TestGetMergeRequest$|TestGetMergeRequestVersions$|TestGetMergeRequestDiffsPagination$|TestDiffNotReadyRetry$ -v`. Output: === RUN   TestGetMergeRequestDiffsPagination\n--- PASS: TestGetMergeRequestDiffsPagination (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/gitlab\t0.555s"
+    },
+    {
+      "id": "VAL-PIPELINE-004",
+      "status": "pass",
+      "evidence": "TestDiffNotReadyRetry passed via `go test ./internal/gitlab -run TestGetMergeRequest$|TestGetMergeRequestVersions$|TestGetMergeRequestDiffsPagination$|TestDiffNotReadyRetry$ -v`. Output: === RUN   TestDiffNotReadyRetry\n--- PASS: TestDiffNotReadyRetry (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/gitlab\t0.555s"
+    },
+    {
+      "id": "VAL-PIPELINE-005",
+      "status": "pass",
+      "evidence": "TestGeneratedFileFilter passed via `go test ./internal/context -run TestGeneratedFileFilter$|TestBinaryVendorLockFilter$|TestPathIncludeExclude$|TestHunkContextAssembly$|TestHistoricalBotContext$|TestLargeDiffTruncation$|TestOutboundScopeLimit$ -v`. Output: === RUN   TestGeneratedFileFilter\n--- PASS: TestGeneratedFileFilter (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/context\t0.413s"
+    },
+    {
+      "id": "VAL-PIPELINE-006",
+      "status": "pass",
+      "evidence": "TestBinaryVendorLockFilter passed via `go test ./internal/context -run TestGeneratedFileFilter$|TestBinaryVendorLockFilter$|TestPathIncludeExclude$|TestHunkContextAssembly$|TestHistoricalBotContext$|TestLargeDiffTruncation$|TestOutboundScopeLimit$ -v`. Output: === RUN   TestBinaryVendorLockFilter\n--- PASS: TestBinaryVendorLockFilter (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/context\t0.413s"
+    },
+    {
+      "id": "VAL-PIPELINE-007",
+      "status": "pass",
+      "evidence": "TestPathIncludeExclude passed via `go test ./internal/context -run TestGeneratedFileFilter$|TestBinaryVendorLockFilter$|TestPathIncludeExclude$|TestHunkContextAssembly$|TestHistoricalBotContext$|TestLargeDiffTruncation$|TestOutboundScopeLimit$ -v`. Output: === RUN   TestPathIncludeExclude\n--- PASS: TestPathIncludeExclude (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/context\t0.413s"
+    },
+    {
+      "id": "VAL-PIPELINE-008",
+      "status": "pass",
+      "evidence": "TestHunkContextAssembly passed via `go test ./internal/context -run TestGeneratedFileFilter$|TestBinaryVendorLockFilter$|TestPathIncludeExclude$|TestHunkContextAssembly$|TestHistoricalBotContext$|TestLargeDiffTruncation$|TestOutboundScopeLimit$ -v`. Output: === RUN   TestHunkContextAssembly\n--- PASS: TestHunkContextAssembly (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/context\t0.413s"
+    },
+    {
+      "id": "VAL-PIPELINE-009",
+      "status": "pass",
+      "evidence": "TestRootReviewLoad passed via `go test ./internal/rules -run TestRootReviewLoad$|TestMissingRootReviewGraceful$|TestPlatformProjectMerge$|TestAllowlistedRuleSourcesOnly$|TestPromptInjectionIsolation$ -v`. Output: === RUN   TestRootReviewLoad\n--- PASS: TestRootReviewLoad (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/rules\t0.442s"
+    },
+    {
+      "id": "VAL-PIPELINE-010",
+      "status": "pass",
+      "evidence": "TestMissingRootReviewGraceful passed via `go test ./internal/rules -run TestRootReviewLoad$|TestMissingRootReviewGraceful$|TestPlatformProjectMerge$|TestAllowlistedRuleSourcesOnly$|TestPromptInjectionIsolation$ -v`. Output: === RUN   TestMissingRootReviewGraceful\n--- PASS: TestMissingRootReviewGraceful (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/rules\t0.442s"
+    },
+    {
+      "id": "VAL-PIPELINE-011",
+      "status": "pass",
+      "evidence": "TestPlatformProjectMerge passed via `go test ./internal/rules -run TestRootReviewLoad$|TestMissingRootReviewGraceful$|TestPlatformProjectMerge$|TestAllowlistedRuleSourcesOnly$|TestPromptInjectionIsolation$ -v`. Output: === RUN   TestPlatformProjectMerge\n--- PASS: TestPlatformProjectMerge (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/rules\t0.442s"
+    },
+    {
+      "id": "VAL-PIPELINE-012",
+      "status": "pass",
+      "evidence": "TestMiniMaxRequestShape passed via `go test ./internal/llm -run TestMiniMaxRequestShape$|TestParseValidReviewResult$|TestParserFallbackChain$|TestProviderTimeoutRetry$|TestRedactedLogging$|TestWorkerExecutesRealProcessor$ -v`. Output: === RUN   TestMiniMaxRequestShape\n--- PASS: TestMiniMaxRequestShape (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/llm\t8.246s"
+    },
+    {
+      "id": "VAL-PIPELINE-013",
+      "status": "pass",
+      "evidence": "TestParseValidReviewResult passed via `go test ./internal/llm -run TestMiniMaxRequestShape$|TestParseValidReviewResult$|TestParserFallbackChain$|TestProviderTimeoutRetry$|TestRedactedLogging$|TestWorkerExecutesRealProcessor$ -v`. Output: === RUN   TestParseValidReviewResult\n--- PASS: TestParseValidReviewResult (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/llm\t8.246s"
+    },
+    {
+      "id": "VAL-PIPELINE-014",
+      "status": "pass",
+      "evidence": "TestParserFallbackChain passed via `go test ./internal/llm -run TestMiniMaxRequestShape$|TestParseValidReviewResult$|TestParserFallbackChain$|TestProviderTimeoutRetry$|TestRedactedLogging$|TestWorkerExecutesRealProcessor$ -v`. Output: === RUN   TestParserFallbackChain\n=== RUN   TestParserFallbackChain/marker_extraction\n=== RUN   TestParserFallbackChain/tolerant_repair\n=== RUN   TestParserFallbackChain/parser_error\n--- PASS: TestParserFallbackChain (0.00s)\n    --- PASS: TestParserFallbackChain/marker_extraction (0.00s)\n    --- PASS: TestParserFallbackChain/tolerant_repair (0.00s)\n    --- PASS: TestParserFallbackChain/parser_error (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/llm\t8.246s"
+    },
+    {
+      "id": "VAL-PIPELINE-015",
+      "status": "pass",
+      "evidence": "TestProviderTimeoutRetry passed via `go test ./internal/llm -run TestMiniMaxRequestShape$|TestParseValidReviewResult$|TestParserFallbackChain$|TestProviderTimeoutRetry$|TestRedactedLogging$|TestWorkerExecutesRealProcessor$ -v`. Output: === RUN   TestProviderTimeoutRetry\n--- PASS: TestProviderTimeoutRetry (1.39s)\nok  \tgithub.com/mreviewer/mreviewer/internal/llm\t8.246s"
+    },
+    {
+      "id": "VAL-PIPELINE-016",
+      "status": "pass",
+      "evidence": "TestWorkerExecutesRealProcessor passed via `go test ./internal/llm -run TestMiniMaxRequestShape$|TestParseValidReviewResult$|TestParserFallbackChain$|TestProviderTimeoutRetry$|TestRedactedLogging$|TestWorkerExecutesRealProcessor$ -v`. Output: === RUN   TestWorkerExecutesRealProcessor\n--- PASS: TestWorkerExecutesRealProcessor (6.39s)\nok  \tgithub.com/mreviewer/mreviewer/internal/llm\t8.246s"
+    },
+    {
+      "id": "VAL-PIPELINE-017",
+      "status": "pass",
+      "evidence": "TestHistoricalBotContext passed via `go test ./internal/context -run TestGeneratedFileFilter$|TestBinaryVendorLockFilter$|TestPathIncludeExclude$|TestHunkContextAssembly$|TestHistoricalBotContext$|TestLargeDiffTruncation$|TestOutboundScopeLimit$ -v`. Output: === RUN   TestHistoricalBotContext\n--- PASS: TestHistoricalBotContext (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/context\t0.413s"
+    },
+    {
+      "id": "VAL-PIPELINE-018",
+      "status": "pass",
+      "evidence": "TestLargeDiffTruncation passed via `go test ./internal/context -run TestGeneratedFileFilter$|TestBinaryVendorLockFilter$|TestPathIncludeExclude$|TestHunkContextAssembly$|TestHistoricalBotContext$|TestLargeDiffTruncation$|TestOutboundScopeLimit$ -v`. Output: === RUN   TestLargeDiffTruncation\n--- PASS: TestLargeDiffTruncation (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/context\t0.413s"
+    },
+    {
+      "id": "VAL-SEC-001",
+      "status": "pass",
+      "evidence": "TestAllowlistedRuleSourcesOnly passed via `go test ./internal/rules -run TestRootReviewLoad$|TestMissingRootReviewGraceful$|TestPlatformProjectMerge$|TestAllowlistedRuleSourcesOnly$|TestPromptInjectionIsolation$ -v`. Output: === RUN   TestAllowlistedRuleSourcesOnly\n--- PASS: TestAllowlistedRuleSourcesOnly (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/rules\t0.442s"
+    },
+    {
+      "id": "VAL-SEC-002",
+      "status": "pass",
+      "evidence": "TestPromptInjectionIsolation passed via `go test ./internal/rules -run TestRootReviewLoad$|TestMissingRootReviewGraceful$|TestPlatformProjectMerge$|TestAllowlistedRuleSourcesOnly$|TestPromptInjectionIsolation$ -v`. Output: === RUN   TestPromptInjectionIsolation\n--- PASS: TestPromptInjectionIsolation (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/rules\t0.442s"
+    },
+    {
+      "id": "VAL-SEC-003",
+      "status": "pass",
+      "evidence": "TestRedactedLogging passed via `go test ./internal/llm -run TestMiniMaxRequestShape$|TestParseValidReviewResult$|TestParserFallbackChain$|TestProviderTimeoutRetry$|TestRedactedLogging$|TestWorkerExecutesRealProcessor$ -v`. Output: === RUN   TestRedactedLogging\n--- PASS: TestRedactedLogging (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/llm\t8.246s"
+    },
+    {
+      "id": "VAL-SEC-004",
+      "status": "pass",
+      "evidence": "TestOutboundScopeLimit passed via `go test ./internal/context -run TestGeneratedFileFilter$|TestBinaryVendorLockFilter$|TestPathIncludeExclude$|TestHunkContextAssembly$|TestHistoricalBotContext$|TestLargeDiffTruncation$|TestOutboundScopeLimit$ -v`. Output: === RUN   TestOutboundScopeLimit\n--- PASS: TestOutboundScopeLimit (0.00s)\nok  \tgithub.com/mreviewer/mreviewer/internal/context\t0.413s"
+    }
+  ],
+  "frictions": [
+    "Repository has no top-level README.md; used mission guidance, validation contract, and .factory/library/user-testing.md instead.",
+    "review-pipeline validation directory did not exist yet; created /Users/chris/workspace/mreviewer/.factory/validation/review-pipeline/user-testing/flows for the required report output."
+  ],
+  "blockers": [],
+  "commands": [
+    {
+      "command": "go test ./internal/gitlab -run TestGetMergeRequest$|TestGetMergeRequestVersions$|TestGetMergeRequestDiffsPagination$|TestDiffNotReadyRetry$ -v",
+      "exitCode": 0,
+      "observation": "passed"
+    },
+    {
+      "command": "go test ./internal/context -run TestGeneratedFileFilter$|TestBinaryVendorLockFilter$|TestPathIncludeExclude$|TestHunkContextAssembly$|TestHistoricalBotContext$|TestLargeDiffTruncation$|TestOutboundScopeLimit$ -v",
+      "exitCode": 0,
+      "observation": "passed"
+    },
+    {
+      "command": "go test ./internal/rules -run TestRootReviewLoad$|TestMissingRootReviewGraceful$|TestPlatformProjectMerge$|TestAllowlistedRuleSourcesOnly$|TestPromptInjectionIsolation$ -v",
+      "exitCode": 0,
+      "observation": "passed"
+    },
+    {
+      "command": "go test ./internal/llm -run TestMiniMaxRequestShape$|TestParseValidReviewResult$|TestParserFallbackChain$|TestProviderTimeoutRetry$|TestRedactedLogging$|TestWorkerExecutesRealProcessor$ -v",
+      "exitCode": 0,
+      "observation": "passed; included TestWorkerExecutesRealProcessor using testcontainers-go mysql:8.4 and goose migration up"
+    },
+    {
+      "command": "go test -run ^$ ./...",
+      "exitCode": 0,
+      "observation": "typecheck-style repo-wide go test -run ^$ passed"
+    }
+  ]
+}

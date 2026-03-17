@@ -1,0 +1,39 @@
+{
+  "milestone": "review-pipeline",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 22,
+    "passed": 22,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-PIPELINE-001",
+    "VAL-PIPELINE-002",
+    "VAL-PIPELINE-003",
+    "VAL-PIPELINE-004",
+    "VAL-PIPELINE-005",
+    "VAL-PIPELINE-006",
+    "VAL-PIPELINE-007",
+    "VAL-PIPELINE-008",
+    "VAL-PIPELINE-009",
+    "VAL-PIPELINE-010",
+    "VAL-PIPELINE-011",
+    "VAL-PIPELINE-012",
+    "VAL-PIPELINE-013",
+    "VAL-PIPELINE-014",
+    "VAL-PIPELINE-015",
+    "VAL-PIPELINE-016",
+    "VAL-PIPELINE-017",
+    "VAL-PIPELINE-018",
+    "VAL-SEC-001",
+    "VAL-SEC-002",
+    "VAL-SEC-003",
+    "VAL-SEC-004"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null
+}
