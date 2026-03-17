@@ -535,6 +535,15 @@ func transitionMissingFinding(current db.ReviewFinding, reviewedPaths, deletedPa
 		}
 	}
 	if current.LastSeenRunID.Valid && !seenThisRun {
+		if _, ok := reviewedPaths[path]; ok {
+			return nextFindingState(current.State, findingStateFixed)
+		}
+		if len(reviewedPaths) == 0 && len(deletedPaths) == 0 {
+			return "", false, nil
+		}
+		return nextFindingState(current.State, findingStateStale)
+	}
+	if current.LastSeenRunID.Valid {
 		return "", false, nil
 	}
 	if _, ok := reviewedPaths[path]; ok {

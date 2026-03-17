@@ -1159,6 +1159,159 @@ func TestDeletedFileFixed(t *testing.T) {
 	}
 }
 
+func TestReviewedCleanPathBecomesFixedAfterCarryForwardRerun(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, projectID, mrID, runID := seedRun(t, ctx, q)
+	baseRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+	if err := activateSingleFinding(ctx, q, baseRun, mr, sameRunFinding(12)); err != nil {
+		t.Fatalf("activateSingleFinding: %v", err)
+	}
+
+	carryForwardRes, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook:carry-forward-reviewed"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun carry forward: %v", err)
+	}
+	carryForwardRunID, err := carryForwardRes.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId carry forward: %v", err)
+	}
+	carryForwardRun, err := q.GetReviewRun(ctx, carryForwardRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun carry forward: %v", err)
+	}
+	if err := persistFindings(ctx, q, carryForwardRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", carryForwardRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, map[string]struct{}{normalizePath("src/service/foo.go"): {}}, nil); err != nil {
+		t.Fatalf("persistFindings carry forward: %v", err)
+	}
+
+	baseFindings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun base after carry forward: %v", err)
+	}
+	if len(baseFindings) != 1 {
+		t.Fatalf("base findings after carry forward = %d, want 1", len(baseFindings))
+	}
+	if !baseFindings[0].LastSeenRunID.Valid || baseFindings[0].LastSeenRunID.Int64 != carryForwardRunID {
+		t.Fatalf("last_seen_run_id after carry forward = %+v, want %d", baseFindings[0].LastSeenRunID, carryForwardRunID)
+	}
+	if baseFindings[0].State != findingStateActive {
+		t.Fatalf("state after carry forward = %q, want active", baseFindings[0].State)
+	}
+
+	cleanRes, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-3", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-3:webhook:clean-reviewed"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun clean: %v", err)
+	}
+	cleanRunID, err := cleanRes.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId clean: %v", err)
+	}
+	cleanRun, err := q.GetReviewRun(ctx, cleanRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun clean: %v", err)
+	}
+	if err := persistFindings(ctx, q, cleanRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", cleanRunID), Summary: "summary", Status: "completed", Findings: nil}, map[string]struct{}{normalizePath("src/service/foo.go"): {}}, nil); err != nil {
+		t.Fatalf("persistFindings clean: %v", err)
+	}
+
+	baseFindings, err = q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun base after clean: %v", err)
+	}
+	if baseFindings[0].State != findingStateFixed {
+		t.Fatalf("state after clean rerun = %q, want fixed", baseFindings[0].State)
+	}
+	if !baseFindings[0].LastSeenRunID.Valid || baseFindings[0].LastSeenRunID.Int64 != carryForwardRunID {
+		t.Fatalf("last_seen_run_id after clean rerun = %+v, want %d", baseFindings[0].LastSeenRunID, carryForwardRunID)
+	}
+}
+
+func TestDeletedFileFixedAfterCarryForwardRerun(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, projectID, mrID, runID := seedRun(t, ctx, q)
+	baseRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+	if err := activateSingleFinding(ctx, q, baseRun, mr, sameRunFinding(12)); err != nil {
+		t.Fatalf("activateSingleFinding: %v", err)
+	}
+
+	carryForwardRes, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook:carry-forward-deleted"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun carry forward: %v", err)
+	}
+	carryForwardRunID, err := carryForwardRes.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId carry forward: %v", err)
+	}
+	carryForwardRun, err := q.GetReviewRun(ctx, carryForwardRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun carry forward: %v", err)
+	}
+	if err := persistFindings(ctx, q, carryForwardRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", carryForwardRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, map[string]struct{}{normalizePath("src/service/foo.go"): {}}, nil); err != nil {
+		t.Fatalf("persistFindings carry forward: %v", err)
+	}
+
+	baseFindings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun base after carry forward: %v", err)
+	}
+	if !baseFindings[0].LastSeenRunID.Valid || baseFindings[0].LastSeenRunID.Int64 != carryForwardRunID {
+		t.Fatalf("last_seen_run_id after carry forward = %+v, want %d", baseFindings[0].LastSeenRunID, carryForwardRunID)
+	}
+
+	deletedRes, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-3", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-3:webhook:deleted-after-carry-forward"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun deleted: %v", err)
+	}
+	deletedRunID, err := deletedRes.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId deleted: %v", err)
+	}
+	deletedRun, err := q.GetReviewRun(ctx, deletedRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun deleted: %v", err)
+	}
+	deleted := sameRunFinding(0)
+	deleted.Path = "src/service/foo.go"
+	deleted.AnchorSnippet = "return *ptr"
+	deleted.AnchorKind = "deleted"
+	deleted.CanonicalKey = "deleted:nil-deref:foo-service"
+	deleted.NewLine = nil
+	deleted.OldLine = func() *int32 { v := int32(12); return &v }()
+	if err := persistFindings(ctx, q, deletedRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", deletedRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{deleted}}, map[string]struct{}{normalizePath(deleted.Path): {}}, map[string]struct{}{normalizePath(deleted.Path): {}}); err != nil {
+		t.Fatalf("persistFindings deleted: %v", err)
+	}
+
+	baseFindings, err = q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun base after deleted: %v", err)
+	}
+	if baseFindings[0].State != findingStateFixed {
+		t.Fatalf("state after deleted rerun = %q, want fixed", baseFindings[0].State)
+	}
+	if !baseFindings[0].LastSeenRunID.Valid || baseFindings[0].LastSeenRunID.Int64 != carryForwardRunID {
+		t.Fatalf("last_seen_run_id after deleted rerun = %+v, want %d", baseFindings[0].LastSeenRunID, carryForwardRunID)
+	}
+}
+
 func TestDeletedAnchorCanonicalizationTriggersDeletedLifecycle(t *testing.T) {
 	deletedOldLine := int32(12)
 	normalized := normalizeFinding(ReviewFinding{
