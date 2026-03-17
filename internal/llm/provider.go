@@ -1,0 +1,507 @@
+package llm
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"strings"
+	"time"
+
+	anthropic "github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
+
+	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
+	"github.com/mreviewer/mreviewer/internal/db"
+	"github.com/mreviewer/mreviewer/internal/gitlab"
+	"github.com/mreviewer/mreviewer/internal/logging"
+	"github.com/mreviewer/mreviewer/internal/rules"
+	"github.com/mreviewer/mreviewer/internal/scheduler"
+)
+
+const (
+	defaultSystemPrompt             = "You are an expert GitLab merge request reviewer. Return only valid JSON matching the provided schema."
+	defaultMaxTokens          int64 = 4096
+	defaultTimeoutRetry             = 3
+	parserErrorCode                 = "parser_error"
+	providerTimeoutCode             = "provider_timeout"
+	providerRequestFailedCode       = "provider_request_failed"
+)
+
+type Processor struct {
+	logger          *slog.Logger
+	queries         *db.Queries
+	gitlab          GitLabReader
+	rulesLoader     RulesLoader
+	assembler       *ctxpkg.Assembler
+	provider        Provider
+	timeoutRetries  int
+	auditLogger     AuditLogger
+	providerTimeout time.Duration
+}
+
+type GitLabReader interface {
+	GetMergeRequestSnapshot(ctx context.Context, projectID, mergeRequestIID int64) (gitlab.MergeRequestSnapshot, error)
+}
+
+type RulesLoader interface {
+	Load(ctx context.Context, input rules.LoadInput) (rules.LoadResult, error)
+}
+
+type Provider interface {
+	Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error)
+	RequestPayload(request ctxpkg.ReviewRequest) map[string]any
+}
+
+type AuditLogger interface {
+	LogProviderCall(ctx context.Context, run db.ReviewRun, payload map[string]any, response ProviderResponse) error
+	LogProviderFailure(ctx context.Context, run db.ReviewRun, payload map[string]any, err error) error
+}
+
+type ProviderResponse struct {
+	Result          ReviewResult
+	RawText         string
+	Latency         time.Duration
+	Tokens          int64
+	FallbackStage   string
+	Model           string
+	ResponsePayload map[string]any
+}
+
+type ReviewResult struct {
+	SchemaVersion string          `json:"schema_version"`
+	ReviewRunID   string          `json:"review_run_id"`
+	Summary       string          `json:"summary"`
+	Findings      []ReviewFinding `json:"findings"`
+	Status        string          `json:"status,omitempty"`
+	SummaryNote   *SummaryNote    `json:"summary_note,omitempty"`
+}
+
+type SummaryNote struct {
+	BodyMarkdown string `json:"body_markdown"`
+}
+
+type ReviewFinding struct {
+	Category       string   `json:"category"`
+	Severity       string   `json:"severity"`
+	Confidence     float64  `json:"confidence"`
+	Title          string   `json:"title"`
+	BodyMarkdown   string   `json:"body_markdown"`
+	Path           string   `json:"path"`
+	AnchorKind     string   `json:"anchor_kind"`
+	OldLine        *int32   `json:"old_line,omitempty"`
+	NewLine        *int32   `json:"new_line,omitempty"`
+	AnchorSnippet  string   `json:"anchor_snippet,omitempty"`
+	Evidence       []string `json:"evidence,omitempty"`
+	SuggestedPatch string   `json:"suggested_patch,omitempty"`
+	CanonicalKey   string   `json:"canonical_key,omitempty"`
+	Symbol         string   `json:"symbol,omitempty"`
+}
+
+type ProviderConfig struct {
+	BaseURL        string
+	APIKey         string
+	Model          string
+	MaxTokens      int64
+	SystemPrompt   string
+	TimeoutRetries int
+	HTTPClient     *http.Client
+	Now            func() time.Time
+	Sleep          func(context.Context, time.Duration) error
+}
+
+type MiniMaxProvider struct {
+	client         anthropic.Client
+	model          string
+	maxTokens      int64
+	systemPrompt   string
+	now            func() time.Time
+	sleep          func(context.Context, time.Duration) error
+	timeoutRetries int
+}
+
+func NewProcessor(logger *slog.Logger, sqlDB *sql.DB, gitlabClient GitLabReader, rulesLoader RulesLoader, provider Provider, audit AuditLogger) *Processor {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Processor{
+		logger:         logger,
+		queries:        db.New(sqlDB),
+		gitlab:         gitlabClient,
+		rulesLoader:    rulesLoader,
+		assembler:      ctxpkg.NewAssembler(),
+		provider:       provider,
+		timeoutRetries: defaultTimeoutRetry,
+		auditLogger:    audit,
+	}
+}
+
+func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
+	if strings.TrimSpace(cfg.BaseURL) == "" {
+		return nil, fmt.Errorf("llm: base URL is required")
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		return nil, fmt.Errorf("llm: model is required")
+	}
+	if cfg.MaxTokens <= 0 {
+		cfg.MaxTokens = defaultMaxTokens
+	}
+	if strings.TrimSpace(cfg.SystemPrompt) == "" {
+		cfg.SystemPrompt = defaultSystemPrompt
+	}
+	if cfg.TimeoutRetries <= 0 {
+		cfg.TimeoutRetries = defaultTimeoutRetry
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.Sleep == nil {
+		cfg.Sleep = sleepContext
+	}
+	options := []option.RequestOption{
+		option.WithBaseURL(cfg.BaseURL),
+		option.WithAPIKey(cfg.APIKey),
+	}
+	if cfg.HTTPClient != nil {
+		options = append(options, option.WithHTTPClient(cfg.HTTPClient))
+	}
+	client := anthropic.NewClient(options...)
+	return &MiniMaxProvider{client: client, model: cfg.Model, maxTokens: cfg.MaxTokens, systemPrompt: cfg.SystemPrompt, now: cfg.Now, sleep: cfg.Sleep, timeoutRetries: cfg.TimeoutRetries}, nil
+}
+
+func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) error {
+	if p.queries == nil || p.gitlab == nil || p.rulesLoader == nil || p.assembler == nil || p.provider == nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: processor dependencies are not configured"))
+	}
+
+	mergeRequest, err := p.queries.GetMergeRequest(ctx, run.MergeRequestID)
+	if err != nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load merge request: %w", err))
+	}
+	project, err := p.queries.GetProject(ctx, run.ProjectID)
+	if err != nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load project: %w", err))
+	}
+	instance, err := p.queries.GetGitlabInstance(ctx, project.GitlabInstanceID)
+	if err != nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load gitlab instance: %w", err))
+	}
+
+	snapshot, err := p.gitlab.GetMergeRequestSnapshot(ctx, project.GitlabProjectID, mergeRequest.MrIid)
+	if err != nil {
+		return scheduler.NewRetryableError(providerRequestFailedCode, fmt.Errorf("llm: fetch merge request snapshot: %w", err))
+	}
+
+	if _, err := p.queries.InsertMRVersion(ctx, db.InsertMRVersionParams{MergeRequestID: mergeRequest.ID, GitlabVersionID: snapshot.Version.GitLabVersionID, BaseSha: snapshot.Version.BaseSHA, StartSha: snapshot.Version.StartSHA, HeadSha: snapshot.Version.HeadSHA, PatchIDSha: snapshot.Version.PatchIDSHA}); err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist MR version: %w", err))
+	}
+
+	policy, err := p.queries.GetProjectPolicy(ctx, project.ID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load project policy: %w", err))
+	}
+	var policyPtr *db.ProjectPolicy
+	if err == nil {
+		policyPtr = &policy
+	}
+
+	ruleResult, err := p.rulesLoader.Load(ctx, rules.LoadInput{ProjectID: project.GitlabProjectID, HeadSHA: snapshot.Version.HeadSHA, ProjectPolicy: policyPtr})
+	if err != nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load rules: %w", err))
+	}
+	settings, err := ctxpkg.SettingsFromPolicy(policyPtr)
+	if err != nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: parse policy settings: %w", err))
+	}
+	historical, err := ctxpkg.LoadHistoricalContext(ctx, p.queries, mergeRequest.ID)
+	if err != nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load historical context: %w", err))
+	}
+
+	assembled, err := p.assembler.Assemble(ctxpkg.AssembleInput{ReviewRunID: run.ID, Project: ctxpkg.ProjectContext{ProjectID: project.GitlabProjectID, FullPath: project.PathWithNamespace}, MergeRequest: ctxpkg.MergeRequestContext{IID: mergeRequest.MrIid, Title: mergeRequest.Title, Author: mergeRequest.Author}, Version: ctxpkg.VersionContext{BaseSHA: snapshot.Version.BaseSHA, StartSHA: snapshot.Version.StartSHA, HeadSHA: snapshot.Version.HeadSHA, PatchIDSHA: snapshot.Version.PatchIDSHA}, Rules: ruleResult.Trusted, Settings: settings, Diffs: snapshot.Diffs, HistoricalContext: historical})
+	if err != nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: assemble request: %w", err))
+	}
+
+	payload := p.provider.RequestPayload(assembled.Request)
+	response, err := p.provider.Review(ctx, assembled.Request)
+	if err != nil {
+		if p.auditLogger != nil {
+			_ = p.auditLogger.LogProviderFailure(ctx, run, payload, err)
+		}
+		if isTimeoutError(err) {
+			return scheduler.NewRetryableError(providerTimeoutCode, err)
+		}
+		return scheduler.NewTerminalError(providerRequestFailedCode, err)
+	}
+	if p.auditLogger != nil {
+		_ = p.auditLogger.LogProviderCall(ctx, run, payload, response)
+	}
+
+	if err := persistFindings(ctx, p.queries, run, mergeRequest, response.Result); err != nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist findings: %w", err))
+	}
+	if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
+		return scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: update run status: %w", err))
+	}
+
+	logger := logging.FromContext(ctx, p.logger)
+	logger.InfoContext(ctx, "provider review completed", "run_id", run.ID, "project_id", project.GitlabProjectID, "merge_request_iid", mergeRequest.MrIid, "provider_model", response.Model, "provider_latency_ms", response.Latency.Milliseconds(), "provider_tokens_total", response.Tokens, "gitlab_instance_url", redactURL(instance.Url), "request", redactPayload(payload), "response", redactPayload(response.ResponsePayload))
+	return nil
+}
+
+func (p *MiniMaxProvider) RequestPayload(request ctxpkg.ReviewRequest) map[string]any {
+	return map[string]any{"model": p.model, "max_tokens": p.maxTokens, "system": p.systemPrompt, "messages": []map[string]any{{"role": "user", "content": mustJSON(request)}}, "output_config": map[string]any{"format": map[string]any{"type": "json_schema", "name": "review_result", "schema": reviewResultSchema()}}}
+}
+
+func (p *MiniMaxProvider) Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
+	var lastErr error
+	maxAttempts := p.timeoutRetries
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		started := p.now()
+		message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{Model: anthropic.Model(p.model), MaxTokens: p.maxTokens, System: []anthropic.TextBlockParam{{Text: p.systemPrompt}}, Messages: []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))}, OutputConfig: anthropic.OutputConfigParam{Format: anthropic.JSONOutputFormatParam{Schema: reviewResultSchema()}}})
+		if err != nil {
+			lastErr = err
+			if !isTimeoutError(err) || attempt == maxAttempts-1 {
+				return ProviderResponse{}, err
+			}
+			if sleepErr := p.sleep(ctx, time.Duration(attempt+1)*50*time.Millisecond); sleepErr != nil {
+				return ProviderResponse{}, sleepErr
+			}
+			continue
+		}
+		text := collectMessageText(message)
+		result, stage, parseErr := ParseReviewResult(text)
+		if parseErr != nil {
+			return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, parseErr)
+		}
+		return ProviderResponse{Result: result, RawText: text, Latency: p.now().Sub(started), Tokens: int64(message.Usage.OutputTokens), FallbackStage: stage, Model: p.model, ResponsePayload: map[string]any{"text": text, "fallback_stage": stage}}, nil
+	}
+	return ProviderResponse{}, lastErr
+}
+
+func ParseReviewResult(raw string) (ReviewResult, string, error) {
+	stages := []struct {
+		name string
+		fn   func(string) (string, bool)
+	}{{name: "direct", fn: func(input string) (string, bool) { return input, strings.TrimSpace(input) != "" }}, {name: "marker_extraction", fn: extractMarkedJSON}, {name: "tolerant_repair", fn: tolerantRepairJSON}}
+	for _, stage := range stages {
+		candidate, ok := stage.fn(raw)
+		if !ok {
+			continue
+		}
+		var result ReviewResult
+		if err := json.Unmarshal([]byte(candidate), &result); err == nil {
+			if err := validateReviewResult(result); err != nil {
+				continue
+			}
+			if result.Status == "" {
+				result.Status = "completed"
+			}
+			return result, stage.name, nil
+		}
+	}
+	return ReviewResult{}, "", fmt.Errorf("llm: unable to parse provider response")
+}
+
+func validateReviewResult(result ReviewResult) error {
+	if strings.TrimSpace(result.SchemaVersion) == "" {
+		return fmt.Errorf("missing schema_version")
+	}
+	if strings.TrimSpace(result.ReviewRunID) == "" {
+		return fmt.Errorf("missing review_run_id")
+	}
+	if result.Status == parserErrorCode {
+		if result.SummaryNote == nil || strings.TrimSpace(result.SummaryNote.BodyMarkdown) == "" {
+			return fmt.Errorf("missing summary_note for parser_error")
+		}
+		return nil
+	}
+	for i, finding := range result.Findings {
+		if strings.TrimSpace(finding.Category) == "" || strings.TrimSpace(finding.Severity) == "" || strings.TrimSpace(finding.Title) == "" || strings.TrimSpace(finding.Path) == "" || strings.TrimSpace(finding.AnchorKind) == "" {
+			return fmt.Errorf("finding %d missing required fields", i)
+		}
+	}
+	return nil
+}
+
+func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, result ReviewResult) error {
+	for _, finding := range result.Findings {
+		var oldLine, newLine sql.NullInt32
+		if finding.OldLine != nil {
+			oldLine = sql.NullInt32{Int32: *finding.OldLine, Valid: true}
+		}
+		if finding.NewLine != nil {
+			newLine = sql.NullInt32{Int32: *finding.NewLine, Valid: true}
+		}
+		_, err := queries.InsertReviewFinding(ctx, db.InsertReviewFindingParams{ReviewRunID: run.ID, MergeRequestID: mr.ID, Category: finding.Category, Severity: finding.Severity, Confidence: finding.Confidence, Title: finding.Title, BodyMarkdown: nullableString(finding.BodyMarkdown), Path: finding.Path, AnchorKind: finding.AnchorKind, OldLine: oldLine, NewLine: newLine, AnchorSnippet: nullableString(finding.AnchorSnippet), Evidence: nullableString(strings.Join(finding.Evidence, "\n")), SuggestedPatch: nullableString(finding.SuggestedPatch), CanonicalKey: finding.CanonicalKey, AnchorFingerprint: "", SemanticFingerprint: "", State: "new"})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DBAuditLogger struct{ queries *db.Queries }
+
+func NewDBAuditLogger(sqlDB *sql.DB) *DBAuditLogger { return &DBAuditLogger{queries: db.New(sqlDB)} }
+
+func (l *DBAuditLogger) LogProviderCall(ctx context.Context, run db.ReviewRun, payload map[string]any, response ProviderResponse) error {
+	detail, _ := json.Marshal(map[string]any{"request": redactPayload(payload), "response": redactPayload(response.ResponsePayload), "provider_model": response.Model, "provider_latency_ms": response.Latency.Milliseconds(), "provider_tokens_total": response.Tokens, "fallback_stage": response.FallbackStage})
+	_, err := l.queries.InsertAuditLog(ctx, db.InsertAuditLogParams{EntityType: "review_run", EntityID: run.ID, Action: "provider_called", Actor: "system", Detail: detail})
+	return err
+}
+
+func (l *DBAuditLogger) LogProviderFailure(ctx context.Context, run db.ReviewRun, payload map[string]any, err error) error {
+	detail, _ := json.Marshal(map[string]any{"request": redactPayload(payload), "error": redactError(err)})
+	_, insertErr := l.queries.InsertAuditLog(ctx, db.InsertAuditLogParams{EntityType: "review_run", EntityID: run.ID, Action: "provider_failed", Actor: "system", Detail: detail, ErrorCode: providerRequestFailedCode})
+	return insertErr
+}
+
+func reviewResultSchema() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{"schema_version": map[string]any{"type": "string"}, "review_run_id": map[string]any{"type": "string"}, "status": map[string]any{"type": "string"}, "summary": map[string]any{"type": "string"}, "summary_note": map[string]any{"type": "object", "properties": map[string]any{"body_markdown": map[string]any{"type": "string"}}, "required": []string{"body_markdown"}, "additionalProperties": false}, "findings": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"category": map[string]any{"type": "string"}, "severity": map[string]any{"type": "string"}, "confidence": map[string]any{"type": "number"}, "title": map[string]any{"type": "string"}, "body_markdown": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"}, "anchor_kind": map[string]any{"type": "string"}, "old_line": map[string]any{"type": "integer"}, "new_line": map[string]any{"type": "integer"}, "anchor_snippet": map[string]any{"type": "string"}, "evidence": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "suggested_patch": map[string]any{"type": "string"}, "canonical_key": map[string]any{"type": "string"}, "symbol": map[string]any{"type": "string"}}, "required": []string{"category", "severity", "confidence", "title", "body_markdown", "path", "anchor_kind"}, "additionalProperties": false}}}, "required": []string{"schema_version", "review_run_id", "summary", "findings"}, "additionalProperties": false}
+}
+
+func extractMarkedJSON(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", false
+	}
+	start := strings.Index(trimmed, "```")
+	if start >= 0 {
+		body := trimmed[start+3:]
+		if strings.HasPrefix(body, "json") {
+			body = strings.TrimPrefix(body, "json")
+		}
+		end := strings.Index(body, "```")
+		if end >= 0 {
+			return strings.TrimSpace(body[:end]), true
+		}
+	}
+	start = strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start >= 0 && end > start {
+		return strings.TrimSpace(trimmed[start : end+1]), true
+	}
+	return "", false
+}
+
+func tolerantRepairJSON(raw string) (string, bool) {
+	candidate, ok := extractMarkedJSON(raw)
+	if !ok {
+		candidate = strings.TrimSpace(raw)
+	}
+	if candidate == "" {
+		return "", false
+	}
+	candidate = strings.ReplaceAll(candidate, "\t", " ")
+	candidate = strings.ReplaceAll(candidate, ",]", "]")
+	candidate = strings.ReplaceAll(candidate, ",}", "}")
+	open := strings.Count(candidate, "{") - strings.Count(candidate, "}")
+	for open > 0 {
+		candidate += "}"
+		open--
+	}
+	return candidate, true
+}
+
+func collectMessageText(message *anthropic.Message) string {
+	if message == nil {
+		return ""
+	}
+	var parts []string
+	for _, block := range message.Content {
+		if tb, ok := block.AsAny().(anthropic.TextBlock); ok {
+			parts = append(parts, tb.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func mustJSON(v any) string { data, _ := json.Marshal(v); return string(data) }
+
+func redactPayload(payload map[string]any) map[string]any {
+	data, _ := json.Marshal(payload)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
+		return map[string]any{"redacted": true}
+	}
+	return redactValue(normalized).(map[string]any)
+}
+
+func redactValue(v any) any {
+	switch value := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(value))
+		for k, item := range value {
+			lower := strings.ToLower(k)
+			switch {
+			case strings.Contains(lower, "api_key"), strings.Contains(lower, "authorization"), strings.Contains(lower, "token"), strings.Contains(lower, "cookie"):
+				out[k] = "[REDACTED]"
+			case lower == "content":
+				out[k] = "[OMITTED]"
+			default:
+				out[k] = redactValue(item)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(value))
+		for i, item := range value {
+			out[i] = redactValue(item)
+		}
+		return out
+	case string:
+		if len(value) > 256 {
+			return value[:256] + "...[truncated]"
+		}
+		return value
+	default:
+		return value
+	}
+}
+
+func redactError(err error) map[string]any {
+	return map[string]any{"message": err.Error(), "timeout": isTimeoutError(err)}
+}
+
+func redactURL(raw string) string { return strings.TrimRight(raw, "/") }
+
+func nullableString(value string) sql.NullString {
+	if strings.TrimSpace(value) == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: value, Valid: true}
+}
+
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	t := time.NewTimer(delay)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
