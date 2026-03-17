@@ -1,22 +1,15 @@
 {
   "featureId": "finding-anchor-kind-canonicalization-hardening",
-  "reviewedAt": "2026-03-17T22:16:39.389792Z",
-  "commitId": "485400692bec75af63f23f4614d6865da8622ae6",
+  "reviewedAt": "2026-03-17T23:37:55Z",
+  "commitId": "b854f34f24fca6afe4390c274cb324ac9800bcfe",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The change correctly canonicalizes legacy anchor labels and adds regression coverage for empty anchor kinds and deleted-file lifecycle handling, but it introduces a blocking lifecycle regression: deleted-file reruns no longer fix previously matched findings once those findings already have last_seen_run_id set from an earlier rerun.",
-    "issues": [
-      {
-        "file": "internal/llm/provider.go",
-        "line": 534,
-        "severity": "blocking",
-        "description": "`transitionMissingFinding` now returns early when `current.LastSeenRunID.Valid` before checking `reviewedPaths`, so a finding that persisted across one rerun and later disappears on a reviewed path is no longer transitioned to `fixed`. The feature changed deleted-file processing to populate `reviewedPaths` instead of calling `markDeletedPathMatches`, but without removing this early return, previously-seen findings on the deleted path remain active/stale instead of fixing. This breaks the requirement to preserve deleted-file fixes after canonicalization changes for findings that had already been carried forward via `last_seen_run_id`."
-      }
-    ]
+    "summary": "Reviewed the original anchor-kind canonicalization change and the follow-up fix. The original canonicalization logic correctly unifies legacy/current provider anchor labels, and the fix removes the early-return lifecycle hole so previously carried-forward findings now transition correctly when a reviewed path comes back clean or a canonicalized deleted-path finding disappears.",
+    "issues": []
   },
   "sharedStateObservations": [],
-  "addressesFailureFrom": null,
-  "summary": "Reviewed the feature handoff, transcript skeleton, commit 485400692bec75af63f23f4614d6865da8622ae6, and the relevant mission/shared-state files. The anchor canonicalization itself looks correct, but the persistence logic still fails a real deleted-file/fixed transition scenario once an existing finding already has `last_seen_run_id`, so this review fails with one blocking issue."
+  "addressesFailureFrom": ".factory/validation/finding-engine/scrutiny/reviews/finding-anchor-kind-canonicalization-hardening.json",
+  "summary": "Reviewed both commits, both handoffs, and both transcript skeletons for the original feature and its fix. The fix in internal/llm/provider.go now checks reviewed/deleted scope before bailing out on existing last_seen_run_id values, and the new DB-backed regressions cover the exact reviewed-clean and deleted-path carry-forward scenarios from the prior failure, so this review now passes."
 }
