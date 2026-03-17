@@ -1,0 +1,34 @@
+{
+  "featureId": "ingress-scheduler-and-retries",
+  "reviewedAt": "2026-03-17T03:36:13.119209+00:00",
+  "commitId": "3682c71",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The scheduler claim path, bounded backoff, and concurrency tests are solid, but the feature is not safe around MR cancellation: retry-scheduled runs are not cancelled on close/merge, and in-flight cancellations can be overwritten back to completed/failed after the processor returns.",
+    "issues": [
+      {
+        "file": "internal/runs/service.go",
+        "line": 219,
+        "severity": "blocking",
+        "description": "Close/merge cancellation only updates rows currently in `pending` or `running`, but the scheduler treats `status='failed'` rows with a due `next_retry_at` as claimable work (`internal/db/queries/review_runs.sql:13-16,70-73`). After this feature adds retry scheduling, a run that temporarily fails and is waiting for retry survives MR close/merge and can still be claimed and processed on a closed or merged MR."
+      },
+      {
+        "file": "internal/scheduler/service.go",
+        "line": 269,
+        "severity": "blocking",
+        "description": "After `ProcessRun` returns, the scheduler unconditionally marks the row `completed` or `failed` (`internal/scheduler/service.go:269-317`; `internal/db/queries/review_runs.sql:42-68`) without checking whether another path has already cancelled the run. If a close/merge event cancels a running run via `CancelPendingRunsForMR` while work is in flight (`internal/db/queries/review_runs.sql:70-73`), the worker can overwrite `cancelled` and allow downstream work to finish anyway."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The shared guidance does not explicitly call out that retry-scheduled runs are represented as `status='failed'` plus `next_retry_at`, i.e. still-active work that lifecycle code must treat like pending work for cancellation and orchestration decisions.",
+      "evidence": "`validation-contract.md` requires retryable failures with backoff (VAL-INGRESS-014); `internal/db/queries/review_runs.sql:13-16` makes those rows claimable, but `internal/db/queries/review_runs.sql:70-73` / `internal/runs/service.go:219` only cancel `pending` and `running` rows."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail. The feature correctly adds atomic claiming and retry scheduling, but two blocking cancellation gaps remain: retry-scheduled failed runs are not cancelled on MR close/merge, and an in-flight cancelled run can be overwritten back to completed/failed by the scheduler. Review report written for commit 3682c71."
+}

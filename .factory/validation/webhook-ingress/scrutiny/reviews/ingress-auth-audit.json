@@ -1,0 +1,28 @@
+{
+  "featureId": "ingress-auth-audit",
+  "reviewedAt": "2026-03-17T03:37:25Z",
+  "commitId": "b9b236149e3d2e8398f3637d7d9d94c78b6e545c",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature covers the main happy-path auth, malformed JSON, duplicate-delivery, and audit scenarios with solid handler tests, but one core ingress guarantee is not reliable for the repo's stated GitLab target: delivery-key extraction only recognizes `X-Gitlab-Delivery` and the older `X-Gitlab-Event-UUID` fallback. On GitLab 16.4+ installs that send `X-Gitlab-Webhook-UUID`, the handler falls back to a synthetic key, so replayed deliveries are no longer deduplicated by GitLab's real delivery identifier and audit rows lose the upstream key.",
+    "issues": [
+      {
+        "file": "internal/hooks/handler.go",
+        "line": 238,
+        "severity": "blocking",
+        "description": "`extractDeliveryKey` only checks `X-Gitlab-Delivery` and `X-Gitlab-Event-UUID`. The repo's shared integration guidance targets self-managed GitLab `16.4+` (`.factory/library/integrations.md:11`), where GitLab documents `X-Gitlab-Webhook-UUID` as the webhook UUID header. When a target instance sends that modern header without `X-Gitlab-Delivery`, this code generates a `synthetic-*` key instead of preserving GitLab's delivery ID, which breaks the feature's promised delivery-key deduplication/audit correlation. The tests also never exercise this fallback path: `internal/hooks/handler_test.go` only posts requests with `X-Gitlab-Delivery`."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The shared GitLab integration notes should explicitly document which webhook delivery headers must be honored for the mission's supported GitLab versions (`X-Gitlab-Delivery`, `X-Gitlab-Webhook-UUID`, and any legacy fallbacks). Without that guidance, the ingress feature implemented delivery-key extraction against a stale header name and the tests only covered the easiest header path.",
+      "evidence": "`.factory/library/integrations.md` targets self-managed GitLab `16.4+` but does not mention webhook delivery headers, while `internal/hooks/handler.go:234-240` only reads `X-Gitlab-Delivery` / `X-Gitlab-Event-UUID`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail: the ingress auth/audit handler is otherwise well covered, but delivery-key extraction is incomplete for the repo's stated GitLab target, so deduplication and audit correlation are not dependable across supported webhook deliveries. Review based on the feature diff, current code, handoff, shared-state docs, and transcript skeleton."
+}

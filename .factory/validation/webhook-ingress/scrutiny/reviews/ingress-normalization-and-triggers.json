@@ -1,0 +1,39 @@
+{
+  "featureId": "ingress-normalization-and-triggers",
+  "reviewedAt": "2026-03-17T03:37:33Z",
+  "commitId": "67bb3e6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds a useful NormalizedEvent model and strong unit coverage, but two required behaviors are still incomplete in the runtime path: actual group-hook deliveries are never identified as group-sourced, and deferred head-SHA handling is only logged instead of being carried forward for lookup.",
+    "issues": [
+      {
+        "file": "internal/hooks/handler.go",
+        "line": 361,
+        "severity": "blocking",
+        "description": "detectHookSource can only return \"system\" or the default \"project\", so real group webhooks never reach normalization as hook_source=\"group\". The added tests pass because they call NormalizeWebhook(..., \"group\") directly, but the actual ingress path records every non-system MR webhook as project-originated, so the feature does not fully normalize project/group/system sources in production."
+      },
+      {
+        "file": "internal/runs/service.go",
+        "line": 81,
+        "severity": "blocking",
+        "description": "Missing head SHA is not actually preserved for deferred lookup beyond the in-memory NormalizedEvent. ProcessEventWithQuerier passes the event through, but createPendingRun persists only ev.HeadSHA and ev.IdempotencyKey (lines 128-136) while no schema or downstream code stores or uses HeadSHADeferred. That means missing-SHA events cannot be resolved later as required by VAL-INGRESS-012, and multiple distinct missing-SHA triggers for the same MR collapse onto the same synthetic \"deferred\" idempotency key."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The go-backend skill says to write failing tests before implementation, but this worker created internal/hooks/normalize.go before internal/hooks/normalize_test.go while still marking skillFeedback.followedProcedure=true. The skill or review expectations should make this easier to audit consistently.",
+      "evidence": "go-backend SKILL.md step 3 says \"Write failing tests first\"; the transcript skeleton for worker session 9767e65b-04ee-4376-b421-a2c9e74831b7 shows Create /Users/chris/workspace/mreviewer/internal/hooks/normalize.go before Create /Users/chris/workspace/mreviewer/internal/hooks/normalize_test.go."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The shared library does not record that project and group MR webhooks use the same X-Gitlab-Event: Merge Request Hook header, so source attribution needs another signal if the system must distinguish them. The worker rediscovered this during implementation and the runtime code currently defaults those events to project.",
+      "evidence": "gitlab-mr-review-system-docs/gitlab-api-reference.md:484-486 documents a shared header for project/group MR webhooks; internal/hooks/handler.go:361-368 defaults every non-system hook to project; the transcript skeleton explicitly notes that GitLab does not distinguish group from project hooks by header alone."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail. The normalization layer and tests are substantial, but the runtime ingress path still cannot emit real group-originated events and it drops deferred head-SHA intent before any lookup can happen, so the feature does not fully meet its expected behavior."
+}

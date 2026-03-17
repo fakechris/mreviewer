@@ -35,5 +35,6 @@ Architectural decisions and implementation patterns for this mission.
 
 - Use transaction boundaries for multi-row state changes.
 - Favor DB-backed correctness over Redis-backed coordination.
+- Retry-scheduled runs remain active work: `review_runs.status='failed'` with a due `next_retry_at` is still claimable by the scheduler, so lifecycle/cancellation logic must treat those rows like pending work until retries are exhausted or the run is cancelled.
 - All writeback actions must be idempotent and auditable.
 - Keep machine-readable error codes for parser, anchor, provider, and writer failures.

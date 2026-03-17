@@ -1,0 +1,34 @@
+{
+  "featureId": "ingress-run-lifecycle",
+  "reviewedAt": "2026-03-17T03:36:05Z",
+  "commitId": "1ef12114741adc29a6157b40fc0402aae032e9c3",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature correctly wires webhook intake to create/cancel review_runs atomically with hook_events and covers the open/update/close/merge/replay paths with good tests, but one intended behavior is still unmet: cancelling a running run does not stop downstream processing, so a cancelled run can still finish and be marked completed. I also found a smaller state-tracking issue where close/merge events can erase the stored MR head SHA when GitLab omits last_commit.id.",
+    "issues": [
+      {
+        "file": "internal/scheduler/service.go",
+        "line": 266,
+        "severity": "blocking",
+        "description": "Close/merge events now mark running rows as cancelled (`internal/db/queries/review_runs.sql:70-73`), but the worker path never re-checks that status before continuing. `processClaimedRun` calls `s.processor.ProcessRun(ctx, run)` and then unconditionally marks the same row completed on success, so a run cancelled while already running can still proceed into downstream writeback/comment work and overwrite the cancelled state. That violates the feature's expected behavior that cancelled runs do not continue into comment-writing work."
+      },
+      {
+        "file": "internal/runs/service.go",
+        "line": 210,
+        "severity": "non_blocking",
+        "description": "`cancelRuns` always writes `merge_requests.head_sha = ev.HeadSHA` when closing/merging. `NormalizedEvent` explicitly allows missing `last_commit.id` via `HeadSHADeferred`/empty `HeadSHA` (`internal/hooks/normalize.go:35-43,141-164`), so close/merge payloads without `last_commit` will blank out a previously known MR HEAD SHA instead of preserving it. That weakens later lifecycle state for no benefit."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `go-integration` skill should mention that webhook/adapter integration tests may need an external `*_test` package when the adapter under test depends on another package that already imports the current package; otherwise workers can hit an avoidable import-cycle trap while following the prescribed handler-test-first workflow.",
+      "evidence": "The feature's handoff sets `skillFeedback.followedProcedure=false` and explains the deviation: handler lifecycle coverage had to move into `internal/hooks/handler_lifecycle_integration_test.go` (`package hooks_test`) because importing `internal/runs` from the existing in-package handler tests created an import cycle."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail: webhook-triggered run creation/cancellation is mostly implemented well, but running runs are only relabeled in the database and can still complete downstream work, so the lifecycle is not fully enforced end-to-end. Review written from the feature diff, current code, handoff, and transcript skeleton."
+}

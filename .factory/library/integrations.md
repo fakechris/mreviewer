@@ -9,6 +9,8 @@ External integration notes for GitLab and the LLM provider.
 ## GitLab
 
 - Target: self-managed GitLab `16.4+`
+- Webhook delivery correlation should honor `X-Gitlab-Delivery` and `X-Gitlab-Webhook-UUID`; accept `X-Gitlab-Event-UUID` only as a legacy fallback when older installations send it.
+- Project and group merge-request webhooks both use `X-Gitlab-Event: Merge Request Hook`, so source attribution cannot rely on that header alone.
 - Use MR versions endpoint for diff discussion SHAs; do not trust MR `diff_refs` for writer positioning.
 - Diff listing is paginated.
 - `diff_refs` / versions may be temporarily unavailable immediately after MR creation.
