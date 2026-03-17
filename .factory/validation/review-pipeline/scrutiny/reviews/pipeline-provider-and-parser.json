@@ -1,40 +1,15 @@
 {
   "featureId": "pipeline-provider-and-parser",
-  "reviewedAt": "2026-03-17T08:24:54.657396Z",
-  "commitId": "0cd5a87c2f30971bb212b506e33a7b8eac507ba4",
+  "reviewedAt": "2026-03-17T09:24:37Z",
+  "commitId": "5e15737ae042d3ecb82075a6994fcc0cf12bd4a1",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The feature wires a real MiniMax-backed processor into the worker and covers basic request, parsing, retry, and audit paths, but two milestone requirements are still not met: successful runs drop provider latency/token telemetry, and parser failures are surfaced as terminal run errors instead of producing the required parser-error result path.",
-    "issues": [
-      {
-        "file": "internal/llm/provider.go",
-        "line": 248,
-        "severity": "blocking",
-        "description": "`ProcessRun` updates the run with `UpdateReviewRunStatus`, which only writes `status`, `error_code`, and `error_detail`. The scheduler later marks the run completed with `provider_latency_ms=0` and `provider_tokens_total=0`, so successful provider executions never persist the actual latency/token metrics captured in `response.Latency` and `response.Tokens`. This breaks the feature requirement to preserve provider execution details after the real review pipeline runs."
-      },
-      {
-        "file": "internal/llm/provider.go",
-        "line": 283,
-        "severity": "blocking",
-        "description": "When provider JSON cannot be recovered, `MiniMaxProvider.Review` returns `scheduler.NewTerminalError(parser_error, parseErr)`. `ProcessRun` treats that as a generic provider failure and the scheduler marks the run failed, instead of returning a structured `ReviewResult` with `status=parser_error` / `summary_note` so downstream fallback handling can emit the parser-error note required by the milestone."
-      },
-      {
-        "file": "internal/llm/provider_test.go",
-        "line": 97,
-        "severity": "non_blocking",
-        "description": "The parser fallback tests stop at asserting `ParseReviewResult` returns an error for unrecoverable input; there is no processor- or scheduler-level test proving parser failures become the expected parser-error review result rather than a failed run. This gap allowed the missing parser fallback behavior to ship."
-      }
-    ]
+    "summary": "Reviewed the original feature commit plus the follow-up hardening commit. The prior blocking gaps are addressed: scheduler completion now persists processor-supplied provider latency/token metrics, and unrecoverable parser failures are converted into structured `parser_error` outcomes that enqueue a single summary-note fallback instead of failing the run.",
+    "issues": []
   },
-  "sharedStateObservations": [
-    {
-      "area": "knowledge",
-      "observation": "The worker now hard-codes platform defaults (`IncludePaths: [\"src/**\"]`, `ExcludePaths: [\"vendor/**\"]`, confidence/severity thresholds, provider route) directly in `cmd/worker/main.go`, but the shared library/service docs only mention that platform defaults exist, not where runtime defaults are currently sourced from. Future workers could easily miss that the live worker is enforcing these hard-coded review-scope defaults.",
-      "evidence": "cmd/worker/main.go:47-55 constructs `rules.PlatformDefaults` inline; .factory/library/integrations.md only says MiniMax uses Anthropic-compatible API semantics and omits this runtime default-policy location."
-    }
-  ],
-  "addressesFailureFrom": null,
-  "summary": "Reviewed commit `0cd5a87c2f30971bb212b506e33a7b8eac507ba4`, the handoff, transcript skeleton, worker skill, and the llm/worker diff. The implementation is close, but it does not persist actual provider latency/token metrics on success and it handles unrecoverable parser failures as failed runs instead of the milestone\u2019s required parser-error result path, so the feature should not pass scrutiny yet."
+  "sharedStateObservations": [],
+  "addressesFailureFrom": ".factory/validation/review-pipeline/scrutiny/reviews/pipeline-provider-and-parser.json",
+  "summary": "Re-reviewed `pipeline-provider-and-parser` against the prior failed scrutiny report and the fix commit `5e15737ae042d3ecb82075a6994fcc0cf12bd4a1`. Current llm/scheduler integration now carries successful provider metrics through `scheduler.ProcessOutcome` into persisted `review_runs`, and parser failures now land on a structured `parser_error` path with a pending `summary_note` fallback action and no inline findings. Diff, transcript skeleton, handoffs, skill guidance, and shared-state files were checked; no remaining feature-scoped issues were found."
 }

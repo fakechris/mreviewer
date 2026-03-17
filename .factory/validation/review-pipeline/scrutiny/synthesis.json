@@ -1,7 +1,7 @@
 {
   "milestone": "review-pipeline",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
@@ -21,59 +21,13 @@
   },
   "reviewsSummary": {
     "total": 4,
-    "passed": 0,
-    "failed": 4,
-    "failedFeatures": [
-      "pipeline-context-assembly",
-      "pipeline-gitlab-readers",
-      "pipeline-provider-and-parser",
-      "pipeline-rules-and-trust-boundary"
-    ]
+    "passed": 4,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "pipeline-context-assembly",
-      "severity": "blocking",
-      "description": "LoadHistoricalContext fetches the latest discussion by finding ID without checking that the returned discussion belongs to the same merge request being assembled. Because gitlab_discussions stores merge_request_id and GetGitlabDiscussionByFinding orders by created_at DESC globally, a superseded or reused finding can pull discussion metadata from another MR into the outbound historical context, violating the feature requirement to attach the relevant active bot context for the current MR only."
-    },
-    {
-      "featureId": "pipeline-gitlab-readers",
-      "severity": "blocking",
-      "description": "`GetMergeRequestVersions` returns `versions[0]` without comparing version IDs or timestamps, so it only works if the GitLab API happens to return newest-first. The feature requires selecting the latest MR version. If GitLab returns ascending order or any non-newest-first ordering, the reader will extract stale base/start/head/patch SHAs and the rest of the pipeline will operate on the wrong diff version. `TestGetMergeRequestVersions` only covers a newest-first fixture, so this regression is untested."
-    },
-    {
-      "featureId": "pipeline-provider-and-parser",
-      "severity": "blocking",
-      "description": "`ProcessRun` updates the run with `UpdateReviewRunStatus`, which only writes `status`, `error_code`, and `error_detail`. The scheduler later marks the run completed with `provider_latency_ms=0` and `provider_tokens_total=0`, so successful provider executions never persist the actual latency/token metrics captured in `response.Latency` and `response.Tokens`. This breaks the feature requirement to preserve provider execution details after the real review pipeline runs."
-    },
-    {
-      "featureId": "pipeline-provider-and-parser",
-      "severity": "blocking",
-      "description": "When provider JSON cannot be recovered, `MiniMaxProvider.Review` returns `scheduler.NewTerminalError(parser_error, parseErr)`. `ProcessRun` treats that as a generic provider failure and the scheduler marks the run failed, instead of returning a structured `ReviewResult` with `status=parser_error` / `summary_note` so downstream fallback handling can emit the parser-error note required by the milestone."
-    },
-    {
-      "featureId": "pipeline-rules-and-trust-boundary",
-      "severity": "blocking",
-      "description": "mergeEffectivePolicy seeds ContextLinesBefore/After and MaxChangedLines/MaxFiles from SettingsFromPolicy(project) before checking whether project is nil. For repositories with no project policy, SettingsFromPolicy(nil) returns global defaults (20/20/2500/80), so the loader overwrites any platform-specified limits with unrelated context-package defaults. The same bug also drops platform-provided extra-based limits whenever a project policy exists but does not override them. This violates the required platform-defaults/project-policy merge behavior and can expand outbound review scope beyond configured trusted defaults."
-    }
-  ],
-  "appliedUpdates": [
-    {
-      "target": "library",
-      "description": "Updated `.factory/library/integrations.md` to record that the live worker currently seeds platform review defaults in `cmd/worker/main.go`, so future workers know where runtime default policy values come from.",
-      "sourceFeature": "pipeline-provider-and-parser"
-    }
-  ],
+  "blockingIssues": [],
+  "appliedUpdates": [],
   "suggestedGuidanceUpdates": [],
-  "rejectedObservations": [
-    {
-      "observation": "The new context-assembly package relies on current gitlab_discussions semantics but there is no shared-state note that discussion lookups are currently keyed only by finding ID and latest created_at, not by merge request. Future workers touching historical context could repeat this assumption.",
-      "reason": "ambiguous"
-    },
-    {
-      "observation": "PlatformDefaults exposes Extra plus rule-scope limit fields, but the current rules-loader implementation does not document how platform-level context/max-file defaults should map into EffectivePolicy. The worker implemented merge logic that fell back to internal/context package defaults instead of preserving platform values, suggesting this precedence rule is not captured clearly in shared guidance.",
-      "reason": "ambiguous"
-    }
-  ],
-  "previousRound": null
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/review-pipeline/scrutiny/synthesis.json"
 }

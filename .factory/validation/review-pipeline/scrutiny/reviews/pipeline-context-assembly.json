@@ -1,34 +1,15 @@
 {
   "featureId": "pipeline-context-assembly",
-  "reviewedAt": "2026-03-17T08:24:31.305495Z",
-  "commitId": "c964a9de094235ac9b26c91e0f8133d5e4245c9d",
+  "reviewedAt": "2026-03-17T09:24:44.731560Z",
+  "commitId": "329c68486e5efa6a59e899e8b980a2f0ff4234d5",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The feature adds a focused context assembler with broad unit coverage, but two correctness gaps remain: historical discussion metadata can be attached from the wrong MR, and truncated diff accounting can under-review large diffs because the tests only cover alternating +/- lines rather than additions-heavy patches.",
-    "issues": [
-      {
-        "file": "internal/context/assembler.go",
-        "line": 232,
-        "severity": "blocking",
-        "description": "LoadHistoricalContext fetches the latest discussion by finding ID without checking that the returned discussion belongs to the same merge request being assembled. Because gitlab_discussions stores merge_request_id and GetGitlabDiscussionByFinding orders by created_at DESC globally, a superseded or reused finding can pull discussion metadata from another MR into the outbound historical context, violating the feature requirement to attach the relevant active bot context for the current MR only."
-      },
-      {
-        "file": "internal/context/assembler.go",
-        "line": 286,
-        "severity": "non_blocking",
-        "description": "Large-diff truncation counts changed lines as every +/- patch line, but the surrounding tests only use sampleDiffWithChangedLines with alternating deletions and additions. That misses the common additions-only case, where one added line increments the budget by 1 while the hunk header new-line span also grows, so there is no coverage that truncation preserves deterministic file selection and patch integrity for pure-addition or pure-deletion hunks near the max_changed_lines boundary."
-      }
-    ]
+    "summary": "The original context-assembly feature plus the MR-scoping hardening now satisfy the historical-context requirement. Historical discussion metadata is looked up by both merge request and finding before attachment, and regression coverage proves reused findings cannot leak discussion state from another MR.",
+    "issues": []
   },
-  "sharedStateObservations": [
-    {
-      "area": "knowledge",
-      "observation": "The new context-assembly package relies on current gitlab_discussions semantics but there is no shared-state note that discussion lookups are currently keyed only by finding ID and latest created_at, not by merge request. Future workers touching historical context could repeat this assumption.",
-      "evidence": "internal/db/queries/gitlab_discussions.sql:9-13 defines GetGitlabDiscussionByFinding as the newest row for a finding ID only; internal/context/assembler.go:232-240 consumes it directly while assembling MR-scoped historical context."
-    }
-  ],
-  "addressesFailureFrom": null,
-  "summary": "Reviewed commit c964a9de094235ac9b26c91e0f8133d5e4245c9d, the worker handoff, transcript skeleton, go-backend skill, and shared-state docs. The implementation mostly matches the feature goals, but I found one blocking MR-scoping bug in historical discussion attachment and one non-blocking gap in truncation edge-case coverage."
+  "sharedStateObservations": [],
+  "addressesFailureFrom": ".factory/validation/review-pipeline/scrutiny/reviews/pipeline-context-assembly.json",
+  "summary": "Reviewed the original context-assembly commit, the MR-scoping hardening commit, the prior failed review, handoffs, transcript skeleton, and go-backend skill. The prior blocking failure is fixed: historical bot context is now scoped to the current merge request via a merge_request_id + review_finding_id lookup, and the new regression test demonstrates cross-MR finding reuse no longer leaks discussion metadata."
 }
