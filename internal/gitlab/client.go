@@ -27,6 +27,7 @@ const (
 )
 
 var ErrDiffNotReady = errors.New("gitlab: diff not ready")
+var ErrFileNotFound = errors.New("gitlab: repository file not found")
 
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -347,6 +348,45 @@ func (c *Client) GetMergeRequestSnapshot(ctx context.Context, projectID, mergeRe
 			return MergeRequestSnapshot{}, err
 		}
 	}
+}
+
+func (c *Client) GetRepositoryFile(ctx context.Context, projectID int64, filePath, ref string) (string, error) {
+	query := url.Values{}
+	if strings.TrimSpace(ref) != "" {
+		query.Set("ref", ref)
+	}
+	requestURL, err := c.buildURL(fmt.Sprintf("/api/v4/projects/%s/repository/files/%s/raw", url.PathEscape(strconv.FormatInt(projectID, 10)), url.PathEscape(filePath)), query)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("gitlab: build GET %s: %w", requestURL, err)
+	}
+	if c.token != "" {
+		req.Header.Set("PRIVATE-TOKEN", c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gitlab: GET %s: %w", requestURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return "", ErrFileNotFound
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", &HTTPStatusError{Method: http.MethodGet, URL: requestURL, StatusCode: resp.StatusCode, Body: readBodyPreview(resp.Body)}
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("gitlab: read GET %s response: %w", requestURL, err)
+	}
+	return string(data), nil
 }
 
 func (c *Client) doJSON(ctx context.Context, method, apiPath string, query url.Values, dest any) (http.Header, error) {
