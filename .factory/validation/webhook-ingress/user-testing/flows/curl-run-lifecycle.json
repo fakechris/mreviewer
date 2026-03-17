@@ -1,0 +1,323 @@
+{
+  "groupId": "curl-run-lifecycle",
+  "surface": "api",
+  "testedAt": "2026-03-17T04:59:42.652763+00:00",
+  "isolation": {
+    "apiBaseUrl": "http://127.0.0.1:3100",
+    "mysql": "mreviewer on 127.0.0.1:3306 via docker exec mreviewer-mysql",
+    "identifierPrefix": "curl-run-lifecycle",
+    "evidenceDir": "/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle",
+    "webhookTokenUsed": "test-secret",
+    "projectIds": [
+      992301,
+      992302,
+      992303
+    ],
+    "mrIIDs": [
+      7301,
+      7302,
+      7303
+    ]
+  },
+  "toolsUsed": [
+    "curl",
+    "docker exec mysql",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-INGRESS-003",
+      "title": "MR open event creates review run",
+      "status": "pass",
+      "reason": "The open webhook returned 200 accepted and persisted both a hook_events row and a pending review_runs row for MR 7301.",
+      "evidence": {
+        "deliveryKey": "curl-run-lifecycle-open-003-001",
+        "curl": {
+          "status": 200,
+          "body": {
+            "status": "accepted"
+          },
+          "headersFile": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003.headers.txt",
+          "bodyFile": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003.body.json"
+        },
+        "hookEvents": {
+          "file": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003-004-hook-events.txt",
+          "matchedRows": [
+            {
+              "id": 8,
+              "action": "open",
+              "mr_iid": 7301,
+              "head_sha": "curlrunlife003open0000000000000000000001",
+              "event_type": "Merge Request Hook",
+              "project_id": 992301,
+              "delivery_key": "curl-run-lifecycle-open-003-001",
+              "verification_outcome": "verified"
+            }
+          ]
+        },
+        "reviewRuns": {
+          "file": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003-004-review-runs.txt",
+          "matchedRows": [
+            {
+              "id": 6,
+              "status": "pending",
+              "head_sha": "curlrunlife003open0000000000000000000001",
+              "started_at": null,
+              "completed_at": null,
+              "trigger_type": "webhook",
+              "hook_event_id": 8,
+              "idempotency_key": "365bc9a1ccaebfce486f82fa1a3f4f3c"
+            }
+          ]
+        },
+        "payload": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003-open.json"
+      }
+    },
+    {
+      "id": "VAL-INGRESS-004",
+      "title": "MR update with new commit creates review run",
+      "status": "pass",
+      "reason": "The update webhook returned 200 accepted and added a second pending review_run for the new head SHA on the same MR.",
+      "evidence": {
+        "deliveryKey": "curl-run-lifecycle-update-004-001",
+        "curl": {
+          "status": 200,
+          "body": {
+            "status": "accepted"
+          },
+          "headersFile": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-004.headers.txt",
+          "bodyFile": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-004.body.json"
+        },
+        "hookEvents": {
+          "file": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003-004-hook-events.txt",
+          "matchedRows": [
+            {
+              "id": 9,
+              "action": "update",
+              "mr_iid": 7301,
+              "head_sha": "curlrunlife004update000000000000000001",
+              "event_type": "Merge Request Hook",
+              "project_id": 992301,
+              "delivery_key": "curl-run-lifecycle-update-004-001",
+              "verification_outcome": "verified"
+            }
+          ]
+        },
+        "reviewRuns": {
+          "file": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003-004-review-runs.txt",
+          "allRows": [
+            {
+              "id": 6,
+              "status": "pending",
+              "head_sha": "curlrunlife003open0000000000000000000001",
+              "started_at": null,
+              "completed_at": null,
+              "trigger_type": "webhook",
+              "hook_event_id": 8,
+              "idempotency_key": "365bc9a1ccaebfce486f82fa1a3f4f3c"
+            },
+            {
+              "id": 7,
+              "status": "pending",
+              "head_sha": "curlrunlife004update000000000000000001",
+              "started_at": null,
+              "completed_at": null,
+              "trigger_type": "webhook",
+              "hook_event_id": 9,
+              "idempotency_key": "857e88ae69d61a843db74ddaf2854d5a"
+            }
+          ]
+        },
+        "payload": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-004-update.json"
+      }
+    },
+    {
+      "id": "VAL-INGRESS-005",
+      "title": "MR close/merge event terminates active runs",
+      "status": "pass",
+      "reason": "Both close and merge webhooks returned 200 accepted and flipped one seeded running row plus one pending row for their MR to cancelled while updating merge_requests.state to closed/merged.",
+      "evidence": {
+        "closeCase": {
+          "deliveryKey": "curl-run-lifecycle-close-005-001",
+          "curl": {
+            "status": 200,
+            "body": {
+              "status": "accepted"
+            },
+            "headersFile": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close.headers.txt",
+            "bodyFile": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close.body.json"
+          },
+          "seededRunsBeforeClose": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-seeded-runs.txt",
+          "hookEvents": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-hook-events.txt",
+          "reviewRunsAfterClose": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-review-runs.txt",
+          "mergeRequest": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-merge-request.txt",
+          "payloads": [
+            "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-open.json",
+            "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-update.json",
+            "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close.json"
+          ],
+          "observedRuns": [
+            {
+              "id": 8,
+              "status": "cancelled",
+              "head_sha": "curlrunlife005closeopen0000000000000001",
+              "started_at": "2026-03-17 04:58:32.000000",
+              "updated_at": "2026-03-17 04:58:32.000000",
+              "completed_at": null,
+              "idempotency_key": "31178b5c0601b8b54d51e27010c15d91"
+            },
+            {
+              "id": 9,
+              "status": "cancelled",
+              "head_sha": "curlrunlife005closeupdate00000000000001",
+              "started_at": null,
+              "updated_at": "2026-03-17 04:58:32.000000",
+              "completed_at": null,
+              "idempotency_key": "536c89ba21748fe0f6dd6104ba40408b"
+            }
+          ],
+          "observedMergeRequest": [
+            {
+              "id": 9,
+              "state": "closed",
+              "head_sha": "curlrunlife005closeupdate00000000000001",
+              "updated_at": "2026-03-17 04:58:32.000000"
+            }
+          ]
+        },
+        "mergeCase": {
+          "deliveryKey": "curl-run-lifecycle-merge-005-001",
+          "curl": {
+            "status": 200,
+            "body": {
+              "status": "accepted"
+            },
+            "headersFile": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge.headers.txt",
+            "bodyFile": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge.body.json"
+          },
+          "seededRunsBeforeMerge": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-seeded-runs.txt",
+          "hookEvents": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-hook-events.txt",
+          "reviewRunsAfterMerge": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-review-runs.txt",
+          "mergeRequest": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-merge-request.txt",
+          "payloads": [
+            "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-open.json",
+            "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-update.json",
+            "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge.json"
+          ],
+          "observedRuns": [
+            {
+              "id": 10,
+              "status": "cancelled",
+              "head_sha": "curlrunlife005mergeopen0000000000000001",
+              "started_at": "2026-03-17 04:58:36.000000",
+              "updated_at": "2026-03-17 04:58:36.000000",
+              "completed_at": null,
+              "idempotency_key": "25e1b4e9dde21ce717a7fe3d561e450c"
+            },
+            {
+              "id": 11,
+              "status": "cancelled",
+              "head_sha": "curlrunlife005mergeupdate00000000000001",
+              "started_at": null,
+              "updated_at": "2026-03-17 04:58:36.000000",
+              "completed_at": null,
+              "idempotency_key": "817a083c4516e49e235ae27164de516d"
+            }
+          ],
+          "observedMergeRequest": [
+            {
+              "id": 11,
+              "state": "merged",
+              "head_sha": "curlrunlife005mergeupdate00000000000001",
+              "updated_at": "2026-03-17 04:58:36.000000"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "VAL-CROSS-011",
+      "title": "MR close cancels pending run",
+      "status": "pass",
+      "reason": "After the close webhook, the pending run for MR 7302 had status cancelled, non-cancelled run count stayed at 0 after a 3-second wait, and comment_actions remained empty.",
+      "evidence": {
+        "deliveryKey": "curl-run-lifecycle-close-005-001",
+        "closeReviewRuns": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-review-runs.txt",
+        "afterWait": {
+          "reviewRuns": "webhook-ingress/curl-run-lifecycle/VAL-CROSS-011-review-runs-after-wait.txt",
+          "nonCancelledCount": {
+            "file": "webhook-ingress/curl-run-lifecycle/VAL-CROSS-011-non-cancelled-count.txt",
+            "value": "0"
+          },
+          "commentActionsCount": {
+            "file": "webhook-ingress/curl-run-lifecycle/VAL-CROSS-011-comment-actions-count.txt",
+            "value": "0"
+          }
+        },
+        "payload": "webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close.json",
+        "observedRuns": [
+          {
+            "id": 8,
+            "status": "cancelled",
+            "head_sha": "curlrunlife005closeopen0000000000000001",
+            "started_at": "2026-03-17 04:58:32.000000",
+            "updated_at": "2026-03-17 04:58:32.000000",
+            "completed_at": null,
+            "idempotency_key": "31178b5c0601b8b54d51e27010c15d91"
+          },
+          {
+            "id": 9,
+            "status": "cancelled",
+            "head_sha": "curlrunlife005closeupdate00000000000001",
+            "started_at": null,
+            "updated_at": "2026-03-17 04:58:32.000000",
+            "completed_at": null,
+            "idempotency_key": "536c89ba21748fe0f6dd6104ba40408b"
+          }
+        ]
+      }
+    }
+  ],
+  "frictions": [
+    {
+      "description": "The ingress binary on port 3100 does not run the scheduler, so HTTP-only traffic leaves runs in pending; to exercise VAL-INGRESS-005 against a running row, a targeted SQL update was required for the isolated test MR before sending close/merge webhooks.",
+      "resolved": true,
+      "resolution": "Updated exactly one run per isolated MR to status=running via docker exec mysql, then verified the subsequent close/merge webhook cancelled both the seeded running row and the remaining pending row.",
+      "affectedAssertions": [
+        "VAL-INGRESS-005"
+      ]
+    }
+  ],
+  "blockers": [],
+  "commandsRun": [
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/health.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/health.body.json http://127.0.0.1:3100/health",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-run-lifecycle-open-003-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-003-open.json",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-004.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-004.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-run-lifecycle-update-004-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-004-update.json",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', id, '\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'event_type'\"'\"', event_type, '\"'\"'action'\"'\"', action, '\"'\"'project_id'\"'\"', project_id, '\"'\"'mr_iid'\"'\"', mr_iid, '\"'\"'head_sha'\"'\"', head_sha, '\"'\"'verification_outcome'\"'\"', verification_outcome) FROM hook_events WHERE delivery_key IN ('\"'\"'curl-run-lifecycle-open-003-001'\"'\"', '\"'\"'curl-run-lifecycle-update-004-001'\"'\"') ORDER BY id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'hook_event_id'\"'\"', rr.hook_event_id, '\"'\"'trigger_type'\"'\"', rr.trigger_type, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key, '\"'\"'started_at'\"'\"', rr.started_at, '\"'\"'completed_at'\"'\"', rr.completed_at) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992301 AND mr.mr_iid = 7301 ORDER BY rr.id;'",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-open.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-open.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-run-lifecycle-close-open-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-open.json",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-update.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-update.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-run-lifecycle-close-update-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close-update.json",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'started_at'\"'\"', rr.started_at, '\"'\"'completed_at'\"'\"', rr.completed_at, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992302 AND mr.mr_iid = 7302 ORDER BY rr.id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT rr.id FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992302 AND mr.mr_iid = 7302 ORDER BY rr.id LIMIT 1;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'UPDATE review_runs SET status = '\"'\"'running'\"'\"', started_at = COALESCE(started_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = 8;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'started_at'\"'\"', rr.started_at, '\"'\"'completed_at'\"'\"', rr.completed_at, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992302 AND mr.mr_iid = 7302 ORDER BY rr.id;'",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-run-lifecycle-close-005-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-close.json",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', id, '\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'event_type'\"'\"', event_type, '\"'\"'action'\"'\"', action, '\"'\"'project_id'\"'\"', project_id, '\"'\"'mr_iid'\"'\"', mr_iid, '\"'\"'head_sha'\"'\"', head_sha, '\"'\"'verification_outcome'\"'\"', verification_outcome) FROM hook_events WHERE delivery_key IN ('\"'\"'curl-run-lifecycle-close-open-001'\"'\"', '\"'\"'curl-run-lifecycle-close-update-001'\"'\"', '\"'\"'curl-run-lifecycle-close-005-001'\"'\"') ORDER BY id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'started_at'\"'\"', rr.started_at, '\"'\"'completed_at'\"'\"', rr.completed_at, '\"'\"'updated_at'\"'\"', rr.updated_at, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992302 AND mr.mr_iid = 7302 ORDER BY rr.id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', mr.id, '\"'\"'state'\"'\"', mr.state, '\"'\"'head_sha'\"'\"', mr.head_sha, '\"'\"'updated_at'\"'\"', mr.updated_at) FROM merge_requests mr JOIN projects p ON mr.project_id = p.id WHERE p.gitlab_project_id = 992302 AND mr.mr_iid = 7302;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT COUNT(*) FROM comment_actions ca JOIN review_runs rr ON ca.review_run_id = rr.id JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992302 AND mr.mr_iid = 7302;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT COUNT(*) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992302 AND mr.mr_iid = 7302 AND rr.status <> '\"'\"'cancelled'\"'\"';'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'started_at'\"'\"', rr.started_at, '\"'\"'completed_at'\"'\"', rr.completed_at, '\"'\"'updated_at'\"'\"', rr.updated_at, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992302 AND mr.mr_iid = 7302 ORDER BY rr.id;'",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-open.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-open.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-run-lifecycle-merge-open-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-open.json",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-update.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-update.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-run-lifecycle-merge-update-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge-update.json",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'started_at'\"'\"', rr.started_at, '\"'\"'completed_at'\"'\"', rr.completed_at, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992303 AND mr.mr_iid = 7303 ORDER BY rr.id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT rr.id FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992303 AND mr.mr_iid = 7303 ORDER BY rr.id LIMIT 1;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'UPDATE review_runs SET status = '\"'\"'running'\"'\"', started_at = COALESCE(started_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = 10;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'started_at'\"'\"', rr.started_at, '\"'\"'completed_at'\"'\"', rr.completed_at, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992303 AND mr.mr_iid = 7303 ORDER BY rr.id;'",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-run-lifecycle-merge-005-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-run-lifecycle/VAL-INGRESS-005-merge.json",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', id, '\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'event_type'\"'\"', event_type, '\"'\"'action'\"'\"', action, '\"'\"'project_id'\"'\"', project_id, '\"'\"'mr_iid'\"'\"', mr_iid, '\"'\"'head_sha'\"'\"', head_sha, '\"'\"'verification_outcome'\"'\"', verification_outcome) FROM hook_events WHERE delivery_key IN ('\"'\"'curl-run-lifecycle-merge-open-001'\"'\"', '\"'\"'curl-run-lifecycle-merge-update-001'\"'\"', '\"'\"'curl-run-lifecycle-merge-005-001'\"'\"') ORDER BY id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'started_at'\"'\"', rr.started_at, '\"'\"'completed_at'\"'\"', rr.completed_at, '\"'\"'updated_at'\"'\"', rr.updated_at, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 992303 AND mr.mr_iid = 7303 ORDER BY rr.id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', mr.id, '\"'\"'state'\"'\"', mr.state, '\"'\"'head_sha'\"'\"', mr.head_sha, '\"'\"'updated_at'\"'\"', mr.updated_at) FROM merge_requests mr JOIN projects p ON mr.project_id = p.id WHERE p.gitlab_project_id = 992303 AND mr.mr_iid = 7303;'"
+  ],
+  "summary": "Tested 4 assertions: 4 passed, 0 failed, 0 blocked, 0 skipped."
+}

@@ -47,6 +47,8 @@ Testing surface: HTTP API endpoints via curl against localhost:3100.
 - Multiple curl-based validators can run concurrently against the same service.
 - Do NOT run goose down/up while the API service is running — it will break health checks and other endpoint tests.
 - For shutdown validation, run a compiled binary from `.factory/run/ingress` rather than `go run`, because `go run` does not reliably forward SIGTERM to the child Go process in this environment.
+- The host environment may not provide a `mysql` CLI binary; when that happens, collect DB evidence with `docker exec mreviewer-mysql mysql ...` against the local project MySQL container.
+- The ingress process on port 3100 does not run the scheduler loop; if a curl validation needs a `running` review run, seed that state with targeted SQL for the isolated test rows or validate scheduler behavior through the CLI test surface instead.
 - Use `curl -sf` for simple checks and `curl -v` when headers/status codes matter.
 - All log output from the service goes to /tmp/mreviewer-api.log.
 

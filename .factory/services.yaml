@@ -21,7 +21,7 @@ services:
     depends_on: []
 
   api:
-    start: test -d ./cmd/ingress && mkdir -p ./.factory/run && go build -o ./.factory/run/ingress ./cmd/ingress && PORT=3100 MYSQL_PORT=3306 REDIS_PORT=6380 ./.factory/run/ingress || echo 'cmd/ingress not initialized yet'
+    start: test -d ./cmd/ingress && mkdir -p ./.factory/run && go build -o ./.factory/run/ingress ./cmd/ingress && PORT=3100 MYSQL_PORT=3306 REDIS_PORT=6380 GITLAB_WEBHOOK_SECRET=${GITLAB_WEBHOOK_SECRET:-test-secret} ./.factory/run/ingress || echo 'cmd/ingress not initialized yet'
     stop: pids=$(lsof -ti :3100); [ -z "$pids" ] || kill $pids
     healthcheck: test -d ./cmd/ingress && curl -sf http://127.0.0.1:3100/health || echo 'cmd/ingress not initialized yet'
     port: 3100

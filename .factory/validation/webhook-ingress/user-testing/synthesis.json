@@ -1,0 +1,45 @@
+{
+  "milestone": "webhook-ingress",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 22,
+    "passed": 22,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CROSS-007",
+    "VAL-CROSS-008",
+    "VAL-CROSS-009",
+    "VAL-CROSS-011",
+    "VAL-CROSS-016",
+    "VAL-INGRESS-001",
+    "VAL-INGRESS-002",
+    "VAL-INGRESS-003",
+    "VAL-INGRESS-004",
+    "VAL-INGRESS-005",
+    "VAL-INGRESS-006",
+    "VAL-INGRESS-007",
+    "VAL-INGRESS-008",
+    "VAL-INGRESS-009",
+    "VAL-INGRESS-010",
+    "VAL-INGRESS-011",
+    "VAL-INGRESS-012",
+    "VAL-INGRESS-013",
+    "VAL-INGRESS-014",
+    "VAL-INGRESS-015",
+    "VAL-INGRESS-016",
+    "VAL-OBS-001"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Documented that DB evidence may need docker exec mysql because the host lacks a mysql CLI, and that curl lifecycle checks needing running rows should seed isolated rows or rely on the CLI scheduler surface.",
+      "source": "flow-report"
+    }
+  ],
+  "previousRound": null
+}

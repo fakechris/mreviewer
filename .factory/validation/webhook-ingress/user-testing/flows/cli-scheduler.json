@@ -1,0 +1,113 @@
+{
+  "groupId": "cli-scheduler",
+  "testedAt": "2026-03-17T04:49:24.081744Z",
+  "surface": "cli",
+  "isolation": {
+    "repoRoot": "/Users/chris/workspace/mreviewer",
+    "missionDir": "/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400",
+    "guidance": "Flow Validator Guidance: cli",
+    "evidenceDir": "/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/cli-scheduler",
+    "boundary": "Repo-local CLI tests only; no application source changes; no shared service restarts"
+  },
+  "toolsUsed": [
+    "go test"
+  ],
+  "commandsRun": [
+    "cd /Users/chris/workspace/mreviewer && go test -count=1 -json ./internal/scheduler -run 'Test(ClaimPendingRun|RetryBackoff|SingleClaimAcrossWorkers|ConcurrentMRIsolation|RetryRecoveryWithoutDuplicateWork)$'"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-INGRESS-013",
+      "status": "pass",
+      "evidence": {
+        "package": "github.com/mreviewer/mreviewer/internal/scheduler",
+        "tests": [
+          "TestClaimPendingRun"
+        ],
+        "sourceReferences": [
+          "internal/scheduler/service_test.go:116"
+        ],
+        "terminalSnapshots": [
+          "webhook-ingress/cli-scheduler/scheduler-tests.jsonl"
+        ],
+        "observed": "The targeted test passed and verifies ClaimNextRun moves a pending review_run to running while populating claimed_by, claimed_at, and started_at."
+      },
+      "reason": "Mock-backed scheduler integration coverage for pending-run pickup passed against a Docker-backed MySQL test database."
+    },
+    {
+      "id": "VAL-INGRESS-014",
+      "status": "pass",
+      "evidence": {
+        "package": "github.com/mreviewer/mreviewer/internal/scheduler",
+        "tests": [
+          "TestRetryBackoff"
+        ],
+        "sourceReferences": [
+          "internal/scheduler/service_test.go:151"
+        ],
+        "terminalSnapshots": [
+          "webhook-ingress/cli-scheduler/scheduler-tests.jsonl"
+        ],
+        "observed": "Both subcases passed: the first retry used the configured base delay and a later retry was capped at the configured max delay while retry_count incremented and next_retry_at was set."
+      },
+      "reason": "The passing retry-backoff test confirms failed runs remain retryable with bounded exponential backoff scheduling."
+    },
+    {
+      "id": "VAL-CROSS-008",
+      "status": "pass",
+      "evidence": {
+        "package": "github.com/mreviewer/mreviewer/internal/scheduler",
+        "tests": [
+          "TestConcurrentMRIsolation"
+        ],
+        "sourceReferences": [
+          "internal/scheduler/service_test.go:310"
+        ],
+        "terminalSnapshots": [
+          "webhook-ingress/cli-scheduler/scheduler-tests.jsonl"
+        ],
+        "observed": "The concurrent-claim test passed and verified two simultaneously pending runs for different MR IDs in the same project were both claimed, with distinct run IDs and merge_request IDs."
+      },
+      "reason": "Passing concurrency coverage shows scheduler claims remain isolated per MR without cross-contaminating state."
+    },
+    {
+      "id": "VAL-CROSS-009",
+      "status": "pass",
+      "evidence": {
+        "package": "github.com/mreviewer/mreviewer/internal/scheduler",
+        "tests": [
+          "TestRetryRecoveryWithoutDuplicateWork"
+        ],
+        "sourceReferences": [
+          "internal/scheduler/service_test.go:368"
+        ],
+        "terminalSnapshots": [
+          "webhook-ingress/cli-scheduler/scheduler-tests.jsonl"
+        ],
+        "observed": "The recovery test passed after one retryable failure and one successful retry, verifying final status completed, retry_count remained 1, next_retry_at cleared, downstream writes executed once, and only one review_run row existed."
+      },
+      "reason": "This passing recovery test provides concrete evidence that retryable failures can complete on retry without duplicating downstream work."
+    },
+    {
+      "id": "VAL-CROSS-016",
+      "status": "pass",
+      "evidence": {
+        "package": "github.com/mreviewer/mreviewer/internal/scheduler",
+        "tests": [
+          "TestSingleClaimAcrossWorkers"
+        ],
+        "sourceReferences": [
+          "internal/scheduler/service_test.go:248"
+        ],
+        "terminalSnapshots": [
+          "webhook-ingress/cli-scheduler/scheduler-tests.jsonl"
+        ],
+        "observed": "The multi-worker claim race test passed and verified exactly one worker claimed the pending run while the other received ErrNoClaimableRuns, leaving the stored run in running status with claimed_by set to the winning worker."
+      },
+      "reason": "The passing race test confirms single-claim behavior across worker instances."
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Executed the narrow scheduler test slice for the assigned CLI assertions. All five assigned assertions passed using mock-backed scheduler coverage in internal/scheduler/service_test.go."
+}

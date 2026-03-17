@@ -1,0 +1,124 @@
+{
+  "groupId": "cli-normalization",
+  "testedAt": "2026-03-17T04:46:00Z",
+  "surface": "cli",
+  "toolsUsed": [
+    "Read",
+    "Grep",
+    "Execute"
+  ],
+  "isolation": {
+    "repoRoot": "/Users/chris/workspace/mreviewer",
+    "missionDir": "/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400",
+    "evidenceDir": "/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/cli-normalization"
+  },
+  "assertions": [
+    {
+      "id": "VAL-INGRESS-007",
+      "status": "pass",
+      "evidence": {
+        "commandLog": "webhook-ingress/cli-normalization/hooks-normalization-go-test.txt",
+        "tests": [
+          "internal/hooks/normalize_test.go:196 TestNormalizeSystemHook"
+        ]
+      },
+      "reason": "The targeted hooks test passed and confirmed a System Hook payload normalizes to the expected MR event fields including project_id, mr_iid, action, head_sha, and hook_source=system."
+    },
+    {
+      "id": "VAL-INGRESS-008",
+      "status": "pass",
+      "evidence": {
+        "commandLog": "webhook-ingress/cli-normalization/hooks-normalization-go-test.txt",
+        "tests": [
+          "internal/hooks/normalize_test.go:171 TestNormalizeGroupHook"
+        ]
+      },
+      "reason": "The targeted hooks test passed and confirmed a group-scoped MR payload normalizes to the same internal event shape as project/system hooks while preserving hook_source=group."
+    },
+    {
+      "id": "VAL-INGRESS-011",
+      "status": "pass",
+      "evidence": {
+        "commandLogs": [
+          "webhook-ingress/cli-normalization/hooks-normalization-go-test.txt",
+          "webhook-ingress/cli-normalization/runs-draft-go-test.txt"
+        ],
+        "tests": [
+          "internal/hooks/normalize_test.go:221 TestDraftMetadata",
+          "internal/runs/service_test.go:399 TestDraftMRCreatesRun"
+        ]
+      },
+      "reason": "Draft/WIP metadata is preserved during normalization, and the run-service test passed showing a draft MR still creates a pending review_run with is_draft persisted on the merge request."
+    },
+    {
+      "id": "VAL-INGRESS-012",
+      "status": "pass",
+      "evidence": {
+        "commandLog": "webhook-ingress/cli-normalization/hooks-normalization-go-test.txt",
+        "tests": [
+          "internal/hooks/normalize_test.go:273 TestHeadSHAFallback",
+          "internal/hooks/handler_lifecycle_integration_test.go:368 TestDeferredHeadSHAPersistence"
+        ],
+        "sourceRefs": [
+          "internal/hooks/normalize.go:168-194"
+        ]
+      },
+      "reason": "The unit fallback test passed for both present and missing last_commit.id cases, and the lifecycle integration test passed showing missing head_sha remains empty, preserves deferred lookup context in the stored payload, and still produces a review_run with a populated idempotency key."
+    },
+    {
+      "id": "VAL-INGRESS-015",
+      "status": "pass",
+      "evidence": {
+        "commandLog": "webhook-ingress/cli-normalization/hooks-normalization-go-test.txt",
+        "tests": [
+          "internal/hooks/normalize_test.go:320 TestCrossSourceIdempotency",
+          "internal/hooks/handler_lifecycle_integration_test.go:412 TestDeferredHeadSHAIdempotency",
+          "internal/hooks/handler_lifecycle_integration_test.go:582 TestReplayDoesNotDuplicateRun"
+        ],
+        "sourceRefs": [
+          "internal/runs/service.go:110-137"
+        ]
+      },
+      "reason": "Equivalent project/group/system webhook events normalize to the same idempotency key, runtime duplicate intake produced only one review_run, and the run creation path deduplicates strictly on that normalized idempotency key."
+    },
+    {
+      "id": "VAL-INGRESS-016",
+      "status": "pass",
+      "evidence": {
+        "commandLog": "webhook-ingress/cli-normalization/hooks-normalization-go-test.txt",
+        "tests": [
+          "internal/hooks/normalize_test.go:367 TestCITriggerType"
+        ],
+        "sourceRefs": [
+          "internal/hooks/normalize.go:303-319",
+          "internal/runs/service.go:133-137"
+        ]
+      },
+      "reason": "The CI normalization test passed, showing webhook and CI triggers for the same MR HEAD produce different idempotency keys and ci-specific trigger metadata, and the run insert path persists TriggerType and idempotency_key from the normalized event."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "The repository does not include a dedicated runtime test that inserts a CI-originated trigger through the run service, so VAL-INGRESS-016 had to rely on NormalizeCITrigger unit coverage plus read-only inspection of the review_run insertion path.",
+      "resolved": true,
+      "resolution": "Used TestCITriggerType as the authoritative normalization check and verified internal/runs/service.go persists ev.TriggerType and ev.IdempotencyKey when creating review_runs.",
+      "affectedAssertions": [
+        "VAL-INGRESS-016"
+      ]
+    },
+    {
+      "description": "Cross-source duplicate-run coverage is split across normalization and runtime tests rather than one end-to-end test with different delivery IDs across hook sources.",
+      "resolved": true,
+      "resolution": "Combined TestCrossSourceIdempotency with TestReplayDoesNotDuplicateRun and the createPendingRun idempotency path inspection to validate the normalized dedupe contract.",
+      "affectedAssertions": [
+        "VAL-INGRESS-015"
+      ]
+    }
+  ],
+  "blockers": [],
+  "commandsRun": [
+    "cd '/Users/chris/workspace/mreviewer' && go test ./internal/hooks -run '^(TestNormalizeSystemHook|TestNormalizeGroupHook|TestDraftMetadata|TestHeadSHAFallback|TestCrossSourceIdempotency|TestCITriggerType|TestDeferredHeadSHAPersistence|TestDeferredHeadSHAIdempotency|TestReplayDoesNotDuplicateRun)$' -count=1 -v",
+    "cd '/Users/chris/workspace/mreviewer' && go test ./internal/runs -run '^TestDraftMRCreatesRun$' -count=1 -v"
+  ],
+  "summary": "Tested 6 assigned CLI normalization assertions; all 6 passed on targeted unit/integration coverage, with two minor coverage frictions but no blockers."
+}
