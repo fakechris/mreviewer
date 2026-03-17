@@ -447,7 +447,7 @@ func TestCanonicalizeLegacyAnchorKinds(t *testing.T) {
 		in   string
 		want string
 	}{
-		{name: "empty defaults to new line", in: "", want: "new_line"},
+		{name: "empty stays empty", in: "", want: ""},
 		{name: "new stays new line", in: "new", want: "new_line"},
 		{name: "new line stays canonical", in: "new_line", want: "new_line"},
 		{name: "added maps to new line", in: "added", want: "new_line"},
@@ -464,6 +464,29 @@ func TestCanonicalizeLegacyAnchorKinds(t *testing.T) {
 				t.Fatalf("normalizeAnchorKind(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRejectEmptyAnchorKind(t *testing.T) {
+	if got := normalizeAnchorKind(""); got != "" {
+		t.Fatalf("normalizeAnchorKind(empty) = %q, want empty", got)
+	}
+
+	normalized := normalizeFinding(ReviewFinding{
+		Category:      "bug",
+		Severity:      "high",
+		Title:         "Missing anchor kind",
+		BodyMarkdown:  "body",
+		Path:          "pkg/foo.go",
+		AnchorKind:    " ",
+		AnchorSnippet: "return *ptr",
+		CanonicalKey:  "missing-anchor-kind",
+	})
+	if normalized.AnchorKind != "" {
+		t.Fatalf("normalized anchor kind = %q, want empty", normalized.AnchorKind)
+	}
+	if normalized.NewLine.Valid || normalized.OldLine.Valid {
+		t.Fatalf("unexpected inferred lines: old=%+v new=%+v", normalized.OldLine, normalized.NewLine)
 	}
 }
 
@@ -1016,12 +1039,48 @@ func TestDeletedFileFixed(t *testing.T) {
 	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{deleted}}); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
+	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun new run: %v", err)
+	}
+	if len(newRunFindings) != 0 {
+		t.Fatalf("new run findings = %d, want 0 because deleted anchors should only drive lifecycle", len(newRunFindings))
+	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
 	if err != nil {
 		t.Fatalf("ListFindingsByRun: %v", err)
 	}
 	if findings[0].State != findingStateFixed {
 		t.Fatalf("state = %q, want fixed", findings[0].State)
+	}
+}
+
+func TestDeletedAnchorCanonicalizationTriggersDeletedLifecycle(t *testing.T) {
+	deletedOldLine := int32(12)
+	normalized := normalizeFinding(ReviewFinding{
+		Category:      "bug",
+		Severity:      "high",
+		Title:         "Deleted file finding",
+		BodyMarkdown:  "body",
+		Path:          "src/service/foo.go",
+		AnchorKind:    "deleted",
+		OldLine:       &deletedOldLine,
+		AnchorSnippet: "return *ptr",
+		CanonicalKey:  "deleted:nil-deref:foo-service",
+	})
+	if normalized.AnchorKind != "old_line" {
+		t.Fatalf("normalized anchor kind = %q, want old_line", normalized.AnchorKind)
+	}
+	if state := evaluateFindingState(normalized, findingThresholds{}); state != findingStateDeleted {
+		t.Fatalf("evaluateFindingState() = %q, want %q", state, findingStateDeleted)
+	}
+	current := db.ReviewFinding{State: findingStateActive, Path: "src/service/foo.go", AnchorKind: "old_line"}
+	next, ok, err := transitionMissingFinding(current, map[string]struct{}{"src/service/foo.go": {}}, map[string]struct{}{"src/service/foo.go": {}})
+	if err != nil {
+		t.Fatalf("transitionMissingFinding: %v", err)
+	}
+	if !ok || next != findingStateFixed {
+		t.Fatalf("transitionMissingFinding() = (%q, %v), want (%q, true)", next, ok, findingStateFixed)
 	}
 }
 

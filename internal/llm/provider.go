@@ -381,7 +381,7 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 			continue
 		case findingStateDeleted:
 			deletedPaths[finding.normalized.Path] = struct{}{}
-			matchedExistingIDs = markDeletedPathMatches(matchedExistingIDs, existing, finding.normalized.Path)
+			reviewedPaths[finding.normalized.Path] = struct{}{}
 		default:
 			reviewedPaths[finding.normalized.Path] = struct{}{}
 		}
@@ -504,7 +504,7 @@ func thresholdsFromPolicy(policy db.ProjectPolicy, ok bool) findingThresholds {
 }
 
 func evaluateFindingState(finding normalizedFinding, thresholds findingThresholds) string {
-	if finding.AnchorKind == "deleted" {
+	if finding.isDeletedFile() {
 		return findingStateDeleted
 	}
 	if finding.Confidence < thresholds.confidence {
@@ -517,12 +517,17 @@ func evaluateFindingState(finding normalizedFinding, thresholds findingThreshold
 }
 
 func transitionMissingFinding(current db.ReviewFinding, reviewedPaths, deletedPaths map[string]struct{}) (string, bool, error) {
-	if current.LastSeenRunID.Valid {
-		return "", false, nil
-	}
 	path := normalizePath(current.Path)
 	if _, ok := deletedPaths[path]; ok {
-		return nextFindingState(current.State, findingStateFixed)
+		if current.AnchorKind == "old_line" {
+			return nextFindingState(current.State, findingStateFixed)
+		}
+		if current.AnchorKind == "deleted" {
+			return nextFindingState(current.State, findingStateFixed)
+		}
+	}
+	if current.LastSeenRunID.Valid {
+		return "", false, nil
 	}
 	if _, ok := reviewedPaths[path]; ok {
 		return nextFindingState(current.State, findingStateFixed)
@@ -560,6 +565,12 @@ func nextFindingState(current, next string) (string, bool, error) {
 
 func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding) (findingMatchDecision, error) {
 	for _, current := range existing {
+		if current.AnchorKind == "new_line" && finding.state == findingStateDeleted && normalizePath(current.Path) == finding.normalized.Path {
+			continue
+		}
+		if finding.state == findingStateDeleted && current.AnchorKind == "old_line" && normalizePath(current.Path) == finding.normalized.Path {
+			continue
+		}
 		if current.AnchorKind == "deleted" && finding.normalized.AnchorKind == "old_line" && normalizePath(current.Path) == finding.normalized.Path {
 			continue
 		}
@@ -583,6 +594,12 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
 	}
 
 	for _, current := range existing {
+		if current.AnchorKind == "new_line" && finding.state == findingStateDeleted && normalizePath(current.Path) == finding.normalized.Path {
+			continue
+		}
+		if finding.state == findingStateDeleted && current.AnchorKind == "old_line" && normalizePath(current.Path) == finding.normalized.Path {
+			continue
+		}
 		if current.AnchorKind == "deleted" && finding.normalized.AnchorKind == "old_line" && normalizePath(current.Path) == finding.normalized.Path {
 			continue
 		}
@@ -654,6 +671,10 @@ type normalizedFinding struct {
 	SuggestedPatch string
 	CanonicalKey   string
 	Symbol         string
+}
+
+func (f normalizedFinding) isDeletedFile() bool {
+	return normalizeAnchorKind(f.AnchorKind) == "old_line" && f.OldLine.Valid && !f.NewLine.Valid
 }
 
 func normalizeFinding(finding ReviewFinding) normalizedFinding {
@@ -746,7 +767,7 @@ func normalizePath(path string) string {
 func normalizeAnchorKind(kind string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(kind))
 	switch trimmed {
-	case "", "new", "new_line", "added":
+	case "new", "new_line", "added":
 		return "new_line"
 	case "old", "old_line", "deleted":
 		return "old_line"
