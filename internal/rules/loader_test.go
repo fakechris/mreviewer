@@ -116,6 +116,88 @@ func TestPlatformProjectMerge(t *testing.T) {
 	if !strings.Contains(result.SystemPrompt, "severity_threshold: high") {
 		t.Fatalf("system prompt missing merged severity threshold: %s", result.SystemPrompt)
 	}
+	if got := result.EffectivePolicy.ContextLinesBefore; got != 20 {
+		t.Fatalf("ContextLinesBefore = %d, want 20", got)
+	}
+	if got := result.EffectivePolicy.ContextLinesAfter; got != 12 {
+		t.Fatalf("ContextLinesAfter = %d, want 12", got)
+	}
+	if got := result.EffectivePolicy.MaxChangedLines; got != 2500 {
+		t.Fatalf("MaxChangedLines = %d, want 2500", got)
+	}
+	if got := result.EffectivePolicy.MaxFiles; got != 80 {
+		t.Fatalf("MaxFiles = %d, want 80", got)
+	}
+}
+
+func TestPlatformDefaultsPreservedWhenProjectMissing(t *testing.T) {
+	loader := NewLoader(stubFileReader{}, PlatformDefaults{
+		Instructions:        "Platform defaults: preserve review scope limits.",
+		ConfidenceThreshold: 0.61,
+		SeverityThreshold:   "low",
+		IncludePaths:        []string{"internal/**"},
+		ExcludePaths:        []string{"vendor/**"},
+		GateMode:            "threads_resolved",
+		ProviderRoute:       "platform-route",
+		Extra:               mustRawJSON(t, map[string]any{"review": map[string]any{"context": map[string]any{"lines_before": 33, "lines_after": 17}, "max_changed_lines": 1111, "max_files": 9}}),
+	})
+
+	result, err := loader.Load(context.Background(), LoadInput{ProjectID: 123, HeadSHA: "head-sha", ProjectPolicy: nil})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := result.EffectivePolicy.ContextLinesBefore; got != 33 {
+		t.Fatalf("ContextLinesBefore = %d, want 33", got)
+	}
+	if got := result.EffectivePolicy.ContextLinesAfter; got != 17 {
+		t.Fatalf("ContextLinesAfter = %d, want 17", got)
+	}
+	if got := result.EffectivePolicy.MaxChangedLines; got != 1111 {
+		t.Fatalf("MaxChangedLines = %d, want 1111", got)
+	}
+	if got := result.EffectivePolicy.MaxFiles; got != 9 {
+		t.Fatalf("MaxFiles = %d, want 9", got)
+	}
+}
+
+func TestPlatformDefaultsPreservedForPartialProjectPolicy(t *testing.T) {
+	loader := NewLoader(stubFileReader{}, PlatformDefaults{
+		Instructions:        "Platform defaults: preserve unspecified limits.",
+		ConfidenceThreshold: 0.74,
+		SeverityThreshold:   "medium",
+		IncludePaths:        []string{"src/**"},
+		ExcludePaths:        []string{"vendor/**"},
+		GateMode:            "threads_resolved",
+		ProviderRoute:       "platform-route",
+		Extra:               mustRawJSON(t, map[string]any{"review": map[string]any{"context": map[string]any{"lines_before": 31, "lines_after": 19}, "max_changed_lines": 1444, "max_files": 17}}),
+	})
+
+	projectPolicy := &db.ProjectPolicy{
+		ConfidenceThreshold: 0.88,
+		Extra:               mustRawJSON(t, map[string]any{"review": map[string]any{"context": map[string]any{"lines_after": 7}}}),
+	}
+
+	result, err := loader.Load(context.Background(), LoadInput{ProjectID: 123, HeadSHA: "head-sha", ProjectPolicy: projectPolicy})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := result.EffectivePolicy.ConfidenceThreshold; got != 0.88 {
+		t.Fatalf("ConfidenceThreshold = %v, want 0.88", got)
+	}
+	if got := result.EffectivePolicy.ContextLinesBefore; got != 31 {
+		t.Fatalf("ContextLinesBefore = %d, want 31", got)
+	}
+	if got := result.EffectivePolicy.ContextLinesAfter; got != 7 {
+		t.Fatalf("ContextLinesAfter = %d, want 7", got)
+	}
+	if got := result.EffectivePolicy.MaxChangedLines; got != 1444 {
+		t.Fatalf("MaxChangedLines = %d, want 1444", got)
+	}
+	if got := result.EffectivePolicy.MaxFiles; got != 17 {
+		t.Fatalf("MaxFiles = %d, want 17", got)
+	}
 }
 
 func TestAllowlistedRuleSourcesOnly(t *testing.T) {
