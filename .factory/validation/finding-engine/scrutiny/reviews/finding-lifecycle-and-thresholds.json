@@ -1,0 +1,28 @@
+{
+  "featureId": "finding-lifecycle-and-thresholds",
+  "reviewedAt": "2026-03-17T13:33:15Z",
+  "commitId": "0825c58fb27046175934dfcd6ebe16ee902f3bc4",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The lifecycle/threshold feature covers state validation, filtered persistence, and deleted-file handling, but the disappearance logic marks unmatched active findings as fixed whenever any non-deleted finding remains in the rerun. That violates the expected fixed-vs-stale split for mixed-scope reruns and can incorrectly auto-resolve findings that were merely out of scope.",
+    "issues": [
+      {
+        "file": "internal/llm/provider.go",
+        "line": 525,
+        "severity": "blocking",
+        "description": "`transitionMissingFinding` treats every missing active finding as `fixed` whenever `len(activePaths) > 0`, regardless of whether the rerun actually covered the finding's file. In mixed-scope reruns (the contract explicitly calls these out), a previously active finding on an excluded path will be marked fixed just because some other file produced a finding in the current run. The function only sees persisted finding paths, not the assembler/request scope, so it cannot distinguish 'issue removed' from 'file not reviewed'. This can incorrectly auto-resolve out-of-scope findings instead of transitioning them to `stale`."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The feature and prior related finding-engine features both had verification steps pointing at `./internal/findings/...`, but the implementation and tests live in `internal/llm` and there is no `internal/findings` package. This mismatch keeps recurring and should be recorded in shared state so future workers and validators do not chase a nonexistent package.",
+      "evidence": "Feature handoff `2026-03-17T10-46-03-120Z__finding-lifecycle-and-thresholds__f4ca835f-2d31-459a-8238-52db02b8c403.json` records `go test ./internal/findings/...` failing because the package does not exist; `.factory/skills/go-backend/SKILL.md` expects targeted package tests, and repo code places finding persistence in `internal/llm/provider.go`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed: disappearance handling is not scope-aware, so mixed-scope reruns can incorrectly mark unseen active findings as fixed rather than stale. Report written with one blocking correctness issue and one shared-state observation about stale verification paths."
+}

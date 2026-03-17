@@ -1,0 +1,33 @@
+{
+  "featureId": "finding-dedupe-and-relocation",
+  "reviewedAt": "2026-03-17T13:33:02Z",
+  "commitId": "80e43fb",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature covers same-head dedupe, last-seen updates, semantic relocation, supersede fallback, and same-run duplicate collapse, but it incorrectly couples this matcher with missing-finding transitions and marks unrelated active findings fixed whenever any unmatched finding remains in a non-empty rerun.",
+    "issues": [
+      {
+        "file": "internal/llm/provider.go",
+        "line": 526,
+        "severity": "blocking",
+        "description": "`transitionMissingFinding` returns `fixed` for any unmatched active finding whenever the rerun contains at least one active path (`len(activePaths) > 0`), regardless of whether the old finding's file was deleted or otherwise proven fixed. In the new-head last-seen path, a rerun that keeps one prior finding and introduces a different finding on another file will incorrectly mark the unrelated old active finding as fixed instead of leaving it active. This regresses finding lifecycle correctness and is not covered by the added tests, which only exercise single-finding scenarios."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker did not follow the go-backend skill's explicit test-first step and recorded a deviation because tests and implementation were added together in one iteration.",
+      "evidence": "Handoff skillFeedback for session dd350468-f408-45f0-95bd-69e04d65a2c3 sets `followedProcedure` to false and cites deviation from step 3 in `.factory/skills/go-backend/SKILL.md`."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The feature contract references `go test ./internal/e2e/...` coverage for rerun dedupe and relocation, but the repository still has no `internal/e2e` package; this known gap is not documented in the shared library even though it affected validation and feature scope decisions.",
+      "evidence": "Worker transcript and handoff report `lstat ./internal/e2e/: no such file or directory`; `LS /Users/chris/workspace/mreviewer/internal/e2e` also showed the package is absent, and `.factory/library/` has no note about milestone e2e coverage being deferred."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed commit 80e43fb, the worker handoff, transcript skeleton, mission guidance, and the go-backend skill. The implementation is close, but it contains a blocking lifecycle regression: unmatched active findings are marked fixed whenever a rerun has any surviving active finding, so the review fails."
+}

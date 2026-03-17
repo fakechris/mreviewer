@@ -372,7 +372,7 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 			state:               evaluateFindingState(normalized, thresholds),
 		})
 	}
-	activePaths := make(map[string]struct{}, len(persisted))
+	reviewedPaths := make(map[string]struct{}, len(persisted))
 	deletedPaths := make(map[string]struct{}, len(persisted))
 	matchedExistingIDs := make(map[int64]struct{})
 	for _, finding := range persisted {
@@ -381,8 +381,9 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 			continue
 		case findingStateDeleted:
 			deletedPaths[finding.normalized.Path] = struct{}{}
+			matchedExistingIDs = markDeletedPathMatches(matchedExistingIDs, existing, finding.normalized.Path)
 		default:
-			activePaths[finding.normalized.Path] = struct{}{}
+			reviewedPaths[finding.normalized.Path] = struct{}{}
 		}
 	}
 
@@ -428,7 +429,7 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 		if _, ok := matchedExistingIDs[current.ID]; ok {
 			continue
 		}
-		nextState, ok, err := transitionMissingFinding(current, activePaths, deletedPaths)
+		nextState, ok, err := transitionMissingFinding(current, reviewedPaths, deletedPaths)
 		if err != nil {
 			return err
 		}
@@ -515,17 +516,27 @@ func evaluateFindingState(finding normalizedFinding, thresholds findingThreshold
 	return findingStateNew
 }
 
-func transitionMissingFinding(current db.ReviewFinding, activePaths, deletedPaths map[string]struct{}) (string, bool, error) {
+func transitionMissingFinding(current db.ReviewFinding, reviewedPaths, deletedPaths map[string]struct{}) (string, bool, error) {
 	if current.LastSeenRunID.Valid {
 		return "", false, nil
 	}
-	if _, ok := deletedPaths[normalizePath(current.Path)]; ok {
+	path := normalizePath(current.Path)
+	if _, ok := deletedPaths[path]; ok {
 		return nextFindingState(current.State, findingStateFixed)
 	}
-	if len(activePaths) > 0 {
+	if _, ok := reviewedPaths[path]; ok {
 		return nextFindingState(current.State, findingStateFixed)
 	}
 	return nextFindingState(current.State, findingStateStale)
+}
+
+func markDeletedPathMatches(matched map[int64]struct{}, existing []db.ReviewFinding, path string) map[int64]struct{} {
+	for _, current := range existing {
+		if normalizePath(current.Path) == path {
+			matched[current.ID] = struct{}{}
+		}
+	}
+	return matched
 }
 
 func nextFindingState(current, next string) (string, bool, error) {
@@ -546,6 +557,9 @@ func nextFindingState(current, next string) (string, bool, error) {
 
 func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding) (findingMatchDecision, error) {
 	for _, current := range existing {
+		if current.AnchorKind == "deleted" && finding.normalized.AnchorKind == "old_line" && normalizePath(current.Path) == finding.normalized.Path {
+			continue
+		}
 		if current.AnchorFingerprint != finding.anchorFingerprint {
 			continue
 		}
@@ -566,6 +580,9 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
 	}
 
 	for _, current := range existing {
+		if current.AnchorKind == "deleted" && finding.normalized.AnchorKind == "old_line" && normalizePath(current.Path) == finding.normalized.Path {
+			continue
+		}
 		if current.SemanticFingerprint != finding.semanticFingerprint {
 			continue
 		}

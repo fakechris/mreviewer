@@ -1,0 +1,22 @@
+{
+  "featureId": "finding-normalization-and-fingerprints",
+  "reviewedAt": "2026-03-17T13:03:00Z",
+  "commitId": "ab684d1e2f005d2cd68a7a60fb0577a48a853f47",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds normalization and deterministic fingerprinting, but the anchor-kind normalization is incompatible with the project’s established anchor vocabulary. That causes equivalent findings using existing provider values like added/deleted to hash differently instead of normalizing into the internal model the feature contract describes.",
+    "issues": [
+      {
+        "file": "internal/llm/provider.go",
+        "line": 726,
+        "severity": "blocking",
+        "description": "`normalizeAnchorKind` only trims whitespace and defaults empty values to `new_line`, but it does not canonicalize the existing anchor kinds already used elsewhere in the codebase (`added`/`deleted`, and older provider payloads using `new`/`old`). The architecture expects provider findings to be normalized into one internal model before fingerprinting, yet semantically identical anchors with values like `added` versus `new_line` produce different persisted `anchor_kind` values and therefore different anchor fingerprints. This breaks deterministic normalization/deduplication for equivalent findings instead of unifying them."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the handoff, transcript skeleton, committed diff, mission guidance, skill, and shared-state files. The implementation is close, but it misses anchor-kind canonicalization: equivalent provider anchor labels are not normalized to one internal representation before persistence/fingerprinting, so the feature does not fully satisfy the normalization contract."
+}

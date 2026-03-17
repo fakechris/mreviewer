@@ -1,0 +1,72 @@
+{
+  "milestone": "finding-engine",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test -p 5 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "go test -run '^$' ./...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "./.factory/bin/golangci-lint run --timeout 5m",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 0,
+    "failed": 3,
+    "failedFeatures": [
+      "finding-dedupe-and-relocation",
+      "finding-lifecycle-and-thresholds",
+      "finding-normalization-and-fingerprints"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "finding-dedupe-and-relocation",
+      "severity": "blocking",
+      "description": "`transitionMissingFinding` returns `fixed` for any unmatched active finding whenever the rerun contains at least one active path (`len(activePaths) > 0`), regardless of whether the old finding's file was deleted or otherwise proven fixed. In the new-head last-seen path, a rerun that keeps one prior finding and introduces a different finding on another file will incorrectly mark the unrelated old active finding as fixed instead of leaving it active. This regresses finding lifecycle correctness and is not covered by the added tests, which only exercise single-finding scenarios."
+    },
+    {
+      "featureId": "finding-lifecycle-and-thresholds",
+      "severity": "blocking",
+      "description": "`transitionMissingFinding` treats every missing active finding as `fixed` whenever `len(activePaths) > 0`, regardless of whether the rerun actually covered the finding's file. In mixed-scope reruns (the contract explicitly calls these out), a previously active finding on an excluded path will be marked fixed just because some other file produced a finding in the current run. The function only sees persisted finding paths, not the assembler/request scope, so it cannot distinguish 'issue removed' from 'file not reviewed'. This can incorrectly auto-resolve out-of-scope findings instead of transitioning them to `stale`."
+    },
+    {
+      "featureId": "finding-normalization-and-fingerprints",
+      "severity": "blocking",
+      "description": "`normalizeAnchorKind` only trims whitespace and defaults empty values to `new_line`, but it does not canonicalize the existing anchor kinds already used elsewhere in the codebase (`added`/`deleted`, and older provider payloads using `new`/`old`). The architecture expects provider findings to be normalized into one internal model before fingerprinting, yet semantically identical anchors with values like `added` versus `new_line` produce different persisted `anchor_kind` values and therefore different anchor fingerprints. This breaks deterministic normalization/deduplication for equivalent findings instead of unifying them."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skill:go-backend",
+      "suggestion": "Reinforce or instrument the go-backend procedure so worker handoffs and validation highlight when tests were not added first, since the feature transcript explicitly deviated from the required test-first flow.",
+      "evidence": "Handoff skillFeedback for session dd350468-f408-45f0-95bd-69e04d65a2c3 sets `followedProcedure` to false and cites deviation from step 3 in `.factory/skills/go-backend/SKILL.md`.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Align feature verification steps with actual repository package locations before assigning validators; avoid references to nonexistent `internal/findings` or `internal/e2e` packages when the implementation lives in `internal/llm` and integration coverage is deferred.",
+      "evidence": "Worker transcript and handoff report `lstat ./internal/e2e/: no such file or directory`; `LS /Users/chris/workspace/mreviewer/internal/e2e` also showed the package is absent, and `.factory/library/` has no note about milestone e2e coverage being deferred.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Align feature verification steps with actual repository package locations before assigning validators; avoid references to nonexistent `internal/findings` or `internal/e2e` packages when the implementation lives in `internal/llm` and integration coverage is deferred.",
+      "evidence": "Feature handoff `2026-03-17T10-46-03-120Z__finding-lifecycle-and-thresholds__f4ca835f-2d31-459a-8238-52db02b8c403.json` records `go test ./internal/findings/...` failing because the package does not exist; `.factory/skills/go-backend/SKILL.md` expects targeted package tests, and repo code places finding persistence in `internal/llm/provider.go`.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}

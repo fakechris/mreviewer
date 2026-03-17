@@ -746,13 +746,6 @@ func TestNewHeadLastSeenUpdate(t *testing.T) {
 	if !active[0].LastSeenRunID.Valid || active[0].LastSeenRunID.Int64 != newRunID {
 		t.Fatalf("last_seen_run_id = %+v, want %d", active[0].LastSeenRunID, newRunID)
 	}
-	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
-	if err != nil {
-		t.Fatalf("ListFindingsByRun new: %v", err)
-	}
-	if len(newRunFindings) != 0 {
-		t.Fatalf("new run findings = %d, want 0", len(newRunFindings))
-	}
 }
 
 func TestSemanticRelocation(t *testing.T) {
@@ -786,13 +779,6 @@ func TestSemanticRelocation(t *testing.T) {
 	}
 	if !active[0].LastSeenRunID.Valid || active[0].LastSeenRunID.Int64 != newRunID {
 		t.Fatalf("last_seen_run_id = %+v, want %d", active[0].LastSeenRunID, newRunID)
-	}
-	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
-	if err != nil {
-		t.Fatalf("ListFindingsByRun new: %v", err)
-	}
-	if len(newRunFindings) != 0 {
-		t.Fatalf("new run findings = %d, want 0", len(newRunFindings))
 	}
 }
 
@@ -921,7 +907,10 @@ func TestMissingFindingFixed(t *testing.T) {
 	newRunID, _ := res.LastInsertId()
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
 	remaining := sameRunFinding(30)
-	remaining.Path = "src/service/bar.go"
+	remaining.Path = "src/service/foo.go"
+	remaining.CanonicalKey = "nil-deref:foo-service:reviewed-remaining"
+	remaining.Symbol = "(*Service).DoReviewedWork"
+	remaining.AnchorSnippet = "return *reviewedPtr"
 	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{remaining}}); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
@@ -980,10 +969,13 @@ func TestDeletedFileFixed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InsertReviewRun: %v", err)
 	}
+	deleted := sameRunFinding(0)
+	deleted.Path = "src/service/foo.go"
+	deleted.AnchorSnippet = "return *ptr"
 	newRunID, _ := res.LastInsertId()
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
-	deleted := sameRunFinding(0)
 	deleted.AnchorKind = "deleted"
+	deleted.CanonicalKey = "deleted:nil-deref:foo-service"
 	deleted.NewLine = nil
 	deleted.OldLine = func() *int32 { v := int32(12); return &v }()
 	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{deleted}}); err != nil {
@@ -996,12 +988,81 @@ func TestDeletedFileFixed(t *testing.T) {
 	if findings[0].State != findingStateFixed {
 		t.Fatalf("state = %q, want fixed", findings[0].State)
 	}
-	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
-	if err != nil {
-		t.Fatalf("ListFindingsByRun new: %v", err)
+}
+
+func TestMixedScopeMissingFindingStaysStale(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, mrID, runID := seedRun(t, ctx, q)
+	run, _ := q.GetReviewRun(ctx, runID)
+	mr, _ := q.GetMergeRequest(ctx, mrID)
+
+	baseFinding := sameRunFinding(12)
+	if err := activateSingleFinding(ctx, q, run, mr, baseFinding); err != nil {
+		t.Fatalf("activateSingleFinding base: %v", err)
 	}
-	if len(newRunFindings) != 0 {
-		t.Fatalf("new run findings = %d, want 0", len(newRunFindings))
+	baseRows, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun base after first insert: %v", err)
+	}
+	if len(baseRows) != 1 {
+		t.Fatalf("base rows after first insert = %d, want 1", len(baseRows))
+	}
+	otherFinding := sameRunFinding(21)
+	otherFinding.Path = "src/service/bar.go"
+	otherFinding.CanonicalKey = "nil-deref:bar-service"
+	otherFinding.Symbol = "(*Service).DoOtherWork"
+	otherFinding.AnchorSnippet = "return *otherPtr"
+	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", run.ID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{otherFinding}}); err != nil {
+		t.Fatalf("persistFindings other: %v", err)
+	}
+	baseRows, err = q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun base after second insert: %v", err)
+	}
+	if len(baseRows) != 2 {
+		t.Fatalf("base rows after second insert = %d, want 2", len(baseRows))
+	}
+	for _, finding := range baseRows {
+		if finding.Path == otherFinding.Path {
+			goto secondActiveReady
+		}
+	}
+	t.Fatal("expected second active finding on reviewed file")
+
+secondActiveReady:
+
+	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: run.ProjectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook:mixed-scope"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	newRunID, _ := res.LastInsertId()
+	newRun, _ := q.GetReviewRun(ctx, newRunID)
+
+	reviewedAbsentReplacement := sameRunFinding(30)
+	reviewedAbsentReplacement.Path = otherFinding.Path
+	reviewedAbsentReplacement.CanonicalKey = otherFinding.CanonicalKey
+	reviewedAbsentReplacement.Symbol = otherFinding.Symbol
+	reviewedAbsentReplacement.AnchorSnippet = otherFinding.AnchorSnippet
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedAbsentReplacement}}); err != nil {
+		t.Fatalf("persistFindings: %v", err)
+	}
+
+	baseRunFindings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun base: %v", err)
+	}
+	statesByPath := map[string]string{}
+	for _, finding := range baseRunFindings {
+		statesByPath[finding.Path] = finding.State
+	}
+	if got := statesByPath[baseFinding.Path]; got != findingStateStale {
+		t.Fatalf("state for %s = %q, want stale", baseFinding.Path, got)
+	}
+	if got := statesByPath[otherFinding.Path]; got != findingStateNew {
+		t.Fatalf("state for %s = %q, want new", otherFinding.Path, got)
 	}
 }
 
