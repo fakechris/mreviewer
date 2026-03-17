@@ -15,6 +15,7 @@ type Querier interface {
 	GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (CommentAction, error)
 	GetGitlabDiscussion(ctx context.Context, id int64) (GitlabDiscussion, error)
 	GetGitlabDiscussionByFinding(ctx context.Context, reviewFindingID int64) (GitlabDiscussion, error)
+	GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg GetGitlabDiscussionByMergeRequestAndFindingParams) (GitlabDiscussion, error)
 	GetGitlabInstance(ctx context.Context, id int64) (GitlabInstance, error)
 	GetGitlabInstanceByURL(ctx context.Context, url string) (GitlabInstance, error)
 	GetHookEventByDeliveryKey(ctx context.Context, deliveryKey string) (HookEvent, error)

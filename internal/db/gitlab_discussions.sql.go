@@ -55,6 +55,36 @@ func (q *Queries) GetGitlabDiscussionByFinding(ctx context.Context, reviewFindin
 	return i, err
 }
 
+const getGitlabDiscussionByMergeRequestAndFinding = `-- name: GetGitlabDiscussionByMergeRequestAndFinding :one
+SELECT id, review_finding_id, merge_request_id, gitlab_discussion_id, discussion_type, resolved, superseded_by_discussion_id, created_at, updated_at FROM gitlab_discussions
+WHERE merge_request_id = ?
+  AND review_finding_id = ?
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetGitlabDiscussionByMergeRequestAndFindingParams struct {
+	MergeRequestID  int64 `json:"merge_request_id"`
+	ReviewFindingID int64 `json:"review_finding_id"`
+}
+
+func (q *Queries) GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg GetGitlabDiscussionByMergeRequestAndFindingParams) (GitlabDiscussion, error) {
+	row := q.db.QueryRowContext(ctx, getGitlabDiscussionByMergeRequestAndFinding, arg.MergeRequestID, arg.ReviewFindingID)
+	var i GitlabDiscussion
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewFindingID,
+		&i.MergeRequestID,
+		&i.GitlabDiscussionID,
+		&i.DiscussionType,
+		&i.Resolved,
+		&i.SupersededByDiscussionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertGitlabDiscussion = `-- name: InsertGitlabDiscussion :execresult
 INSERT INTO gitlab_discussions (
     review_finding_id, merge_request_id, gitlab_discussion_id, discussion_type, resolved

@@ -217,8 +217,8 @@ func TestHistoricalBotContext(t *testing.T) {
 				BodyMarkdown:        sql.NullString{String: "Handle nil session before dereference.", Valid: true},
 			},
 		},
-		discussions: map[int64]db.GitlabDiscussion{
-			11: {
+		discussions: map[historicalDiscussionKey]db.GitlabDiscussion{
+			{mergeRequestID: 99, reviewFindingID: 11}: {
 				GitlabDiscussionID: "discussion-123",
 				DiscussionType:     "diff",
 				Resolved:           false,
@@ -246,6 +246,64 @@ func TestHistoricalBotContext(t *testing.T) {
 	got := result.Request.HistoricalContext.ActiveBotFindings[0]
 	if got.SemanticFingerprint != "sf_abc" || got.DiscussionID != "discussion-123" {
 		t.Fatalf("historical finding = %+v, want fingerprint/discussion populated", got)
+	}
+}
+
+func TestHistoricalDiscussionScopedToMergeRequest(t *testing.T) {
+	store := &fakeHistoricalStore{
+		findings: []db.ReviewFinding{
+			{
+				ID:                  11,
+				MergeRequestID:      99,
+				Path:                "src/auth/session.ts",
+				Title:               "Missing null guard",
+				SemanticFingerprint: "sf_shared",
+				GitlabDiscussionID:  "finding-discussion-id",
+			},
+		},
+		discussions: map[historicalDiscussionKey]db.GitlabDiscussion{
+			{mergeRequestID: 99, reviewFindingID: 11}: {
+				MergeRequestID:     99,
+				ReviewFindingID:    11,
+				GitlabDiscussionID: "discussion-current-mr",
+				DiscussionType:     "diff",
+				Resolved:           false,
+			},
+			{mergeRequestID: 100, reviewFindingID: 11}: {
+				MergeRequestID:     100,
+				ReviewFindingID:    11,
+				GitlabDiscussionID: "discussion-other-mr",
+				DiscussionType:     "diff",
+				Resolved:           true,
+			},
+		},
+	}
+
+	historical, err := LoadHistoricalContext(context.Background(), store, 99)
+	if err != nil {
+		t.Fatalf("LoadHistoricalContext: %v", err)
+	}
+
+	if len(historical.ActiveBotFindings) != 1 {
+		t.Fatalf("len(active_bot_findings) = %d, want 1", len(historical.ActiveBotFindings))
+	}
+
+	got := historical.ActiveBotFindings[0]
+	if got.DiscussionID != "discussion-current-mr" {
+		t.Fatalf("discussion id = %q, want current MR discussion", got.DiscussionID)
+	}
+	if got.Resolved {
+		t.Fatalf("resolved = %v, want false from current MR discussion", got.Resolved)
+	}
+	if got.DiscussionType != "diff" {
+		t.Fatalf("discussion type = %q, want diff", got.DiscussionType)
+	}
+	if len(store.discussionLookups) != 1 {
+		t.Fatalf("discussion lookups = %d, want 1", len(store.discussionLookups))
+	}
+	lookup := store.discussionLookups[0]
+	if lookup.MergeRequestID != 99 || lookup.ReviewFindingID != 11 {
+		t.Fatalf("discussion lookup = %+v, want merge_request_id=99 review_finding_id=11", lookup)
 	}
 }
 
@@ -398,9 +456,15 @@ func equalStrings(got, want []string) bool {
 }
 
 type fakeHistoricalStore struct {
-	findings    []db.ReviewFinding
-	discussions map[int64]db.GitlabDiscussion
-	err         error
+	findings          []db.ReviewFinding
+	discussions       map[historicalDiscussionKey]db.GitlabDiscussion
+	discussionLookups []db.GetGitlabDiscussionByMergeRequestAndFindingParams
+	err               error
+}
+
+type historicalDiscussionKey struct {
+	mergeRequestID  int64
+	reviewFindingID int64
 }
 
 func (f *fakeHistoricalStore) ListActiveFindingsByMR(context.Context, int64) ([]db.ReviewFinding, error) {
@@ -410,8 +474,9 @@ func (f *fakeHistoricalStore) ListActiveFindingsByMR(context.Context, int64) ([]
 	return append([]db.ReviewFinding(nil), f.findings...), nil
 }
 
-func (f *fakeHistoricalStore) GetGitlabDiscussionByFinding(_ context.Context, reviewFindingID int64) (db.GitlabDiscussion, error) {
-	if discussion, ok := f.discussions[reviewFindingID]; ok {
+func (f *fakeHistoricalStore) GetGitlabDiscussionByMergeRequestAndFinding(_ context.Context, arg db.GetGitlabDiscussionByMergeRequestAndFindingParams) (db.GitlabDiscussion, error) {
+	f.discussionLookups = append(f.discussionLookups, arg)
+	if discussion, ok := f.discussions[historicalDiscussionKey{mergeRequestID: arg.MergeRequestID, reviewFindingID: arg.ReviewFindingID}]; ok {
 		return discussion, nil
 	}
 	return db.GitlabDiscussion{}, sql.ErrNoRows

@@ -146,7 +146,7 @@ type PolicySettings struct {
 
 type HistoricalStore interface {
 	ListActiveFindingsByMR(ctx context.Context, mergeRequestID int64) ([]db.ReviewFinding, error)
-	GetGitlabDiscussionByFinding(ctx context.Context, reviewFindingID int64) (db.GitlabDiscussion, error)
+	GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg db.GetGitlabDiscussionByMergeRequestAndFindingParams) (db.GitlabDiscussion, error)
 }
 
 func NewAssembler() *Assembler {
@@ -229,14 +229,15 @@ func LoadHistoricalContext(ctx context.Context, store HistoricalStore, mergeRequ
 			entry.BodyMarkdown = finding.BodyMarkdown.String
 		}
 
-		discussion, err := store.GetGitlabDiscussionByFinding(ctx, finding.ID)
+		discussion, err := store.GetGitlabDiscussionByMergeRequestAndFinding(ctx, db.GetGitlabDiscussionByMergeRequestAndFindingParams{
+			MergeRequestID:  mergeRequestID,
+			ReviewFindingID: finding.ID,
+		})
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return HistoricalContext{}, fmt.Errorf("context: load discussion for finding %d: %w", finding.ID, err)
 		}
 		if err == nil {
-			if entry.DiscussionID == "" {
-				entry.DiscussionID = discussion.GitlabDiscussionID
-			}
+			entry.DiscussionID = discussion.GitlabDiscussionID
 			entry.DiscussionType = discussion.DiscussionType
 			entry.Resolved = discussion.Resolved
 		}

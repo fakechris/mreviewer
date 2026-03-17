@@ -12,6 +12,13 @@ WHERE review_finding_id = ?
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: GetGitlabDiscussionByMergeRequestAndFinding :one
+SELECT * FROM gitlab_discussions
+WHERE merge_request_id = ?
+  AND review_finding_id = ?
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: UpdateGitlabDiscussionResolved :exec
 UPDATE gitlab_discussions
 SET resolved = ?, updated_at = CURRENT_TIMESTAMP
