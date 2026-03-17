@@ -229,9 +229,13 @@ func (h *Handler) verifyToken(token string) bool {
 }
 
 // extractDeliveryKey derives a delivery key from GitLab headers or generates
-// a synthetic UUID if none is present. GitLab sends X-Gitlab-Delivery or
-// X-Request-ID depending on the hook type.
+// a synthetic UUID if none is present. Prefer X-Gitlab-Webhook-UUID for
+// GitLab 16.4+, then preserve X-Gitlab-Delivery and the legacy
+// X-Gitlab-Event-UUID fallback for older/self-managed installations.
 func (h *Handler) extractDeliveryKey(r *http.Request) string {
+	if dk := r.Header.Get("X-Gitlab-Webhook-UUID"); dk != "" {
+		return dk
+	}
 	if dk := r.Header.Get("X-Gitlab-Delivery"); dk != "" {
 		return dk
 	}

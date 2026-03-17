@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 )
@@ -48,6 +49,18 @@ func postWebhook(handler http.Handler, body string, headers map[string]string) *
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+func webhookHeaders(token string, extra map[string]string) map[string]string {
+	headers := map[string]string{
+		"X-Gitlab-Token": token,
+		"X-Gitlab-Event": "Merge Request Hook",
+		"Content-Type":   "application/json",
+	}
+	for k, v := range extra {
+		headers[k] = v
+	}
+	return headers
 }
 
 // mrOpenPayload returns a minimal valid MR open webhook payload.
@@ -198,53 +211,151 @@ func TestMalformedJSON(t *testing.T) {
 	}
 }
 
+// TestWebhookDeliveryKeyHeaders verifies modern and legacy GitLab delivery key
+// header extraction, including preference order and synthetic fallback.
+func TestWebhookDeliveryKeyHeaders(t *testing.T) {
+	h := &Handler{}
+
+	tests := []struct {
+		name      string
+		headers   map[string]string
+		want      string
+		synthetic bool
+	}{
+		{
+			name: "prefers webhook UUID over other headers",
+			headers: map[string]string{
+				"X-Gitlab-Webhook-UUID": "webhook-uuid-1",
+				"X-Gitlab-Delivery":     "delivery-uuid-1",
+				"X-Gitlab-Event-UUID":   "event-uuid-1",
+			},
+			want: "webhook-uuid-1",
+		},
+		{
+			name: "falls back to delivery header",
+			headers: map[string]string{
+				"X-Gitlab-Delivery": "delivery-uuid-2",
+			},
+			want: "delivery-uuid-2",
+		},
+		{
+			name: "falls back to legacy event UUID header",
+			headers: map[string]string{
+				"X-Gitlab-Event-UUID": "event-uuid-2",
+			},
+			want: "event-uuid-2",
+		},
+		{
+			name:      "generates synthetic key when no supported header is present",
+			headers:   map[string]string{},
+			synthetic: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(nil))
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+
+			got := h.extractDeliveryKey(req)
+			if tc.synthetic {
+				if !strings.HasPrefix(got, "synthetic-") {
+					t.Fatalf("expected synthetic delivery key, got %q", got)
+				}
+				if _, err := uuid.Parse(strings.TrimPrefix(got, "synthetic-")); err != nil {
+					t.Fatalf("synthetic delivery key should end with a UUID, got %q: %v", got, err)
+				}
+				return
+			}
+
+			if got != tc.want {
+				t.Fatalf("extractDeliveryKey() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestDuplicateDeliveryKey verifies VAL-INGRESS-006:
-// Replaying the same delivery key returns 200 without creating duplicate records.
+// Replaying the same delivery key returns 200 without creating duplicate records,
+// including when equivalent deliveries arrive through different supported GitLab headers.
 func TestDuplicateDeliveryKey(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	secret := testWebhookKey
 	handler := newTestHandler(sqlDB)
 
-	dlvID := "dedup-test-1"
-	headers := map[string]string{
-		"X-Gitlab-Token":    secret,
-		"X-Gitlab-Event":    "Merge Request Hook",
-		"X-Gitlab-Delivery": dlvID,
-		"Content-Type":      "application/json",
-	}
-	payload := mrOpenPayload(dlvID)
-
-	// First request should succeed and create records.
-	rec1 := postWebhook(handler, payload, headers)
-	if rec1.Code != http.StatusOK {
-		t.Fatalf("first request: expected 200, got %d: %s", rec1.Code, rec1.Body.String())
-	}
-
-	// Second request with the same delivery key should succeed but be deduped.
-	rec2 := postWebhook(handler, payload, headers)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("second request: expected 200, got %d: %s", rec2.Code, rec2.Body.String())
-	}
-
-	// Verify the response indicates duplicate.
-	var resp map[string]string
-	if err := json.NewDecoder(rec2.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp["status"] != "duplicate" {
-		t.Errorf("expected status='duplicate', got %q", resp["status"])
+	tests := []struct {
+		name          string
+		deliveryKey   string
+		firstHeaders  map[string]string
+		secondHeaders map[string]string
+	}{
+		{
+			name:        "webhook UUID dedupes against delivery fallback",
+			deliveryKey: "dedup-webhook-uuid-1",
+			firstHeaders: webhookHeaders(secret, map[string]string{
+				"X-Gitlab-Webhook-UUID": "dedup-webhook-uuid-1",
+			}),
+			secondHeaders: webhookHeaders(secret, map[string]string{
+				"X-Gitlab-Delivery": "dedup-webhook-uuid-1",
+			}),
+		},
+		{
+			name:        "delivery header dedupes against legacy event UUID fallback",
+			deliveryKey: "dedup-delivery-1",
+			firstHeaders: webhookHeaders(secret, map[string]string{
+				"X-Gitlab-Delivery": "dedup-delivery-1",
+			}),
+			secondHeaders: webhookHeaders(secret, map[string]string{
+				"X-Gitlab-Event-UUID": "dedup-delivery-1",
+			}),
+		},
 	}
 
-	// Verify only one hook_events row exists.
-	var count int
-	err := sqlDB.QueryRowContext(context.Background(),
-		"SELECT COUNT(*) FROM hook_events WHERE delivery_key = ?", dlvID,
-	).Scan(&count)
-	if err != nil {
-		t.Fatalf("count query: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("expected 1 hook_events row, got %d", count)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := mrOpenPayload(tc.deliveryKey)
+
+			// First request should succeed and create records.
+			rec1 := postWebhook(handler, payload, tc.firstHeaders)
+			if rec1.Code != http.StatusOK {
+				t.Fatalf("first request: expected 200, got %d: %s", rec1.Code, rec1.Body.String())
+			}
+
+			// Second equivalent request should be deduped even if it uses a different supported header.
+			rec2 := postWebhook(handler, payload, tc.secondHeaders)
+			if rec2.Code != http.StatusOK {
+				t.Fatalf("second request: expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+			}
+
+			var resp map[string]string
+			if err := json.NewDecoder(rec2.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if resp["status"] != "duplicate" {
+				t.Errorf("expected status='duplicate', got %q", resp["status"])
+			}
+
+			event, err := db.New(sqlDB).GetHookEventByDeliveryKey(context.Background(), tc.deliveryKey)
+			if err != nil {
+				t.Fatalf("expected hook event for %q: %v", tc.deliveryKey, err)
+			}
+			if event.DeliveryKey != tc.deliveryKey {
+				t.Fatalf("stored delivery key = %q, want %q", event.DeliveryKey, tc.deliveryKey)
+			}
+
+			var count int
+			err = sqlDB.QueryRowContext(context.Background(),
+				"SELECT COUNT(*) FROM hook_events WHERE delivery_key = ?", tc.deliveryKey,
+			).Scan(&count)
+			if err != nil {
+				t.Fatalf("count query: %v", err)
+			}
+			if count != 1 {
+				t.Errorf("expected 1 hook_events row, got %d", count)
+			}
+		})
 	}
 }
 
@@ -330,13 +441,10 @@ func TestWebhookAuditLogging(t *testing.T) {
 	handler := newTestHandler(sqlDB)
 
 	t.Run("accepted webhook has audit record", func(t *testing.T) {
-		dlvID := "audit-accepted-1"
-		postWebhook(handler, mrOpenPayload(dlvID), map[string]string{
-			"X-Gitlab-Token":    secret,
-			"X-Gitlab-Event":    "Merge Request Hook",
-			"X-Gitlab-Delivery": dlvID,
-			"Content-Type":      "application/json",
-		})
+		dlvID := "audit-accepted-webhook-uuid-1"
+		postWebhook(handler, mrOpenPayload(dlvID), webhookHeaders(secret, map[string]string{
+			"X-Gitlab-Webhook-UUID": dlvID,
+		}))
 
 		logs, err := db.New(sqlDB).ListAuditLogsByDeliveryKey(context.Background(), dlvID)
 		if err != nil {
@@ -363,12 +471,9 @@ func TestWebhookAuditLogging(t *testing.T) {
 
 	t.Run("rejected webhook has audit record with reason", func(t *testing.T) {
 		dlvID := "audit-rejected-1"
-		postWebhook(handler, mrOpenPayload(dlvID), map[string]string{
-			"X-Gitlab-Token":    "BADVALUE",
-			"X-Gitlab-Event":    "Merge Request Hook",
+		postWebhook(handler, mrOpenPayload(dlvID), webhookHeaders("BADVALUE", map[string]string{
 			"X-Gitlab-Delivery": dlvID,
-			"Content-Type":      "application/json",
-		})
+		}))
 
 		logs, err := db.New(sqlDB).ListAuditLogsByDeliveryKey(context.Background(), dlvID)
 		if err != nil {
@@ -394,13 +499,10 @@ func TestWebhookAuditLogging(t *testing.T) {
 	})
 
 	t.Run("malformed JSON has audit record", func(t *testing.T) {
-		dlvID := "audit-malformed-1"
-		postWebhook(handler, "{bad json", map[string]string{
-			"X-Gitlab-Token":    secret,
-			"X-Gitlab-Event":    "Merge Request Hook",
-			"X-Gitlab-Delivery": dlvID,
-			"Content-Type":      "application/json",
-		})
+		dlvID := "audit-malformed-event-uuid-1"
+		postWebhook(handler, "{bad json", webhookHeaders(secret, map[string]string{
+			"X-Gitlab-Event-UUID": dlvID,
+		}))
 
 		logs, err := db.New(sqlDB).ListAuditLogsByDeliveryKey(context.Background(), dlvID)
 		if err != nil {
@@ -423,19 +525,17 @@ func TestWebhookAuditLogging(t *testing.T) {
 	})
 
 	t.Run("duplicate delivery has audit record", func(t *testing.T) {
-		dlvID := "audit-dedup-1"
-		headers := map[string]string{
-			"X-Gitlab-Token":    secret,
-			"X-Gitlab-Event":    "Merge Request Hook",
-			"X-Gitlab-Delivery": dlvID,
-			"Content-Type":      "application/json",
-		}
+		dlvID := "audit-dedup-cross-variant-1"
 		payload := mrOpenPayload(dlvID)
 
 		// First: accepted
-		postWebhook(handler, payload, headers)
+		postWebhook(handler, payload, webhookHeaders(secret, map[string]string{
+			"X-Gitlab-Webhook-UUID": dlvID,
+		}))
 		// Second: deduplicated
-		postWebhook(handler, payload, headers)
+		postWebhook(handler, payload, webhookHeaders(secret, map[string]string{
+			"X-Gitlab-Delivery": dlvID,
+		}))
 
 		logs, err := db.New(sqlDB).ListAuditLogsByDeliveryKey(context.Background(), dlvID)
 		if err != nil {
