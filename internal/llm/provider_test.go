@@ -441,6 +441,181 @@ func TestAnchorFingerprintDeterministic(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeLegacyAnchorKinds(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty defaults to new line", in: "", want: "new_line"},
+		{name: "new stays new line", in: "new", want: "new_line"},
+		{name: "new line stays canonical", in: "new_line", want: "new_line"},
+		{name: "added maps to new line", in: "added", want: "new_line"},
+		{name: "old stays old line", in: "old", want: "old_line"},
+		{name: "old line stays canonical", in: "old_line", want: "old_line"},
+		{name: "deleted maps to old line", in: "deleted", want: "old_line"},
+		{name: "context stays context line", in: "context", want: "context_line"},
+		{name: "context line stays canonical", in: "context_line", want: "context_line"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeAnchorKind(tt.in); got != tt.want {
+				t.Fatalf("normalizeAnchorKind(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeFindingCanonicalizesLegacyAnchorLabels(t *testing.T) {
+	legacyOldLine := int32(11)
+	currentOldLine := int32(11)
+
+	legacy := normalizeFinding(ReviewFinding{
+		Category:      "bug",
+		Severity:      "high",
+		Title:         "Legacy anchor",
+		BodyMarkdown:  "body",
+		Path:          "pkg/foo.go",
+		AnchorKind:    "deleted",
+		OldLine:       &legacyOldLine,
+		AnchorSnippet: "removed line",
+		CanonicalKey:  "legacy-anchor",
+	})
+	current := normalizeFinding(ReviewFinding{
+		Category:      "bug",
+		Severity:      "high",
+		Title:         "Current anchor",
+		BodyMarkdown:  "body",
+		Path:          "pkg/foo.go",
+		AnchorKind:    "old_line",
+		OldLine:       &currentOldLine,
+		AnchorSnippet: "removed line",
+		CanonicalKey:  "legacy-anchor",
+	})
+
+	if legacy.AnchorKind != "old_line" {
+		t.Fatalf("legacy anchor kind = %q, want old_line", legacy.AnchorKind)
+	}
+	if current.AnchorKind != "old_line" {
+		t.Fatalf("current anchor kind = %q, want old_line", current.AnchorKind)
+	}
+	if computeAnchorFingerprint(legacy) != computeAnchorFingerprint(current) {
+		t.Fatal("expected canonicalized legacy/current anchors to share anchor fingerprint")
+	}
+}
+
+func TestPersistFindingsCanonicalizesLegacyAnchorLabels(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, mrID, runID := seedRun(t, ctx, q)
+
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+
+	newLine := int32(27)
+	legacy := ReviewResult{
+		SchemaVersion: "1.0",
+		ReviewRunID:   fmt.Sprintf("%d", runID),
+		Summary:       "summary",
+		Status:        "completed",
+		Findings: []ReviewFinding{{
+			Category:      "bug",
+			Severity:      "high",
+			Confidence:    0.8,
+			Title:         "Equivalent anchor vocabulary",
+			BodyMarkdown:  "body",
+			Path:          "pkg/service.go",
+			AnchorKind:    "added",
+			NewLine:       &newLine,
+			AnchorSnippet: "if err != nil { return err }",
+			CanonicalKey:  "equivalent-anchor-vocabulary",
+		}},
+	}
+	if err := persistFindings(ctx, q, run, mr, legacy); err != nil {
+		t.Fatalf("persistFindings legacy: %v", err)
+	}
+
+	legacyRows, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun legacy: %v", err)
+	}
+	if len(legacyRows) != 1 {
+		t.Fatalf("legacy rows = %d, want 1", len(legacyRows))
+	}
+	if legacyRows[0].AnchorKind != "new_line" {
+		t.Fatalf("legacy anchor kind persisted as %q, want new_line", legacyRows[0].AnchorKind)
+	}
+	legacyFingerprint := legacyRows[0].AnchorFingerprint
+
+	secondRunResult, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: run.ProjectID, MergeRequestID: mrID, Status: "pending", TriggerType: "merge_request", HeadSha: "head-sha-2"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	secondRunID, err := secondRunResult.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+	secondRun, err := q.GetReviewRun(ctx, secondRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun second run: %v", err)
+	}
+
+	current := ReviewResult{
+		SchemaVersion: "1.0",
+		ReviewRunID:   fmt.Sprintf("%d", secondRunID),
+		Summary:       "summary",
+		Status:        "completed",
+		Findings: []ReviewFinding{{
+			Category:      "bug",
+			Severity:      "high",
+			Confidence:    0.8,
+			Title:         "Equivalent anchor vocabulary",
+			BodyMarkdown:  "body",
+			Path:          "pkg/service.go",
+			AnchorKind:    "new_line",
+			NewLine:       &newLine,
+			AnchorSnippet: "if err != nil { return err }",
+			CanonicalKey:  "equivalent-anchor-vocabulary",
+		}},
+	}
+	if err := persistFindings(ctx, q, secondRun, mr, current); err != nil {
+		t.Fatalf("persistFindings current: %v", err)
+	}
+
+	currentRows, err := q.ListFindingsByRun(ctx, secondRunID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun current: %v", err)
+	}
+	if len(currentRows) == 0 {
+		activeRows, listErr := q.ListActiveFindingsByMR(ctx, mrID)
+		if listErr != nil {
+			t.Fatalf("ListActiveFindingsByMR: %v", listErr)
+		}
+		if len(activeRows) != 1 {
+			t.Fatalf("active rows = %d, want 1", len(activeRows))
+		}
+		currentRows = activeRows
+	}
+	if currentRows[0].AnchorKind != "new_line" {
+		t.Fatalf("current anchor kind persisted as %q, want new_line", currentRows[0].AnchorKind)
+	}
+	if currentRows[0].AnchorFingerprint != legacyFingerprint {
+		t.Fatalf("anchor fingerprint = %q, want %q", currentRows[0].AnchorFingerprint, legacyFingerprint)
+	}
+	if currentRows[0].SemanticFingerprint != legacyRows[0].SemanticFingerprint {
+		t.Fatalf("semantic fingerprint = %q, want %q", currentRows[0].SemanticFingerprint, legacyRows[0].SemanticFingerprint)
+	}
+}
+
 func TestSemanticFingerprintDeterministic(t *testing.T) {
 	base := normalizedFinding{
 		Path:         "pkg/foo.go",

@@ -12,7 +12,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -691,15 +690,6 @@ func severityRank(value string) int {
 	}
 }
 
-func sortedKeys(values map[string]struct{}) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func computeAnchorFingerprint(finding normalizedFinding) string {
 	return hashFingerprint(strings.Join([]string{
 		finding.Path,
@@ -734,9 +724,14 @@ func normalizePath(path string) string {
 }
 
 func normalizeAnchorKind(kind string) string {
-	trimmed := strings.TrimSpace(kind)
-	if trimmed == "" {
+	trimmed := strings.ToLower(strings.TrimSpace(kind))
+	switch trimmed {
+	case "", "new", "new_line", "added":
 		return "new_line"
+	case "old", "old_line", "deleted":
+		return "old_line"
+	case "context", "context_line", "unchanged":
+		return "context_line"
 	}
 	return trimmed
 }
