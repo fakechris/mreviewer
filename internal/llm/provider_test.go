@@ -312,6 +312,173 @@ func TestSuccessfulRunPersistsProviderMetrics(t *testing.T) {
 	}
 }
 
+func TestNormalizeFinding(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, mrID, runID := seedRun(t, ctx, q)
+
+	oldLine := int32(7)
+	newLine := int32(9)
+	result := ReviewResult{
+		SchemaVersion: "1.0",
+		ReviewRunID:   fmt.Sprintf("%d", runID),
+		Summary:       "summary",
+		Status:        "completed",
+		Findings: []ReviewFinding{{
+			Category:       "bug",
+			Severity:       "high",
+			Confidence:     0.91,
+			Title:          "Nil dereference",
+			BodyMarkdown:   "Dereference may panic.",
+			Path:           "src/service/foo.go",
+			AnchorKind:     "new_line",
+			OldLine:        &oldLine,
+			NewLine:        &newLine,
+			AnchorSnippet:  "return *ptr",
+			Evidence:       []string{"ptr may be nil", "guard is missing"},
+			SuggestedPatch: "if ptr == nil { return 0 }",
+			CanonicalKey:   "nil-deref:foo-service",
+			Symbol:         "(*Service).DoWork",
+		}},
+	}
+
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+	if err := persistFindings(ctx, q, run, mr, result); err != nil {
+		t.Fatalf("persistFindings: %v", err)
+	}
+
+	findings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(findings))
+	}
+
+	got := findings[0]
+	if got.Category != "bug" || got.Severity != "high" || got.Confidence != 0.91 {
+		t.Fatalf("unexpected classification fields: %+v", got)
+	}
+	if got.Title != "Nil dereference" || got.BodyMarkdown.String != "Dereference may panic." {
+		t.Fatalf("unexpected title/body: %+v", got)
+	}
+	if got.Path != "src/service/foo.go" || got.AnchorKind != "new_line" {
+		t.Fatalf("unexpected path/anchor_kind: %+v", got)
+	}
+	if !got.OldLine.Valid || got.OldLine.Int32 != oldLine || !got.NewLine.Valid || got.NewLine.Int32 != newLine {
+		t.Fatalf("unexpected line anchors: old=%+v new=%+v", got.OldLine, got.NewLine)
+	}
+	if got.AnchorSnippet.String != "return *ptr" {
+		t.Fatalf("anchor_snippet = %q, want %q", got.AnchorSnippet.String, "return *ptr")
+	}
+	if got.Evidence.String != "ptr may be nil\nguard is missing" {
+		t.Fatalf("evidence = %q", got.Evidence.String)
+	}
+	if got.SuggestedPatch.String != "if ptr == nil { return 0 }" {
+		t.Fatalf("suggested_patch = %q", got.SuggestedPatch.String)
+	}
+	if got.CanonicalKey != "nil-deref:foo-service" {
+		t.Fatalf("canonical_key = %q", got.CanonicalKey)
+	}
+	if got.AnchorFingerprint == "" || got.SemanticFingerprint == "" {
+		t.Fatalf("expected fingerprints to be populated: %+v", got)
+	}
+	if got.State != "new" {
+		t.Fatalf("state = %q, want new", got.State)
+	}
+
+	wantAnchor := computeAnchorFingerprint(normalizedFinding{
+		Path:          "src/service/foo.go",
+		AnchorKind:    "new_line",
+		AnchorSnippet: "return *ptr",
+		Category:      "bug",
+		CanonicalKey:  "nil-deref:foo-service",
+	})
+	wantSemantic := computeSemanticFingerprint(normalizedFinding{
+		Path:         "src/service/foo.go",
+		Category:     "bug",
+		CanonicalKey: "nil-deref:foo-service",
+		Symbol:       "(*Service).DoWork",
+	})
+	if got.AnchorFingerprint != wantAnchor {
+		t.Fatalf("anchor_fingerprint = %q, want %q", got.AnchorFingerprint, wantAnchor)
+	}
+	if got.SemanticFingerprint != wantSemantic {
+		t.Fatalf("semantic_fingerprint = %q, want %q", got.SemanticFingerprint, wantSemantic)
+	}
+	if got.MergeRequestID != mrID {
+		t.Fatalf("merge_request_id = %d, want %d", got.MergeRequestID, mrID)
+	}
+	if got.ReviewRunID != runID {
+		t.Fatalf("review_run_id = %d, want %d", got.ReviewRunID, runID)
+	}
+}
+
+func TestAnchorFingerprintDeterministic(t *testing.T) {
+	base := normalizedFinding{
+		Path:          "src/foo.go",
+		AnchorKind:    "new_line",
+		AnchorSnippet: "if err != nil {",
+		Category:      "bug",
+		CanonicalKey:  "missing-error-context",
+	}
+	if got, want := computeAnchorFingerprint(base), computeAnchorFingerprint(base); got != want {
+		t.Fatalf("anchor fingerprint not deterministic: %q != %q", got, want)
+	}
+	changed := base
+	changed.AnchorSnippet = "if err != nil && retry {"
+	if computeAnchorFingerprint(base) == computeAnchorFingerprint(changed) {
+		t.Fatal("expected different anchor fingerprint for changed snippet")
+	}
+}
+
+func TestSemanticFingerprintDeterministic(t *testing.T) {
+	base := normalizedFinding{
+		Path:         "pkg/foo.go",
+		Category:     "bug",
+		CanonicalKey: "missing-nil-check",
+		Symbol:       "(*Server).Handle",
+	}
+	withLineShift := base
+	withLineShift.OldLine = sql.NullInt32{Int32: 10, Valid: true}
+	withLineShift.NewLine = sql.NullInt32{Int32: 30, Valid: true}
+	if got, want := computeSemanticFingerprint(base), computeSemanticFingerprint(withLineShift); got != want {
+		t.Fatalf("semantic fingerprint changed across line shift: %q != %q", got, want)
+	}
+	changedSymbol := base
+	changedSymbol.Symbol = "(*Server).Serve"
+	if computeSemanticFingerprint(base) == computeSemanticFingerprint(changedSymbol) {
+		t.Fatal("expected different semantic fingerprint for changed symbol")
+	}
+}
+
+func TestCanonicalKeyFallback(t *testing.T) {
+	base := ReviewFinding{Title: "Missing nil check", Path: "pkg/service.go", Category: "bug", AnchorKind: "new_line", AnchorSnippet: "return *ptr"}
+	normalizedA := normalizeFinding(base)
+	if normalizedA.CanonicalKey != "missing nil check::pkg/service.go" {
+		t.Fatalf("canonical key fallback = %q", normalizedA.CanonicalKey)
+	}
+	normalizedB := normalizeFinding(ReviewFinding{Title: "Missing nil check", Path: "pkg/service.go", Category: "bug", AnchorKind: "new_line", AnchorSnippet: "return *ptr", NewLine: func() *int32 { v := int32(44); return &v }()})
+	if normalizedA.CanonicalKey != normalizedB.CanonicalKey {
+		t.Fatalf("fallback canonical key unstable: %q != %q", normalizedA.CanonicalKey, normalizedB.CanonicalKey)
+	}
+	if computeSemanticFingerprint(normalizedA) != computeSemanticFingerprint(normalizedB) {
+		t.Fatal("semantic fingerprint should stay stable with fallback canonical key")
+	}
+	if computeAnchorFingerprint(normalizedA) != computeAnchorFingerprint(normalizedB) {
+		t.Fatal("anchor fingerprint should stay stable with fallback canonical key when other inputs match")
+	}
+}
+
 type captureTransport struct {
 	body         bytes.Buffer
 	header       http.Header

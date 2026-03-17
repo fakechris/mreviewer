@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -345,19 +346,125 @@ func validateReviewResult(result ReviewResult) error {
 
 func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, result ReviewResult) error {
 	for _, finding := range result.Findings {
+		normalized := normalizeFinding(finding)
 		var oldLine, newLine sql.NullInt32
-		if finding.OldLine != nil {
-			oldLine = sql.NullInt32{Int32: *finding.OldLine, Valid: true}
+		if normalized.OldLine.Valid {
+			oldLine = normalized.OldLine
 		}
-		if finding.NewLine != nil {
-			newLine = sql.NullInt32{Int32: *finding.NewLine, Valid: true}
+		if normalized.NewLine.Valid {
+			newLine = normalized.NewLine
 		}
-		_, err := queries.InsertReviewFinding(ctx, db.InsertReviewFindingParams{ReviewRunID: run.ID, MergeRequestID: mr.ID, Category: finding.Category, Severity: finding.Severity, Confidence: finding.Confidence, Title: finding.Title, BodyMarkdown: nullableString(finding.BodyMarkdown), Path: finding.Path, AnchorKind: finding.AnchorKind, OldLine: oldLine, NewLine: newLine, AnchorSnippet: nullableString(finding.AnchorSnippet), Evidence: nullableString(strings.Join(finding.Evidence, "\n")), SuggestedPatch: nullableString(finding.SuggestedPatch), CanonicalKey: finding.CanonicalKey, AnchorFingerprint: "", SemanticFingerprint: "", State: "new"})
+		_, err := queries.InsertReviewFinding(ctx, db.InsertReviewFindingParams{ReviewRunID: run.ID, MergeRequestID: mr.ID, Category: normalized.Category, Severity: normalized.Severity, Confidence: normalized.Confidence, Title: normalized.Title, BodyMarkdown: nullableString(normalized.BodyMarkdown), Path: normalized.Path, AnchorKind: normalized.AnchorKind, OldLine: oldLine, NewLine: newLine, AnchorSnippet: nullableString(normalized.AnchorSnippet), Evidence: nullableString(normalized.Evidence), SuggestedPatch: nullableString(normalized.SuggestedPatch), CanonicalKey: normalized.CanonicalKey, AnchorFingerprint: computeAnchorFingerprint(normalized), SemanticFingerprint: computeSemanticFingerprint(normalized), State: "new"})
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type normalizedFinding struct {
+	Category       string
+	Severity       string
+	Confidence     float64
+	Title          string
+	BodyMarkdown   string
+	Path           string
+	AnchorKind     string
+	OldLine        sql.NullInt32
+	NewLine        sql.NullInt32
+	AnchorSnippet  string
+	Evidence       string
+	SuggestedPatch string
+	CanonicalKey   string
+	Symbol         string
+}
+
+func normalizeFinding(finding ReviewFinding) normalizedFinding {
+	normalized := normalizedFinding{
+		Category:       strings.TrimSpace(finding.Category),
+		Severity:       strings.TrimSpace(finding.Severity),
+		Confidence:     finding.Confidence,
+		Title:          strings.TrimSpace(finding.Title),
+		BodyMarkdown:   strings.TrimSpace(finding.BodyMarkdown),
+		Path:           normalizePath(finding.Path),
+		AnchorKind:     normalizeAnchorKind(finding.AnchorKind),
+		AnchorSnippet:  normalizeWhitespace(finding.AnchorSnippet),
+		Evidence:       normalizeEvidence(finding.Evidence),
+		SuggestedPatch: strings.TrimSpace(finding.SuggestedPatch),
+		CanonicalKey:   strings.TrimSpace(finding.CanonicalKey),
+		Symbol:         strings.TrimSpace(finding.Symbol),
+	}
+	if finding.OldLine != nil {
+		normalized.OldLine = sql.NullInt32{Int32: *finding.OldLine, Valid: true}
+	}
+	if finding.NewLine != nil {
+		normalized.NewLine = sql.NullInt32{Int32: *finding.NewLine, Valid: true}
+	}
+	if normalized.CanonicalKey == "" {
+		normalized.CanonicalKey = canonicalKeyFallback(normalized.Title, normalized.Path)
+	}
+	return normalized
+}
+
+func computeAnchorFingerprint(finding normalizedFinding) string {
+	return hashFingerprint(strings.Join([]string{
+		finding.Path,
+		finding.AnchorKind,
+		finding.AnchorSnippet,
+		finding.Category,
+		finding.CanonicalKey,
+	}, "\x00"))
+}
+
+func computeSemanticFingerprint(finding normalizedFinding) string {
+	return hashFingerprint(strings.Join([]string{
+		finding.Path,
+		finding.Category,
+		finding.CanonicalKey,
+		finding.Symbol,
+	}, "\x00"))
+}
+
+func hashFingerprint(input string) string {
+	sum := sha256.Sum256([]byte(input))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func normalizePath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	trimmed = strings.ReplaceAll(trimmed, "\\", "/")
+	for strings.Contains(trimmed, "//") {
+		trimmed = strings.ReplaceAll(trimmed, "//", "/")
+	}
+	return strings.TrimPrefix(trimmed, "./")
+}
+
+func normalizeAnchorKind(kind string) string {
+	trimmed := strings.TrimSpace(kind)
+	if trimmed == "" {
+		return "new_line"
+	}
+	return trimmed
+}
+
+func normalizeEvidence(evidence []string) string {
+	parts := make([]string, 0, len(evidence))
+	for _, item := range evidence {
+		item = normalizeWhitespace(item)
+		if item == "" {
+			continue
+		}
+		parts = append(parts, item)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func normalizeWhitespace(value string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+}
+
+func canonicalKeyFallback(title, path string) string {
+	return strings.ToLower(strings.TrimSpace(title) + "::" + normalizePath(path))
 }
 
 func persistSummaryNoteFallback(ctx context.Context, queries *db.Queries, run db.ReviewRun, result ReviewResult) error {
