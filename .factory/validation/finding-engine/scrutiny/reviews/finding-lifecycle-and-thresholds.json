@@ -1,21 +1,31 @@
 {
   "featureId": "finding-lifecycle-and-thresholds",
-  "reviewedAt": "2026-03-17T21:17:38.008948+00:00",
+  "reviewedAt": "2026-03-17T22:16:50.137624+00:00",
   "commitId": "0825c58fb27046175934dfcd6ebe16ee902f3bc4",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "pass",
   "codeReview": {
-    "summary": "The original lifecycle/threshold implementation had a blocking reviewed-scope bug, but the follow-up fixes now thread actual assembled review scope into persistence and preserve deleted-file lifecycle handling under canonicalized anchors, so the original failure is resolved.",
+    "summary": "Reviewed the original feature implementation and its follow-up remediation. The current code satisfies the lifecycle and threshold requirements: transitions are gated through an explicit state machine, missing findings use assembler-derived reviewed scope to distinguish fixed from stale, deleted-file findings resolve to fixed under canonicalized anchors, and below-threshold findings are persisted as filtered and skipped for writeback.",
     "issues": []
   },
   "sharedStateObservations": [
     {
+      "area": "skills",
+      "observation": "The feature uses the `go-backend` skill, but the worker transcript shows substantial reliability-style work around lifecycle correctness and regression testing while the mission's project skills list only `go-backend`, `go-integration`, and `go-reliability`; the relevant `go-backend` skill file is absent from the repo, so reviewers cannot compare the worker's procedure against the intended skill guidance.",
+      "evidence": "Feature metadata in mission `features.json` sets `skillName` to `go-backend`; the transcript skeleton for worker session `f4ca835f-2d31-459a-8238-52db02b8c403` shows `Skill {\"skill\": \"go-backend\"}`, but `.factory/skills/` in the repo contains `go-reliability` and `go-integration` guidance only."
+    },
+    {
       "area": "knowledge",
-      "observation": "The mission shared-state docs already capture the key lifecycle nuance: missing-finding transitions need true assembler/request scope rather than inferring scope from surviving persisted findings, which matches the remediation that landed in `internal/llm`.",
-      "evidence": ".factory/library/architecture.md notes that persisted surviving findings are insufficient to distinguish reviewed-clean from out-of-scope reruns; current code now uses `reviewedScopeFromAssembly` in `internal/llm/provider.go`."
+      "observation": "Shared state correctly documents the reviewed-scope pitfall for missing-finding transitions, and the final code now follows that guidance by threading assembler scope into finding persistence.",
+      "evidence": "`.factory/library/architecture.md` states that inferring rerun scope from persisted surviving findings is insufficient and that persistence needs assembler/request scope; current code calls `reviewedScopeFromAssembly` before `persistFindings` in `internal/llm/provider.go`."
+    },
+    {
+      "area": "conventions",
+      "observation": "The mission feature verification step still points reviewers and workers at a nonexistent `./internal/findings/...` package even though finding lifecycle tests live under `internal/llm`, which already caused a failed verification command in the worker handoff.",
+      "evidence": "`features.json` verification step for `finding-lifecycle-and-thresholds` says `go test ./internal/findings/...`, while the handoff for worker session `f4ca835f-2d31-459a-8238-52db02b8c403` records that command failing because no such package exists and lifecycle tests live in `internal/llm/provider_test.go`."
     }
   ],
-  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/finding-engine/scrutiny/reviews/finding-lifecycle-and-thresholds.json",
-  "summary": "Reviewed the original feature commit 0825c58 plus fix commits 22b94d37ffb0f3c8b67fb00c332dabf7ae6ae5f2 and 27097dc5f99963e0e820e674a4a10b563fdf013c, along with the associated handoffs, transcript skeletons, mission guidance, and current repo state. The prior blocking failure is resolved: missing findings now transition based on actual assembled reviewed-file scope, reviewed-clean reruns become `fixed`, mixed-scope out-of-scope disappearances stay `stale`, and deleted-file findings still transition to `fixed` after anchor canonicalization."
+  "addressesFailureFrom": null,
+  "summary": "Reviewed feature `finding-lifecycle-and-thresholds` using the mission feature spec, worker handoff/transcript skeleton, original feature commit `0825c58fb27046175934dfcd6ebe16ee902f3bc4`, and the current repo state including the later remediation commits. The implementation now satisfies the required lifecycle behavior with no remaining code issues found; I recorded shared-state observations about the missing `go-backend` skill artifact, the already-documented reviewed-scope knowledge, and the stale verification command path in mission metadata."
 }

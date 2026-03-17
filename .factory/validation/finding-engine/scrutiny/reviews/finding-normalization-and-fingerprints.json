@@ -1,15 +1,15 @@
 {
   "featureId": "finding-normalization-and-fingerprints",
-  "reviewedAt": "2026-03-17T21:17:26.721489+00:00",
-  "commitId": "27097dc5f99963e0e820e674a4a10b563fdf013c",
+  "reviewedAt": "2026-03-17T22:16:31.987411+00:00",
+  "commitId": "ab684d1e2f005d2cd68a7a60fb0577a48a853f47",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "pass",
   "codeReview": {
-    "summary": "Reviewed the original normalization/fingerprint feature plus the relevant hardening fixes. The original blocking issue is resolved: missing or blank provider anchor kinds are no longer canonicalized to real anchors, while canonical deleted anchors still drive deleted/fixed lifecycle behavior and reviewed-scope regressions are covered by the remediation follow-up.",
+    "summary": "Reviewed the worker transcript, handoff, commit diff, and current implementation for normalization/fingerprinting. The feature normalizes persisted finding fields, canonicalizes legacy anchor labels, derives deterministic anchor and semantic fingerprints, and applies a stable title-plus-path fallback canonical key when providers omit one.",
     "issues": []
   },
   "sharedStateObservations": [],
-  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/finding-engine/scrutiny/reviews/finding-normalization-and-fingerprints.json",
-  "summary": "Reviewed the original feature handoff/transcript, the prior failed review, and the fix commits 485400692bec75af63f23f4614d6865da8622ae6 and 27097dc5f99963e0e820e674a4a10b563fdf013c against the current repo state. The empty-anchor normalization flaw called out in the prior review is fixed, deleted-anchor canonicalization still reaches the fixed lifecycle path, and the current internal/llm tests cover the relevant regressions, so this rerun passes."
+  "addressesFailureFrom": null,
+  "summary": "Pass. The feature requirements are satisfied in the current code: findings are normalized before persistence, fingerprints are deterministic and stable across line shifts, fallback canonical keys are generated when absent, and focused regression tests cover the expected behaviors. I did not find blocking or non-blocking issues specific to this feature."
 }

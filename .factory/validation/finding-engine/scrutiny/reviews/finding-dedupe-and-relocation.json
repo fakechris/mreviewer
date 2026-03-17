@@ -1,26 +1,34 @@
 {
   "featureId": "finding-dedupe-and-relocation",
-  "reviewedAt": "2026-03-17T21:17:19Z",
+  "reviewedAt": "2026-03-18T00:00:00Z",
   "commitId": "80e43fb",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "pass",
+  "status": "fail",
   "codeReview": {
-    "summary": "Reviewed the prior failure context, worker transcript skeleton, feature commit, and current finding-engine implementation/tests. In the current repo state, the dedupe/relocation logic still satisfies same-HEAD dedupe, new-HEAD last-seen updates, semantic relocation reuse, supersede-on-relocation-failure, and same-run duplicate collapse, with targeted DB-backed regression coverage in internal/llm/provider_test.go.",
-    "issues": []
+    "summary": "The feature implements same-run duplicate collapse, cross-run anchor last-seen refresh, semantic-match relocation checks, and supersede fallback in the LLM finding persistence path, but semantic relocation is not actually performed. A semantic match that keeps the same path/anchor/snippet only updates last_seen_run_id on the old row and leaves the persisted finding anchored to the stale location, which does not satisfy the relocation requirement.",
+    "issues": [
+      {
+        "file": "internal/llm/provider.go",
+        "line": 607,
+        "severity": "blocking",
+        "description": "On semantic matches, the code treats `relocationMatches` as a pure dedupe signal and only calls `UpdateFindingLastSeen`; it never updates the existing finding's path/line/snippet fields to the candidate's new position. This means line-drifted findings remain persisted at their old anchor instead of being relocated, so the implementation does not fulfill the expected behavior to 'attempt semantic relocation across line drift' and update the existing finding when relocation succeeds."
+      },
+      {
+        "file": "internal/llm/provider_test.go",
+        "line": 834,
+        "severity": "non_blocking",
+        "description": "`TestSemanticRelocation` only asserts that `last_seen_run_id` was refreshed and that no new row was inserted; it does not verify any anchor fields changed to the relocated position. Because of that, the test passes even though no relocation is persisted, leaving the core requirement effectively untested."
+      }
+    ]
   },
   "sharedStateObservations": [
     {
       "area": "skills",
-      "observation": "The go-backend skill still lacks guidance that DB-backed package-local tests are acceptable when a milestone references end-to-end coverage that has not been scaffolded yet.",
-      "evidence": "The handoff for worker session dd350468-f408-45f0-95bd-69e04d65a2c3 records skillFeedback.followedProcedure=false and explicitly suggests documenting DB-backed tests as the fallback when the planned e2e package does not exist."
-    },
-    {
-      "area": "knowledge",
-      "observation": "Shared state still does not record that finding-engine rerun/relocation validation currently lives in internal/llm DB-backed tests because internal/e2e has not been added yet.",
-      "evidence": "Mission features.json still lists go test ./internal/e2e/... for this feature, the handoff records that ./internal/e2e was absent, and .factory/library/architecture.md discusses finding lifecycle scope gaps but does not note the current package-level validation location."
+      "observation": "The go-backend skill requires failing tests first, but the worker's own handoff says it implemented the matcher and tests together in one iteration. The skill currently does not describe when that deviation is acceptable in exec-mode feature work.",
+      "evidence": "Mission handoff `2026-03-17T10-13-57-480Z__finding-dedupe-and-relocation__dd350468-f408-45f0-95bd-69e04d65a2c3.json` -> `skillFeedback.followedProcedure=false`, with deviation from step 3 of `.factory/skills/go-backend/SKILL.md`."
     }
   ],
-  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/finding-engine/scrutiny/reviews/finding-dedupe-and-relocation.json",
-  "summary": "Pass. After reviewing the current code and tests, I found no blocking or non-blocking feature-scope defects in finding dedupe and relocation behavior."
+  "addressesFailureFrom": null,
+  "summary": "Reviewed worker session dd350468-f408-45f0-95bd-69e04d65a2c3 for feature `finding-dedupe-and-relocation` by examining mission metadata, handoff, transcript skeleton, go-backend skill guidance, and commit `80e43fb`. The implementation covers duplicate collapse, last-seen refresh, and supersede fallback, but it fails the feature because successful semantic matches do not relocate persisted findings to the new anchor; the code only refreshes `last_seen_run_id`, and the accompanying relocation test does not catch that gap."
 }

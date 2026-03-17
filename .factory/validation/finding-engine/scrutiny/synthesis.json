@@ -1,7 +1,7 @@
 {
   "milestone": "finding-engine",
-  "round": 3,
-  "status": "pass",
+  "round": 4,
+  "status": "fail",
   "validatorsRun": {
     "test": {
       "passed": true,
@@ -21,11 +21,25 @@
   },
   "reviewsSummary": {
     "total": 5,
-    "passed": 5,
-    "failed": 0,
-    "failedFeatures": []
+    "passed": 3,
+    "failed": 2,
+    "failedFeatures": [
+      "finding-dedupe-and-relocation",
+      "finding-anchor-kind-canonicalization-hardening"
+    ]
   },
-  "blockingIssues": [],
+  "blockingIssues": [
+    {
+      "featureId": "finding-dedupe-and-relocation",
+      "severity": "blocking",
+      "description": "Semantic relocation matches only refresh `last_seen_run_id`; the existing finding is never updated to the candidate's new anchor/line fields, so relocation across line drift is not actually persisted."
+    },
+    {
+      "featureId": "finding-anchor-kind-canonicalization-hardening",
+      "severity": "blocking",
+      "description": "`transitionMissingFinding` returns early when `last_seen_run_id` is already set, preventing previously carried-forward findings on reviewed/deleted paths from transitioning to `fixed` after the canonicalization change."
+    }
+  ],
   "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
@@ -45,6 +59,12 @@
       "suggestion": "Clarify in worker skills that package-local DB-backed regression tests are acceptable when planned milestone e2e packages have not been scaffolded yet, as long as the same assertions are covered and the substitution is called out in handoff verification.",
       "evidence": "The dedupe/relocation review and prior worker handoff note that mission verification steps referenced `internal/e2e`, but the current repo validates rerun/relocation behavior through targeted DB-backed tests in `internal/llm/provider_test.go` instead.",
       "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Clarify in the `go-backend` skill when exec-mode workers may combine implementation and regression-test authoring in a single iteration, and how to document that deviation when strict red-green sequencing is impractical.",
+      "evidence": "The `finding-dedupe-and-relocation` review found the worker explicitly deviated from the skill's failing-tests-first procedure in handoff feedback, and the current skill guidance does not explain acceptable exec-mode exceptions.",
+      "isSystemic": false
     }
   ],
   "rejectedObservations": [
