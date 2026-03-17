@@ -1,0 +1,28 @@
+{
+  "featureId": "pipeline-rules-and-trust-boundary",
+  "reviewedAt": "2026-03-17T08:25:01Z",
+  "commitId": "724fb12",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Trusted rule loading and allowlist enforcement were implemented, but project-policy context limits are not preserved, so effective rules can silently widen review scope relative to policy.",
+    "issues": [
+      {
+        "file": "internal/rules/loader.go",
+        "line": 157,
+        "severity": "blocking",
+        "description": "mergeEffectivePolicy seeds ContextLinesBefore/After and MaxChangedLines/MaxFiles from SettingsFromPolicy(project) before checking whether project is nil. For repositories with no project policy, SettingsFromPolicy(nil) returns global defaults (20/20/2500/80), so the loader overwrites any platform-specified limits with unrelated context-package defaults. The same bug also drops platform-provided extra-based limits whenever a project policy exists but does not override them. This violates the required platform-defaults/project-policy merge behavior and can expand outbound review scope beyond configured trusted defaults."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "PlatformDefaults exposes Extra plus rule-scope limit fields, but the current rules-loader implementation does not document how platform-level context/max-file defaults should map into EffectivePolicy. The worker implemented merge logic that fell back to internal/context package defaults instead of preserving platform values, suggesting this precedence rule is not captured clearly in shared guidance.",
+      "evidence": "internal/rules/loader.go:157-160 fills EffectivePolicy context/max limits from SettingsFromPolicy(project); internal/context/assembler.go:158-161 defines those as generic defaults 20/20/2500/80; no corresponding note appears in AGENTS.md or .factory/library/integrations.md."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed: the feature adds trusted REVIEW.md loading and prompt-injection isolation, but mergeEffectivePolicy incorrectly replaces platform-configured context/max-file limits with generic assembler defaults, breaking policy precedence and potentially widening review scope."
+}

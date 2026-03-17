@@ -1,0 +1,22 @@
+{
+  "featureId": "pipeline-gitlab-readers",
+  "reviewedAt": "2026-03-17T08:24:03.275913+00:00",
+  "commitId": "489f13c9f34f5e90501f2a917b4b46f1fc3ddc48",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The GitLab reader client covers the main endpoints and retry paths, but it incorrectly assumes the first MR version returned by GitLab is always the newest version. That can produce stale base/start/head/patch SHAs, breaking downstream diff positioning and violating the feature contract to select the latest version.",
+    "issues": [
+      {
+        "file": "internal/gitlab/client.go",
+        "line": 267,
+        "severity": "blocking",
+        "description": "`GetMergeRequestVersions` returns `versions[0]` without comparing version IDs or timestamps, so it only works if the GitLab API happens to return newest-first. The feature requires selecting the latest MR version. If GitLab returns ascending order or any non-newest-first ordering, the reader will extract stale base/start/head/patch SHAs and the rest of the pipeline will operate on the wrong diff version. `TestGetMergeRequestVersions` only covers a newest-first fixture, so this regression is untested."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the handoff, commit diff, transcript skeleton, skill guidance, and shared-state sources for `pipeline-gitlab-readers`. Found one blocking correctness issue: the versions reader does not actually select the latest MR version and lacks a test for out-of-order version responses."
+}

@@ -31,3 +31,4 @@ External integration notes for GitLab and the LLM provider.
 - Use Anthropic Go SDK with a custom base URL.
 - Keep provider requests minimal and scoped to the reviewed diff context.
 - Do not log raw prompts, raw diffs, or secrets.
+- The current worker runtime seeds `rules.PlatformDefaults` directly in `cmd/worker/main.go`; review-scope defaults like include/exclude paths, thresholds, and provider route are presently sourced there unless later config layers override them.
