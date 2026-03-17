@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -349,6 +351,11 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 	if err != nil {
 		return err
 	}
+	policy, err := queries.GetProjectPolicy(ctx, run.ProjectID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	thresholds := thresholdsFromPolicy(policy, err == nil)
 
 	seenInRun := make(map[string]struct{}, len(result.Findings))
 	persisted := make([]persistedFinding, 0, len(result.Findings))
@@ -363,13 +370,40 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 			normalized:          normalized,
 			anchorFingerprint:   anchorFingerprint,
 			semanticFingerprint: computeSemanticFingerprint(normalized),
+			state:               evaluateFindingState(normalized, thresholds),
 		})
+	}
+	activePaths := make(map[string]struct{}, len(persisted))
+	deletedPaths := make(map[string]struct{}, len(persisted))
+	matchedExistingIDs := make(map[int64]struct{})
+	for _, finding := range persisted {
+		switch finding.state {
+		case findingStateFiltered:
+			continue
+		case findingStateDeleted:
+			deletedPaths[finding.normalized.Path] = struct{}{}
+		default:
+			activePaths[finding.normalized.Path] = struct{}{}
+		}
 	}
 
 	for _, finding := range persisted {
+		if finding.state == findingStateFiltered {
+			if _, err := insertFinding(ctx, queries, run, mr, finding); err != nil {
+				return err
+			}
+			continue
+		}
+		if finding.state == findingStateDeleted {
+			continue
+		}
+
 		matched, err := matchExistingFinding(ctx, queries, run, existing, finding)
 		if err != nil {
 			return err
+		}
+		if matched.existingID != 0 {
+			matchedExistingIDs[matched.existingID] = struct{}{}
 		}
 		if matched.skipInsert {
 			continue
@@ -382,12 +416,28 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 
 		if matched.supersedeID != 0 {
 			if err := queries.UpdateFindingState(ctx, db.UpdateFindingStateParams{
-				State:            "superseded",
+				State:            findingStateSuperseded,
 				MatchedFindingID: sql.NullInt64{Int64: insertedID, Valid: true},
 				ID:               matched.supersedeID,
 			}); err != nil {
 				return err
 			}
+		}
+	}
+
+	for _, current := range existing {
+		if _, ok := matchedExistingIDs[current.ID]; ok {
+			continue
+		}
+		nextState, ok, err := transitionMissingFinding(current, activePaths, deletedPaths)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if err := queries.UpdateFindingState(ctx, db.UpdateFindingStateParams{State: nextState, ID: current.ID}); err != nil {
+			return err
 		}
 	}
 
@@ -397,12 +447,102 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 type findingMatchDecision struct {
 	skipInsert  bool
 	supersedeID int64
+	existingID  int64
 }
 
 type persistedFinding struct {
 	normalized          normalizedFinding
 	anchorFingerprint   string
 	semanticFingerprint string
+	state               string
+}
+
+const (
+	findingStateNew        = "new"
+	findingStatePosted     = "posted"
+	findingStateActive     = "active"
+	findingStateFixed      = "fixed"
+	findingStateSuperseded = "superseded"
+	findingStateStale      = "stale"
+	findingStateIgnored    = "ignored"
+	findingStateFiltered   = "filtered"
+	findingStateDeleted    = "__deleted__"
+)
+
+var validFindingTransitions = map[string]map[string]struct{}{
+	findingStateNew: {
+		findingStatePosted: {},
+	},
+	findingStatePosted: {
+		findingStateActive: {},
+	},
+	findingStateActive: {
+		findingStateFixed:      {},
+		findingStateSuperseded: {},
+		findingStateStale:      {},
+		findingStateIgnored:    {},
+	},
+}
+
+type findingThresholds struct {
+	confidence float64
+	severity   string
+}
+
+func thresholdsFromPolicy(policy db.ProjectPolicy, ok bool) findingThresholds {
+	thresholds := findingThresholds{confidence: 0, severity: "low"}
+	if !ok {
+		return thresholds
+	}
+	if policy.ConfidenceThreshold > 0 {
+		thresholds.confidence = policy.ConfidenceThreshold
+	}
+	if level := normalizeSeverity(policy.SeverityThreshold); level != "" {
+		thresholds.severity = level
+	}
+	return thresholds
+}
+
+func evaluateFindingState(finding normalizedFinding, thresholds findingThresholds) string {
+	if finding.AnchorKind == "deleted" {
+		return findingStateDeleted
+	}
+	if finding.Confidence < thresholds.confidence {
+		return findingStateFiltered
+	}
+	if severityRank(finding.Severity) < severityRank(thresholds.severity) {
+		return findingStateFiltered
+	}
+	return findingStateNew
+}
+
+func transitionMissingFinding(current db.ReviewFinding, activePaths, deletedPaths map[string]struct{}) (string, bool, error) {
+	if current.LastSeenRunID.Valid {
+		return "", false, nil
+	}
+	if _, ok := deletedPaths[normalizePath(current.Path)]; ok {
+		return nextFindingState(current.State, findingStateFixed)
+	}
+	if len(activePaths) > 0 {
+		return nextFindingState(current.State, findingStateFixed)
+	}
+	return nextFindingState(current.State, findingStateStale)
+}
+
+func nextFindingState(current, next string) (string, bool, error) {
+	current = strings.TrimSpace(current)
+	next = strings.TrimSpace(next)
+	if current == "" || next == "" || current == next {
+		return "", false, nil
+	}
+	allowed, ok := validFindingTransitions[current]
+	if !ok {
+		return "", false, fmt.Errorf("llm: no transitions allowed from %q", current)
+	}
+	if _, ok := allowed[next]; !ok {
+		return "", false, fmt.Errorf("llm: invalid finding transition %q -> %q", current, next)
+	}
+	return next, true, nil
 }
 
 func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding) (findingMatchDecision, error) {
@@ -412,7 +552,7 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
 		}
 
 		if current.ReviewRunID == run.ID || (current.LastSeenRunID.Valid && current.LastSeenRunID.Int64 == run.ID) {
-			return findingMatchDecision{skipInsert: true}, nil
+			return findingMatchDecision{skipInsert: true, existingID: current.ID}, nil
 		}
 
 		if current.ReviewRunID != run.ID {
@@ -422,7 +562,7 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
 			}); err != nil {
 				return findingMatchDecision{}, err
 			}
-			return findingMatchDecision{skipInsert: true}, nil
+			return findingMatchDecision{skipInsert: true, existingID: current.ID}, nil
 		}
 	}
 
@@ -440,9 +580,9 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
 			}); err != nil {
 				return findingMatchDecision{}, err
 			}
-			return findingMatchDecision{skipInsert: true}, nil
+			return findingMatchDecision{skipInsert: true, existingID: current.ID}, nil
 		}
-		return findingMatchDecision{supersedeID: current.ID}, nil
+		return findingMatchDecision{supersedeID: current.ID, existingID: current.ID}, nil
 	}
 
 	return findingMatchDecision{}, nil
@@ -456,7 +596,7 @@ func insertFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, m
 	if finding.normalized.NewLine.Valid {
 		newLine = finding.normalized.NewLine
 	}
-	result, err := queries.InsertReviewFinding(ctx, db.InsertReviewFindingParams{ReviewRunID: run.ID, MergeRequestID: mr.ID, Category: finding.normalized.Category, Severity: finding.normalized.Severity, Confidence: finding.normalized.Confidence, Title: finding.normalized.Title, BodyMarkdown: nullableString(finding.normalized.BodyMarkdown), Path: finding.normalized.Path, AnchorKind: finding.normalized.AnchorKind, OldLine: oldLine, NewLine: newLine, AnchorSnippet: nullableString(finding.normalized.AnchorSnippet), Evidence: nullableString(finding.normalized.Evidence), SuggestedPatch: nullableString(finding.normalized.SuggestedPatch), CanonicalKey: finding.normalized.CanonicalKey, AnchorFingerprint: finding.anchorFingerprint, SemanticFingerprint: finding.semanticFingerprint, State: "new"})
+	result, err := queries.InsertReviewFinding(ctx, db.InsertReviewFindingParams{ReviewRunID: run.ID, MergeRequestID: mr.ID, Category: finding.normalized.Category, Severity: finding.normalized.Severity, Confidence: finding.normalized.Confidence, Title: finding.normalized.Title, BodyMarkdown: nullableString(finding.normalized.BodyMarkdown), Path: finding.normalized.Path, AnchorKind: finding.normalized.AnchorKind, OldLine: oldLine, NewLine: newLine, AnchorSnippet: nullableString(finding.normalized.AnchorSnippet), Evidence: nullableString(finding.normalized.Evidence), SuggestedPatch: nullableString(finding.normalized.SuggestedPatch), CanonicalKey: finding.normalized.CanonicalKey, AnchorFingerprint: finding.anchorFingerprint, SemanticFingerprint: finding.semanticFingerprint, State: finding.state})
 	if err != nil {
 		return 0, err
 	}
@@ -518,10 +658,46 @@ func normalizeFinding(finding ReviewFinding) normalizedFinding {
 	if finding.NewLine != nil {
 		normalized.NewLine = sql.NullInt32{Int32: *finding.NewLine, Valid: true}
 	}
+	if normalized.AnchorKind == "" && normalized.NewLine.Valid && !normalized.OldLine.Valid {
+		normalized.AnchorKind = "new"
+	}
+	if normalized.AnchorKind == "" && normalized.OldLine.Valid && !normalized.NewLine.Valid {
+		normalized.AnchorKind = "old"
+	}
 	if normalized.CanonicalKey == "" {
 		normalized.CanonicalKey = canonicalKeyFallback(normalized.Title, normalized.Path)
 	}
 	return normalized
+}
+
+func normalizeSeverity(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func severityRank(value string) int {
+	switch normalizeSeverity(value) {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	case "info", "nit":
+		return 0
+	default:
+		return math.MinInt
+	}
+}
+
+func sortedKeys(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func computeAnchorFingerprint(finding normalizedFinding) string {
