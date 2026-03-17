@@ -21,6 +21,71 @@ func (q *Queries) CancelPendingRunsForMR(ctx context.Context, mergeRequestID int
 	return err
 }
 
+const claimReviewRun = `-- name: ClaimReviewRun :exec
+UPDATE review_runs
+SET status = 'running',
+    claimed_by = ?,
+    claimed_at = CURRENT_TIMESTAMP,
+    started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+    next_retry_at = NULL,
+    error_code = '',
+    error_detail = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type ClaimReviewRunParams struct {
+	ClaimedBy string `json:"claimed_by"`
+	ID        int64  `json:"id"`
+}
+
+func (q *Queries) ClaimReviewRun(ctx context.Context, arg ClaimReviewRunParams) error {
+	_, err := q.db.ExecContext(ctx, claimReviewRun, arg.ClaimedBy, arg.ID)
+	return err
+}
+
+const getNextClaimableReviewRun = `-- name: GetNextClaimableReviewRun :one
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at FROM review_runs
+WHERE status = 'pending'
+   OR (status = 'failed' AND next_retry_at IS NOT NULL AND next_retry_at <= CURRENT_TIMESTAMP)
+ORDER BY
+    CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+    COALESCE(next_retry_at, created_at) ASC,
+    created_at ASC,
+    id ASC
+LIMIT 1
+FOR UPDATE SKIP LOCKED
+`
+
+func (q *Queries) GetNextClaimableReviewRun(ctx context.Context) (ReviewRun, error) {
+	row := q.db.QueryRowContext(ctx, getNextClaimableReviewRun)
+	var i ReviewRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.MergeRequestID,
+		&i.HookEventID,
+		&i.TriggerType,
+		&i.HeadSha,
+		&i.Status,
+		&i.ErrorCode,
+		&i.ErrorDetail,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.NextRetryAt,
+		&i.ClaimedBy,
+		&i.ClaimedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.ProviderLatencyMs,
+		&i.ProviderTokensTotal,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getReviewRun = `-- name: GetReviewRun :one
 SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at FROM review_runs WHERE id = ? LIMIT 1
 `
@@ -221,10 +286,70 @@ func (q *Queries) ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) 
 	return items, nil
 }
 
+const markReviewRunFailed = `-- name: MarkReviewRunFailed :exec
+UPDATE review_runs
+SET status = 'failed',
+    error_code = ?,
+    error_detail = ?,
+    retry_count = ?,
+    next_retry_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type MarkReviewRunFailedParams struct {
+	ErrorCode   string         `json:"error_code"`
+	ErrorDetail sql.NullString `json:"error_detail"`
+	RetryCount  int32          `json:"retry_count"`
+	ID          int64          `json:"id"`
+}
+
+func (q *Queries) MarkReviewRunFailed(ctx context.Context, arg MarkReviewRunFailedParams) error {
+	_, err := q.db.ExecContext(ctx, markReviewRunFailed,
+		arg.ErrorCode,
+		arg.ErrorDetail,
+		arg.RetryCount,
+		arg.ID,
+	)
+	return err
+}
+
+const markReviewRunRetryableFailure = `-- name: MarkReviewRunRetryableFailure :exec
+UPDATE review_runs
+SET status = 'failed',
+    error_code = ?,
+    error_detail = ?,
+    retry_count = ?,
+    next_retry_at = ?,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type MarkReviewRunRetryableFailureParams struct {
+	ErrorCode   string         `json:"error_code"`
+	ErrorDetail sql.NullString `json:"error_detail"`
+	RetryCount  int32          `json:"retry_count"`
+	NextRetryAt sql.NullTime   `json:"next_retry_at"`
+	ID          int64          `json:"id"`
+}
+
+func (q *Queries) MarkReviewRunRetryableFailure(ctx context.Context, arg MarkReviewRunRetryableFailureParams) error {
+	_, err := q.db.ExecContext(ctx, markReviewRunRetryableFailure,
+		arg.ErrorCode,
+		arg.ErrorDetail,
+		arg.RetryCount,
+		arg.NextRetryAt,
+		arg.ID,
+	)
+	return err
+}
+
 const updateReviewRunCompleted = `-- name: UpdateReviewRunCompleted :exec
 UPDATE review_runs
 SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
-    provider_latency_ms = ?, provider_tokens_total = ?, updated_at = CURRENT_TIMESTAMP
+    provider_latency_ms = ?, provider_tokens_total = ?,
+    error_code = '', error_detail = NULL, next_retry_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 `
 

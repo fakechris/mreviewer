@@ -11,6 +11,7 @@ import (
 
 type Querier interface {
 	CancelPendingRunsForMR(ctx context.Context, mergeRequestID int64) error
+	ClaimReviewRun(ctx context.Context, arg ClaimReviewRunParams) error
 	GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (CommentAction, error)
 	GetGitlabDiscussion(ctx context.Context, id int64) (GitlabDiscussion, error)
 	GetGitlabDiscussionByFinding(ctx context.Context, reviewFindingID int64) (GitlabDiscussion, error)
@@ -20,6 +21,7 @@ type Querier interface {
 	GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (MrVersion, error)
 	GetMergeRequest(ctx context.Context, id int64) (MergeRequest, error)
 	GetMergeRequestByProjectMR(ctx context.Context, arg GetMergeRequestByProjectMRParams) (MergeRequest, error)
+	GetNextClaimableReviewRun(ctx context.Context) (ReviewRun, error)
 	GetProject(ctx context.Context, id int64) (Project, error)
 	GetProjectByGitlabID(ctx context.Context, arg GetProjectByGitlabIDParams) (Project, error)
 	GetProjectPolicy(ctx context.Context, projectID int64) (ProjectPolicy, error)
@@ -45,6 +47,8 @@ type Querier interface {
 	ListHookEventsByProjectMR(ctx context.Context, arg ListHookEventsByProjectMRParams) ([]HookEvent, error)
 	ListPendingRuns(ctx context.Context, limit int32) ([]ReviewRun, error)
 	ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) ([]ReviewRun, error)
+	MarkReviewRunFailed(ctx context.Context, arg MarkReviewRunFailedParams) error
+	MarkReviewRunRetryableFailure(ctx context.Context, arg MarkReviewRunRetryableFailureParams) error
 	UpdateCommentActionStatus(ctx context.Context, arg UpdateCommentActionStatusParams) error
 	UpdateFindingLastSeen(ctx context.Context, arg UpdateFindingLastSeenParams) error
 	UpdateFindingState(ctx context.Context, arg UpdateFindingStateParams) error
