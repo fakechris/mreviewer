@@ -1,0 +1,15 @@
+{
+  "featureId": "finding-anchor-kind-canonicalization-hardening",
+  "reviewedAt": "2026-03-18T00:00:00Z",
+  "commitId": "873300a7d10eba5c6560ddc6e1a8819f08bf07e8",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the original feature commit together with the later remediation commits `485400692bec75af63f23f4614d6865da8622ae6` and `27097dc5f99963e0e820e674a4a10b563fdf013c`. The original canonicalization change correctly unified legacy/current provider anchor labels before persistence and fingerprinting, and the later fixes restore the deleted-file lifecycle path by recognizing canonicalized old-line deleted anchors and by carrying reviewed/deleted scope from assembled changes. I did not find remaining feature-scoped defects in the current repo state.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/finding-engine/scrutiny/reviews/finding-anchor-kind-canonicalization-hardening.json",
+  "summary": "Reviewed the original handoff/transcript plus the relevant remediation handoffs, inspected commits `873300a7d10eba5c6560ddc6e1a8819f08bf07e8`, `485400692bec75af63f23f4614d6865da8622ae6`, and `27097dc5f99963e0e820e674a4a10b563fdf013c`, and checked the current `internal/llm` implementation and regression tests. The prior deleted-file lifecycle regression is resolved: deleted anchors now canonicalize deterministically for persistence/fingerprinting while still taking the deleted/fixed lifecycle path, and reviewed-scope extraction from assembled changes covers reviewed-clean/deleted files needed by the later remediation."
+}

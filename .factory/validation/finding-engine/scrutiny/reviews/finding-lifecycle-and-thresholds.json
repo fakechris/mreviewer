@@ -1,28 +1,21 @@
 {
   "featureId": "finding-lifecycle-and-thresholds",
-  "reviewedAt": "2026-03-17T13:33:15Z",
+  "reviewedAt": "2026-03-17T21:17:38.008948+00:00",
   "commitId": "0825c58fb27046175934dfcd6ebe16ee902f3bc4",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The lifecycle/threshold feature covers state validation, filtered persistence, and deleted-file handling, but the disappearance logic marks unmatched active findings as fixed whenever any non-deleted finding remains in the rerun. That violates the expected fixed-vs-stale split for mixed-scope reruns and can incorrectly auto-resolve findings that were merely out of scope.",
-    "issues": [
-      {
-        "file": "internal/llm/provider.go",
-        "line": 525,
-        "severity": "blocking",
-        "description": "`transitionMissingFinding` treats every missing active finding as `fixed` whenever `len(activePaths) > 0`, regardless of whether the rerun actually covered the finding's file. In mixed-scope reruns (the contract explicitly calls these out), a previously active finding on an excluded path will be marked fixed just because some other file produced a finding in the current run. The function only sees persisted finding paths, not the assembler/request scope, so it cannot distinguish 'issue removed' from 'file not reviewed'. This can incorrectly auto-resolve out-of-scope findings instead of transitioning them to `stale`."
-      }
-    ]
+    "summary": "The original lifecycle/threshold implementation had a blocking reviewed-scope bug, but the follow-up fixes now thread actual assembled review scope into persistence and preserve deleted-file lifecycle handling under canonicalized anchors, so the original failure is resolved.",
+    "issues": []
   },
   "sharedStateObservations": [
     {
       "area": "knowledge",
-      "observation": "The feature and prior related finding-engine features both had verification steps pointing at `./internal/findings/...`, but the implementation and tests live in `internal/llm` and there is no `internal/findings` package. This mismatch keeps recurring and should be recorded in shared state so future workers and validators do not chase a nonexistent package.",
-      "evidence": "Feature handoff `2026-03-17T10-46-03-120Z__finding-lifecycle-and-thresholds__f4ca835f-2d31-459a-8238-52db02b8c403.json` records `go test ./internal/findings/...` failing because the package does not exist; `.factory/skills/go-backend/SKILL.md` expects targeted package tests, and repo code places finding persistence in `internal/llm/provider.go`."
+      "observation": "The mission shared-state docs already capture the key lifecycle nuance: missing-finding transitions need true assembler/request scope rather than inferring scope from surviving persisted findings, which matches the remediation that landed in `internal/llm`.",
+      "evidence": ".factory/library/architecture.md notes that persisted surviving findings are insufficient to distinguish reviewed-clean from out-of-scope reruns; current code now uses `reviewedScopeFromAssembly` in `internal/llm/provider.go`."
     }
   ],
-  "addressesFailureFrom": null,
-  "summary": "Review failed: disappearance handling is not scope-aware, so mixed-scope reruns can incorrectly mark unseen active findings as fixed rather than stale. Report written with one blocking correctness issue and one shared-state observation about stale verification paths."
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/finding-engine/scrutiny/reviews/finding-lifecycle-and-thresholds.json",
+  "summary": "Reviewed the original feature commit 0825c58 plus fix commits 22b94d37ffb0f3c8b67fb00c332dabf7ae6ae5f2 and 27097dc5f99963e0e820e674a4a10b563fdf013c, along with the associated handoffs, transcript skeletons, mission guidance, and current repo state. The prior blocking failure is resolved: missing findings now transition based on actual assembled reviewed-file scope, reviewed-clean reruns become `fixed`, mixed-scope out-of-scope disappearances stay `stale`, and deleted-file findings still transition to `fixed` after anchor canonicalization."
 }

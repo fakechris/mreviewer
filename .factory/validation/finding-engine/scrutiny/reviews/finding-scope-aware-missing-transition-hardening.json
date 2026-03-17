@@ -1,0 +1,15 @@
+{
+  "featureId": "finding-scope-aware-missing-transition-hardening",
+  "reviewedAt": "2026-03-17T21:17:12Z",
+  "commitId": "99237f64bf08a3a450851ae38b3991936401f86a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The original hardening commit did not fully solve reviewed-scope semantics, but the later remediation commits now do: `ProcessRun` derives reviewed and deleted paths from the assembled request, threads them into persistence, and `transitionMissingFinding` uses that explicit scope to mark reviewed-clean files fixed, out-of-scope disappearances stale, and deleted-file disappearances fixed after canonical anchor normalization. The current targeted `internal/llm` coverage exercises reviewed-clean, mixed-scope stale, deleted-file, and reviewed-scope derivation cases, so the prior scrutiny failure is resolved.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/finding-engine/scrutiny/reviews/finding-scope-aware-missing-transition-hardening.json",
+  "summary": "Reviewed the original feature handoff/transcript plus the remediation features `finding-reviewed-scope-persistence-and-missing-transitions` and `finding-engine-scrutiny-remediation-round-2`, inspected the relevant diffs and current `internal/llm` code, and confirmed the repository now persists real reviewed scope from assembled changes. Missing findings on reviewed-clean files transition to `fixed`, mixed-scope/out-of-scope disappearances transition to `stale`, deleted-file handling remains `fixed` after anchor canonicalization, and the prior scrutiny failure is now addressed."
+}

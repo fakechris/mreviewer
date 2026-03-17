@@ -1,22 +1,15 @@
 {
   "featureId": "finding-normalization-and-fingerprints",
-  "reviewedAt": "2026-03-17T13:03:00Z",
-  "commitId": "ab684d1e2f005d2cd68a7a60fb0577a48a853f47",
+  "reviewedAt": "2026-03-17T21:17:26.721489+00:00",
+  "commitId": "27097dc5f99963e0e820e674a4a10b563fdf013c",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The feature adds normalization and deterministic fingerprinting, but the anchor-kind normalization is incompatible with the project’s established anchor vocabulary. That causes equivalent findings using existing provider values like added/deleted to hash differently instead of normalizing into the internal model the feature contract describes.",
-    "issues": [
-      {
-        "file": "internal/llm/provider.go",
-        "line": 726,
-        "severity": "blocking",
-        "description": "`normalizeAnchorKind` only trims whitespace and defaults empty values to `new_line`, but it does not canonicalize the existing anchor kinds already used elsewhere in the codebase (`added`/`deleted`, and older provider payloads using `new`/`old`). The architecture expects provider findings to be normalized into one internal model before fingerprinting, yet semantically identical anchors with values like `added` versus `new_line` produce different persisted `anchor_kind` values and therefore different anchor fingerprints. This breaks deterministic normalization/deduplication for equivalent findings instead of unifying them."
-      }
-    ]
+    "summary": "Reviewed the original normalization/fingerprint feature plus the relevant hardening fixes. The original blocking issue is resolved: missing or blank provider anchor kinds are no longer canonicalized to real anchors, while canonical deleted anchors still drive deleted/fixed lifecycle behavior and reviewed-scope regressions are covered by the remediation follow-up.",
+    "issues": []
   },
   "sharedStateObservations": [],
-  "addressesFailureFrom": null,
-  "summary": "Reviewed the handoff, transcript skeleton, committed diff, mission guidance, skill, and shared-state files. The implementation is close, but it misses anchor-kind canonicalization: equivalent provider anchor labels are not normalized to one internal representation before persistence/fingerprinting, so the feature does not fully satisfy the normalization contract."
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/finding-engine/scrutiny/reviews/finding-normalization-and-fingerprints.json",
+  "summary": "Reviewed the original feature handoff/transcript, the prior failed review, and the fix commits 485400692bec75af63f23f4614d6865da8622ae6 and 27097dc5f99963e0e820e674a4a10b563fdf013c against the current repo state. The empty-anchor normalization flaw called out in the prior review is fixed, deleted-anchor canonicalization still reaches the fixed lifecycle path, and the current internal/llm tests cover the relevant regressions, so this rerun passes."
 }
