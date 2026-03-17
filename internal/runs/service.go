@@ -38,7 +38,8 @@ func NewService(logger *slog.Logger, database *sql.DB) *Service {
 //
 // For open/update actions: creates a pending review run (with idempotency
 // dedup via the normalized idempotency key).
-// For close/merge actions: cancels any pending/running review runs for the MR.
+// For close/merge actions: cancels any pending, running, or retry-scheduled
+// review runs for the MR.
 //
 // The hookEventID is the ID of the hook_events row created during ingress.
 // It may be 0 if unknown.
@@ -161,7 +162,8 @@ func (s *Service) createPendingRun(ctx context.Context, q db.Querier, ev hooks.N
 	return nil
 }
 
-// cancelRuns cancels any pending or running review runs for the given MR.
+// cancelRuns cancels any pending, running, or retry-scheduled review runs for
+// the given MR.
 func (s *Service) cancelRuns(ctx context.Context, q db.Querier, ev hooks.NormalizedEvent, action string) error {
 	// 1. Ensure gitlab_instance exists (needed to find the project).
 	instanceID, err := s.ensureInstance(ctx, q, ev.GitLabInstanceURL)
@@ -215,7 +217,7 @@ func (s *Service) cancelRuns(ctx context.Context, q db.Querier, ev hooks.Normali
 		return fmt.Errorf("update mr state: %w", err)
 	}
 
-	// 5. Cancel pending/running review runs.
+	// 5. Cancel any active review runs, including retry-scheduled failures.
 	if err := q.CancelPendingRunsForMR(ctx, mr.ID); err != nil {
 		return fmt.Errorf("cancel runs: %w", err)
 	}

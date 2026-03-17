@@ -12,8 +12,14 @@ import (
 
 const cancelPendingRunsForMR = `-- name: CancelPendingRunsForMR :exec
 UPDATE review_runs
-SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
-WHERE merge_request_id = ? AND status IN ('pending', 'running')
+SET status = 'cancelled',
+    next_retry_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE merge_request_id = ?
+  AND (
+    status IN ('pending', 'running')
+    OR (status = 'failed' AND next_retry_at IS NOT NULL)
+  )
 `
 
 func (q *Queries) CancelPendingRunsForMR(ctx context.Context, mergeRequestID int64) error {

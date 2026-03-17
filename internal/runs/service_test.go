@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
@@ -292,6 +293,72 @@ func TestMergeCancelsRuns(t *testing.T) {
 	}
 }
 
+func TestCloseCancelsRetryScheduledRuns(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	svc := NewService(testLogger(), sqlDB)
+
+	openEv := makeOpenEvent("abc123def456")
+	if err := svc.ProcessEvent(context.Background(), openEv, 0); err != nil {
+		t.Fatalf("ProcessEvent open: %v", err)
+	}
+
+	run, err := db.New(sqlDB).GetReviewRunByIdempotencyKey(context.Background(), openEv.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("GetReviewRunByIdempotencyKey: %v", err)
+	}
+
+	markRunRetryScheduled(t, sqlDB, run.ID)
+
+	closeEv := makeCloseEvent()
+	if err := svc.ProcessEvent(context.Background(), closeEv, 0); err != nil {
+		t.Fatalf("ProcessEvent close: %v", err)
+	}
+
+	run, err = db.New(sqlDB).GetReviewRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "cancelled" {
+		t.Errorf("expected status 'cancelled', got %q", run.Status)
+	}
+	if run.NextRetryAt.Valid {
+		t.Fatal("next_retry_at should be cleared for cancelled retry-scheduled runs")
+	}
+}
+
+func TestMergeCancelsRetryScheduledRuns(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	svc := NewService(testLogger(), sqlDB)
+
+	openEv := makeOpenEvent("abc123def456")
+	if err := svc.ProcessEvent(context.Background(), openEv, 0); err != nil {
+		t.Fatalf("ProcessEvent open: %v", err)
+	}
+
+	run, err := db.New(sqlDB).GetReviewRunByIdempotencyKey(context.Background(), openEv.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("GetReviewRunByIdempotencyKey: %v", err)
+	}
+
+	markRunRetryScheduled(t, sqlDB, run.ID)
+
+	mergeEv := makeMergeEvent()
+	if err := svc.ProcessEvent(context.Background(), mergeEv, 0); err != nil {
+		t.Fatalf("ProcessEvent merge: %v", err)
+	}
+
+	run, err = db.New(sqlDB).GetReviewRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "cancelled" {
+		t.Errorf("expected status 'cancelled', got %q", run.Status)
+	}
+	if run.NextRetryAt.Valid {
+		t.Fatal("next_retry_at should be cleared for cancelled retry-scheduled runs")
+	}
+}
+
 // TestReplayDoesNotDuplicateRun verifies VAL-INGRESS-006:
 // A replayed webhook with the same idempotency key does not create a second
 // review run.
@@ -451,5 +518,18 @@ func TestMultipleRunsDifferentSHAs(t *testing.T) {
 	}
 	if run2.Status != "cancelled" {
 		t.Errorf("run2: expected 'cancelled', got %q", run2.Status)
+	}
+}
+
+func markRunRetryScheduled(t *testing.T, sqlDB *sql.DB, runID int64) {
+	t.Helper()
+
+	nextRetryAt := time.Now().Add(5 * time.Minute)
+	if _, err := sqlDB.Exec(
+		"UPDATE review_runs SET status = 'failed', retry_count = 1, next_retry_at = ? WHERE id = ?",
+		nextRetryAt,
+		runID,
+	); err != nil {
+		t.Fatalf("mark retry-scheduled run: %v", err)
 	}
 }

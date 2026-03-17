@@ -22,6 +22,8 @@ const (
 
 var ErrNoClaimableRuns = errors.New("scheduler: no claimable runs")
 
+var errRunCancelled = errors.New("scheduler: run cancelled")
+
 type Processor interface {
 	ProcessRun(ctx context.Context, run db.ReviewRun) error
 }
@@ -264,14 +266,26 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
 }
 
 func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error {
-	err := s.processor.ProcessRun(ctx, run)
+	run, err := s.reloadRunningRun(ctx, run.ID)
+	if err != nil {
+		if errors.Is(err, errRunCancelled) {
+			return nil
+		}
+		return err
+	}
+
+	err = s.processor.ProcessRun(ctx, run)
 	if err == nil {
-		if err := db.New(s.db).UpdateReviewRunCompleted(ctx, db.UpdateReviewRunCompletedParams{
+		updated, err := db.New(s.db).UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
 			ProviderLatencyMs:   0,
 			ProviderTokensTotal: 0,
 			ID:                  run.ID,
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("scheduler: mark run %d completed: %w", run.ID, err)
+		}
+		if !updated {
+			return s.handleSkippedTerminalWrite(ctx, run, "completed")
 		}
 
 		s.logger.InfoContext(ctx, "completed review run",
@@ -289,14 +303,18 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		delay := s.retryDelay(run.RetryCount)
 		nextRetryAt := s.now().Add(delay)
 
-		if err := db.New(s.db).MarkReviewRunRetryableFailure(ctx, db.MarkReviewRunRetryableFailureParams{
+		updated, err := db.New(s.db).MarkReviewRunRetryableFailureIfRunning(ctx, db.MarkReviewRunRetryableFailureParams{
 			ErrorCode:   code,
 			ErrorDetail: nullableString(detail),
 			RetryCount:  nextRetryCount,
 			NextRetryAt: sql.NullTime{Time: nextRetryAt, Valid: true},
 			ID:          run.ID,
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("scheduler: mark run %d retryable failure: %w", run.ID, err)
+		}
+		if !updated {
+			return s.handleSkippedTerminalWrite(ctx, run, "retryable failure")
 		}
 
 		s.logger.WarnContext(ctx, "review run failed with retry scheduled",
@@ -310,13 +328,17 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		return nil
 	}
 
-	if err := db.New(s.db).MarkReviewRunFailed(ctx, db.MarkReviewRunFailedParams{
+	updated, err := db.New(s.db).MarkReviewRunFailedIfRunning(ctx, db.MarkReviewRunFailedParams{
 		ErrorCode:   code,
 		ErrorDetail: nullableString(detail),
 		RetryCount:  run.RetryCount,
 		ID:          run.ID,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("scheduler: mark run %d failed: %w", run.ID, err)
+	}
+	if !updated {
+		return s.handleSkippedTerminalWrite(ctx, run, "failed")
 	}
 
 	s.logger.ErrorContext(ctx, "review run failed permanently",
@@ -327,6 +349,25 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		"retry_count", run.RetryCount,
 	)
 	return nil
+}
+
+func (s *Service) handleSkippedTerminalWrite(ctx context.Context, run db.ReviewRun, terminalState string) error {
+	currentRun, err := db.New(s.db).GetReviewRun(ctx, run.ID)
+	if err != nil {
+		return fmt.Errorf("scheduler: reload run %d after skipped %s write: %w", run.ID, terminalState, err)
+	}
+
+	if currentRun.Status == "cancelled" {
+		s.logger.InfoContext(ctx, "skipped terminal write for cancelled review run",
+			"run_id", run.ID,
+			"worker_id", s.workerID,
+			"merge_request_id", currentRun.MergeRequestID,
+			"terminal_state", terminalState,
+		)
+		return nil
+	}
+
+	return fmt.Errorf("scheduler: skipped %s write for run %d with unexpected status %q", terminalState, run.ID, currentRun.Status)
 }
 
 func (s *Service) retryDelay(retryCount int32) time.Duration {
@@ -376,6 +417,28 @@ func defaultWorkerID() string {
 		hostname = "worker"
 	}
 	return fmt.Sprintf("%s-%d", hostname, os.Getpid())
+}
+
+func (s *Service) reloadRunningRun(ctx context.Context, runID int64) (db.ReviewRun, error) {
+	run, err := db.New(s.db).GetReviewRun(ctx, runID)
+	if err != nil {
+		return db.ReviewRun{}, fmt.Errorf("scheduler: reload run %d before processing: %w", runID, err)
+	}
+
+	if run.Status == "cancelled" {
+		s.logger.InfoContext(ctx, "skipping cancelled review run before processing",
+			"run_id", run.ID,
+			"worker_id", s.workerID,
+			"merge_request_id", run.MergeRequestID,
+		)
+		return db.ReviewRun{}, errRunCancelled
+	}
+
+	if run.Status != "running" {
+		return db.ReviewRun{}, fmt.Errorf("scheduler: run %d has unexpected status %q before processing", runID, run.Status)
+	}
+
+	return run, nil
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {

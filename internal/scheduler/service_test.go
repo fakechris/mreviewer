@@ -12,6 +12,8 @@ import (
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
+	"github.com/mreviewer/mreviewer/internal/hooks"
+	runsvc "github.com/mreviewer/mreviewer/internal/runs"
 )
 
 const migrationsDir = "../../migrations"
@@ -445,6 +447,141 @@ func TestRetryRecoveryWithoutDuplicateWork(t *testing.T) {
 	}
 }
 
+func TestCancelledRunCannotComplete(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 42, "sha-cancel-complete")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{status: "pending", idempotencyKey: "cancelled-complete"})
+
+	processor := newBlockingProcessor(nil)
+	svc := NewService(testLogger(), sqlDB, processor, WithWorkerID("worker-a"))
+
+	type runOnceResult struct {
+		processed int
+		err       error
+	}
+	resultCh := make(chan runOnceResult, 1)
+	go func() {
+		processed, err := svc.RunOnce(context.Background())
+		resultCh <- runOnceResult{processed: processed, err: err}
+	}()
+
+	processor.waitUntilStarted(t)
+	cancelMergeRequest(t, sqlDB, 100, 42, "close", "closed", "sha-cancel-complete")
+	processor.release()
+
+	result := <-resultCh
+	if result.err != nil {
+		t.Fatalf("RunOnce: %v", result.err)
+	}
+	if result.processed != 1 {
+		t.Fatalf("processed = %d, want 1", result.processed)
+	}
+
+	run, err := db.New(sqlDB).GetReviewRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", run.Status)
+	}
+	if run.CompletedAt.Valid {
+		t.Fatal("completed_at should remain unset for cancelled runs")
+	}
+}
+
+func TestCancelledRunCannotFail(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 42, "sha-cancel-fail")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{status: "pending", idempotencyKey: "cancelled-fail"})
+
+	processor := newBlockingProcessor(NewRetryableError("gitlab_unavailable", errors.New("temporary failure")))
+	svc := NewService(testLogger(), sqlDB, processor, WithWorkerID("worker-a"))
+
+	type runOnceResult struct {
+		processed int
+		err       error
+	}
+	resultCh := make(chan runOnceResult, 1)
+	go func() {
+		processed, err := svc.RunOnce(context.Background())
+		resultCh <- runOnceResult{processed: processed, err: err}
+	}()
+
+	processor.waitUntilStarted(t)
+	cancelMergeRequest(t, sqlDB, 100, 42, "merge", "merged", "sha-cancel-fail")
+	processor.release()
+
+	result := <-resultCh
+	if result.err != nil {
+		t.Fatalf("RunOnce: %v", result.err)
+	}
+	if result.processed != 1 {
+		t.Fatalf("processed = %d, want 1", result.processed)
+	}
+
+	run, err := db.New(sqlDB).GetReviewRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", run.Status)
+	}
+	if run.RetryCount != 0 {
+		t.Fatalf("retry_count = %d, want 0", run.RetryCount)
+	}
+	if run.NextRetryAt.Valid {
+		t.Fatal("next_retry_at should remain unset for cancelled runs")
+	}
+}
+
+func TestCancelledRunNotReclaimed(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 42, "sha-not-reclaimed")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{
+		status:         "failed",
+		retryCount:     1,
+		maxRetries:     3,
+		nextRetryAt:    timePtr(time.Now().Add(-time.Second)),
+		idempotencyKey: "cancelled-not-reclaimed",
+	})
+
+	cancelMergeRequest(t, sqlDB, 100, 42, "close", "closed", "sha-not-reclaimed")
+
+	processorCalled := false
+	svc := NewService(testLogger(), sqlDB, FuncProcessor(func(context.Context, db.ReviewRun) error {
+		processorCalled = true
+		return nil
+	}), WithWorkerID("worker-a"))
+
+	processed, err := svc.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 0 {
+		t.Fatalf("processed = %d, want 0", processed)
+	}
+	if processorCalled {
+		t.Fatal("processor should not be called for cancelled runs")
+	}
+
+	run, err := db.New(sqlDB).GetReviewRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", run.Status)
+	}
+	if run.NextRetryAt.Valid {
+		t.Fatal("next_retry_at should be cleared for cancelled runs")
+	}
+}
+
 type retryThenSucceedProcessor struct {
 	mu               sync.Mutex
 	attempts         map[int64]int
@@ -475,4 +612,64 @@ func (p *retryThenSucceedProcessor) stats(runID int64) (attempts int, downstream
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.attempts[runID], p.downstreamWrites[runID]
+}
+
+type blockingProcessor struct {
+	started   chan struct{}
+	releaseCh chan struct{}
+	err       error
+	once      sync.Once
+}
+
+func newBlockingProcessor(err error) *blockingProcessor {
+	return &blockingProcessor{
+		started:   make(chan struct{}),
+		releaseCh: make(chan struct{}),
+		err:       err,
+	}
+}
+
+func (p *blockingProcessor) ProcessRun(context.Context, db.ReviewRun) error {
+	p.once.Do(func() {
+		close(p.started)
+	})
+	<-p.releaseCh
+	return p.err
+}
+
+func (p *blockingProcessor) waitUntilStarted(t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-p.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("processor did not start")
+	}
+}
+
+func (p *blockingProcessor) release() {
+	close(p.releaseCh)
+}
+
+func cancelMergeRequest(t *testing.T, sqlDB *sql.DB, projectID, mrIID int64, action, state, headSHA string) {
+	t.Helper()
+
+	svc := runsvc.NewService(testLogger(), sqlDB)
+	if err := svc.ProcessEvent(context.Background(), hooks.NormalizedEvent{
+		GitLabInstanceURL: "https://test.gitlab.com",
+		ProjectID:         projectID,
+		ProjectPath:       "test/repo",
+		MRIID:             mrIID,
+		Action:            action,
+		HeadSHA:           headSHA,
+		TriggerType:       "webhook",
+		EventType:         "Merge Request Hook",
+		State:             state,
+	}, 0); err != nil {
+		t.Fatalf("ProcessEvent %s: %v", action, err)
+	}
+}
+
+func timePtr(value time.Time) *time.Time {
+	return &value
 }
