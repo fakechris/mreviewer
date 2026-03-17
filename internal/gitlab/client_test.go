@@ -127,6 +127,68 @@ func TestGetMergeRequestVersions(t *testing.T) {
 	}
 }
 
+func TestGetMergeRequestVersionsOutOfOrder(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/projects/123/merge_requests/7/versions" {
+			t.Fatalf("request path = %q, want /api/v4/projects/123/merge_requests/7/versions", r.URL.Path)
+		}
+
+		writeJSON(t, w, http.StatusOK, []map[string]any{
+			{
+				"id":               21,
+				"head_commit_sha":  "old-head",
+				"base_commit_sha":  "old-base",
+				"start_commit_sha": "old-start",
+				"patch_id_sha":     "old-patch",
+				"created_at":       "2026-03-16T12:00:00Z",
+				"merge_request_id": 101,
+				"state":            "collected",
+				"real_size":        "3",
+			},
+			{
+				"id":               22,
+				"head_commit_sha":  "new-head",
+				"base_commit_sha":  "new-base",
+				"start_commit_sha": "new-start",
+				"patch_id_sha":     "new-patch",
+				"created_at":       "2026-03-17T12:00:00Z",
+				"merge_request_id": 101,
+				"state":            "collected",
+				"real_size":        "4",
+			},
+			{
+				"id":               23,
+				"head_commit_sha":  "same-time-head",
+				"base_commit_sha":  "same-time-base",
+				"start_commit_sha": "same-time-start",
+				"patch_id_sha":     "same-time-patch",
+				"created_at":       "2026-03-17T12:00:00Z",
+				"merge_request_id": 101,
+				"state":            "collected",
+				"real_size":        "5",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+
+	version, err := client.GetMergeRequestVersions(context.Background(), 123, 7)
+	if err != nil {
+		t.Fatalf("GetMergeRequestVersions: %v", err)
+	}
+
+	if version.GitLabVersionID != 23 {
+		t.Fatalf("GitLabVersionID = %d, want 23", version.GitLabVersionID)
+	}
+	if version.BaseSHA != "same-time-base" || version.StartSHA != "same-time-start" || version.HeadSHA != "same-time-head" || version.PatchIDSHA != "same-time-patch" {
+		t.Fatalf("version = %+v, want newest version SHAs from highest ID tie-breaker", version)
+	}
+	if version.RealSize != "5" {
+		t.Fatalf("RealSize = %q, want 5", version.RealSize)
+	}
+}
+
 func TestGetMergeRequestDiffsPagination(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

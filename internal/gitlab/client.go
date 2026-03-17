@@ -267,6 +267,11 @@ func (c *Client) GetMergeRequestVersions(ctx context.Context, projectID, mergeRe
 	}
 
 	latest := versions[0]
+	for _, candidate := range versions[1:] {
+		if candidate.newerThan(latest) {
+			latest = candidate
+		}
+	}
 	if !latest.ready() {
 		return MergeRequestVersion{}, ErrDiffNotReady
 	}
@@ -505,6 +510,14 @@ func mergeRequestPath(projectID, mergeRequestIID int64, suffix string) string {
 
 func (mr MergeRequest) diffRefsReady() bool {
 	return mr.DiffRefs != nil && mr.DiffRefs.BaseSHA != "" && mr.DiffRefs.HeadSHA != "" && mr.DiffRefs.StartSHA != ""
+}
+
+func (v MergeRequestVersion) newerThan(other MergeRequestVersion) bool {
+	if !v.CreatedAt.Equal(other.CreatedAt) {
+		return v.CreatedAt.After(other.CreatedAt)
+	}
+
+	return v.GitLabVersionID > other.GitLabVersionID
 }
 
 func (v MergeRequestVersion) ready() bool {
