@@ -1,8 +1,8 @@
 -- name: InsertReviewRun :execresult
 INSERT INTO review_runs (
     project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
-    status, max_retries, idempotency_key
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    status, max_retries, idempotency_key, scope_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetReviewRun :one
 SELECT * FROM review_runs WHERE id = ? LIMIT 1;

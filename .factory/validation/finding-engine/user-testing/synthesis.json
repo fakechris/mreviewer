@@ -1,0 +1,34 @@
+{
+  "milestone": "finding-engine",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 17,
+    "passed": 17,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CROSS-002",
+    "VAL-CROSS-004",
+    "VAL-FINDING-001",
+    "VAL-FINDING-002",
+    "VAL-FINDING-003",
+    "VAL-FINDING-004",
+    "VAL-FINDING-005",
+    "VAL-FINDING-006",
+    "VAL-FINDING-007",
+    "VAL-FINDING-008",
+    "VAL-FINDING-009",
+    "VAL-FINDING-010",
+    "VAL-FINDING-011",
+    "VAL-FINDING-012",
+    "VAL-FINDING-013",
+    "VAL-FINDING-014",
+    "VAL-FINDING-015"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null
+}

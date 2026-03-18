@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/mreviewer/mreviewer/internal/commands"
 	"github.com/mreviewer/mreviewer/internal/config"
 	"github.com/mreviewer/mreviewer/internal/database"
 	"github.com/mreviewer/mreviewer/internal/hooks"
@@ -58,6 +59,8 @@ func run() int {
 	// Webhook ingress handler.
 	runProcessor := runs.NewService(logger, db)
 	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runProcessor)
+	commandProcessor := commands.NewProcessor(logger, db)
+	webhookHandler.SetCommandProcessor(commandProcessor)
 	mux.Handle("POST /webhook", webhookHandler)
 
 	// Wrap with request-id middleware.

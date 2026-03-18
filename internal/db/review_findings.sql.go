@@ -10,6 +10,50 @@ import (
 	"database/sql"
 )
 
+const getFindingByMRAndDiscussionID = `-- name: GetFindingByMRAndDiscussionID :one
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
+WHERE merge_request_id = ? AND gitlab_discussion_id = ?
+LIMIT 1
+`
+
+type GetFindingByMRAndDiscussionIDParams struct {
+	MergeRequestID     int64  `json:"merge_request_id"`
+	GitlabDiscussionID string `json:"gitlab_discussion_id"`
+}
+
+func (q *Queries) GetFindingByMRAndDiscussionID(ctx context.Context, arg GetFindingByMRAndDiscussionIDParams) (ReviewFinding, error) {
+	row := q.db.QueryRowContext(ctx, getFindingByMRAndDiscussionID, arg.MergeRequestID, arg.GitlabDiscussionID)
+	var i ReviewFinding
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewRunID,
+		&i.MergeRequestID,
+		&i.Category,
+		&i.Severity,
+		&i.Confidence,
+		&i.Title,
+		&i.BodyMarkdown,
+		&i.Path,
+		&i.AnchorKind,
+		&i.OldLine,
+		&i.NewLine,
+		&i.AnchorSnippet,
+		&i.Evidence,
+		&i.SuggestedPatch,
+		&i.CanonicalKey,
+		&i.AnchorFingerprint,
+		&i.SemanticFingerprint,
+		&i.State,
+		&i.MatchedFindingID,
+		&i.LastSeenRunID,
+		&i.GitlabDiscussionID,
+		&i.ErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getReviewFinding = `-- name: GetReviewFinding :one
 SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings WHERE id = ? LIMIT 1
 `

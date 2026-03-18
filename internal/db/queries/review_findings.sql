@@ -43,6 +43,11 @@ WHERE review_run_id = ?
 ORDER BY created_at ASC;
 
 
+-- name: GetFindingByMRAndDiscussionID :one
+SELECT * FROM review_findings
+WHERE merge_request_id = ? AND gitlab_discussion_id = ?
+LIMIT 1;
+
 -- name: UpdateFindingDiscussionID :exec
 UPDATE review_findings
 SET gitlab_discussion_id = ?, updated_at = CURRENT_TIMESTAMP

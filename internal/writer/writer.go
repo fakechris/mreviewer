@@ -25,6 +25,7 @@ type Store interface {
 	GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (db.MrVersion, error)
 	GetMergeRequest(ctx context.Context, id int64) (db.MergeRequest, error)
 	GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error)
+	GetProjectPolicy(ctx context.Context, projectID int64) (db.ProjectPolicy, error)
 	GetReviewFinding(ctx context.Context, id int64) (db.ReviewFinding, error)
 	GetGitlabDiscussion(ctx context.Context, id int64) (db.GitlabDiscussion, error)
 	ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]db.ReviewFinding, error)
@@ -88,14 +89,27 @@ type ResolveDiscussionRequest struct {
 }
 
 type Position struct {
-	PositionType string `json:"position_type"`
-	BaseSHA      string `json:"base_sha"`
-	StartSHA     string `json:"start_sha"`
-	HeadSHA      string `json:"head_sha"`
-	OldPath      string `json:"old_path"`
-	NewPath      string `json:"new_path"`
-	OldLine      *int32 `json:"old_line,omitempty"`
-	NewLine      *int32 `json:"new_line,omitempty"`
+	PositionType string     `json:"position_type"`
+	BaseSHA      string     `json:"base_sha"`
+	StartSHA     string     `json:"start_sha"`
+	HeadSHA      string     `json:"head_sha"`
+	OldPath      string     `json:"old_path"`
+	NewPath      string     `json:"new_path"`
+	OldLine      *int32     `json:"old_line,omitempty"`
+	NewLine      *int32     `json:"new_line,omitempty"`
+	LineRange    *LineRange `json:"line_range,omitempty"`
+}
+
+type LineRange struct {
+	Start RangeLine `json:"start"`
+	End   RangeLine `json:"end"`
+}
+
+type RangeLine struct {
+	LineCode string `json:"line_code"`
+	LineType string `json:"type,omitempty"`
+	OldLine  *int32 `json:"old_line,omitempty"`
+	NewLine  *int32 `json:"new_line,omitempty"`
 }
 
 type Discussion struct {
@@ -163,7 +177,7 @@ func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.Merge
 	if action, err := w.store.GetCommentActionByIdempotencyKey(ctx, idempotencyKey); err == nil && action.Status == commentActionStatusSucceeded {
 		return nil
 	}
-	body := RenderCommentBody(finding)
+	body := RenderCommentBody(finding, w.suggestionConfidenceThreshold(ctx, mr.ProjectID))
 	diffReq := CreateDiscussionRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, ReviewFindingID: finding.ID, IdempotencyKey: idempotencyKey, Body: body, Position: BuildPosition(version, finding)}
 	discussion, err := w.performDiscussionAction(ctx, run, finding, idempotencyKey, actionTypeCreateDiscussion, "diff", diffReq)
 	if err == nil {
@@ -713,7 +727,14 @@ func BuildPosition(version db.MrVersion, finding db.ReviewFinding) Position {
 		OldPath:      oldPath,
 		NewPath:      newPath,
 	}
-	switch canonicalAnchorKind(finding.AnchorKind) {
+	anchorKind := canonicalAnchorKind(finding.AnchorKind)
+	if anchorKind == "range" {
+		if lineRange := buildLineRange(oldPath, newPath, finding); lineRange != nil {
+			position.LineRange = lineRange
+		}
+		return position
+	}
+	switch anchorKind {
 	case "old_line":
 		if finding.OldLine.Valid {
 			value := finding.OldLine.Int32
@@ -737,7 +758,7 @@ func BuildPosition(version db.MrVersion, finding db.ReviewFinding) Position {
 	return position
 }
 
-func RenderCommentBody(finding db.ReviewFinding) string {
+func RenderCommentBody(finding db.ReviewFinding, suggestionThreshold float64) string {
 	parts := []string{fmt.Sprintf("**%s**", strings.TrimSpace(finding.Title))}
 	if body := strings.TrimSpace(finding.BodyMarkdown.String); body != "" {
 		parts = append(parts, body)
@@ -745,8 +766,8 @@ func RenderCommentBody(finding db.ReviewFinding) string {
 	if evidence := strings.TrimSpace(finding.Evidence.String); evidence != "" {
 		parts = append(parts, "Evidence:\n"+renderBulletList(evidence))
 	}
-	if suggestion := strings.TrimSpace(finding.SuggestedPatch.String); suggestion != "" {
-		parts = append(parts, "Suggested fix:\n"+suggestion)
+	if suggestion := buildSuggestionBlock(finding, suggestionThreshold); suggestion != "" {
+		parts = append(parts, suggestion)
 	}
 	parts = append(parts, fmt.Sprintf("<!-- ai-review:finding_id=%d anchor_fp=%s semantic_fp=%s confidence=%.2f -->", finding.ID, finding.AnchorFingerprint, finding.SemanticFingerprint, finding.Confidence))
 	return strings.Join(parts, "\n\n")
@@ -779,6 +800,8 @@ func resolvePaths(finding db.ReviewFinding) (string, string) {
 
 func canonicalAnchorKind(kind string) string {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "range", "line_range":
+		return "range"
 	case "old", "old_line", "deleted", "removed":
 		return "old_line"
 	case "context", "context_line", "unchanged":
@@ -786,4 +809,113 @@ func canonicalAnchorKind(kind string) string {
 	default:
 		return "new_line"
 	}
+}
+
+func buildLineRange(oldPath, newPath string, finding db.ReviewFinding) *LineRange {
+	startKind, endKind, ok := rangeLineKinds(finding)
+	if !ok {
+		return nil
+	}
+	start := buildRangeLine(oldPath, newPath, startKind, finding.OldLine, finding.NewLine)
+	end := buildRangeLine(oldPath, newPath, endKind, finding.OldLine, finding.NewLine)
+	if start == nil || end == nil {
+		return nil
+	}
+	return &LineRange{Start: *start, End: *end}
+}
+
+func rangeLineKinds(finding db.ReviewFinding) (string, string, bool) {
+	evidence := strings.TrimSpace(finding.Evidence.String)
+	if evidence == "" {
+		return "", "", false
+	}
+	parts := strings.SplitN(evidence, "\n", 2)
+	kinds := strings.Split(strings.TrimSpace(parts[0]), "->")
+	if len(kinds) != 2 {
+		return "", "", false
+	}
+	start := canonicalRangeLineType(kinds[0])
+	end := canonicalRangeLineType(kinds[1])
+	if start == "" || end == "" {
+		return "", "", false
+	}
+	return start, end, true
+}
+
+func canonicalRangeLineType(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "old", "old_line", "removed":
+		return "old"
+	case "new", "new_line", "added":
+		return "new"
+	case "context", "context_line", "unchanged":
+		return "context"
+	default:
+		return ""
+	}
+}
+
+func buildRangeLine(oldPath, newPath, lineType string, oldLine, newLine sql.NullInt32) *RangeLine {
+	lineCode := lineCode(oldPath, newPath, oldLine, newLine)
+	if lineCode == "" {
+		return nil
+	}
+	line := &RangeLine{LineCode: lineCode, LineType: lineType}
+	if oldLine.Valid {
+		value := oldLine.Int32
+		line.OldLine = &value
+	}
+	if newLine.Valid {
+		value := newLine.Int32
+		line.NewLine = &value
+	}
+	return line
+}
+
+func lineCode(oldPath, newPath string, oldLine, newLine sql.NullInt32) string {
+	if oldPath == "" && newPath == "" {
+		return ""
+	}
+	path := newPath
+	if path == "" {
+		path = oldPath
+	}
+	oldValue := 0
+	if oldLine.Valid {
+		oldValue = int(oldLine.Int32)
+	}
+	newValue := 0
+	if newLine.Valid {
+		newValue = int(newLine.Int32)
+	}
+	return fmt.Sprintf("%s_%d_%d", path, oldValue, newValue)
+}
+
+func (w *Writer) suggestionConfidenceThreshold(ctx context.Context, projectID int64) float64 {
+	policy, err := w.store.GetProjectPolicy(ctx, projectID)
+	if err != nil || policy.ConfidenceThreshold <= 0 {
+		return 0
+	}
+	return policy.ConfidenceThreshold
+}
+
+func buildSuggestionBlock(finding db.ReviewFinding, threshold float64) string {
+	suggestion := strings.TrimSpace(finding.SuggestedPatch.String)
+	if suggestion == "" || finding.Confidence < threshold || !isValidSuggestionPatch(suggestion) {
+		return ""
+	}
+	return "Suggested fix:\n```suggestion\n" + suggestion + "\n```"
+}
+
+func isValidSuggestionPatch(suggestion string) bool {
+	if suggestion == "" {
+		return false
+	}
+	lines := strings.Split(suggestion, "\n")
+	for _, line := range lines {
+		if strings.ContainsRune(line, '\r') {
+			return false
+		}
+	}
+	return true
 }

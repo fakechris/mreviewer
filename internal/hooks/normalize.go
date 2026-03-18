@@ -378,6 +378,134 @@ func extractInstanceURL(webURL string) string {
 	return webURL[:protoEnd+3+slashIdx]
 }
 
+// NormalizedNoteEvent represents a note/comment webhook event that may
+// contain a /ai-review command. It captures the note body, the discussion
+// context (for reply-based commands like ignore/resolve), and the MR context.
+type NormalizedNoteEvent struct {
+	// GitLabInstanceURL is the base URL of the GitLab instance.
+	GitLabInstanceURL string `json:"gitlab_instance_url"`
+
+	// ProjectID is the numeric GitLab project ID.
+	ProjectID int64 `json:"project_id"`
+
+	// ProjectPath is the path_with_namespace of the project.
+	ProjectPath string `json:"project_path"`
+
+	// MRIID is the merge request internal ID.
+	MRIID int64 `json:"mr_iid"`
+
+	// HeadSHA is the current HEAD SHA of the MR source branch, if available
+	// from the note payload's merge_request object.
+	HeadSHA string `json:"head_sha"`
+
+	// NoteBody is the full text of the note/comment.
+	NoteBody string `json:"note_body"`
+
+	// NoteAuthor is the username of the note author.
+	NoteAuthor string `json:"note_author"`
+
+	// DiscussionID is the GitLab discussion ID if the note is part of a
+	// threaded discussion. Empty for standalone notes.
+	DiscussionID string `json:"discussion_id"`
+
+	// NoteableType is "MergeRequest" for MR notes.
+	NoteableType string `json:"noteable_type"`
+
+	// HookSource is "project", "group", or "system".
+	HookSource string `json:"hook_source"`
+}
+
+// noteWebhookPayload extracts note/comment webhook fields.
+type noteWebhookPayload struct {
+	ObjectKind       string `json:"object_kind"`
+	EventType        string `json:"event_type"`
+	ObjectAttributes struct {
+		Note         string `json:"note"`
+		NoteableType string `json:"noteable_type"`
+		DiscussionID string `json:"discussion_id"`
+	} `json:"object_attributes"`
+	User struct {
+		Username string `json:"username"`
+	} `json:"user"`
+	Project struct {
+		ID                int64  `json:"id"`
+		PathWithNamespace string `json:"path_with_namespace"`
+		WebURL            string `json:"web_url"`
+	} `json:"project"`
+	MergeRequest struct {
+		IID        int64  `json:"iid"`
+		LastCommit struct {
+			ID string `json:"id"`
+		} `json:"last_commit"`
+	} `json:"merge_request"`
+}
+
+// NormalizeNoteWebhook converts a raw GitLab note webhook payload into a
+// NormalizedNoteEvent. Returns an error if the payload cannot be parsed.
+func NormalizeNoteWebhook(payload json.RawMessage, headerEventType, hookSource string) (NormalizedNoteEvent, error) {
+	var raw noteWebhookPayload
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return NormalizedNoteEvent{}, fmt.Errorf("normalize note: unmarshal payload: %w", err)
+	}
+
+	instanceURL := extractInstanceURL(raw.Project.WebURL)
+	normalizedHookSource := normalizeWebhookSourceFallback(hookSource)
+
+	return NormalizedNoteEvent{
+		GitLabInstanceURL: instanceURL,
+		ProjectID:         raw.Project.ID,
+		ProjectPath:       raw.Project.PathWithNamespace,
+		MRIID:             raw.MergeRequest.IID,
+		HeadSHA:           raw.MergeRequest.LastCommit.ID,
+		NoteBody:          raw.ObjectAttributes.Note,
+		NoteAuthor:        raw.User.Username,
+		DiscussionID:      raw.ObjectAttributes.DiscussionID,
+		NoteableType:      raw.ObjectAttributes.NoteableType,
+		HookSource:        normalizedHookSource,
+	}, nil
+}
+
+// IsNoteEventType returns true for GitLab note/comment event type headers.
+func IsNoteEventType(headerEventType string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(headerEventType))
+	switch normalized {
+	case "note", "note hook":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsNotePayload checks whether the raw payload's object_kind is "note".
+// This is needed for system hooks where the header does not distinguish
+// event types.
+func IsNotePayload(payload json.RawMessage) bool {
+	var probe struct {
+		ObjectKind string `json:"object_kind"`
+	}
+	if err := json.Unmarshal(payload, &probe); err != nil {
+		return false
+	}
+	return strings.EqualFold(probe.ObjectKind, "note")
+}
+
+// IsMergeRequestNotePayload returns true when the payload is a note event
+// whose noteable_type is "MergeRequest". This filters out notes on issues,
+// snippets, commits, etc.
+func IsMergeRequestNotePayload(payload json.RawMessage) bool {
+	var probe struct {
+		ObjectKind       string `json:"object_kind"`
+		ObjectAttributes struct {
+			NoteableType string `json:"noteable_type"`
+		} `json:"object_attributes"`
+	}
+	if err := json.Unmarshal(payload, &probe); err != nil {
+		return false
+	}
+	return strings.EqualFold(probe.ObjectKind, "note") &&
+		strings.EqualFold(probe.ObjectAttributes.NoteableType, "MergeRequest")
+}
+
 // IsMergeRequestEventType returns true for GitLab merge request event type
 // headers. For "System Hook" headers, the caller must additionally check
 // the payload's object_kind because system hooks carry all event types under

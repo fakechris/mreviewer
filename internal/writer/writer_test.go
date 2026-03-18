@@ -71,12 +71,39 @@ func TestAnchorKindLineTargeting(t *testing.T) {
 }
 
 func TestCommentBodyTemplate(t *testing.T) {
-	body := RenderCommentBody(db.ReviewFinding{ID: 42, Title: "Possible nil dereference", Confidence: 0.91, BodyMarkdown: sql.NullString{String: "This branch dereferences `user.profile` without a guard.", Valid: true}, Evidence: sql.NullString{String: "`user.profile` is optional\nThis branch runs before fallback logic", Valid: true}, SuggestedPatch: sql.NullString{String: "Guard `user.profile` before reading `timezone`.", Valid: true}, AnchorFingerprint: "anchor-fp", SemanticFingerprint: "semantic-fp"})
-	checks := []string{"**Possible nil dereference**", "This branch dereferences `user.profile` without a guard.", "Evidence:", "- `user.profile` is optional", "Suggested fix:", "Guard `user.profile` before reading `timezone`.", "<!-- ai-review:finding_id=42 anchor_fp=anchor-fp semantic_fp=semantic-fp confidence=0.91 -->"}
+	body := RenderCommentBody(db.ReviewFinding{ID: 42, Title: "Possible nil dereference", Confidence: 0.91, BodyMarkdown: sql.NullString{String: "This branch dereferences `user.profile` without a guard.", Valid: true}, Evidence: sql.NullString{String: "`user.profile` is optional\nThis branch runs before fallback logic", Valid: true}, SuggestedPatch: sql.NullString{String: "if user.profile == nil {\n    return\n}", Valid: true}, AnchorFingerprint: "anchor-fp", SemanticFingerprint: "semantic-fp"}, 0.9)
+	checks := []string{"**Possible nil dereference**", "This branch dereferences `user.profile` without a guard.", "Evidence:", "- `user.profile` is optional", "Suggested fix:", "```suggestion", "if user.profile == nil {", "<!-- ai-review:finding_id=42 anchor_fp=anchor-fp semantic_fp=semantic-fp confidence=0.91 -->"}
 	for _, check := range checks {
 		if !contains(body, check) {
 			t.Fatalf("body missing %q:\n%s", check, body)
 		}
+	}
+}
+
+func TestSuggestionBlockThreshold(t *testing.T) {
+	body := RenderCommentBody(db.ReviewFinding{ID: 42, Title: "Possible nil dereference", Confidence: 0.72, SuggestedPatch: sql.NullString{String: "if user.profile == nil {\n    return\n}", Valid: true}}, 0.8)
+	if contains(body, "```suggestion") {
+		t.Fatalf("body unexpectedly included suggestion block: %s", body)
+	}
+}
+
+func TestInvalidSuggestionOmitted(t *testing.T) {
+	body := RenderCommentBody(db.ReviewFinding{ID: 42, Title: "Possible nil dereference", Confidence: 0.95, SuggestedPatch: sql.NullString{String: "bad patch\r\nnext", Valid: true}}, 0.8)
+	if contains(body, "```suggestion") {
+		t.Fatalf("body unexpectedly included invalid suggestion block: %s", body)
+	}
+}
+
+func TestRangeCommentPayload(t *testing.T) {
+	position := BuildPosition(db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, db.ReviewFinding{Path: "pkg/file.go", AnchorKind: "range", OldLine: sql.NullInt32{Int32: 10, Valid: true}, NewLine: sql.NullInt32{Int32: 14, Valid: true}, Evidence: sql.NullString{String: "old->new", Valid: true}})
+	if position.LineRange == nil {
+		t.Fatal("expected line_range to be populated")
+	}
+	if position.LineRange.Start.LineCode != "pkg/file.go_10_14" || position.LineRange.End.LineCode != "pkg/file.go_10_14" {
+		t.Fatalf("unexpected line codes: %+v", position.LineRange)
+	}
+	if position.LineRange.Start.LineType != "old" || position.LineRange.End.LineType != "new" {
+		t.Fatalf("unexpected line types: %+v", position.LineRange)
 	}
 }
 
@@ -660,6 +687,7 @@ func (f *fakeDiscussionClient) ResolveDiscussion(_ context.Context, req ResolveD
 type fakeStore struct {
 	mr                        db.MergeRequest
 	version                   db.MrVersion
+	policy                    db.ProjectPolicy
 	actions                   map[string]db.CommentAction
 	runUpdates                map[int64]db.UpdateReviewRunStatusParams
 	runsByID                  map[int64]db.ReviewRun
@@ -684,6 +712,9 @@ func (f *fakeStore) GetReviewRun(_ context.Context, id int64) (db.ReviewRun, err
 		return run, nil
 	}
 	return db.ReviewRun{}, errors.New("not found")
+}
+func (f *fakeStore) GetProjectPolicy(context.Context, int64) (db.ProjectPolicy, error) {
+	return f.policy, nil
 }
 func (f *fakeStore) GetReviewFinding(_ context.Context, id int64) (db.ReviewFinding, error) {
 	if finding, ok := f.findingsByID[id]; ok {

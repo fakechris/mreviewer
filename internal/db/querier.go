@@ -13,6 +13,7 @@ type Querier interface {
 	CancelPendingRunsForMR(ctx context.Context, mergeRequestID int64) error
 	ClaimReviewRun(ctx context.Context, arg ClaimReviewRunParams) error
 	GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (CommentAction, error)
+	GetFindingByMRAndDiscussionID(ctx context.Context, arg GetFindingByMRAndDiscussionIDParams) (ReviewFinding, error)
 	GetGitlabDiscussion(ctx context.Context, id int64) (GitlabDiscussion, error)
 	GetGitlabDiscussionByFinding(ctx context.Context, reviewFindingID int64) (GitlabDiscussion, error)
 	GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg GetGitlabDiscussionByMergeRequestAndFindingParams) (GitlabDiscussion, error)

@@ -312,6 +312,10 @@ func (s *runtimeWriterStore) GetReviewRun(ctx context.Context, id int64) (db.Rev
 	return s.queries.GetReviewRun(ctx, id)
 }
 
+func (s *runtimeWriterStore) GetProjectPolicy(ctx context.Context, projectID int64) (db.ProjectPolicy, error) {
+	return s.queries.GetProjectPolicy(ctx, projectID)
+}
+
 func (s *runtimeWriterStore) GetReviewFinding(ctx context.Context, id int64) (db.ReviewFinding, error) {
 	return s.queries.GetReviewFinding(ctx, id)
 }

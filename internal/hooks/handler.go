@@ -25,10 +25,11 @@ const maxPayloadBytes = 1 << 20
 
 // Handler processes incoming GitLab webhook POST requests.
 type Handler struct {
-	logger       *slog.Logger
-	db           *sql.DB
-	secret       string
-	runProcessor RunProcessor
+	logger           *slog.Logger
+	db               *sql.DB
+	secret           string
+	runProcessor     RunProcessor
+	commandProcessor CommandProcessor
 }
 
 // RunProcessor creates or cancels review runs for normalized MR events.
@@ -36,6 +37,11 @@ type Handler struct {
 // using the provided querier.
 type RunProcessor interface {
 	ProcessEventWithQuerier(ctx context.Context, q db.Querier, ev NormalizedEvent, hookEventID int64) error
+}
+
+// CommandProcessor handles /ai-review commands from note webhook events.
+type CommandProcessor interface {
+	Execute(ctx context.Context, noteEvent NormalizedNoteEvent, cmd interface{}) error
 }
 
 // NewHandler creates a webhook handler. The secret is the expected value of
@@ -48,6 +54,13 @@ func NewHandler(logger *slog.Logger, database *sql.DB, secret string, runProcess
 		secret:       secret,
 		runProcessor: runProcessor,
 	}
+}
+
+// SetCommandProcessor sets an optional command processor for /ai-review
+// note commands. This is separated from the constructor to avoid a circular
+// dependency.
+func (h *Handler) SetCommandProcessor(cp CommandProcessor) {
+	h.commandProcessor = cp
 }
 
 // ServeHTTP handles POST /webhook requests.
@@ -125,7 +138,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- 4. Determine if this is a merge request event ---
+	// --- 4a. Check if this is a note/comment event with a command ---
+	isNoteEvent := IsNoteEventType(eventType)
+	if !isNoteEvent && IsSystemHookHeader(eventType) {
+		isNoteEvent = IsNotePayload(payload)
+	}
+
+	if isNoteEvent && IsMergeRequestNotePayload(payload) {
+		h.handleNoteEvent(ctx, w, l, deliveryKey, hookSource, eventType, payload)
+		return
+	}
+
+	// --- 4b. Determine if this is a merge request event ---
 	// For system hooks, the header is always "System Hook" regardless of the
 	// actual event kind, so we must inspect the payload's object_kind.
 	isMREvent := IsMergeRequestEventType(eventType)
@@ -311,6 +335,130 @@ func (h *Handler) writeAuditLog(
 		)
 	}
 }
+
+// handleNoteEvent processes note/comment webhook events. If the note body
+// starts with /ai-review, it routes to the command processor. Otherwise
+// the note is accepted for audit but produces no downstream action.
+func (h *Handler) handleNoteEvent(
+	ctx context.Context,
+	w http.ResponseWriter,
+	l *slog.Logger,
+	deliveryKey, hookSource, eventType string,
+	payload json.RawMessage,
+) {
+	// Parse the note event.
+	noteEvent, err := NormalizeNoteWebhook(payload, eventType, hookSource)
+	if err != nil {
+		l.ErrorContext(ctx, "failed to normalize note webhook",
+			"delivery_key", deliveryKey,
+			"error", err,
+		)
+		h.writeAuditLog(ctx, deliveryKey, hookSource, "rejected", "note_normalization_error", eventType)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to normalize note payload"})
+		return
+	}
+
+	// Record the hook event for audit.
+	parsed := parsedEvent{
+		EventType: eventType,
+		Action:    "note",
+		ProjectID: noteEvent.ProjectID,
+		MRIID:     noteEvent.MRIID,
+		HeadSHA:   noteEvent.HeadSHA,
+	}
+	if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+		// Log but do not fail — duplicate delivery keys may hit here.
+		if !isDuplicateKeyError(insertErr) {
+			l.WarnContext(ctx, "failed to insert hook_event for note",
+				"delivery_key", deliveryKey,
+				"error", insertErr,
+			)
+		}
+	}
+	h.writeAuditLog(ctx, deliveryKey, hookSource, "verified", "", eventType)
+
+	// Check if the note body contains a /ai-review command.
+	if !isCommandNote(noteEvent.NoteBody) {
+		l.InfoContext(ctx, "note event accepted, no command found",
+			"delivery_key", deliveryKey,
+			"mr_iid", noteEvent.MRIID,
+		)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "command": "none"})
+		return
+	}
+
+	// Route to command processor.
+	if h.commandProcessor == nil {
+		l.WarnContext(ctx, "note command received but no command processor configured",
+			"delivery_key", deliveryKey,
+			"note_body", noteEvent.NoteBody,
+		)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "command": "unprocessed"})
+		return
+	}
+
+	// Parse the command and execute it.
+	cmd := parseNoteCommand(noteEvent.NoteBody)
+	if err := h.commandProcessor.Execute(ctx, noteEvent, cmd); err != nil {
+		l.ErrorContext(ctx, "command execution failed",
+			"delivery_key", deliveryKey,
+			"note_body", noteEvent.NoteBody,
+			"error", err,
+		)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "command execution failed"})
+		return
+	}
+
+	l.InfoContext(ctx, "note command processed",
+		"delivery_key", deliveryKey,
+		"mr_iid", noteEvent.MRIID,
+		"note_body", noteEvent.NoteBody,
+	)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "command": "processed"})
+}
+
+// isCommandNote returns true if the note body starts with /ai-review.
+func isCommandNote(noteBody string) bool {
+	return strings.HasPrefix(strings.TrimSpace(noteBody), "/ai-review")
+}
+
+// parseNoteCommand is a thin wrapper that extracts the command kind and args
+// from a note body. Returns nil if the body is not a command.
+func parseNoteCommand(noteBody string) interface{} {
+	trimmed := strings.TrimSpace(noteBody)
+	if !strings.HasPrefix(trimmed, "/ai-review") {
+		return nil
+	}
+
+	// Extract the command portion after "/ai-review".
+	rest := strings.TrimSpace(trimmed[len("/ai-review"):])
+
+	parts := strings.SplitN(rest, " ", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		return &noteCommand{kind: "unknown"}
+	}
+
+	keyword := strings.ToLower(parts[0])
+	args := ""
+	if len(parts) > 1 {
+		args = strings.TrimSpace(parts[1])
+	}
+
+	return &noteCommand{kind: keyword, args: args}
+}
+
+// noteCommand is an opaque command value passed through the CommandProcessor
+// interface to avoid a direct dependency on the commands package from hooks.
+type noteCommand struct {
+	kind string
+	args string
+}
+
+// Kind returns the command keyword.
+func (c *noteCommand) Kind() string { return c.kind }
+
+// Args returns the command arguments.
+func (c *noteCommand) Args() string { return c.args }
 
 // parsedEvent holds the extracted fields from a webhook payload.
 type parsedEvent struct {

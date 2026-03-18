@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 )
 
 const cancelPendingRunsForMR = `-- name: CancelPendingRunsForMR :exec
@@ -51,7 +52,7 @@ func (q *Queries) ClaimReviewRun(ctx context.Context, arg ClaimReviewRunParams) 
 }
 
 const getNextClaimableReviewRun = `-- name: GetNextClaimableReviewRun :one
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at FROM review_runs
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs
 WHERE status = 'pending'
    OR (status = 'failed' AND next_retry_at IS NOT NULL AND next_retry_at <= CURRENT_TIMESTAMP)
 ORDER BY
@@ -88,12 +89,13 @@ func (q *Queries) GetNextClaimableReviewRun(ctx context.Context) (ReviewRun, err
 		&i.IdempotencyKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ScopeJson,
 	)
 	return i, err
 }
 
 const getReviewRun = `-- name: GetReviewRun :one
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at FROM review_runs WHERE id = ? LIMIT 1
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetReviewRun(ctx context.Context, id int64) (ReviewRun, error) {
@@ -121,12 +123,13 @@ func (q *Queries) GetReviewRun(ctx context.Context, id int64) (ReviewRun, error)
 		&i.IdempotencyKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ScopeJson,
 	)
 	return i, err
 }
 
 const getReviewRunByIdempotencyKey = `-- name: GetReviewRunByIdempotencyKey :one
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at FROM review_runs WHERE idempotency_key = ? LIMIT 1
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs WHERE idempotency_key = ? LIMIT 1
 `
 
 func (q *Queries) GetReviewRunByIdempotencyKey(ctx context.Context, idempotencyKey string) (ReviewRun, error) {
@@ -154,6 +157,7 @@ func (q *Queries) GetReviewRunByIdempotencyKey(ctx context.Context, idempotencyK
 		&i.IdempotencyKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ScopeJson,
 	)
 	return i, err
 }
@@ -161,19 +165,20 @@ func (q *Queries) GetReviewRunByIdempotencyKey(ctx context.Context, idempotencyK
 const insertReviewRun = `-- name: InsertReviewRun :execresult
 INSERT INTO review_runs (
     project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
-    status, max_retries, idempotency_key
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    status, max_retries, idempotency_key, scope_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertReviewRunParams struct {
-	ProjectID      int64         `json:"project_id"`
-	MergeRequestID int64         `json:"merge_request_id"`
-	HookEventID    sql.NullInt64 `json:"hook_event_id"`
-	TriggerType    string        `json:"trigger_type"`
-	HeadSha        string        `json:"head_sha"`
-	Status         string        `json:"status"`
-	MaxRetries     int32         `json:"max_retries"`
-	IdempotencyKey string        `json:"idempotency_key"`
+	ProjectID      int64           `json:"project_id"`
+	MergeRequestID int64           `json:"merge_request_id"`
+	HookEventID    sql.NullInt64   `json:"hook_event_id"`
+	TriggerType    string          `json:"trigger_type"`
+	HeadSha        string          `json:"head_sha"`
+	Status         string          `json:"status"`
+	MaxRetries     int32           `json:"max_retries"`
+	IdempotencyKey string          `json:"idempotency_key"`
+	ScopeJson      json.RawMessage `json:"scope_json"`
 }
 
 func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams) (sql.Result, error) {
@@ -186,11 +191,12 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 		arg.Status,
 		arg.MaxRetries,
 		arg.IdempotencyKey,
+		arg.ScopeJson,
 	)
 }
 
 const listPendingRuns = `-- name: ListPendingRuns :many
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at FROM review_runs
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs
 WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
 ORDER BY created_at ASC
 LIMIT ?
@@ -227,6 +233,7 @@ func (q *Queries) ListPendingRuns(ctx context.Context, limit int32) ([]ReviewRun
 			&i.IdempotencyKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ScopeJson,
 		); err != nil {
 			return nil, err
 		}
@@ -242,7 +249,7 @@ func (q *Queries) ListPendingRuns(ctx context.Context, limit int32) ([]ReviewRun
 }
 
 const listReviewRunsByMR = `-- name: ListReviewRunsByMR :many
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at FROM review_runs
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs
 WHERE merge_request_id = ?
 ORDER BY created_at DESC
 `
@@ -278,6 +285,7 @@ func (q *Queries) ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) 
 			&i.IdempotencyKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ScopeJson,
 		); err != nil {
 			return nil, err
 		}
