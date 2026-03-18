@@ -277,6 +277,96 @@ func TestSupersedeResolvesOldDiscussion(t *testing.T) {
 	}
 }
 
+func TestReplacementDiscussionBecomesActiveLink(t *testing.T) {
+	store := &fakeStore{
+		mr:           db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		version:      db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+		findingsByID: map[int64]db.ReviewFinding{1: {ID: 1, GitlabDiscussionID: "disc-old"}},
+		discussionByID: map[int64]db.GitlabDiscussion{
+			1: {ID: 11, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-old", DiscussionType: "diff"},
+		},
+	}
+	client := &fakeDiscussionClient{discussionErrors: []error{errors.New("400 invalid position")}}
+	w := New(client, store)
+	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "running"}, []db.ReviewFinding{{ID: 1, Path: "pkg/file.go", AnchorKind: "new_line", NewLine: sql.NullInt32{Int32: 17, Valid: true}, Title: "Issue one", Confidence: 0.8, GitlabDiscussionID: "disc-old"}}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := store.findingsByID[1].GitlabDiscussionID; got != "run:55:finding:1:create_file_discussion" {
+		t.Fatalf("active finding discussion id = %q, want replacement file discussion id", got)
+	}
+	if len(store.insertedDiscussions) != 1 {
+		t.Fatalf("inserted discussions = %d, want 1 replacement row", len(store.insertedDiscussions))
+	}
+	if got := store.insertedDiscussions[0].DiscussionType; got != "file" {
+		t.Fatalf("replacement discussion type = %q, want file", got)
+	}
+	if got := store.discussionByID[1].GitlabDiscussionID; got != "run:55:finding:1:create_file_discussion" {
+		t.Fatalf("latest stored discussion id = %q, want replacement file discussion id", got)
+	}
+	if got := store.insertedDiscussions[0].GitlabDiscussionID; got == "disc-old" {
+		t.Fatalf("replacement discussion row reused stale discussion id %q", got)
+	}
+}
+
+func TestSupersedePersistsReplacementLink(t *testing.T) {
+	store := &fakeStore{
+		mr:      db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+		findingsByRun: map[int64][]db.ReviewFinding{55: {
+			{ID: 2, State: "new", GitlabDiscussionID: "disc-fallback"},
+			{ID: 1, State: "superseded", MatchedFindingID: sql.NullInt64{Int64: 2, Valid: true}},
+		}},
+		findingsByID: map[int64]db.ReviewFinding{
+			1: {ID: 1},
+			2: {ID: 2, GitlabDiscussionID: "disc-old-inline"},
+		},
+		discussionByID: map[int64]db.GitlabDiscussion{
+			1: {ID: 11, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-old", DiscussionType: "diff"},
+			2: {ID: 21, ReviewFindingID: 2, MergeRequestID: 99, GitlabDiscussionID: "disc-old-inline", DiscussionType: "diff"},
+		},
+	}
+	client := &fakeDiscussionClient{}
+	w := New(client, store)
+	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := store.discussionByID[1].SupersededByDiscussionID; !got.Valid || got.Int64 != 21 {
+		t.Fatalf("superseded_by_discussion_id = %+v, want active replacement discussion row id 21", got)
+	}
+}
+
+func TestResolveUsesCurrentDiscussionLink(t *testing.T) {
+	store := &fakeStore{
+		mr:            db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		version:       db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+		findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 1, State: "fixed", GitlabDiscussionID: "disc-file"}}},
+		findingsByID:  map[int64]db.ReviewFinding{1: {ID: 1, GitlabDiscussionID: "disc-file"}},
+		discussionByID: map[int64]db.GitlabDiscussion{
+			1: {ID: 11, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-old", DiscussionType: "diff"},
+		},
+		discussionByFinding: map[string]db.GitlabDiscussion{
+			"99:1": {ID: 22, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-file", DiscussionType: "file"},
+		},
+	}
+	client := &fakeDiscussionClient{}
+	w := New(client, store)
+	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(client.resolveRequests) != 1 {
+		t.Fatalf("resolve requests = %d, want 1", len(client.resolveRequests))
+	}
+	if got := client.resolveRequests[0].DiscussionID; got != "disc-file" {
+		t.Fatalf("resolved discussion id = %q, want current persisted discussion id", got)
+	}
+	if !store.resolvedDiscussionUpdates[22] {
+		t.Fatalf("expected current persisted discussion row 22 to be marked resolved: %+v", store.resolvedDiscussionUpdates)
+	}
+	if store.resolvedDiscussionUpdates[11] {
+		t.Fatalf("stale predecessor discussion row 11 should not be resolved: %+v", store.resolvedDiscussionUpdates)
+	}
+}
+
 func TestThreadsResolvedGateDefault(t *testing.T) {
 	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{56: {{ID: 1, State: "fixed"}}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, GitlabDiscussionID: "disc-1", DiscussionType: "diff"}}}
 	client := &fakeDiscussionClient{}
