@@ -16,16 +16,20 @@ import (
 type DiscussionClient interface {
 	CreateDiscussion(ctx context.Context, req CreateDiscussionRequest) (Discussion, error)
 	CreateNote(ctx context.Context, req CreateNoteRequest) (Discussion, error)
+	ResolveDiscussion(ctx context.Context, req ResolveDiscussionRequest) error
 }
 
 type Store interface {
 	GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (db.MrVersion, error)
 	GetMergeRequest(ctx context.Context, id int64) (db.MergeRequest, error)
+	ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]db.ReviewFinding, error)
 	GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (db.CommentAction, error)
+	GetGitlabDiscussionByFinding(ctx context.Context, reviewFindingID int64) (db.GitlabDiscussion, error)
 	GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg db.GetGitlabDiscussionByMergeRequestAndFindingParams) (db.GitlabDiscussion, error)
 	InsertCommentAction(ctx context.Context, arg db.InsertCommentActionParams) (sql.Result, error)
 	UpdateCommentActionStatus(ctx context.Context, arg db.UpdateCommentActionStatusParams) error
 	InsertGitlabDiscussion(ctx context.Context, arg db.InsertGitlabDiscussionParams) (sql.Result, error)
+	UpdateGitlabDiscussionResolved(ctx context.Context, arg db.UpdateGitlabDiscussionResolvedParams) error
 	UpdateReviewRunStatus(ctx context.Context, arg db.UpdateReviewRunStatusParams) error
 }
 
@@ -56,6 +60,13 @@ type CreateNoteRequest struct {
 	IdempotencyKey  string `json:"idempotency_key"`
 }
 
+type ResolveDiscussionRequest struct {
+	ProjectID       int64  `json:"project_id"`
+	MergeRequestIID int64  `json:"merge_request_iid"`
+	DiscussionID    string `json:"discussion_id"`
+	Resolved        bool   `json:"resolved"`
+}
+
 type Position struct {
 	PositionType string `json:"position_type"`
 	BaseSHA      string `json:"base_sha"`
@@ -80,12 +91,16 @@ const (
 	actionTypeCreateDiscussion     = "create_discussion"
 	actionTypeCreateFileDiscussion = "create_file_discussion"
 	actionTypeCreateGeneralNote    = "create_general_note"
+	actionTypeSummaryNote          = "summary_note"
+	actionTypeResolveDiscussion    = "resolve_discussion"
 	writerErrorParserFallback      = "writer_parser_error_note"
 	writerErrorDiscussionCreate    = "gitlab_create_discussion_failed"
 	writerErrorDiscussionPosition  = "gitlab_position_invalid"
 	writerErrorFileCreate          = "gitlab_create_file_discussion_failed"
 	writerErrorNoteCreate          = "gitlab_create_note_failed"
+	writerErrorDiscussionResolve   = "gitlab_resolve_discussion_failed"
 	writerErrorUnavailable         = "gitlab_unavailable"
+	runStatusParserError           = "parser_error"
 )
 
 func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.ReviewFinding) error {
@@ -108,7 +123,13 @@ func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.Revi
 			return err
 		}
 	}
-	return nil
+	if !isTerminalRun(run.Status) {
+		return nil
+	}
+	if err := w.resolveCompletedFindings(ctx, run, mr); err != nil {
+		return err
+	}
+	return w.writeSummaryNote(ctx, run, mr, findings)
 }
 
 func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, version db.MrVersion, finding db.ReviewFinding) error {
@@ -156,9 +177,97 @@ func (w *Writer) writeParserErrorNote(ctx context.Context, run db.ReviewRun) err
 		return fmt.Errorf("writer: load merge request: %w", err)
 	}
 	noteReq := CreateNoteRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: fmt.Sprintf("AI review could not parse provider output for review run %d. A general fallback note was emitted instead of inline comments.", run.ID)}
-	_, err = w.performNoteAction(ctx, run, db.ReviewFinding{}, idempotencyKey, "summary_note", noteReq)
+	_, err = w.performNoteAction(ctx, run, db.ReviewFinding{}, idempotencyKey, actionTypeSummaryNote, noteReq)
 	if err != nil {
 		return w.persistRunFailure(ctx, run, writerErrorParserFallback, err)
+	}
+	return nil
+}
+
+func (w *Writer) resolveCompletedFindings(ctx context.Context, run db.ReviewRun, mr db.MergeRequest) error {
+	runFindings, err := w.store.ListFindingsByRun(ctx, run.ID)
+	if err != nil {
+		return fmt.Errorf("writer: list run findings: %w", err)
+	}
+	newDiscussions := map[int64]string{}
+	for _, finding := range runFindings {
+		if finding.ID == 0 {
+			continue
+		}
+		if finding.GitlabDiscussionID != "" {
+			newDiscussions[finding.ID] = finding.GitlabDiscussionID
+			continue
+		}
+		discussion, lookupErr := w.store.GetGitlabDiscussionByFinding(ctx, finding.ID)
+		if lookupErr == nil && strings.TrimSpace(discussion.GitlabDiscussionID) != "" {
+			newDiscussions[finding.ID] = discussion.GitlabDiscussionID
+		}
+	}
+	for _, finding := range runFindings {
+		switch finding.State {
+		case "fixed", "stale":
+			if err := w.resolveFindingDiscussion(ctx, run, mr, finding, sql.NullInt64{}); err != nil {
+				return err
+			}
+		case "superseded":
+			if err := w.resolveFindingDiscussion(ctx, run, mr, finding, nullableReplacementDiscussionID(finding.MatchedFindingID, newDiscussions)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func nullableReplacementDiscussionID(matched sql.NullInt64, discussions map[int64]string) sql.NullInt64 {
+	if !matched.Valid {
+		return sql.NullInt64{}
+	}
+	replacementDiscussionID, ok := discussions[matched.Int64]
+	if !ok || strings.TrimSpace(replacementDiscussionID) == "" {
+		return sql.NullInt64{}
+	}
+	return matched
+}
+
+func (w *Writer) resolveFindingDiscussion(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, finding db.ReviewFinding, supersededBy sql.NullInt64) error {
+	if finding.ID == 0 {
+		return nil
+	}
+	discussion, err := w.store.GetGitlabDiscussionByFinding(ctx, finding.ID)
+	if err != nil {
+		return nil
+	}
+	if strings.TrimSpace(discussion.GitlabDiscussionID) == "" {
+		return nil
+	}
+	idempotencyKey := fmt.Sprintf("run:%d:finding:%d:%s", run.ID, finding.ID, actionTypeResolveDiscussion)
+	actionID, existing, err := w.ensureAction(ctx, run.ID, nullableFindingID(finding.ID), actionTypeResolveDiscussion, idempotencyKey)
+	if err != nil {
+		return fmt.Errorf("writer: insert comment action: %w", err)
+	}
+	if existing.Status != commentActionStatusSucceeded {
+		callErr := w.retryWrite(ctx, func() error {
+			return w.client.ResolveDiscussion(ctx, ResolveDiscussionRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, DiscussionID: discussion.GitlabDiscussionID, Resolved: true})
+		})
+		if err := w.finalizeAction(ctx, actionID, existing, callErr, classifyResolveError(callErr)); err != nil {
+			return err
+		}
+		if callErr != nil && classifyResolveError(callErr) != "" {
+			return callErr
+		}
+	}
+	return w.store.UpdateGitlabDiscussionResolved(ctx, db.UpdateGitlabDiscussionResolvedParams{Resolved: true, ID: discussion.ID})
+}
+
+func (w *Writer) writeSummaryNote(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, findings []db.ReviewFinding) error {
+	idempotencyKey := fmt.Sprintf("run:%d:summary_note", run.ID)
+	if action, err := w.store.GetCommentActionByIdempotencyKey(ctx, idempotencyKey); err == nil && action.Status == commentActionStatusSucceeded {
+		return nil
+	}
+	body := renderSummaryBody(run, findings)
+	_, err := w.performNoteAction(ctx, run, db.ReviewFinding{}, idempotencyKey, actionTypeSummaryNote, CreateNoteRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: body})
+	if err != nil {
+		return w.persistRunFailure(ctx, run, classifyWriteError(err), err)
 	}
 	return nil
 }
@@ -232,9 +341,13 @@ func (w *Writer) finalizeAction(ctx context.Context, actionID int64, existing db
 	detail := sql.NullString{}
 	retryCount := existing.RetryCount
 	if actionErr != nil {
-		status = commentActionStatusFailed
-		detail = sql.NullString{String: actionErr.Error(), Valid: true}
-		retryCount++
+		if errorCode == "" {
+			detail = sql.NullString{}
+		} else {
+			status = commentActionStatusFailed
+			detail = sql.NullString{String: actionErr.Error(), Valid: true}
+			retryCount++
+		}
 	}
 	if actionID == 0 {
 		actionID = existing.ID
@@ -330,6 +443,35 @@ func renderTargetLine(finding db.ReviewFinding) string {
 	return ""
 }
 
+func isTerminalRun(status string) bool {
+	status = strings.ToLower(strings.TrimSpace(status))
+	return status == "completed" || status == runStatusParserError
+}
+
+func renderSummaryBody(run db.ReviewRun, findings []db.ReviewFinding) string {
+	active := 0
+	resolved := 0
+	filtered := 0
+	for _, finding := range findings {
+		switch strings.ToLower(strings.TrimSpace(finding.State)) {
+		case "filtered":
+			filtered++
+		case "fixed", "stale", "superseded", "ignored":
+			resolved++
+		default:
+			active++
+		}
+	}
+	overallRisk := "none"
+	if active > 0 {
+		overallRisk = "elevated"
+	}
+	if len(findings) == 0 {
+		return fmt.Sprintf("AI review summary for run %d\n\n- overall_risk: %s\n- findings_posted: 0\n- findings_resolved: 0\n- findings_filtered: 0\n\nNo issues found.", run.ID, overallRisk)
+	}
+	return fmt.Sprintf("AI review summary for run %d\n\n- overall_risk: %s\n- findings_posted: %d\n- findings_resolved: %d\n- findings_filtered: %d", run.ID, overallRisk, active, resolved, filtered)
+}
+
 func nullableFindingID(id int64) sql.NullInt64 {
 	if id == 0 {
 		return sql.NullInt64{}
@@ -367,6 +509,20 @@ func classifyWriteError(err error) string {
 		return writerErrorDiscussionPosition
 	}
 	return writerErrorNoteCreate
+}
+
+func classifyResolveError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if isRetryableWriteError(err) {
+		return writerErrorUnavailable
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "already resolved") {
+		return ""
+	}
+	return writerErrorDiscussionResolve
 }
 
 func errorCodeIfFailed(status, code string) string {
