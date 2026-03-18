@@ -2,8 +2,10 @@ package gate
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/mreviewer/mreviewer/internal/db"
@@ -60,7 +62,7 @@ func ComputeResult(run db.ReviewRun, policy *db.ProjectPolicy, findings []db.Rev
 	}
 	qualifyingIDs := make([]int64, 0)
 	for _, finding := range findings {
-		if qualifies(policy, finding) {
+		if qualifies(policy, mode, finding) {
 			qualifyingIDs = append(qualifyingIDs, finding.ID)
 		}
 	}
@@ -94,7 +96,7 @@ func (s *Service) Publish(ctx context.Context, result Result) error {
 	return nil
 }
 
-func qualifies(policy *db.ProjectPolicy, finding db.ReviewFinding) bool {
+func qualifies(policy *db.ProjectPolicy, mode string, finding db.ReviewFinding) bool {
 	state := strings.ToLower(strings.TrimSpace(finding.State))
 	if state == "ignored" || state == "fixed" || state == "stale" || state == "superseded" || state == "filtered" {
 		return false
@@ -109,7 +111,116 @@ func qualifies(policy *db.ProjectPolicy, finding db.ReviewFinding) bool {
 	if policy != nil && policy.ConfidenceThreshold > 0 && finding.Confidence < policy.ConfidenceThreshold {
 		return false
 	}
+	if strings.EqualFold(strings.TrimSpace(mode), "threads_resolved") && !blocksThreadsResolved(finding) {
+		return false
+	}
 	return true
+}
+
+func blocksThreadsResolved(finding db.ReviewFinding) bool {
+	if strings.TrimSpace(finding.GitlabDiscussionID) == "" {
+		return false
+	}
+	return !discussionResolved(finding)
+}
+
+func discussionResolved(finding db.ReviewFinding) bool {
+	if text, ok := nullableStringValue(finding.Evidence); ok {
+		if resolved, found := parseResolvedFlag(text); found {
+			return resolved
+		}
+	}
+	if text, ok := nullableStringValue(finding.BodyMarkdown); ok {
+		if resolved, found := parseResolvedFlag(text); found {
+			return resolved
+		}
+	}
+	return false
+}
+
+func nullableStringValue(value sql.NullString) (string, bool) {
+	if !value.Valid {
+		return "", false
+	}
+	return value.String, true
+}
+
+func parseResolvedFlag(raw string) (bool, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false, false
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var payload any
+	if err := decoder.Decode(&payload); err == nil {
+		if resolved, found := resolvedFromValue(payload); found {
+			return resolved, true
+		}
+	}
+
+	lower := strings.ToLower(raw)
+	switch {
+	case strings.Contains(lower, "resolved=true") || strings.Contains(lower, "\"resolved\":true"):
+		return true, true
+	case strings.Contains(lower, "resolved=false") || strings.Contains(lower, "\"resolved\":false"):
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func resolvedFromValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"resolved", "discussion_resolved", "thread_resolved"} {
+			if raw, ok := typed[key]; ok {
+				return coerceBool(raw)
+			}
+		}
+		for _, key := range []string{"discussion", "thread", "gitlab_discussion", "metadata"} {
+			if nested, ok := typed[key]; ok {
+				if resolved, found := resolvedFromValue(nested); found {
+					return resolved, true
+				}
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if resolved, found := resolvedFromValue(item); found {
+				return resolved, true
+			}
+		}
+	}
+	return false, false
+}
+
+func coerceBool(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		parsed, err := strconv.ParseBool(strings.TrimSpace(typed))
+		if err != nil {
+			return false, false
+		}
+		return parsed, true
+	case json.Number:
+		intValue, err := typed.Int64()
+		if err != nil {
+			return false, false
+		}
+		return intValue != 0, true
+	case float64:
+		return typed != 0, true
+	case int:
+		return typed != 0, true
+	case int64:
+		return typed != 0, true
+	default:
+		return false, false
+	}
 }
 
 func severityRank(value string) int {

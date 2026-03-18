@@ -2,6 +2,7 @@ package gate
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"testing"
 
@@ -46,7 +47,7 @@ func TestNoopGateAdapters(t *testing.T) {
 }
 
 func TestGateQualifyingFindings(t *testing.T) {
-	policy := &db.ProjectPolicy{ConfidenceThreshold: 0.8, SeverityThreshold: "medium", GateMode: "threads_resolved"}
+	policy := &db.ProjectPolicy{ConfidenceThreshold: 0.8, SeverityThreshold: "medium", GateMode: "external_status"}
 	run := db.ReviewRun{ID: 55, ProjectID: 12, MergeRequestID: 34, HeadSha: "abc"}
 	findings := []db.ReviewFinding{
 		{ID: 1, Severity: "high", Confidence: 0.91, State: "active"},
@@ -63,6 +64,45 @@ func TestGateQualifyingFindings(t *testing.T) {
 	}
 	if len(result.QualifyingFindingIDs) != 1 || result.QualifyingFindingIDs[0] != 1 {
 		t.Fatalf("qualifying ids = %v, want [1]", result.QualifyingFindingIDs)
+	}
+}
+
+func TestThreadsResolvedModeUsesBotThreads(t *testing.T) {
+	policy := &db.ProjectPolicy{ConfidenceThreshold: 0.8, SeverityThreshold: "medium", GateMode: "threads_resolved"}
+	run := db.ReviewRun{ID: 55, ProjectID: 12, MergeRequestID: 34, HeadSha: "abc"}
+	findings := []db.ReviewFinding{
+		{ID: 1, Severity: "high", Confidence: 0.91, State: "active", GitlabDiscussionID: "disc-open"},
+		{ID: 2, Severity: "high", Confidence: 0.95, State: "active", GitlabDiscussionID: "disc-resolved", Evidence: sql.NullString{String: `{"resolved":true}`, Valid: true}},
+		{ID: 3, Severity: "critical", Confidence: 0.99, State: "active"},
+	}
+	result := ComputeResult(run, policy, findings, "trace-threads")
+	if result.State != "failed" {
+		t.Fatalf("state = %q, want failed", result.State)
+	}
+	if result.BlockingFindings != 1 {
+		t.Fatalf("blocking findings = %d, want 1", result.BlockingFindings)
+	}
+	if len(result.QualifyingFindingIDs) != 1 || result.QualifyingFindingIDs[0] != 1 {
+		t.Fatalf("qualifying ids = %v, want [1]", result.QualifyingFindingIDs)
+	}
+}
+
+func TestParserErrorDoesNotBlockThreadsResolved(t *testing.T) {
+	policy := &db.ProjectPolicy{ConfidenceThreshold: 0.8, SeverityThreshold: "medium", GateMode: "threads_resolved"}
+	run := db.ReviewRun{ID: 55, ProjectID: 12, MergeRequestID: 34, HeadSha: "abc"}
+	findings := []db.ReviewFinding{
+		{ID: 1, Severity: "high", Confidence: 0.95, State: "active", ErrorCode: "parser_error"},
+		{ID: 2, Severity: "high", Confidence: 0.95, State: "active", GitlabDiscussionID: "disc-resolved", BodyMarkdown: sql.NullString{String: `{"discussion":{"resolved":true}}`, Valid: true}},
+	}
+	result := ComputeResult(run, policy, findings, "trace-parser")
+	if result.State != "passed" {
+		t.Fatalf("state = %q, want passed", result.State)
+	}
+	if result.BlockingFindings != 0 {
+		t.Fatalf("blocking findings = %d, want 0", result.BlockingFindings)
+	}
+	if len(result.QualifyingFindingIDs) != 0 {
+		t.Fatalf("qualifying ids = %v, want none", result.QualifyingFindingIDs)
 	}
 }
 
