@@ -297,13 +297,17 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist parser-error summary note fallback: %w", err))
 		}
 	}
+	findingsForOutcome, err := p.queries.ListFindingsByRun(ctx, run.ID)
+	if err != nil {
+		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load persisted findings for outcome: %w", err))
+	}
 	if p.auditLogger != nil {
 		_ = p.auditLogger.LogRunLifecycle(ctx, run, "run_completed", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "status": response.Result.Status})
 	}
 
 	logger := logging.FromContext(ctx, p.logger)
 	logger.InfoContext(ctx, "provider review completed", "run_id", run.ID, "project_id", project.GitlabProjectID, "merge_request_iid", mergeRequest.MrIid, "provider_model", response.Model, "provider_latency_ms", response.Latency.Milliseconds(), "provider_tokens_total", response.Tokens, "gitlab_instance_url", redactURL(instance.Url), "request", redactPayload(payload), "response", redactPayload(response.ResponsePayload))
-	return scheduler.ProcessOutcome{Status: response.Result.Status, ProviderLatencyMs: response.Latency.Milliseconds(), ProviderTokensTotal: response.Tokens}, nil
+	return scheduler.ProcessOutcome{Status: response.Result.Status, ProviderLatencyMs: response.Latency.Milliseconds(), ProviderTokensTotal: response.Tokens, ReviewFindings: findingsForOutcome}, nil
 }
 
 func (p *Processor) recordProviderMetrics(response ProviderResponse) {

@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
+	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/metrics"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
@@ -34,6 +36,7 @@ type ProcessOutcome struct {
 	Status              string
 	ProviderLatencyMs   int64
 	ProviderTokensTotal int64
+	ReviewFindings      []db.ReviewFinding
 }
 
 type FuncProcessor func(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error)
@@ -82,6 +85,7 @@ type Service struct {
 	logger         *slog.Logger
 	db             *sql.DB
 	processor      Processor
+	gateService    *gate.Service
 	workerID       string
 	pollInterval   time.Duration
 	retryBaseDelay time.Duration
@@ -164,6 +168,10 @@ func WithMetrics(registry *metrics.Registry) Option {
 
 func WithTracer(recorder *tracing.Recorder) Option {
 	return func(s *Service) { s.tracer = recorder }
+}
+
+func WithGateService(gateSvc *gate.Service) Option {
+	return func(s *Service) { s.gateService = gateSvc }
 }
 
 func NewNoopProcessor(logger *slog.Logger) Processor {
@@ -323,6 +331,9 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 			)
 			return nil
 		}
+		if err := s.publishGateResult(ctx, run, outcome); err != nil {
+			return err
+		}
 		updated, err := db.New(s.db).UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
 			ProviderLatencyMs:   outcome.ProviderLatencyMs,
 			ProviderTokensTotal: outcome.ProviderTokensTotal,
@@ -398,6 +409,36 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		"retry_count", run.RetryCount,
 	)
 	s.recordTerminalMetrics("failed", run, code)
+	return nil
+}
+
+func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outcome ProcessOutcome) error {
+	if s.gateService == nil {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(outcome.Status), "completed") {
+		return nil
+	}
+	queries := db.New(s.db)
+	var policyPtr *db.ProjectPolicy
+	policy, err := queries.GetProjectPolicy(ctx, run.ProjectID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("scheduler: load gate policy for run %d: %w", run.ID, err)
+	}
+	if err == nil {
+		policyPtr = &policy
+	}
+	findings := outcome.ReviewFindings
+	if findings == nil {
+		findings, err = queries.ListFindingsByRun(ctx, run.ID)
+		if err != nil {
+			return fmt.Errorf("scheduler: load findings for gate publication on run %d: %w", run.ID, err)
+		}
+	}
+	result := gate.ComputeResult(run, policyPtr, findings, tracing.CurrentTraceID(ctx))
+	if err := s.gateService.Publish(ctx, result); err != nil {
+		return fmt.Errorf("scheduler: publish gate result for run %d: %w", run.ID, err)
+	}
 	return nil
 }
 

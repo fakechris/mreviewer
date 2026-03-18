@@ -126,6 +126,9 @@ func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.Revi
 	ctx, endSpan := w.startSpan(ctx, "gitlab.create_discussion", map[string]string{"run_id": fmt.Sprintf("%d", run.ID)})
 	defer endSpan()
 	started := w.now()
+	defer func() {
+		w.recordMetrics(run, started, nil)
+	}()
 	if w.client == nil || w.store == nil {
 		return fmt.Errorf("writer: dependencies are not configured")
 	}
@@ -149,12 +152,9 @@ func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.Revi
 		return nil
 	}
 	if err := w.resolveCompletedFindings(ctx, run, mr); err != nil {
-		w.recordMetrics(run, started, err)
 		return err
 	}
-	err = w.writeSummaryNote(ctx, run, mr, findings)
-	w.recordMetrics(run, started, err)
-	return err
+	return w.writeSummaryNote(ctx, run, mr, findings)
 }
 
 func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, version db.MrVersion, finding db.ReviewFinding) error {

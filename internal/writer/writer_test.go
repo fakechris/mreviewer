@@ -143,7 +143,8 @@ func TestFileFallbackToGeneralNote(t *testing.T) {
 func TestParserErrorSingleNote(t *testing.T) {
 	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}}
 	client := &fakeDiscussionClient{}
-	w := New(client, store)
+	registry := metrics.NewRegistry()
+	w := New(client, store).WithMetrics(registry)
 	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "parser_error"}, []db.ReviewFinding{{ID: 1}}); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -155,6 +156,9 @@ func TestParserErrorSingleNote(t *testing.T) {
 	}
 	if len(store.insertedDiscussions) != 0 {
 		t.Fatalf("stored discussions = %d, want 0", len(store.insertedDiscussions))
+	}
+	if got := registry.HistogramValues("comment_writer_latency_ms", map[string]string{"status": "parser_error"}); len(got) != 1 {
+		t.Fatalf("writer latency samples = %v, want 1 parser_error sample", got)
 	}
 }
 

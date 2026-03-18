@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -12,8 +13,10 @@ import (
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
+	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/hooks"
 	runsvc "github.com/mreviewer/mreviewer/internal/runs"
+	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
 
 const migrationsDir = "../../migrations"
@@ -305,6 +308,101 @@ func TestSingleClaimAcrossWorkers(t *testing.T) {
 	if run.ClaimedBy != winnerID {
 		t.Fatalf("claimed_by = %q, want %q", run.ClaimedBy, winnerID)
 	}
+}
+
+func TestGatePublishesFromRuntimePath(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-gate")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{status: "pending", idempotencyKey: "runtime-gate", headSHA: "sha-gate"})
+	if _, err := sqlDB.Exec("INSERT INTO project_policies (project_id, confidence_threshold, severity_threshold, include_paths, exclude_paths, gate_mode, extra) VALUES (?, ?, ?, ?, ?, ?, ?)", projectID, 0.8, "medium", []byte("[]"), []byte("[]"), "external_status", []byte("{}")); err != nil {
+		t.Fatalf("insert project policy: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, anchor_fingerprint, semantic_fingerprint, state)
+		VALUES (?, ?, 'bug', 'high', 0.95, 'Blocking issue', 'body', 'src/main.go', 'new_line', 'anchor-1', 'semantic-1', 'active')`, runID, mrID); err != nil {
+		t.Fatalf("insert finding: %v", err)
+	}
+
+	status := &fakeStatusPublisher{}
+	ci := &fakeCIPublisher{}
+	tracer := tracing.NewRecorder()
+	processor := FuncProcessor(func(context.Context, db.ReviewRun) (ProcessOutcome, error) {
+		findings, err := db.New(sqlDB).ListFindingsByRun(ctx, runID)
+		if err != nil {
+			return ProcessOutcome{}, err
+		}
+		return ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
+	})
+	svc := NewService(testLogger(), sqlDB, processor, WithWorkerID("worker-gate"), WithTracer(tracer), WithGateService(gate.NewService(status, ci, gate.NewDBAuditLogger(db.New(sqlDB)))))
+
+	processed, err := svc.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(status.results) != 1 {
+		t.Fatalf("status publish count = %d, want 1", len(status.results))
+	}
+	if len(ci.results) != 1 {
+		t.Fatalf("ci publish count = %d, want 1", len(ci.results))
+	}
+	if status.results[0].RunID != runID || status.results[0].State != "failed" {
+		t.Fatalf("status result = %+v, want failed result for run %d", status.results[0], runID)
+	}
+	if status.results[0].TraceID == "" {
+		t.Fatal("expected trace id on gate result")
+	}
+	audits, err := db.New(sqlDB).ListAuditLogsByEntity(ctx, db.ListAuditLogsByEntityParams{EntityType: "review_run", EntityID: runID, Limit: 20, Offset: 0})
+	if err != nil {
+		t.Fatalf("ListAuditLogsByEntity: %v", err)
+	}
+	var gateDetail map[string]any
+	found := false
+	for _, audit := range audits {
+		if audit.Action != "gate_published" {
+			continue
+		}
+		if err := json.Unmarshal(audit.Detail, &gateDetail); err != nil {
+			t.Fatalf("unmarshal gate audit detail: %v", err)
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatal("expected gate_published audit log")
+	}
+	if gateDetail["state"] != "failed" {
+		t.Fatalf("gate audit state = %#v, want failed", gateDetail["state"])
+	}
+	ids, _ := gateDetail["qualifying_finding_ids"].([]any)
+	if len(ids) != 1 {
+		t.Fatalf("qualifying_finding_ids = %v, want 1 entry", gateDetail["qualifying_finding_ids"])
+	}
+	run, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "completed" {
+		t.Fatalf("run status = %q, want completed", run.Status)
+	}
+}
+
+type fakeStatusPublisher struct{ results []gate.Result }
+
+func (f *fakeStatusPublisher) PublishStatus(_ context.Context, result gate.Result) error {
+	f.results = append(f.results, result)
+	return nil
+}
+
+type fakeCIPublisher struct{ results []gate.Result }
+
+func (f *fakeCIPublisher) PublishCIGate(_ context.Context, result gate.Result) error {
+	f.results = append(f.results, result)
+	return nil
 }
 
 func TestConcurrentMRIsolation(t *testing.T) {
