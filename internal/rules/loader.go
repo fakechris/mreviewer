@@ -47,10 +47,25 @@ type EffectivePolicy struct {
 	MaxFiles            int
 }
 
+// GroupPolicy mirrors the shape of db.ProjectPolicy but represents
+// group-level configuration. It sits between platform defaults and
+// project policy in the precedence chain.
+type GroupPolicy struct {
+	ConfidenceThreshold float64
+	SeverityThreshold   string
+	IncludePaths        []string
+	ExcludePaths        []string
+	GateMode            string
+	ProviderRoute       string
+	Extra               json.RawMessage
+}
+
 type LoadInput struct {
 	ProjectID         int64
 	HeadSHA           string
+	GroupPolicy       *GroupPolicy
 	ProjectPolicy     *db.ProjectPolicy
+	ChangedPaths      []string
 	UntrustedContents []UntrustedContent
 }
 
@@ -82,7 +97,8 @@ func NewLoader(files RepositoryFileReader, platform PlatformDefaults) *Loader {
 }
 
 func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) {
-	effective, err := mergeEffectivePolicy(l.platform, input.ProjectPolicy)
+	// 1. Start with platform defaults < group policy < project policy.
+	effective, err := mergeEffectivePolicyFull(l.platform, input.GroupPolicy, input.ProjectPolicy)
 	if err != nil {
 		return LoadResult{}, err
 	}
@@ -92,7 +108,22 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 		ProjectPolicy:  summarizeProjectPolicy(input.ProjectPolicy),
 	}
 
-	if l.files != nil && strings.TrimSpace(input.HeadSHA) != "" {
+	canFetchFiles := l.files != nil && strings.TrimSpace(input.HeadSHA) != ""
+
+	// 2. Load and apply .gitlab/ai-review.yaml (above project policy, below REVIEW.md).
+	if canFetchFiles {
+		aiBody, err := l.files.GetRepositoryFile(ctx, input.ProjectID, aiReviewYAMLPath, input.HeadSHA)
+		if err != nil && !isFileNotFound(err) {
+			return LoadResult{}, fmt.Errorf("rules: load %s: %w", aiReviewYAMLPath, err)
+		}
+		if err == nil {
+			cfg, _, _ := ParseAIReviewConfig(aiBody)
+			applyAIReviewConfig(&effective, cfg)
+		}
+	}
+
+	// 3. Load root REVIEW.md.
+	if canFetchFiles {
 		reviewBody, err := l.files.GetRepositoryFile(ctx, input.ProjectID, rootReviewPath, input.HeadSHA)
 		if err != nil {
 			if !isFileNotFound(err) {
@@ -100,6 +131,15 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 			}
 		} else {
 			trusted.ReviewMarkdown = reviewBody
+		}
+	}
+
+	// 4. Load directory-scoped REVIEW.md for changed files.
+	if canFetchFiles && len(input.ChangedPaths) > 0 {
+		dirReview := loadDirectoryScopedReviews(ctx, l.files, input.ProjectID, input.HeadSHA, input.ChangedPaths)
+		if dirReview != "" {
+			// Directory-scoped REVIEW.md overrides root REVIEW.md.
+			trusted.ReviewMarkdown = dirReview
 		}
 	}
 
@@ -137,6 +177,181 @@ func computeRulesDigest(trusted internalcontext.TrustedRules, effective Effectiv
 	data, _ := json.Marshal(payload)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// mergeEffectivePolicyFull applies the full precedence chain:
+// platform defaults < group policy < project policy.
+// ai-review.yaml and REVIEW.md are applied later in Load().
+func mergeEffectivePolicyFull(platform PlatformDefaults, group *GroupPolicy, project *db.ProjectPolicy) (EffectivePolicy, error) {
+	effective, err := mergeEffectivePolicy(platform, project)
+	if err != nil {
+		return EffectivePolicy{}, err
+	}
+	// Group policy sits between platform and project, so we apply it in
+	// the correct spot: override platform values that project hasn't set.
+	// Since mergeEffectivePolicy already applied both platform and project,
+	// we need to re-merge properly. Instead, we apply group on top of
+	// platform, then project on top of that.
+	if group != nil {
+		// Re-derive from scratch: platform → group → project.
+		effective, err = mergeWithGroupPolicy(platform, group, project)
+		if err != nil {
+			return EffectivePolicy{}, err
+		}
+	}
+	return effective, nil
+}
+
+// mergeWithGroupPolicy rebuilds the effective policy from scratch with the
+// full chain: platform → group → project.
+func mergeWithGroupPolicy(platform PlatformDefaults, group *GroupPolicy, project *db.ProjectPolicy) (EffectivePolicy, error) {
+	projectSettings, err := internalcontext.SettingsFromPolicy(project)
+	if err != nil {
+		return EffectivePolicy{}, fmt.Errorf("rules: decode project policy settings: %w", err)
+	}
+	platformSettings, err := policySettingsFromPlatformDefaults(platform)
+	if err != nil {
+		return EffectivePolicy{}, err
+	}
+
+	// Start from platform defaults.
+	effective := EffectivePolicy{
+		Instructions:        strings.TrimSpace(platform.Instructions),
+		ConfidenceThreshold: platform.ConfidenceThreshold,
+		SeverityThreshold:   strings.TrimSpace(platform.SeverityThreshold),
+		IncludePaths:        append([]string(nil), platform.IncludePaths...),
+		ExcludePaths:        append([]string(nil), platform.ExcludePaths...),
+		GateMode:            strings.TrimSpace(platform.GateMode),
+		ProviderRoute:       strings.TrimSpace(platform.ProviderRoute),
+		Extra:               cloneRawJSON(platform.Extra),
+		ContextLinesBefore:  platformSettings.ContextLinesBefore,
+		ContextLinesAfter:   platformSettings.ContextLinesAfter,
+		MaxChangedLines:     platformSettings.MaxChangedLines,
+		MaxFiles:            platformSettings.MaxFiles,
+	}
+
+	// Layer group policy on top.
+	applyGroupPolicyToEffective(&effective, group)
+
+	// Layer project policy on top.
+	if project != nil {
+		if project.ConfidenceThreshold > 0 {
+			effective.ConfidenceThreshold = project.ConfidenceThreshold
+		}
+		if strings.TrimSpace(project.SeverityThreshold) != "" {
+			effective.SeverityThreshold = strings.TrimSpace(project.SeverityThreshold)
+		}
+		if len(projectSettings.IncludePaths) > 0 {
+			effective.IncludePaths = append([]string(nil), projectSettings.IncludePaths...)
+		}
+		if len(projectSettings.ExcludePaths) > 0 {
+			effective.ExcludePaths = append([]string(nil), projectSettings.ExcludePaths...)
+		}
+		if strings.TrimSpace(project.GateMode) != "" {
+			effective.GateMode = strings.TrimSpace(project.GateMode)
+		}
+		if strings.TrimSpace(project.ProviderRoute) != "" {
+			effective.ProviderRoute = strings.TrimSpace(project.ProviderRoute)
+		}
+		if len(project.Extra) > 0 && string(project.Extra) != "null" {
+			effective.Extra = cloneRawJSON(project.Extra)
+		}
+		defaults := internalcontext.DefaultPolicySettings()
+		if projectSettings.ContextLinesBefore > 0 && projectSettings.ContextLinesBefore != defaults.ContextLinesBefore {
+			effective.ContextLinesBefore = projectSettings.ContextLinesBefore
+		}
+		if projectSettings.ContextLinesAfter > 0 && projectSettings.ContextLinesAfter != defaults.ContextLinesAfter {
+			effective.ContextLinesAfter = projectSettings.ContextLinesAfter
+		}
+		if projectSettings.MaxChangedLines > 0 && projectSettings.MaxChangedLines != defaults.MaxChangedLines {
+			effective.MaxChangedLines = projectSettings.MaxChangedLines
+		}
+		if projectSettings.MaxFiles > 0 && projectSettings.MaxFiles != defaults.MaxFiles {
+			effective.MaxFiles = projectSettings.MaxFiles
+		}
+	}
+
+	return effective, nil
+}
+
+// applyGroupPolicyToEffective overlays group-level policy values on top of
+// the effective policy. Only non-zero/non-empty group values override.
+func applyGroupPolicyToEffective(effective *EffectivePolicy, group *GroupPolicy) {
+	if group == nil {
+		return
+	}
+	if group.ConfidenceThreshold > 0 {
+		effective.ConfidenceThreshold = group.ConfidenceThreshold
+	}
+	if strings.TrimSpace(group.SeverityThreshold) != "" {
+		effective.SeverityThreshold = strings.TrimSpace(group.SeverityThreshold)
+	}
+	if len(group.IncludePaths) > 0 {
+		effective.IncludePaths = append([]string(nil), group.IncludePaths...)
+	}
+	if len(group.ExcludePaths) > 0 {
+		effective.ExcludePaths = append([]string(nil), group.ExcludePaths...)
+	}
+	if strings.TrimSpace(group.GateMode) != "" {
+		effective.GateMode = strings.TrimSpace(group.GateMode)
+	}
+	if strings.TrimSpace(group.ProviderRoute) != "" {
+		effective.ProviderRoute = strings.TrimSpace(group.ProviderRoute)
+	}
+}
+
+// loadDirectoryScopedReviews loads the nearest directory-scoped REVIEW.md for
+// each changed path and returns the highest-priority one (the deepest
+// directory match). Multiple different directory REVIEW.md files are combined
+// with the deepest one winning.
+func loadDirectoryScopedReviews(ctx context.Context, files RepositoryFileReader, projectID int64, headSHA string, changedPaths []string) string {
+	// Collect all unique parent directories from changed paths, sorted
+	// deepest-first so we can check the nearest ancestor first.
+	candidates := directoryReviewCandidates(changedPaths)
+	// Try each candidate from deepest to shallowest. Return the first hit.
+	for _, dir := range candidates {
+		reviewPath := dir + "/REVIEW.md"
+		body, err := files.GetRepositoryFile(ctx, projectID, reviewPath, headSHA)
+		if err == nil && strings.TrimSpace(body) != "" {
+			return body
+		}
+	}
+	return ""
+}
+
+// directoryReviewCandidates returns all unique parent directories of the given
+// paths (excluding root), sorted deepest-first.
+func directoryReviewCandidates(paths []string) []string {
+	seen := map[string]bool{}
+	for _, p := range paths {
+		p = normalizePath(p)
+		for {
+			idx := strings.LastIndex(p, "/")
+			if idx <= 0 {
+				break
+			}
+			dir := p[:idx]
+			if seen[dir] {
+				break
+			}
+			seen[dir] = true
+			p = dir
+		}
+	}
+	dirs := make([]string, 0, len(seen))
+	for d := range seen {
+		dirs = append(dirs, d)
+	}
+	// Sort deepest first (longest path first).
+	sort.Slice(dirs, func(i, j int) bool {
+		ci := strings.Count(dirs[i], "/")
+		cj := strings.Count(dirs[j], "/")
+		if ci != cj {
+			return ci > cj
+		}
+		return dirs[i] < dirs[j]
+	})
+	return dirs
 }
 
 func mergeEffectivePolicy(platform PlatformDefaults, project *db.ProjectPolicy) (EffectivePolicy, error) {

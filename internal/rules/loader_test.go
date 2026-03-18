@@ -22,13 +22,16 @@ func TestRootReviewLoad(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("method = %s, want GET", r.Method)
 		}
-		if r.URL.Path != "/api/v4/projects/123/repository/files/REVIEW.md/raw" {
-			t.Fatalf("request path = %q, want /api/v4/projects/123/repository/files/REVIEW.md/raw", r.URL.Path)
+		switch {
+		case strings.Contains(r.URL.Path, "REVIEW.md"):
+			if got := r.URL.Query().Get("ref"); got != "head-sha" {
+				t.Fatalf("ref = %q, want head-sha", got)
+			}
+			_, _ = w.Write([]byte(reviewBody))
+		default:
+			// .gitlab/ai-review.yaml and other files: 404.
+			http.NotFound(w, r)
 		}
-		if got := r.URL.Query().Get("ref"); got != "head-sha" {
-			t.Fatalf("ref = %q, want head-sha", got)
-		}
-		_, _ = w.Write([]byte(reviewBody))
 	}))
 	defer server.Close()
 
