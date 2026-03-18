@@ -1,0 +1,15 @@
+{
+  "featureId": "writer-fallbacks-idempotency-and-recovery",
+  "reviewedAt": "2026-03-18T03:37:07.211580+00:00",
+  "commitId": "05a9266177efef835807e82aafb6c9a3aa6b612b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the feature handoff, transcript skeleton, commit diff, and current writer implementation/tests. The implementation covers the requested reliability scope: diff\u2192file\u2192note fallback, parser-error general-note handling, deterministic idempotency keys, replay-safe partial-batch resume, bounded retry/backoff for transient GitLab failures, machine-readable failure-code persistence, and safe continuation semantics for completed runs via persisted MR/run state.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/comment-writer/scrutiny/reviews/writer-fallbacks-idempotency-and-recovery.json",
+  "summary": "Pass. I reviewed mission docs, the prior review, worker transcript skeleton, handoff, commit 05a9266177efef835807e82aafb6c9a3aa6b612b, and the current writer code/tests. The earlier completed-run scoping concerns are resolved in the current code: `resolveCompletedFindings` uses persisted merge-request lifecycle state while `writeSummaryNote` reads persisted run findings, and dedicated tests cover both cross-run auto-resolution and persisted-run summary generation alongside the new fallback/idempotency/retry behaviors."
+}

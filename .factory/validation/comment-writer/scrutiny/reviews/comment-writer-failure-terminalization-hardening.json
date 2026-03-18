@@ -1,0 +1,15 @@
+{
+  "featureId": "comment-writer-failure-terminalization-hardening",
+  "reviewedAt": "2026-03-18T02:37:27.226895+00:00",
+  "commitId": "739d527698f0f5c58a4fc66dc313eff8d98c2d8b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix directly addresses the prior blocking bug. Writer failure persistence now uses the same conditional terminal-failure update path as the scheduler, so inline discussion failures and parser-fallback note failures persist `review_runs.status='failed'` while retaining machine-readable `error_code` and `error_detail` fields. Regression tests cover both failure modes.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": ".factory/validation/comment-writer/scrutiny/reviews/writer-fallbacks-idempotency-and-recovery.json",
+  "summary": "Reviewed the fix handoff, transcript skeleton, go-reliability skill, prior failed review, and commit `739d527698f0f5c58a4fc66dc313eff8d98c2d8b`. The implementation resolves the original blocking issue: writer writeback failures now terminalize review runs as `failed` with preserved machine-readable error details, and targeted regressions cover both inline and parser-fallback failure paths."
+}

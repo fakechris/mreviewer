@@ -1,0 +1,18 @@
+{
+  "featureId": "comment-writer-lifecycle-linkage-hardening",
+  "reviewedAt": "2026-03-18T02:37:25.631810+00:00",
+  "commitId": "d512bb8",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix directly addresses both prior blocking issues. Discussion creation now persists the created GitLab discussion ID back onto `review_findings.gitlab_discussion_id`, and supersede resolution now persists `gitlab_discussions.superseded_by_discussion_id` to the replacement discussion row, with regression tests covering durable recovery for later lifecycle operations.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": [
+    ".factory/validation/comment-writer/scrutiny/reviews/writer-positioning-and-body.json",
+    ".factory/validation/comment-writer/scrutiny/reviews/writer-summary-and-resolution.json"
+  ],
+  "summary": "Reviewed the fix handoff, transcript skeleton, commit diff, prior failed reviews, and the updated writer/sqlc persistence paths. The fix is sufficient: it now writes created discussion IDs onto findings, records supersede replacement linkage on old discussion rows, and includes regression coverage proving later resolve/supersede flows recover the durable linkage from persisted state."
+}

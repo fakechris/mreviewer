@@ -1,0 +1,15 @@
+{
+  "featureId": "writer-summary-and-resolution",
+  "reviewedAt": "2026-03-18T03:37:07.438761+00:00",
+  "commitId": "c6fde82a676eeb0fa49ec5afff38a4627c6d819d",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the worker handoff, transcript skeleton, commit diff, and current writer implementation. The earlier blocking issue is fixed: resolution now gates on stored bot-owned discussion rows before calling GitLab resolve, and current tests cover the intended summary-note and discussion-resolution behaviors.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/comment-writer/scrutiny/reviews/writer-summary-and-resolution.json",
+  "summary": "Pass. The feature now posts one terminal summary note (including clean runs and parser-error notes), resolves only persisted bot-owned discussions for fixed/stale/superseded findings, handles already-resolved discussions as no-ops, and links superseded discussions to replacement threads. No remaining blocking or non-blocking feature-scope issues were found in the reviewed code."
+}

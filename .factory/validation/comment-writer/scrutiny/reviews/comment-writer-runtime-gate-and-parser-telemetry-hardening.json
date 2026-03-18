@@ -1,0 +1,28 @@
+{
+  "featureId": "comment-writer-runtime-gate-and-parser-telemetry-hardening",
+  "reviewedAt": "2026-03-18T02:37:19Z",
+  "commitId": "1d8a3f846869ca23925643f379c962650dfc7bfa",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fix closes the parser-error telemetry gap and adds a scheduler-path regression proving gate publication from the runtime path, but the production worker still never constructs or injects a gate service. As shipped, external status/CI gate publication remains test-only and the original runtime wiring issue is not actually fixed.",
+    "issues": [
+      {
+        "file": "cmd/worker/main.go",
+        "line": 59,
+        "severity": "blocking",
+        "description": "The worker still builds `scheduler.NewService(logger, db, processor)` without `WithGateService(...)`, and the repository has no runtime construction for concrete gate publishers. Although `internal/scheduler/service.go` can now publish gates when a gate service is injected, production never injects one, so completed runs still do not publish external status or CI gate results. This does not resolve the prior blocking runtime-wiring failure."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Shared architecture notes mention optional gate outputs, but they still do not document the concrete worker wiring requirement that gate publication only occurs when `scheduler.WithGateService(...)` is provided with runtime publishers. That gap aligns with this fix landing only in scheduler tests while `cmd/worker` remains unwired.",
+      "evidence": ".factory/library/architecture.md:14 and :25 describe optional gate outputs at a high level, while cmd/worker/main.go:59 constructs the scheduler without WithGateService and internal/scheduler/service_test.go:338 is the only runtime-path caller that injects gate.NewService(...)"
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/comment-writer/scrutiny/reviews/results-gate-and-telemetry.json",
+  "summary": "Reviewed the prior failed review, fix handoff, transcript skeleton, commit 1d8a3f846869ca23925643f379c962650dfc7bfa, skill context, and shared-state docs. Parser-error runs now record `comment_writer_latency_ms`, but the worker still does not wire a gate service into the production scheduler, so the original blocking requirement that runtime completion publish gate adapters is still unmet; the fix review fails."
+}

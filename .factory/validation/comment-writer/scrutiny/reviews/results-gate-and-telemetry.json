@@ -1,0 +1,15 @@
+{
+  "featureId": "results-gate-and-telemetry",
+  "reviewedAt": "2026-03-18T03:36:42Z",
+  "commitId": "c9923afbf2b2c2efba6825ac334c2670bd989f4e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The follow-up fix now wires the metrics registry and tracer through worker runtime construction, and the gate implementation correctly limits `threads_resolved` blocking to unresolved bot-thread-backed findings. The reviewed feature behavior is now aligned with the milestone gate/telemetry requirements.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/comment-writer/scrutiny/reviews/results-gate-and-telemetry.json",
+  "summary": "Review passed: the prior blocking gaps were addressed by honoring `threads_resolved` semantics in gate qualification and by threading runtime metrics/tracing into the real worker assembly path."
+}
