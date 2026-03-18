@@ -38,6 +38,13 @@ func TestCIGateAdapter(t *testing.T) {
 	}
 }
 
+func TestNoopGateAdapters(t *testing.T) {
+	svc := NewService(NoopStatusPublisher{}, NoopCIGatePublisher{}, nil)
+	if err := svc.Publish(context.Background(), Result{RunID: 88, State: "passed"}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+}
+
 func TestGateQualifyingFindings(t *testing.T) {
 	policy := &db.ProjectPolicy{ConfidenceThreshold: 0.8, SeverityThreshold: "medium", GateMode: "threads_resolved"}
 	run := db.ReviewRun{ID: 55, ProjectID: 12, MergeRequestID: 34, HeadSha: "abc"}

@@ -17,6 +17,14 @@ type CIGatePublisher interface {
 	PublishCIGate(ctx context.Context, result Result) error
 }
 
+type NoopStatusPublisher struct{}
+
+func (NoopStatusPublisher) PublishStatus(context.Context, Result) error { return nil }
+
+type NoopCIGatePublisher struct{}
+
+func (NoopCIGatePublisher) PublishCIGate(context.Context, Result) error { return nil }
+
 type AuditLogger interface {
 	LogGateResult(ctx context.Context, run db.ReviewRun, result Result) error
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/mreviewer/mreviewer/internal/llm"
 	"github.com/mreviewer/mreviewer/internal/logging"
 	"github.com/mreviewer/mreviewer/internal/rules"
-	"github.com/mreviewer/mreviewer/internal/scheduler"
 )
 
 func main() {
@@ -64,7 +63,8 @@ func run() int {
 		return 1
 	}
 	processor := llm.NewProcessor(logger, db, gitlabClient, rulesLoader, provider, llm.NewDBAuditLogger(db))
-	worker := scheduler.NewService(logger, db, processor)
+	runtimeDeps := newRuntimeDeps(logger, db, processor)
+	worker := runtimeDeps.Scheduler
 	logger.Info("worker starting")
 	if err := worker.Run(ctx); err != nil {
 		logger.Error("worker stopped with error", "error", err)
