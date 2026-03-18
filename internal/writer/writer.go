@@ -24,6 +24,7 @@ type DiscussionClient interface {
 type Store interface {
 	GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (db.MrVersion, error)
 	GetMergeRequest(ctx context.Context, id int64) (db.MergeRequest, error)
+	GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error)
 	GetReviewFinding(ctx context.Context, id int64) (db.ReviewFinding, error)
 	GetGitlabDiscussion(ctx context.Context, id int64) (db.GitlabDiscussion, error)
 	ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]db.ReviewFinding, error)
@@ -36,7 +37,7 @@ type Store interface {
 	UpdateFindingDiscussionID(ctx context.Context, arg db.UpdateFindingDiscussionIDParams) error
 	UpdateGitlabDiscussionResolved(ctx context.Context, arg db.UpdateGitlabDiscussionResolvedParams) error
 	UpdateGitlabDiscussionSupersededBy(ctx context.Context, arg db.UpdateGitlabDiscussionSupersededByParams) error
-	UpdateReviewRunStatus(ctx context.Context, arg db.UpdateReviewRunStatusParams) error
+	MarkReviewRunFailedIfRunning(ctx context.Context, arg db.MarkReviewRunFailedParams) (bool, error)
 }
 
 type Writer struct {
@@ -494,9 +495,19 @@ func (w *Writer) persistRunFailure(ctx context.Context, run db.ReviewRun, code s
 	if code == "" || err == nil {
 		return err
 	}
-	updateErr := w.store.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: run.Status, ErrorCode: code, ErrorDetail: sql.NullString{String: err.Error(), Valid: true}, ID: run.ID})
+	updated, updateErr := w.store.MarkReviewRunFailedIfRunning(ctx, db.MarkReviewRunFailedParams{ErrorCode: code, ErrorDetail: sql.NullString{String: err.Error(), Valid: true}, RetryCount: run.RetryCount, ID: run.ID})
 	if updateErr != nil {
 		return fmt.Errorf("writer: persist run failure: %w", updateErr)
+	}
+	if updated {
+		return err
+	}
+	currentRun, getErr := w.store.GetReviewRun(ctx, run.ID)
+	if getErr != nil {
+		return fmt.Errorf("writer: reload run after failed terminalization: %w", getErr)
+	}
+	if strings.EqualFold(strings.TrimSpace(currentRun.Status), "failed") {
+		return err
 	}
 	return err
 }

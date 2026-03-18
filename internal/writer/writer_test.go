@@ -358,6 +358,49 @@ func TestFailureReasonCodes(t *testing.T) {
 	if store.runUpdates[55].ErrorCode != writerErrorUnavailable {
 		t.Fatalf("run error code = %q, want %q", store.runUpdates[55].ErrorCode, writerErrorUnavailable)
 	}
+	if store.runUpdates[55].Status != "failed" {
+		t.Fatalf("run status = %q, want failed", store.runUpdates[55].Status)
+	}
+}
+
+func TestWriterFailureSetsRunFailed(t *testing.T) {
+	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, runsByID: map[int64]db.ReviewRun{55: {ID: 55, MergeRequestID: 99, Status: "running"}}}
+	client := &fakeDiscussionClient{discussionErrors: []error{errors.New("temporary outage"), errors.New("temporary outage"), errors.New("temporary outage")}}
+	w := New(client, store)
+	err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "running"}, []db.ReviewFinding{{ID: 1, Path: "pkg/file.go", AnchorKind: "new_line", NewLine: sql.NullInt32{Int32: 17, Valid: true}, Title: "Issue one", Confidence: 0.8}})
+	if err == nil {
+		t.Fatal("expected Write to fail")
+	}
+	run := store.runsByID[55]
+	if run.Status != "failed" {
+		t.Fatalf("persisted run status = %q, want failed", run.Status)
+	}
+	if run.ErrorCode != writerErrorUnavailable {
+		t.Fatalf("persisted run error code = %q, want %q", run.ErrorCode, writerErrorUnavailable)
+	}
+	if !run.ErrorDetail.Valid || !contains(run.ErrorDetail.String, "temporary outage") {
+		t.Fatalf("persisted run error detail = %+v, want temporary outage detail", run.ErrorDetail)
+	}
+}
+
+func TestParserErrorNoteFailureSetsRunFailed(t *testing.T) {
+	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, runsByID: map[int64]db.ReviewRun{55: {ID: 55, MergeRequestID: 99, Status: "running"}}}
+	client := &fakeDiscussionClient{noteErrors: []error{errors.New("parser fallback note unavailable"), errors.New("parser fallback note unavailable"), errors.New("parser fallback note unavailable")}}
+	w := New(client, store)
+	err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "parser_error"}, nil)
+	if err == nil {
+		t.Fatal("expected Write to fail")
+	}
+	run := store.runsByID[55]
+	if run.Status != "failed" {
+		t.Fatalf("persisted run status = %q, want failed", run.Status)
+	}
+	if run.ErrorCode != writerErrorParserFallback {
+		t.Fatalf("persisted run error code = %q, want %q", run.ErrorCode, writerErrorParserFallback)
+	}
+	if !run.ErrorDetail.Valid || !contains(run.ErrorDetail.String, "parser fallback note unavailable") {
+		t.Fatalf("persisted run error detail = %+v, want parser fallback note error", run.ErrorDetail)
+	}
 }
 
 func TestGitLabOutageRecovery(t *testing.T) {
@@ -429,6 +472,7 @@ type fakeStore struct {
 	version                   db.MrVersion
 	actions                   map[string]db.CommentAction
 	runUpdates                map[int64]db.UpdateReviewRunStatusParams
+	runsByID                  map[int64]db.ReviewRun
 	findingsByRun             map[int64][]db.ReviewFinding
 	findingsByID              map[int64]db.ReviewFinding
 	discussionByID            map[int64]db.GitlabDiscussion
@@ -443,6 +487,12 @@ func (f *fakeStore) GetLatestMRVersion(context.Context, int64) (db.MrVersion, er
 }
 func (f *fakeStore) GetMergeRequest(context.Context, int64) (db.MergeRequest, error) {
 	return f.mr, nil
+}
+func (f *fakeStore) GetReviewRun(_ context.Context, id int64) (db.ReviewRun, error) {
+	if run, ok := f.runsByID[id]; ok {
+		return run, nil
+	}
+	return db.ReviewRun{}, errors.New("not found")
 }
 func (f *fakeStore) GetReviewFinding(_ context.Context, id int64) (db.ReviewFinding, error) {
 	if finding, ok := f.findingsByID[id]; ok {
@@ -570,12 +620,28 @@ func (f *fakeStore) UpdateGitlabDiscussionResolved(_ context.Context, arg db.Upd
 	return nil
 }
 
-func (f *fakeStore) UpdateReviewRunStatus(_ context.Context, arg db.UpdateReviewRunStatusParams) error {
+func (f *fakeStore) MarkReviewRunFailedIfRunning(_ context.Context, arg db.MarkReviewRunFailedParams) (bool, error) {
 	if f.runUpdates == nil {
 		f.runUpdates = map[int64]db.UpdateReviewRunStatusParams{}
 	}
-	f.runUpdates[arg.ID] = arg
-	return nil
+	f.runUpdates[arg.ID] = db.UpdateReviewRunStatusParams{Status: "failed", ErrorCode: arg.ErrorCode, ErrorDetail: arg.ErrorDetail, ID: arg.ID}
+	if f.runsByID == nil {
+		f.runsByID = map[int64]db.ReviewRun{}
+	}
+	run := f.runsByID[arg.ID]
+	run.ID = arg.ID
+	if strings.TrimSpace(run.Status) == "" {
+		run.Status = "running"
+	}
+	if run.Status != "running" {
+		return false, nil
+	}
+	run.Status = "failed"
+	run.ErrorCode = arg.ErrorCode
+	run.ErrorDetail = arg.ErrorDetail
+	run.RetryCount = arg.RetryCount
+	f.runsByID[arg.ID] = run
+	return true, nil
 }
 
 type fakeResult int64
