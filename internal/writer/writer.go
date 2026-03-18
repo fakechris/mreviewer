@@ -731,6 +731,8 @@ func BuildPosition(version db.MrVersion, finding db.ReviewFinding) Position {
 	if anchorKind == "range" {
 		if lineRange := buildLineRange(oldPath, newPath, finding); lineRange != nil {
 			position.LineRange = lineRange
+			position.OldLine = lineRange.End.OldLine
+			position.NewLine = lineRange.End.NewLine
 		}
 		return position
 	}
@@ -812,34 +814,60 @@ func canonicalAnchorKind(kind string) string {
 }
 
 func buildLineRange(oldPath, newPath string, finding db.ReviewFinding) *LineRange {
-	startKind, endKind, ok := rangeLineKinds(finding)
+	rangeAnchor, ok := parseRangeAnchor(finding)
 	if !ok {
 		return nil
 	}
-	start := buildRangeLine(oldPath, newPath, startKind, finding.OldLine, finding.NewLine)
-	end := buildRangeLine(oldPath, newPath, endKind, finding.OldLine, finding.NewLine)
+	start := buildRangeLine(oldPath, newPath, rangeAnchor.Start.Kind, rangeAnchor.Start.OldLine, rangeAnchor.Start.NewLine)
+	end := buildRangeLine(oldPath, newPath, rangeAnchor.End.Kind, rangeAnchor.End.OldLine, rangeAnchor.End.NewLine)
 	if start == nil || end == nil {
 		return nil
 	}
 	return &LineRange{Start: *start, End: *end}
 }
 
-func rangeLineKinds(finding db.ReviewFinding) (string, string, bool) {
+type rangeAnchor struct {
+	Start rangeAnchorLine
+	End   rangeAnchorLine
+}
+
+type rangeAnchorLine struct {
+	Kind    string
+	OldLine sql.NullInt32
+	NewLine sql.NullInt32
+}
+
+func parseRangeAnchor(finding db.ReviewFinding) (rangeAnchor, bool) {
 	evidence := strings.TrimSpace(finding.Evidence.String)
 	if evidence == "" {
-		return "", "", false
+		return rangeAnchor{}, false
 	}
-	parts := strings.SplitN(evidence, "\n", 2)
-	kinds := strings.Split(strings.TrimSpace(parts[0]), "->")
-	if len(kinds) != 2 {
-		return "", "", false
+	parts := strings.FieldsFunc(strings.TrimSpace(firstNonEmptyLine(evidence)), func(r rune) bool {
+		return r == '-' || r == '>' || r == ',' || r == '|'
+	})
+	if len(parts) != 2 {
+		return rangeAnchor{}, false
 	}
-	start := canonicalRangeLineType(kinds[0])
-	end := canonicalRangeLineType(kinds[1])
+	start := canonicalRangeLineType(parts[0])
+	end := canonicalRangeLineType(parts[1])
 	if start == "" || end == "" {
-		return "", "", false
+		return rangeAnchor{}, false
 	}
-	return start, end, true
+	startLine, endLine, ok := assignRangeLines(start, end, finding.OldLine, finding.NewLine)
+	if !ok {
+		return rangeAnchor{}, false
+	}
+	return rangeAnchor{Start: startLine, End: endLine}, true
+}
+
+func firstNonEmptyLine(value string) string {
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func canonicalRangeLineType(kind string) string {
@@ -853,6 +881,43 @@ func canonicalRangeLineType(kind string) string {
 	default:
 		return ""
 	}
+}
+
+func assignRangeLines(startKind, endKind string, oldLine, newLine sql.NullInt32) (rangeAnchorLine, rangeAnchorLine, bool) {
+	start, ok := rangeAnchorLineForKind(startKind, oldLine, newLine)
+	if !ok {
+		return rangeAnchorLine{}, rangeAnchorLine{}, false
+	}
+	end, ok := rangeAnchorLineForKind(endKind, oldLine, newLine)
+	if !ok {
+		return rangeAnchorLine{}, rangeAnchorLine{}, false
+	}
+	return start, end, true
+}
+
+func rangeAnchorLineForKind(kind string, oldLine, newLine sql.NullInt32) (rangeAnchorLine, bool) {
+	line := rangeAnchorLine{Kind: kind}
+	switch kind {
+	case "old":
+		if !oldLine.Valid {
+			return rangeAnchorLine{}, false
+		}
+		line.OldLine = oldLine
+	case "new":
+		if !newLine.Valid {
+			return rangeAnchorLine{}, false
+		}
+		line.NewLine = newLine
+	case "context":
+		if !oldLine.Valid || !newLine.Valid {
+			return rangeAnchorLine{}, false
+		}
+		line.OldLine = oldLine
+		line.NewLine = newLine
+	default:
+		return rangeAnchorLine{}, false
+	}
+	return line, true
 }
 
 func buildRangeLine(oldPath, newPath, lineType string, oldLine, newLine sql.NullInt32) *RangeLine {

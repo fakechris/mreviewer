@@ -99,11 +99,39 @@ func TestRangeCommentPayload(t *testing.T) {
 	if position.LineRange == nil {
 		t.Fatal("expected line_range to be populated")
 	}
-	if position.LineRange.Start.LineCode != "pkg/file.go_10_14" || position.LineRange.End.LineCode != "pkg/file.go_10_14" {
+	if position.LineRange.Start.LineCode != "pkg/file.go_10_0" || position.LineRange.End.LineCode != "pkg/file.go_0_14" {
 		t.Fatalf("unexpected line codes: %+v", position.LineRange)
 	}
 	if position.LineRange.Start.LineType != "old" || position.LineRange.End.LineType != "new" {
 		t.Fatalf("unexpected line types: %+v", position.LineRange)
+	}
+	if position.LineRange.Start.OldLine == nil || *position.LineRange.Start.OldLine != 10 {
+		t.Fatalf("start old line = %+v, want 10", position.LineRange.Start.OldLine)
+	}
+	if position.LineRange.Start.NewLine != nil {
+		t.Fatalf("start new line = %+v, want nil", position.LineRange.Start.NewLine)
+	}
+	if position.LineRange.End.NewLine == nil || *position.LineRange.End.NewLine != 14 {
+		t.Fatalf("end new line = %+v, want 14", position.LineRange.End.NewLine)
+	}
+	if position.LineRange.End.OldLine != nil {
+		t.Fatalf("end old line = %+v, want nil", position.LineRange.End.OldLine)
+	}
+	if position.NewLine == nil || *position.NewLine != 14 {
+		t.Fatalf("position new line = %+v, want 14", position.NewLine)
+	}
+}
+
+func TestRangeCommentPayloadContextRange(t *testing.T) {
+	position := BuildPosition(db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, db.ReviewFinding{Path: "pkg/file.go", AnchorKind: "range", OldLine: sql.NullInt32{Int32: 10, Valid: true}, NewLine: sql.NullInt32{Int32: 14, Valid: true}, Evidence: sql.NullString{String: "context -> context\nmultiline body", Valid: true}})
+	if position.LineRange == nil {
+		t.Fatal("expected context line_range to be populated")
+	}
+	if position.LineRange.Start.LineCode != "pkg/file.go_10_14" || position.LineRange.End.LineCode != "pkg/file.go_10_14" {
+		t.Fatalf("unexpected context line codes: %+v", position.LineRange)
+	}
+	if position.LineRange.Start.LineType != "context" || position.LineRange.End.LineType != "context" {
+		t.Fatalf("unexpected context line types: %+v", position.LineRange)
 	}
 }
 
