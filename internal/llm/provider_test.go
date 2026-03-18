@@ -22,8 +22,10 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
+	metrics2 "github.com/mreviewer/mreviewer/internal/metrics"
 	"github.com/mreviewer/mreviewer/internal/rules"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
+	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
 
 func TestMiniMaxRequestShape(t *testing.T) {
@@ -155,7 +157,9 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
 	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
 	provider := fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{{Category: "bug", Severity: "high", Confidence: 0.9, Title: "Issue", BodyMarkdown: "body", Path: "main.go", AnchorKind: "new"}}}, Model: "MiniMax-M2.5", Tokens: 77, Latency: 25 * time.Millisecond, ResponsePayload: map[string]any{"token": "secret", "content": "prompt body"}}}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	registry := metrics2.NewRegistry()
+	tracer := tracing.NewRecorder()
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithMetrics(registry).WithTracer(tracer)
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
 	}
@@ -205,6 +209,12 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	}
 	if projectID == 0 {
 		t.Fatal("expected seeded project")
+	}
+	if got := registry.CounterValue("provider_tokens_total", nil); got != 77 {
+		t.Fatalf("provider token metric = %d, want 77", got)
+	}
+	if spans := tracer.Spans(); len(spans) == 0 {
+		t.Fatal("expected trace spans to be recorded")
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
+	"github.com/mreviewer/mreviewer/internal/metrics"
+	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
 
 type DiscussionClient interface {
@@ -34,13 +36,25 @@ type Store interface {
 }
 
 type Writer struct {
-	client DiscussionClient
-	store  Store
-	now    func() time.Time
+	client  DiscussionClient
+	store   Store
+	now     func() time.Time
+	metrics *metrics.Registry
+	tracer  *tracing.Recorder
 }
 
 func New(client DiscussionClient, store Store) *Writer {
 	return &Writer{client: client, store: store, now: time.Now}
+}
+
+func (w *Writer) WithMetrics(registry *metrics.Registry) *Writer {
+	w.metrics = registry
+	return w
+}
+
+func (w *Writer) WithTracer(recorder *tracing.Recorder) *Writer {
+	w.tracer = recorder
+	return w
 }
 
 type CreateDiscussionRequest struct {
@@ -104,6 +118,9 @@ const (
 )
 
 func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.ReviewFinding) error {
+	ctx, endSpan := w.startSpan(ctx, "gitlab.create_discussion", map[string]string{"run_id": fmt.Sprintf("%d", run.ID)})
+	defer endSpan()
+	started := w.now()
 	if w.client == nil || w.store == nil {
 		return fmt.Errorf("writer: dependencies are not configured")
 	}
@@ -127,9 +144,12 @@ func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.Revi
 		return nil
 	}
 	if err := w.resolveCompletedFindings(ctx, run, mr); err != nil {
+		w.recordMetrics(run, started, err)
 		return err
 	}
-	return w.writeSummaryNote(ctx, run, mr, findings)
+	err = w.writeSummaryNote(ctx, run, mr, findings)
+	w.recordMetrics(run, started, err)
+	return err
 }
 
 func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, version db.MrVersion, finding db.ReviewFinding) error {
@@ -270,6 +290,24 @@ func (w *Writer) writeSummaryNote(ctx context.Context, run db.ReviewRun, mr db.M
 		return w.persistRunFailure(ctx, run, classifyWriteError(err), err)
 	}
 	return nil
+}
+
+func (w *Writer) recordMetrics(run db.ReviewRun, started time.Time, err error) {
+	if w.metrics == nil {
+		return
+	}
+	labels := map[string]string{"status": strings.ToLower(strings.TrimSpace(run.Status))}
+	if err != nil {
+		labels["error_code"] = classifyWriteError(err)
+	}
+	w.metrics.ObserveDuration("comment_writer_latency_ms", labels, w.now().Sub(started))
+}
+
+func (w *Writer) startSpan(ctx context.Context, name string, attrs map[string]string) (context.Context, func()) {
+	if w.tracer == nil {
+		return ctx, func() {}
+	}
+	return w.tracer.Start(ctx, name, attrs)
 }
 
 func (w *Writer) performDiscussionAction(ctx context.Context, run db.ReviewRun, finding db.ReviewFinding, idempotencyKey, actionType, discussionType string, req CreateDiscussionRequest) (Discussion, error) {

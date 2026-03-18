@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
+	"github.com/mreviewer/mreviewer/internal/metrics"
+	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
 
 func TestPositionUsesVersionSHAs(t *testing.T) {
@@ -159,7 +161,9 @@ func TestParserErrorSingleNote(t *testing.T) {
 func TestRunSummaryNote(t *testing.T) {
 	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}}
 	client := &fakeDiscussionClient{}
-	w := New(client, store)
+	registry := metrics.NewRegistry()
+	tracer := tracing.NewRecorder()
+	w := New(client, store).WithMetrics(registry).WithTracer(tracer)
 	finding := db.ReviewFinding{ID: 1, Path: "pkg/file.go", AnchorKind: "new_line", NewLine: sql.NullInt32{Int32: 17, Valid: true}, Title: "Issue one", Confidence: 0.8, State: "new"}
 	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, []db.ReviewFinding{finding}); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -172,6 +176,12 @@ func TestRunSummaryNote(t *testing.T) {
 	}
 	if store.actions["run:55:summary_note"].ActionType != actionTypeSummaryNote {
 		t.Fatalf("summary action type = %q, want %q", store.actions["run:55:summary_note"].ActionType, actionTypeSummaryNote)
+	}
+	if got := registry.HistogramValues("comment_writer_latency_ms", map[string]string{"status": "completed"}); len(got) != 1 {
+		t.Fatalf("writer latency samples = %v, want 1 sample", got)
+	}
+	if spans := tracer.Spans(); len(spans) == 0 || spans[0].Name != "gitlab.create_discussion" {
+		t.Fatalf("writer spans = %+v, expected gitlab.create_discussion span", spans)
 	}
 }
 

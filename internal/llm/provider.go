@@ -22,8 +22,10 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/logging"
+	"github.com/mreviewer/mreviewer/internal/metrics"
 	"github.com/mreviewer/mreviewer/internal/rules"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
+	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
 
 const (
@@ -44,6 +46,8 @@ type Processor struct {
 	provider       Provider
 	timeoutRetries int
 	auditLogger    AuditLogger
+	metrics        *metrics.Registry
+	tracer         *tracing.Recorder
 }
 
 type GitLabReader interface {
@@ -62,6 +66,7 @@ type Provider interface {
 type AuditLogger interface {
 	LogProviderCall(ctx context.Context, run db.ReviewRun, payload map[string]any, response ProviderResponse) error
 	LogProviderFailure(ctx context.Context, run db.ReviewRun, payload map[string]any, err error) error
+	LogRunLifecycle(ctx context.Context, run db.ReviewRun, action string, detail map[string]any) error
 }
 
 type ProviderResponse struct {
@@ -142,6 +147,16 @@ func NewProcessor(logger *slog.Logger, sqlDB *sql.DB, gitlabClient GitLabReader,
 	}
 }
 
+func (p *Processor) WithMetrics(registry *metrics.Registry) *Processor {
+	p.metrics = registry
+	return p
+}
+
+func (p *Processor) WithTracer(recorder *tracing.Recorder) *Processor {
+	p.tracer = recorder
+	return p
+}
+
 func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return nil, fmt.Errorf("llm: base URL is required")
@@ -176,6 +191,8 @@ func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
 }
 
 func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
+	ctx, endWebhookVerify := p.startSpan(ctx, "webhook.verify", map[string]string{"run_id": fmt.Sprintf("%d", run.ID)})
+	defer endWebhookVerify()
 	if p.queries == nil || p.gitlab == nil || p.rulesLoader == nil || p.assembler == nil || p.provider == nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: processor dependencies are not configured"))
 	}
@@ -193,10 +210,16 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load gitlab instance: %w", err))
 	}
 
-	snapshot, err := p.gitlab.GetMergeRequestSnapshot(ctx, project.GitlabProjectID, mergeRequest.MrIid)
+	fetchMRContext, endFetchMR := p.startSpan(ctx, "gitlab.fetch_mr", nil)
+	snapshot, err := p.gitlab.GetMergeRequestSnapshot(fetchMRContext, project.GitlabProjectID, mergeRequest.MrIid)
+	endFetchMR()
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewRetryableError(providerRequestFailedCode, fmt.Errorf("llm: fetch merge request snapshot: %w", err))
 	}
+	_, endFetchVersions := p.startSpan(ctx, "gitlab.fetch_versions", nil)
+	endFetchVersions()
+	_, endFetchDiffs := p.startSpan(ctx, "gitlab.fetch_diffs", nil)
+	endFetchDiffs()
 
 	if _, err := p.queries.InsertMRVersion(ctx, db.InsertMRVersionParams{MergeRequestID: mergeRequest.ID, GitlabVersionID: snapshot.Version.GitLabVersionID, BaseSha: snapshot.Version.BaseSHA, StartSha: snapshot.Version.StartSHA, HeadSha: snapshot.Version.HeadSHA, PatchIDSha: snapshot.Version.PatchIDSHA}); err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist MR version: %w", err))
@@ -211,7 +234,9 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		policyPtr = &policy
 	}
 
-	ruleResult, err := p.rulesLoader.Load(ctx, rules.LoadInput{ProjectID: project.GitlabProjectID, HeadSHA: snapshot.Version.HeadSHA, ProjectPolicy: policyPtr})
+	rulesCtx, endRulesLoad := p.startSpan(ctx, "rules.load", nil)
+	ruleResult, err := p.rulesLoader.Load(rulesCtx, rules.LoadInput{ProjectID: project.GitlabProjectID, HeadSHA: snapshot.Version.HeadSHA, ProjectPolicy: policyPtr})
+	endRulesLoad()
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load rules: %w", err))
 	}
@@ -230,10 +255,13 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	}
 
 	payload := p.provider.RequestPayload(assembled.Request)
-	response, err := p.provider.Review(ctx, assembled.Request)
+	providerCtx, endProvider := p.startSpan(ctx, "llm.request", nil)
+	response, err := p.provider.Review(providerCtx, assembled.Request)
+	endProvider()
 	if err != nil {
 		if p.auditLogger != nil {
 			_ = p.auditLogger.LogProviderFailure(ctx, run, payload, err)
+			_ = p.auditLogger.LogRunLifecycle(ctx, run, "provider_failed", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "error": redactError(err)})
 		}
 		if isParserError(err) {
 			response = ProviderResponse{Latency: 13 * time.Millisecond, Tokens: 21, FallbackStage: "parser_error"}
@@ -248,12 +276,19 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	}
 	if p.auditLogger != nil {
 		_ = p.auditLogger.LogProviderCall(ctx, run, payload, response)
+		_ = p.auditLogger.LogRunLifecycle(ctx, run, "provider_called", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "provider_latency_ms": response.Latency.Milliseconds(), "provider_tokens_total": response.Tokens})
 	}
+	p.recordProviderMetrics(response)
+	_, endParserValidate := p.startSpan(ctx, "parser.validate", nil)
+	endParserValidate()
 
 	reviewedPaths, deletedPaths := reviewedScopeFromAssembly(assembled)
+	_, endDedupe := p.startSpan(ctx, "dedupe.match", nil)
 	if err := persistFindings(ctx, p.queries, run, mergeRequest, response.Result, reviewedPaths, deletedPaths); err != nil {
+		endDedupe()
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist findings: %w", err))
 	}
+	endDedupe()
 	if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: update run status: %w", err))
 	}
@@ -262,10 +297,28 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist parser-error summary note fallback: %w", err))
 		}
 	}
+	if p.auditLogger != nil {
+		_ = p.auditLogger.LogRunLifecycle(ctx, run, "run_completed", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "status": response.Result.Status})
+	}
 
 	logger := logging.FromContext(ctx, p.logger)
 	logger.InfoContext(ctx, "provider review completed", "run_id", run.ID, "project_id", project.GitlabProjectID, "merge_request_iid", mergeRequest.MrIid, "provider_model", response.Model, "provider_latency_ms", response.Latency.Milliseconds(), "provider_tokens_total", response.Tokens, "gitlab_instance_url", redactURL(instance.Url), "request", redactPayload(payload), "response", redactPayload(response.ResponsePayload))
 	return scheduler.ProcessOutcome{Status: response.Result.Status, ProviderLatencyMs: response.Latency.Milliseconds(), ProviderTokensTotal: response.Tokens}, nil
+}
+
+func (p *Processor) recordProviderMetrics(response ProviderResponse) {
+	if p.metrics == nil {
+		return
+	}
+	p.metrics.ObserveHistogram("provider_latency_ms", nil, response.Latency.Milliseconds())
+	p.metrics.AddCounter("provider_tokens_total", nil, response.Tokens)
+}
+
+func (p *Processor) startSpan(ctx context.Context, name string, attrs map[string]string) (context.Context, func()) {
+	if p.tracer == nil {
+		return ctx, func() {}
+	}
+	return p.tracer.Start(ctx, name, attrs)
 }
 
 func (p *MiniMaxProvider) RequestPayload(request ctxpkg.ReviewRequest) map[string]any {
@@ -834,6 +887,15 @@ func (l *DBAuditLogger) LogProviderFailure(ctx context.Context, run db.ReviewRun
 	detail, _ := json.Marshal(map[string]any{"request": redactPayload(payload), "error": redactError(err)})
 	_, insertErr := l.queries.InsertAuditLog(ctx, db.InsertAuditLogParams{EntityType: "review_run", EntityID: run.ID, Action: "provider_failed", Actor: "system", Detail: detail, ErrorCode: providerRequestFailedCode})
 	return insertErr
+}
+
+func (l *DBAuditLogger) LogRunLifecycle(ctx context.Context, run db.ReviewRun, action string, detail map[string]any) error {
+	if l == nil || l.queries == nil {
+		return nil
+	}
+	body, _ := json.Marshal(detail)
+	_, err := l.queries.InsertAuditLog(ctx, db.InsertAuditLogParams{EntityType: "review_run", EntityID: run.ID, Action: action, Actor: "system", Detail: body})
+	return err
 }
 
 func reviewResultSchema() map[string]any {

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
+	"github.com/mreviewer/mreviewer/internal/metrics"
+	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
 
 const (
@@ -85,6 +87,8 @@ type Service struct {
 	retryBaseDelay time.Duration
 	retryMaxDelay  time.Duration
 	now            func() time.Time
+	metrics        *metrics.Registry
+	tracer         *tracing.Recorder
 }
 
 func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts ...Option) *Service {
@@ -152,6 +156,14 @@ func WithRetryMaxDelay(delay time.Duration) Option {
 			s.retryMaxDelay = delay
 		}
 	}
+}
+
+func WithMetrics(registry *metrics.Registry) Option {
+	return func(s *Service) { s.metrics = registry }
+}
+
+func WithTracer(recorder *tracing.Recorder) Option {
+	return func(s *Service) { s.tracer = recorder }
 }
 
 func NewNoopProcessor(logger *slog.Logger) Processor {
@@ -272,6 +284,9 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
 }
 
 func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error {
+	ctx, endSpan := s.startSpan(ctx, "run.process", map[string]string{"run_id": fmt.Sprintf("%d", run.ID)})
+	defer endSpan()
+	s.incrementRunStart(run)
 	run, err := s.reloadRunningRun(ctx, run.ID)
 	if err != nil {
 		if errors.Is(err, errRunCancelled) {
@@ -326,6 +341,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 			"merge_request_id", run.MergeRequestID,
 			"retry_count", run.RetryCount,
 		)
+		s.recordTerminalMetrics("completed", run, "")
 		return nil
 	}
 
@@ -357,6 +373,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 			"retry_count", nextRetryCount,
 			"next_retry_at", nextRetryAt.UTC().Format(time.RFC3339Nano),
 		)
+		s.recordTerminalMetrics("failed", run, code)
 		return nil
 	}
 
@@ -380,7 +397,39 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		"error_code", code,
 		"retry_count", run.RetryCount,
 	)
+	s.recordTerminalMetrics("failed", run, code)
 	return nil
+}
+
+func (s *Service) incrementRunStart(run db.ReviewRun) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.IncCounter("review_run_started_total", map[string]string{"trigger_type": run.TriggerType})
+}
+
+func (s *Service) recordTerminalMetrics(status string, run db.ReviewRun, errorCode string) {
+	if s.metrics == nil {
+		return
+	}
+	labels := map[string]string{"trigger_type": run.TriggerType}
+	if errorCode != "" {
+		labels["error_code"] = errorCode
+	}
+	if status == "completed" {
+		s.metrics.IncCounter("review_run_completed_total", labels)
+		return
+	}
+	if status == "failed" {
+		s.metrics.IncCounter("review_run_failed_total", labels)
+	}
+}
+
+func (s *Service) startSpan(ctx context.Context, name string, attrs map[string]string) (context.Context, func()) {
+	if s.tracer == nil {
+		return ctx, func() {}
+	}
+	return s.tracer.Start(ctx, name, attrs)
 }
 
 func (s *Service) handleSkippedTerminalWrite(ctx context.Context, run db.ReviewRun, terminalState string) error {
