@@ -1,0 +1,22 @@
+{
+  "featureId": "beta-comment-extensions",
+  "reviewedAt": "2026-03-18T16:13:06Z",
+  "commitId": "4b21b13344649caf2f502b1f4ff9feba580b3faa",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The range-anchor and suggestion-gating changes in commit 4b21b133 implement the requested beta comment extension behavior, but a later change on top of that feature introduced a blocking regression in summary rendering that reuses `review_runs.error_detail` for degradation summaries.",
+    "issues": [
+      {
+        "file": "internal/writer/writer.go",
+        "line": 594,
+        "severity": "blocking",
+        "description": "`renderSummaryBody` now returns `run.ErrorDetail` whenever `run.ErrorCode == \"degradation_mode\"`, but the processor never persists the degradation summary into `review_runs.error_detail` (it clears the field in `UpdateReviewRunStatus` and stores the text only via `persistSummaryNoteFallback`). As a result, degraded runs fall back to the generic summary body instead of the explicit partial-coverage summary required by the large-MR/degradation flow. This later regression affects the reviewed beta comment-extension surface because `internal/writer/writer.go` was modified again after the feature commit."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the beta-comment-extensions feature by reading the mission context, AGENTS/services/library guidance, the feature entry in features.json, the worker transcript skeleton, the handoff, and the feature commit diff (4b21b133). The feature commit itself correctly adds GitLab `line_range` payload handling and keeps suggestion blocks gated by valid high-confidence patches. However, the current code in `internal/writer/writer.go` contains a later blocking regression at line 594: degradation summaries rely on `review_runs.error_detail`, but provider degradation handling never stores that text there, so partial-coverage summary notes are not rendered as intended in the live tree."
+}

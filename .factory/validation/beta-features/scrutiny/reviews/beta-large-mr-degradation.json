@@ -1,0 +1,34 @@
+{
+  "featureId": "beta-large-mr-degradation",
+  "reviewedAt": "2026-03-18T16:13:34.807184Z",
+  "commitId": "bf7ba981b33b0e68aa5ca570ad05e54ca556c3d2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Large-MR degradation mode and partial-coverage summaries are implemented, but the degradation path never persists the summary body onto the run, so the final writer summary note cannot publish the explicit skipped-file summary required by the feature. The requested VAL-PERF-001 benchmark target is also still unimplemented in this feature.",
+    "issues": [
+      {
+        "file": "internal/llm/provider.go",
+        "line": 295,
+        "severity": "blocking",
+        "description": "The degradation short-circuit marks the run completed and inserts a pending `summary_note` action, but it never stores the generated degradation summary on `review_runs.error_detail` or any other field that the writer reads. `writer.renderSummaryBody` only emits the detailed partial-coverage body when `run.ErrorCode == \"degradation_mode\"` and `run.ErrorDetail` contains that summary, yet this branch clears `error_code`/`error_detail` before returning. As a result, the eventual summary note falls back to the generic counts-only body and does not explicitly state which files were skipped and why, so VAL-BETA-018 is not actually satisfied end-to-end."
+      },
+      {
+        "file": "internal/llm/provider.go",
+        "line": 274,
+        "severity": "blocking",
+        "description": "This feature\u2019s handoff explicitly records that the VAL-PERF-001 benchmark corpus/harness was not implemented, and the committed diff contains no benchmark package, fixtures, or runtime-report generation. Because the feature description and fulfills list include benchmarking end-to-end runtime against the mission target, the implementation is incomplete for VAL-PERF-001."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker used the `go-reliability` skill appropriately and followed its documented procedure; no skill gap was evident from the transcript skeleton for this feature.",
+      "evidence": "Transcript skeleton for worker session e4c99ae4-091a-40d2-b343-bf2cfe57302d shows mission docs review, targeted tests, gofmt, compile/full test passes, and the handoff reports `skillFeedback.followedProcedure = true`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed. The large-MR degradation branch does choose degradation deterministically and records partial-coverage metadata, but it does not persist that degradation summary for the writer\u2019s final summary note, so explicit skipped-file coverage reporting is lost end-to-end. The requested benchmark deliverable for VAL-PERF-001 is also still missing per both the diff and the worker\u2019s own handoff."
+}

@@ -1,0 +1,34 @@
+{
+  "featureId": "beta-provider-routing-rate-limits",
+  "reviewedAt": "2026-03-18T16:18:25.921964+00:00",
+  "commitId": "606d631828bc4625b7db6674c1d24715d2f62beb",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds in-memory throttling, fallback-provider plumbing, and degraded Redis logging, but the worker wiring does not actually route provider selection from effective project/group policy, so the core provider-routing requirement is not implemented end-to-end.",
+    "issues": [
+      {
+        "file": "cmd/worker/main.go",
+        "line": 49,
+        "severity": "blocking",
+        "description": "The worker hard-codes the primary/secondary provider routes as `default` and `secondary` and always passes the same fallback provider into `llm.NewProcessor`, but nothing threads `rules.Load(...).EffectivePolicy.ProviderRoute` into provider selection. As a result, project/group policy cannot choose the provider route used for a run, so the implementation does not satisfy the feature's required route-selection behavior."
+      },
+      {
+        "file": "internal/llm/provider_test.go",
+        "line": 150,
+        "severity": "non_blocking",
+        "description": "`TestProviderRouteSelection` only asserts that a fake rules loader returns `EffectivePolicy.ProviderRoute`; it does not verify that processor/runtime code actually uses that policy to select a provider. This leaves the missing end-to-end route-selection behavior untested and allowed the blocking gap above to ship."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The feature is tagged with `go-reliability`, but its handoff says the worker followed procedure from a different integration-oriented flow, and the added route-selection test only checked rules metadata instead of exercising the runtime contract. The current skill guidance may not be pushing workers to verify end-to-end policy-to-runtime wiring for mixed reliability/integration features.",
+      "evidence": "features.json marks `beta-provider-routing-rate-limits` with `skillName: go-reliability`, while the implementation coverage in internal/llm/provider_test.go:150-157 only inspects `rules.LoadResult.EffectivePolicy.ProviderRoute` and never proves provider selection in cmd/worker/main.go or llm.Processor."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed: throttling and fallback pieces landed, but effective project/group provider routing is not wired into the runtime, so the feature does not fully meet its expected behavior."
+}

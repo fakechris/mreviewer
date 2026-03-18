@@ -1,0 +1,34 @@
+{
+  "featureId": "beta-comment-extensions-tree-state-finalization",
+  "reviewedAt": "2026-03-18T16:15:03.613162+00:00",
+  "commitId": "a3a89ad",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature was supposed to only legalize and commit pre-existing tree residue, but commit a3a89ad bundled substantial new beta behavior including the new /ai-review command processor, note-webhook routing, scope_json persistence, and writer range/suggestion logic. That broad behavioral scope violates the feature contract for tree-state finalization.",
+    "issues": [
+      {
+        "file": "internal/commands/commands.go",
+        "line": 1,
+        "severity": "blocking",
+        "description": "This feature introduced an entirely new command-processing package with rerun/ignore/resolve/focus behavior instead of only finalizing an existing dirty tree. Shipping ~490 lines of new product logic in a tree-state finalization feature violates the requirement to avoid new behavioral work and makes the handoff non-isolated."
+      },
+      {
+        "file": "internal/hooks/handler.go",
+        "line": 141,
+        "severity": "blocking",
+        "description": "The commit changed webhook runtime behavior by routing note events into command processing and wiring a new command processor into ingress. Tree-state finalization was required to legalize existing residue only; changing live webhook behavior here broadens feature scope beyond finalization."
+      },
+      {
+        "file": "internal/writer/writer.go",
+        "line": 720,
+        "severity": "blocking",
+        "description": "The commit added new writer behavior for range anchors and suggestion rendering, including policy-dependent suggestion gating. Those are substantive beta-comment-extensions/product changes, not tree cleanup, so this feature does not satisfy its own no-new-behavior contract."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the handoff, transcript skeleton, shared-state files, and commit a3a89ad. The feature fails review because the supposed tree-state-finalization commit bundled substantial new beta behavioral work instead of only isolating and legalizing pre-existing dirty-tree residue."
+}

@@ -161,7 +161,7 @@ func toParsedCommand(cmd interface{}) *ParsedCommand {
 		return pc
 	}
 	if ci, ok := cmd.(commandInterface); ok {
-		kind := CommandUnknown
+		var kind CommandKind
 		switch ci.Kind() {
 		case "rerun":
 			kind = CommandRerun

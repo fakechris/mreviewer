@@ -1,0 +1,98 @@
+{
+  "milestone": "beta-features",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "test -f go.mod && go test -p 5 ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "test -f go.mod && go test -run '^$' ./...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "test -f go.mod && test -x ./.factory/bin/golangci-lint && ./.factory/bin/golangci-lint run --timeout 5m",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 6,
+    "passed": 0,
+    "failed": 6,
+    "failedFeatures": [
+      "beta-command-webhooks",
+      "beta-comment-extensions-tree-state-finalization",
+      "beta-comment-extensions",
+      "beta-large-mr-degradation",
+      "beta-provider-routing-rate-limits",
+      "beta-repo-config-layers"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "beta-command-webhooks",
+      "severity": "blocking",
+      "description": "`/ai-review rerun` and `/ai-review focus` generate idempotency keys with `time.Now().UnixNano()`, so command retries/replays can create duplicate runs instead of at-most-once command effects keyed to the note delivery."
+    },
+    {
+      "featureId": "beta-command-webhooks",
+      "severity": "blocking",
+      "description": "Note hook persistence and command execution are not atomic; if command execution fails after the hook event insert, a retried delivery is deduplicated and the rerun/ignore/resolve/focus side effect is permanently lost."
+    },
+    {
+      "featureId": "beta-comment-extensions-tree-state-finalization",
+      "severity": "blocking",
+      "description": "The supposed tree-state-finalization commit bundled substantial new behavior (command processor, note routing, and writer changes) instead of only legalizing existing residue, so it violated its own feature contract."
+    },
+    {
+      "featureId": "beta-comment-extensions",
+      "severity": "blocking",
+      "description": "Degradation summary rendering now depends on `review_runs.error_detail`, but the degradation path never persists that summary there, so degraded runs fall back to a generic summary instead of the required explicit partial-coverage note."
+    },
+    {
+      "featureId": "beta-large-mr-degradation",
+      "severity": "blocking",
+      "description": "The degradation branch does not persist the skipped-file/why summary where the writer can read it, so VAL-BETA-018 is not satisfied end-to-end."
+    },
+    {
+      "featureId": "beta-large-mr-degradation",
+      "severity": "blocking",
+      "description": "The requested VAL-PERF-001 benchmark corpus/report is still missing from the implementation and worker handoff."
+    },
+    {
+      "featureId": "beta-provider-routing-rate-limits",
+      "severity": "blocking",
+      "description": "Runtime provider selection is hard-coded to `default`/`secondary` and never uses effective project/group policy, so provider-route-per-project/group is not implemented end-to-end."
+    },
+    {
+      "featureId": "beta-repo-config-layers",
+      "severity": "blocking",
+      "description": "Directory-scoped `REVIEW.md` is loaded as one global winner for the run instead of applying the nearest directory review per changed file."
+    },
+    {
+      "featureId": "beta-repo-config-layers",
+      "severity": "blocking",
+      "description": "`.gitlab/ai-review.yaml` parsing discards validation warnings and silently accepts unknown fields, so invalid config is not surfaced as required."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Clarify how workers should handle features whose intended behavior is already present in dirty branch state or prior commits: require them to distinguish between true implementation work and tree-state finalization/validation-unblock commits, and to verify end-to-end runtime behavior rather than only metadata/tests.",
+      "evidence": "`beta-command-webhooks` and `beta-provider-routing-rate-limits` both had review feedback that workers validated partial or pre-existing logic without proving the runtime contract end-to-end; the tree-finalization feature also shipped behavioral work beyond its scope.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The beta-large-mr-degradation review noted that the go-reliability skill procedure itself was followed successfully.",
+      "reason": "not-actionable"
+    }
+  ],
+  "previousRound": null
+}

@@ -1,0 +1,34 @@
+{
+  "featureId": "beta-command-webhooks",
+  "reviewedAt": "2026-03-19T00:00:00Z",
+  "commitId": "29ae864468dfe743886317306885fd4242d72954",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The control-plane implementation for /ai-review note commands is present and test-covered, but the reviewed commit only changes sqlc model scanning for nullable review run scopes and leaves the intended feature behavior in pre-existing tree state. No new blocking implementation defects were found in the command/webhook flow itself.",
+    "issues": [
+      {
+        "file": "internal/commands/commands.go",
+        "line": 204,
+        "severity": "blocking",
+        "description": "`/ai-review rerun` and `/ai-review focus` generate idempotency keys with `time.Now().UnixNano()`, so command retries after a transient database error are not idempotent. The feature description says the system should accept note/comment webhooks and trigger reruns safely; with a retry/replay of the same command delivery, this implementation can create duplicate review runs instead of at-most-once command effects keyed to the webhook/note event."
+      },
+      {
+        "file": "internal/hooks/handler.go",
+        "line": 355,
+        "severity": "blocking",
+        "description": "`handleNoteEvent` writes the `hook_events` row and audit log before executing the command, but command execution is not wrapped in the same transaction or tied to the delivery key for deduplication. If command execution fails after the hook event insert, a GitLab retry of the same delivery is treated as a duplicate and skipped, permanently dropping the requested command side effect (rerun/ignore/resolve/focus)."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker deviated from the `go-integration` skill because the feature logic was already present in the branch and the actual commit was only a validation unblock. The skill does not describe how to handle 'pre-implemented feature on dirty branch' situations where the right action is a minimal enabling fix plus regression verification.",
+      "evidence": "Handoff skillFeedback marks `followedProcedure=false` with a suggested skill change; transcript shows the worker inspected existing command/webhook code and only committed `internal/db/models.go`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the feature metadata, worker handoff/transcript, go-integration skill, shared-state files, and commit `29ae864468dfe743886317306885fd4242d72954`. The command/webhook flow is implemented and covered by tests, but I found two blocking correctness gaps around command-delivery idempotency and loss of side effects on webhook retry after partial note handling failure, so the feature review fails."
+}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -54,17 +53,6 @@ func run() int {
 		GateMode:            "threads_resolved",
 		ProviderRoute:       "default",
 	})
-	provider, err := llm.NewMiniMaxProvider(llm.ProviderConfig{
-		BaseURL:   cfg.AnthropicBaseURL,
-		APIKey:    cfg.AnthropicAPIKey,
-		Model:     cfg.AnthropicModel,
-		RouteName: "default",
-		MaxTokens: 4096,
-	})
-	if err != nil {
-		logger.Error("failed to configure llm provider", "error", err)
-		return 1
-	}
 	gitLabLimiter := gitlab.NewInMemoryRateLimiter(gitlab.RateLimitConfig{Requests: 5, Window: time.Second}, time.Now, nil)
 	gitLabLimiter.SetLimit("global", gitlab.RateLimitConfig{Requests: 5, Window: time.Second})
 	gitlabClient, err = gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken, gitlab.WithRateLimiter(gitLabLimiter))
@@ -86,7 +74,7 @@ func run() int {
 	llmLimiter := llm.NewInMemoryRateLimiter(llm.RateLimitConfig{Requests: 2, Window: time.Second}, time.Now, nil)
 	llmLimiter.SetLimit("default", llm.RateLimitConfig{Requests: 2, Window: time.Second})
 	llmLimiter.SetLimit("secondary", llm.RateLimitConfig{Requests: 2, Window: time.Second})
-	provider, err = llm.NewMiniMaxProvider(llm.ProviderConfig{
+	provider, err := llm.NewMiniMaxProvider(llm.ProviderConfig{
 		BaseURL:     cfg.AnthropicBaseURL,
 		APIKey:      cfg.AnthropicAPIKey,
 		Model:       cfg.AnthropicModel,
@@ -102,7 +90,7 @@ func run() int {
 	if cfg.RedisAddr == "" {
 		logger.Warn("redis unavailable; optional coordination disabled", "mode", "degraded_fallback")
 	} else {
-		logger.Info("redis coordination configured", "redis_addr", fmt.Sprintf("%s", cfg.RedisAddr))
+		logger.Info("redis coordination configured", "redis_addr", cfg.RedisAddr)
 	}
 	processor := llm.NewProcessor(logger, db, gitlabClient, rulesLoader, fallbackProvider, llm.NewDBAuditLogger(db))
 	runtimeDeps := newRuntimeDeps(logger, db, processor)
