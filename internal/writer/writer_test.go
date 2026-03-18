@@ -163,7 +163,7 @@ func TestParserErrorSingleNote(t *testing.T) {
 }
 
 func TestRunSummaryNote(t *testing.T) {
-	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}}
+	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 1, State: "new"}}}}
 	client := &fakeDiscussionClient{}
 	registry := metrics.NewRegistry()
 	tracer := tracing.NewRecorder()
@@ -223,7 +223,8 @@ func TestDiscussionIdPersistedToFinding(t *testing.T) {
 }
 
 func TestAutoResolveFixedOrStale(t *testing.T) {
-	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 1, State: "fixed"}, {ID: 2, State: "stale"}}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, GitlabDiscussionID: "disc-1", DiscussionType: "diff"}, 2: {ID: 12, GitlabDiscussionID: "disc-2", DiscussionType: "diff"}}}
+	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 1, State: "fixed"}, {ID: 2, State: "stale"}}}, findingsByMR: map[int64][]db.ReviewFinding{99: {{ID: 1, MergeRequestID: 99, State: "fixed"}, {ID: 2, MergeRequestID: 99, State: "stale"}}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, GitlabDiscussionID: "disc-1", DiscussionType: "diff"}, 2: {ID: 12, GitlabDiscussionID: "disc-2", DiscussionType: "diff"}}}
+	store.discussionByFinding = map[string]db.GitlabDiscussion{"99:1": store.discussionByID[1], "99:2": store.discussionByID[2]}
 	client := &fakeDiscussionClient{}
 	w := New(client, store)
 	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
@@ -241,7 +242,8 @@ func TestAutoResolveFixedOrStale(t *testing.T) {
 }
 
 func TestAlreadyResolvedDiscussion(t *testing.T) {
-	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 1, State: "fixed"}}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, GitlabDiscussionID: "disc-1", DiscussionType: "diff", Resolved: true}}}
+	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 1, State: "fixed"}}}, findingsByMR: map[int64][]db.ReviewFinding{99: {{ID: 1, MergeRequestID: 99, State: "fixed"}}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, GitlabDiscussionID: "disc-1", DiscussionType: "diff", Resolved: true}}}
+	store.discussionByFinding = map[string]db.GitlabDiscussion{"99:1": store.discussionByID[1]}
 	client := &fakeDiscussionClient{resolveErrors: []error{errors.New("already resolved")}}
 	w := New(client, store)
 	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
@@ -259,8 +261,93 @@ func TestAlreadyResolvedDiscussion(t *testing.T) {
 	}
 }
 
+func TestSummaryUsesPersistedRunState(t *testing.T) {
+	store := &fakeStore{
+		mr:      db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+		findingsByRun: map[int64][]db.ReviewFinding{55: {
+			{ID: 101, State: "active"},
+			{ID: 102, State: "fixed"},
+			{ID: 103, State: "filtered"},
+		}},
+	}
+	client := &fakeDiscussionClient{}
+	w := New(client, store)
+	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, []db.ReviewFinding{{ID: 1, State: "new"}}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(client.noteRequests) != 1 {
+		t.Fatalf("note requests = %d, want 1", len(client.noteRequests))
+	}
+	body := client.noteRequests[0].Body
+	for _, want := range []string{"findings_posted: 1", "findings_resolved: 1", "findings_filtered: 1"} {
+		if !contains(body, want) {
+			t.Fatalf("summary note missing %q: %s", want, body)
+		}
+	}
+}
+
+func TestResolveOnlyBotOwnedDiscussions(t *testing.T) {
+	store := &fakeStore{
+		mr:      db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+		findingsByRun: map[int64][]db.ReviewFinding{55: {
+			{ID: 1, State: "fixed"},
+			{ID: 2, State: "fixed"},
+		}},
+		findingsByMR: map[int64][]db.ReviewFinding{99: {
+			{ID: 1, MergeRequestID: 99, State: "fixed"},
+			{ID: 2, MergeRequestID: 99, State: "fixed"},
+		}},
+		discussionByID: map[int64]db.GitlabDiscussion{
+			1: {ID: 11, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-1", DiscussionType: "diff"},
+			2: {},
+		},
+	}
+	client := &fakeDiscussionClient{}
+	w := New(client, store)
+	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(client.resolveRequests) != 1 {
+		t.Fatalf("resolve requests = %d, want 1", len(client.resolveRequests))
+	}
+	if client.resolveRequests[0].DiscussionID != "disc-1" {
+		t.Fatalf("resolved discussion id = %q, want disc-1", client.resolveRequests[0].DiscussionID)
+	}
+}
+
+func TestAutoResolveFixedOrStaleUsesPersistedMRStateAcrossRuns(t *testing.T) {
+	store := &fakeStore{
+		mr:            db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		version:       db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+		findingsByRun: map[int64][]db.ReviewFinding{56: {}},
+		findingsByMR: map[int64][]db.ReviewFinding{99: {
+			{ID: 1, ReviewRunID: 55, MergeRequestID: 99, State: "fixed"},
+			{ID: 2, ReviewRunID: 54, MergeRequestID: 99, State: "stale"},
+		}},
+		discussionByID: map[int64]db.GitlabDiscussion{
+			1: {ID: 11, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-fixed", DiscussionType: "diff"},
+			2: {ID: 12, ReviewFindingID: 2, MergeRequestID: 99, GitlabDiscussionID: "disc-stale", DiscussionType: "diff"},
+		},
+	}
+	client := &fakeDiscussionClient{}
+	w := New(client, store)
+	if err := w.Write(context.Background(), db.ReviewRun{ID: 56, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(client.resolveRequests) != 2 {
+		t.Fatalf("resolve requests = %d, want 2", len(client.resolveRequests))
+	}
+	if !store.resolvedDiscussionUpdates[11] || !store.resolvedDiscussionUpdates[12] {
+		t.Fatalf("resolved discussion updates = %+v, want persisted prior-run discussions resolved", store.resolvedDiscussionUpdates)
+	}
+}
+
 func TestSupersedeResolvesOldDiscussion(t *testing.T) {
 	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 2, State: "new", GitlabDiscussionID: "disc-new"}, {ID: 1, State: "superseded", MatchedFindingID: sql.NullInt64{Int64: 2, Valid: true}}}}, findingsByID: map[int64]db.ReviewFinding{1: {ID: 1}, 2: {ID: 2, GitlabDiscussionID: "disc-new"}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-old", DiscussionType: "diff"}, 2: {ID: 22, ReviewFindingID: 2, MergeRequestID: 99, GitlabDiscussionID: "disc-new", DiscussionType: "diff"}}}
+	store.findingsByMR = map[int64][]db.ReviewFinding{99: store.findingsByRun[55]}
+	store.discussionByFinding = map[string]db.GitlabDiscussion{"99:1": store.discussionByID[1], "99:2": store.discussionByID[2]}
 	client := &fakeDiscussionClient{}
 	w := New(client, store)
 	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
@@ -320,11 +407,16 @@ func TestSupersedePersistsReplacementLink(t *testing.T) {
 			1: {ID: 1},
 			2: {ID: 2, GitlabDiscussionID: "disc-old-inline"},
 		},
+		findingsByMR: map[int64][]db.ReviewFinding{99: {
+			{ID: 2, MergeRequestID: 99, State: "new", GitlabDiscussionID: "disc-fallback"},
+			{ID: 1, MergeRequestID: 99, State: "superseded", MatchedFindingID: sql.NullInt64{Int64: 2, Valid: true}},
+		}},
 		discussionByID: map[int64]db.GitlabDiscussion{
 			1: {ID: 11, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-old", DiscussionType: "diff"},
 			2: {ID: 21, ReviewFindingID: 2, MergeRequestID: 99, GitlabDiscussionID: "disc-old-inline", DiscussionType: "diff"},
 		},
 	}
+	store.discussionByFinding = map[string]db.GitlabDiscussion{"99:1": store.discussionByID[1], "99:2": store.discussionByID[2]}
 	client := &fakeDiscussionClient{}
 	w := New(client, store)
 	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
@@ -340,6 +432,7 @@ func TestResolveUsesCurrentDiscussionLink(t *testing.T) {
 		mr:            db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
 		version:       db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
 		findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 1, State: "fixed", GitlabDiscussionID: "disc-file"}}},
+		findingsByMR:  map[int64][]db.ReviewFinding{99: {{ID: 1, MergeRequestID: 99, State: "fixed", GitlabDiscussionID: "disc-file"}}},
 		findingsByID:  map[int64]db.ReviewFinding{1: {ID: 1, GitlabDiscussionID: "disc-file"}},
 		discussionByID: map[int64]db.GitlabDiscussion{
 			1: {ID: 11, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-old", DiscussionType: "diff"},
@@ -368,7 +461,9 @@ func TestResolveUsesCurrentDiscussionLink(t *testing.T) {
 }
 
 func TestThreadsResolvedGateDefault(t *testing.T) {
-	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{56: {{ID: 1, State: "fixed"}}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, GitlabDiscussionID: "disc-1", DiscussionType: "diff"}}}
+	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 1, State: "new"}}, 56: {{ID: 1, State: "fixed"}}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, GitlabDiscussionID: "disc-1", DiscussionType: "diff"}}}
+	store.findingsByMR = map[int64][]db.ReviewFinding{99: {{ID: 1, MergeRequestID: 99, State: "fixed"}}}
+	store.discussionByFinding = map[string]db.GitlabDiscussion{"99:1": store.discussionByID[1]}
 	client := &fakeDiscussionClient{}
 	w := New(client, store)
 	activeFinding := db.ReviewFinding{ID: 1, Path: "pkg/file.go", AnchorKind: "new_line", NewLine: sql.NullInt32{Int32: 17, Valid: true}, Title: "Issue one", Confidence: 0.8, State: "new"}
@@ -378,6 +473,7 @@ func TestThreadsResolvedGateDefault(t *testing.T) {
 	if len(client.requests) != 1 {
 		t.Fatalf("discussion requests = %d, want 1", len(client.requests))
 	}
+	client.resolveRequests = nil
 	if err := w.Write(context.Background(), db.ReviewRun{ID: 56, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
 		t.Fatalf("follow-up Write: %v", err)
 	}
@@ -568,6 +664,7 @@ type fakeStore struct {
 	runUpdates                map[int64]db.UpdateReviewRunStatusParams
 	runsByID                  map[int64]db.ReviewRun
 	findingsByRun             map[int64][]db.ReviewFinding
+	findingsByMR              map[int64][]db.ReviewFinding
 	findingsByID              map[int64]db.ReviewFinding
 	discussionByID            map[int64]db.GitlabDiscussion
 	discussionByFinding       map[string]db.GitlabDiscussion
@@ -607,6 +704,12 @@ func (f *fakeStore) ListFindingsByRun(_ context.Context, runID int64) ([]db.Revi
 		return nil, nil
 	}
 	return f.findingsByRun[runID], nil
+}
+func (f *fakeStore) ListFindingsByMergeRequest(_ context.Context, mergeRequestID int64) ([]db.ReviewFinding, error) {
+	if f.findingsByMR == nil {
+		return nil, nil
+	}
+	return f.findingsByMR[mergeRequestID], nil
 }
 func (f *fakeStore) GetCommentActionByIdempotencyKey(_ context.Context, key string) (db.CommentAction, error) {
 	if f.actions == nil {

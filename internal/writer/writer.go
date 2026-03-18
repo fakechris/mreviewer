@@ -28,6 +28,7 @@ type Store interface {
 	GetReviewFinding(ctx context.Context, id int64) (db.ReviewFinding, error)
 	GetGitlabDiscussion(ctx context.Context, id int64) (db.GitlabDiscussion, error)
 	ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]db.ReviewFinding, error)
+	ListFindingsByMergeRequest(ctx context.Context, mergeRequestID int64) ([]db.ReviewFinding, error)
 	GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (db.CommentAction, error)
 	GetGitlabDiscussionByFinding(ctx context.Context, reviewFindingID int64) (db.GitlabDiscussion, error)
 	GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg db.GetGitlabDiscussionByMergeRequestAndFindingParams) (db.GitlabDiscussion, error)
@@ -210,6 +211,10 @@ func (w *Writer) writeParserErrorNote(ctx context.Context, run db.ReviewRun) err
 }
 
 func (w *Writer) resolveCompletedFindings(ctx context.Context, run db.ReviewRun, mr db.MergeRequest) error {
+	mrFindings, err := w.store.ListFindingsByMergeRequest(ctx, run.MergeRequestID)
+	if err != nil {
+		return fmt.Errorf("writer: list merge request findings: %w", err)
+	}
 	runFindings, err := w.store.ListFindingsByRun(ctx, run.ID)
 	if err != nil {
 		return fmt.Errorf("writer: list run findings: %w", err)
@@ -221,7 +226,7 @@ func (w *Writer) resolveCompletedFindings(ctx context.Context, run db.ReviewRun,
 			newDiscussions[finding.ID] = discussionID
 		}
 	}
-	for _, finding := range runFindings {
+	for _, finding := range mrFindings {
 		switch finding.State {
 		case "fixed", "stale":
 			if err := w.resolveFindingDiscussion(ctx, run, mr, finding, sql.NullInt64{}); err != nil {
@@ -253,6 +258,9 @@ func (w *Writer) resolveFindingDiscussion(ctx context.Context, run db.ReviewRun,
 	}
 	discussion, err := w.activeDiscussion(ctx, mr.ID, finding)
 	if err != nil {
+		return nil
+	}
+	if !isBotOwnedDiscussion(discussion) {
 		return nil
 	}
 	if strings.TrimSpace(discussion.GitlabDiscussionID) == "" {
@@ -288,12 +296,20 @@ func (w *Writer) writeSummaryNote(ctx context.Context, run db.ReviewRun, mr db.M
 	if action, err := w.store.GetCommentActionByIdempotencyKey(ctx, idempotencyKey); err == nil && action.Status == commentActionStatusSucceeded {
 		return nil
 	}
-	body := renderSummaryBody(run, findings)
-	_, err := w.performNoteAction(ctx, run, db.ReviewFinding{}, idempotencyKey, actionTypeSummaryNote, CreateNoteRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: body})
+	persistedFindings, err := w.store.ListFindingsByRun(ctx, run.ID)
+	if err != nil {
+		return fmt.Errorf("writer: list persisted run findings for summary: %w", err)
+	}
+	body := renderSummaryBody(run, persistedFindings)
+	_, err = w.performNoteAction(ctx, run, db.ReviewFinding{}, idempotencyKey, actionTypeSummaryNote, CreateNoteRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: body})
 	if err != nil {
 		return w.persistRunFailure(ctx, run, classifyWriteError(err), err)
 	}
 	return nil
+}
+
+func isBotOwnedDiscussion(discussion db.GitlabDiscussion) bool {
+	return discussion.ID != 0 && strings.TrimSpace(discussion.GitlabDiscussionID) != ""
 }
 
 func (w *Writer) recordMetrics(run db.ReviewRun, started time.Time, err error) {
