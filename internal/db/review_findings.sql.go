@@ -210,6 +210,22 @@ func (q *Queries) ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]R
 	return items, nil
 }
 
+const updateFindingDiscussionID = `-- name: UpdateFindingDiscussionID :exec
+UPDATE review_findings
+SET gitlab_discussion_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type UpdateFindingDiscussionIDParams struct {
+	GitlabDiscussionID string `json:"gitlab_discussion_id"`
+	ID                 int64  `json:"id"`
+}
+
+func (q *Queries) UpdateFindingDiscussionID(ctx context.Context, arg UpdateFindingDiscussionIDParams) error {
+	_, err := q.db.ExecContext(ctx, updateFindingDiscussionID, arg.GitlabDiscussionID, arg.ID)
+	return err
+}
+
 const updateFindingLastSeen = `-- name: UpdateFindingLastSeen :exec
 UPDATE review_findings
 SET last_seen_run_id = ?, updated_at = CURRENT_TIMESTAMP

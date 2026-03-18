@@ -41,3 +41,9 @@ ORDER BY created_at ASC;
 SELECT * FROM review_findings
 WHERE review_run_id = ?
 ORDER BY created_at ASC;
+
+
+-- name: UpdateFindingDiscussionID :exec
+UPDATE review_findings
+SET gitlab_discussion_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;

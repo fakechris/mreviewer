@@ -24,6 +24,8 @@ type DiscussionClient interface {
 type Store interface {
 	GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (db.MrVersion, error)
 	GetMergeRequest(ctx context.Context, id int64) (db.MergeRequest, error)
+	GetReviewFinding(ctx context.Context, id int64) (db.ReviewFinding, error)
+	GetGitlabDiscussion(ctx context.Context, id int64) (db.GitlabDiscussion, error)
 	ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]db.ReviewFinding, error)
 	GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (db.CommentAction, error)
 	GetGitlabDiscussionByFinding(ctx context.Context, reviewFindingID int64) (db.GitlabDiscussion, error)
@@ -31,7 +33,9 @@ type Store interface {
 	InsertCommentAction(ctx context.Context, arg db.InsertCommentActionParams) (sql.Result, error)
 	UpdateCommentActionStatus(ctx context.Context, arg db.UpdateCommentActionStatusParams) error
 	InsertGitlabDiscussion(ctx context.Context, arg db.InsertGitlabDiscussionParams) (sql.Result, error)
+	UpdateFindingDiscussionID(ctx context.Context, arg db.UpdateFindingDiscussionIDParams) error
 	UpdateGitlabDiscussionResolved(ctx context.Context, arg db.UpdateGitlabDiscussionResolvedParams) error
+	UpdateGitlabDiscussionSupersededBy(ctx context.Context, arg db.UpdateGitlabDiscussionSupersededByParams) error
 	UpdateReviewRunStatus(ctx context.Context, arg db.UpdateReviewRunStatusParams) error
 }
 
@@ -276,7 +280,13 @@ func (w *Writer) resolveFindingDiscussion(ctx context.Context, run db.ReviewRun,
 			return callErr
 		}
 	}
-	return w.store.UpdateGitlabDiscussionResolved(ctx, db.UpdateGitlabDiscussionResolvedParams{Resolved: true, ID: discussion.ID})
+	if err := w.store.UpdateGitlabDiscussionResolved(ctx, db.UpdateGitlabDiscussionResolvedParams{Resolved: true, ID: discussion.ID}); err != nil {
+		return err
+	}
+	if supersededBy.Valid {
+		return w.linkSupersededDiscussion(ctx, discussion, supersededBy.Int64)
+	}
+	return nil
 }
 
 func (w *Writer) writeSummaryNote(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, findings []db.ReviewFinding) error {
@@ -393,6 +403,39 @@ func (w *Writer) finalizeAction(ctx context.Context, actionID int64, existing db
 	return w.store.UpdateCommentActionStatus(ctx, db.UpdateCommentActionStatusParams{Status: status, ErrorCode: errorCodeIfFailed(status, errorCode), ErrorDetail: detail, LatencyMs: defaultRetryBackoff.Milliseconds(), RetryCount: retryCount, ID: actionID})
 }
 
+func (w *Writer) linkSupersededDiscussion(ctx context.Context, discussion db.GitlabDiscussion, replacementFindingID int64) error {
+	if discussion.ID == 0 || replacementFindingID == 0 {
+		return nil
+	}
+	replacement, err := w.store.GetReviewFinding(ctx, replacementFindingID)
+	if err != nil {
+		return nil
+	}
+	replacementDiscussionID := strings.TrimSpace(replacement.GitlabDiscussionID)
+	if replacementDiscussionID == "" {
+		linked, err := w.store.GetGitlabDiscussionByFinding(ctx, replacementFindingID)
+		if err != nil {
+			return nil
+		}
+		replacementDiscussionID = strings.TrimSpace(linked.GitlabDiscussionID)
+	}
+	if replacementDiscussionID == "" {
+		return nil
+	}
+	current := discussion
+	if current.SupersededByDiscussionID.Valid {
+		existing, err := w.store.GetGitlabDiscussion(ctx, current.SupersededByDiscussionID.Int64)
+		if err == nil && strings.TrimSpace(existing.GitlabDiscussionID) == replacementDiscussionID {
+			return nil
+		}
+	}
+	replacementDiscussion, err := w.store.GetGitlabDiscussionByFinding(ctx, replacementFindingID)
+	if err != nil {
+		return nil
+	}
+	return w.store.UpdateGitlabDiscussionSupersededBy(ctx, db.UpdateGitlabDiscussionSupersededByParams{SupersededByDiscussionID: sql.NullInt64{Int64: replacementDiscussion.ID, Valid: true}, ID: discussion.ID})
+}
+
 func (w *Writer) persistDiscussion(ctx context.Context, mr db.MergeRequest, finding db.ReviewFinding, discussion Discussion, discussionType string) error {
 	if finding.ID == 0 || discussion.ID == "" {
 		return nil
@@ -403,7 +446,24 @@ func (w *Writer) persistDiscussion(ctx context.Context, mr db.MergeRequest, find
 	if _, err := w.store.InsertGitlabDiscussion(ctx, db.InsertGitlabDiscussionParams{ReviewFindingID: finding.ID, MergeRequestID: mr.ID, GitlabDiscussionID: discussion.ID, DiscussionType: discussionType, Resolved: false}); err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
 		return fmt.Errorf("writer: insert gitlab discussion: %w", err)
 	}
+	if err := w.persistFindingDiscussionLink(ctx, finding.ID, discussion.ID); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (w *Writer) persistFindingDiscussionLink(ctx context.Context, findingID int64, discussionID string) error {
+	if findingID == 0 || strings.TrimSpace(discussionID) == "" {
+		return nil
+	}
+	finding, err := w.store.GetReviewFinding(ctx, findingID)
+	if err != nil {
+		return nil
+	}
+	if strings.TrimSpace(finding.GitlabDiscussionID) == discussionID {
+		return nil
+	}
+	return w.store.UpdateFindingDiscussionID(ctx, db.UpdateFindingDiscussionIDParams{GitlabDiscussionID: discussionID, ID: findingID})
 }
 
 func (w *Writer) restoreDiscussion(ctx context.Context, findingID, mergeRequestID int64) (Discussion, error) {

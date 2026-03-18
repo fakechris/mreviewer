@@ -203,6 +203,21 @@ func TestEmptyFindingsSummary(t *testing.T) {
 	}
 }
 
+func TestDiscussionIdPersistedToFinding(t *testing.T) {
+	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByID: map[int64]db.ReviewFinding{1: {ID: 1}}}
+	client := &fakeDiscussionClient{}
+	w := New(client, store)
+	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "running"}, []db.ReviewFinding{{ID: 1, Path: "pkg/file.go", AnchorKind: "new_line", NewLine: sql.NullInt32{Int32: 17, Valid: true}, Title: "Issue one", Confidence: 0.8}}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := store.findingsByID[1].GitlabDiscussionID; got == "" {
+		t.Fatal("finding discussion id was not persisted")
+	}
+	if got := store.findingsByID[1].GitlabDiscussionID; got != "run:55:finding:1:create_discussion" {
+		t.Fatalf("finding discussion id = %q, want persisted created discussion id", got)
+	}
+}
+
 func TestAutoResolveFixedOrStale(t *testing.T) {
 	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 1, State: "fixed"}, {ID: 2, State: "stale"}}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, GitlabDiscussionID: "disc-1", DiscussionType: "diff"}, 2: {ID: 12, GitlabDiscussionID: "disc-2", DiscussionType: "diff"}}}
 	client := &fakeDiscussionClient{}
@@ -241,7 +256,7 @@ func TestAlreadyResolvedDiscussion(t *testing.T) {
 }
 
 func TestSupersedeResolvesOldDiscussion(t *testing.T) {
-	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 2, State: "new", GitlabDiscussionID: "disc-new"}, {ID: 1, State: "superseded", MatchedFindingID: sql.NullInt64{Int64: 2, Valid: true}}}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, GitlabDiscussionID: "disc-old", DiscussionType: "diff"}, 2: {ID: 22, GitlabDiscussionID: "disc-new", DiscussionType: "diff"}}}
+	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, findingsByRun: map[int64][]db.ReviewFinding{55: {{ID: 2, State: "new", GitlabDiscussionID: "disc-new"}, {ID: 1, State: "superseded", MatchedFindingID: sql.NullInt64{Int64: 2, Valid: true}}}}, findingsByID: map[int64]db.ReviewFinding{1: {ID: 1}, 2: {ID: 2, GitlabDiscussionID: "disc-new"}}, discussionByID: map[int64]db.GitlabDiscussion{1: {ID: 11, ReviewFindingID: 1, MergeRequestID: 99, GitlabDiscussionID: "disc-old", DiscussionType: "diff"}, 2: {ID: 22, ReviewFindingID: 2, MergeRequestID: 99, GitlabDiscussionID: "disc-new", DiscussionType: "diff"}}}
 	client := &fakeDiscussionClient{}
 	w := New(client, store)
 	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
@@ -253,8 +268,8 @@ func TestSupersedeResolvesOldDiscussion(t *testing.T) {
 	if !store.resolvedDiscussionUpdates[11] {
 		t.Fatalf("old discussion not marked resolved")
 	}
-	if got := store.discussionByID[2].GitlabDiscussionID; got != "disc-new" {
-		t.Fatalf("replacement discussion id = %q, want disc-new", got)
+	if got := store.discussionByID[1].SupersededByDiscussionID; !got.Valid || got.Int64 != 22 {
+		t.Fatalf("superseded_by_discussion_id = %+v, want valid replacement discussion row id 22", got)
 	}
 }
 
@@ -415,6 +430,7 @@ type fakeStore struct {
 	actions                   map[string]db.CommentAction
 	runUpdates                map[int64]db.UpdateReviewRunStatusParams
 	findingsByRun             map[int64][]db.ReviewFinding
+	findingsByID              map[int64]db.ReviewFinding
 	discussionByID            map[int64]db.GitlabDiscussion
 	discussionByFinding       map[string]db.GitlabDiscussion
 	resolvedDiscussionUpdates map[int64]bool
@@ -427,6 +443,20 @@ func (f *fakeStore) GetLatestMRVersion(context.Context, int64) (db.MrVersion, er
 }
 func (f *fakeStore) GetMergeRequest(context.Context, int64) (db.MergeRequest, error) {
 	return f.mr, nil
+}
+func (f *fakeStore) GetReviewFinding(_ context.Context, id int64) (db.ReviewFinding, error) {
+	if finding, ok := f.findingsByID[id]; ok {
+		return finding, nil
+	}
+	return db.ReviewFinding{}, errors.New("not found")
+}
+func (f *fakeStore) GetGitlabDiscussion(_ context.Context, id int64) (db.GitlabDiscussion, error) {
+	for _, discussion := range f.discussionByID {
+		if discussion.ID == id {
+			return discussion, nil
+		}
+	}
+	return db.GitlabDiscussion{}, errors.New("not found")
 }
 func (f *fakeStore) ListFindingsByRun(_ context.Context, runID int64) ([]db.ReviewFinding, error) {
 	if f.findingsByRun == nil {
@@ -477,6 +507,33 @@ func (f *fakeStore) InsertGitlabDiscussion(_ context.Context, arg db.InsertGitla
 	f.discussionByFinding[fmt.Sprintf("%d:%d", arg.MergeRequestID, arg.ReviewFindingID)] = discussion
 	f.discussionByID[arg.ReviewFindingID] = discussion
 	return fakeResult(int64(len(f.insertedDiscussions))), nil
+}
+
+func (f *fakeStore) UpdateFindingDiscussionID(_ context.Context, arg db.UpdateFindingDiscussionIDParams) error {
+	if f.findingsByID == nil {
+		f.findingsByID = map[int64]db.ReviewFinding{}
+	}
+	finding := f.findingsByID[arg.ID]
+	finding.ID = arg.ID
+	finding.GitlabDiscussionID = arg.GitlabDiscussionID
+	f.findingsByID[arg.ID] = finding
+	return nil
+}
+
+func (f *fakeStore) UpdateGitlabDiscussionSupersededBy(_ context.Context, arg db.UpdateGitlabDiscussionSupersededByParams) error {
+	for findingID, discussion := range f.discussionByID {
+		if discussion.ID == arg.ID {
+			discussion.SupersededByDiscussionID = arg.SupersededByDiscussionID
+			f.discussionByID[findingID] = discussion
+		}
+	}
+	for key, discussion := range f.discussionByFinding {
+		if discussion.ID == arg.ID {
+			discussion.SupersededByDiscussionID = arg.SupersededByDiscussionID
+			f.discussionByFinding[key] = discussion
+		}
+	}
+	return nil
 }
 
 func (f *fakeStore) GetGitlabDiscussionByFinding(_ context.Context, reviewFindingID int64) (db.GitlabDiscussion, error) {

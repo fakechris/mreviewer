@@ -51,10 +51,12 @@ type Querier interface {
 	MarkReviewRunFailed(ctx context.Context, arg MarkReviewRunFailedParams) error
 	MarkReviewRunRetryableFailure(ctx context.Context, arg MarkReviewRunRetryableFailureParams) error
 	UpdateCommentActionStatus(ctx context.Context, arg UpdateCommentActionStatusParams) error
+	UpdateFindingDiscussionID(ctx context.Context, arg UpdateFindingDiscussionIDParams) error
 	UpdateFindingLastSeen(ctx context.Context, arg UpdateFindingLastSeenParams) error
 	UpdateFindingRelocation(ctx context.Context, arg UpdateFindingRelocationParams) error
 	UpdateFindingState(ctx context.Context, arg UpdateFindingStateParams) error
 	UpdateGitlabDiscussionResolved(ctx context.Context, arg UpdateGitlabDiscussionResolvedParams) error
+	UpdateGitlabDiscussionSupersededBy(ctx context.Context, arg UpdateGitlabDiscussionSupersededByParams) error
 	UpdateMergeRequestState(ctx context.Context, arg UpdateMergeRequestStateParams) error
 	UpdateReviewRunCompleted(ctx context.Context, arg UpdateReviewRunCompletedParams) error
 	UpdateReviewRunStatus(ctx context.Context, arg UpdateReviewRunStatusParams) error

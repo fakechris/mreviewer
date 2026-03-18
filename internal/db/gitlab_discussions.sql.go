@@ -124,3 +124,19 @@ func (q *Queries) UpdateGitlabDiscussionResolved(ctx context.Context, arg Update
 	_, err := q.db.ExecContext(ctx, updateGitlabDiscussionResolved, arg.Resolved, arg.ID)
 	return err
 }
+
+const updateGitlabDiscussionSupersededBy = `-- name: UpdateGitlabDiscussionSupersededBy :exec
+UPDATE gitlab_discussions
+SET superseded_by_discussion_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type UpdateGitlabDiscussionSupersededByParams struct {
+	SupersededByDiscussionID sql.NullInt64 `json:"superseded_by_discussion_id"`
+	ID                       int64         `json:"id"`
+}
+
+func (q *Queries) UpdateGitlabDiscussionSupersededBy(ctx context.Context, arg UpdateGitlabDiscussionSupersededByParams) error {
+	_, err := q.db.ExecContext(ctx, updateGitlabDiscussionSupersededBy, arg.SupersededByDiscussionID, arg.ID)
+	return err
+}

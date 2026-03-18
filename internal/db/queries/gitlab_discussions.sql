@@ -23,3 +23,9 @@ LIMIT 1;
 UPDATE gitlab_discussions
 SET resolved = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
+
+
+-- name: UpdateGitlabDiscussionSupersededBy :exec
+UPDATE gitlab_discussions
+SET superseded_by_discussion_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;
