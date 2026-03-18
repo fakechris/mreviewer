@@ -1,21 +1,21 @@
 {
   "milestone": "beta-features",
-  "round": 2,
+  "round": 3,
   "status": "fail",
   "validatorsRun": {
     "test": {
       "passed": true,
-      "command": "test -f go.mod && go test -p 5 ./...",
+      "command": "test -f /Users/chris/workspace/mreviewer/go.mod && cd \"/Users/chris/workspace/mreviewer\" && go test -p 5 ./...",
       "exitCode": 0
     },
     "typecheck": {
       "passed": true,
-      "command": "test -f go.mod && go test -run '^$' ./...",
+      "command": "test -f /Users/chris/workspace/mreviewer/go.mod && cd \"/Users/chris/workspace/mreviewer\" && go test -run '^$' ./...",
       "exitCode": 0
     },
     "lint": {
       "passed": true,
-      "command": "test -f go.mod && test -x ./.factory/bin/golangci-lint && ./.factory/bin/golangci-lint run --timeout 5m",
+      "command": "test -f /Users/chris/workspace/mreviewer/go.mod && cd \"/Users/chris/workspace/mreviewer\" && test -x ./.factory/bin/golangci-lint && ./.factory/bin/golangci-lint run --timeout 5m",
       "exitCode": 0
     }
   },
@@ -24,14 +24,24 @@
     "passed": 0,
     "failed": 5,
     "failedFeatures": [
+      "beta-repo-config-layer-correctness-fix",
       "beta-command-webhooks-idempotency-atomicity-fix",
       "beta-degradation-summary-persistence-fix",
       "beta-large-mr-benchmark-evidence",
-      "beta-provider-route-runtime-wiring-fix",
-      "beta-repo-config-layer-correctness-fix"
+      "beta-provider-route-runtime-wiring-fix"
     ]
   },
   "blockingIssues": [
+    {
+      "featureId": "beta-repo-config-layer-correctness-fix",
+      "severity": "blocking",
+      "description": "Directory-scoped `REVIEW.md` is still collapsed into one run-wide `TrustedRules.ReviewMarkdown` winner rather than applying the nearest directory review per changed file/path."
+    },
+    {
+      "featureId": "beta-repo-config-layer-correctness-fix",
+      "severity": "blocking",
+      "description": "`.gitlab/ai-review.yaml` loader behavior still suppresses unknown-field and validation warnings because parser warnings are dropped and unknown keys are silently accepted."
+    },
     {
       "featureId": "beta-command-webhooks-idempotency-atomicity-fix",
       "severity": "blocking",
@@ -58,19 +68,14 @@
       "description": "The requested VAL-PERF-001 benchmark corpus/report is still missing from the implementation and worker handoff."
     },
     {
+      "featureId": "beta-large-mr-benchmark-evidence",
+      "severity": "blocking",
+      "description": "The requested VAL-PERF-001 benchmark corpus, runnable harness, and checked-in runtime evidence are still missing from the repository and mission handoffs."
+    },
+    {
       "featureId": "beta-provider-route-runtime-wiring-fix",
       "severity": "blocking",
-      "description": "Runtime provider selection is hard-coded to `default`/`secondary` and never uses effective project/group policy, so provider-route-per-project/group is not implemented end-to-end."
-    },
-    {
-      "featureId": "beta-repo-config-layer-correctness-fix",
-      "severity": "blocking",
-      "description": "Directory-scoped `REVIEW.md` is loaded as one global winner for the run instead of applying the nearest directory review per changed file."
-    },
-    {
-      "featureId": "beta-repo-config-layer-correctness-fix",
-      "severity": "blocking",
-      "description": "`.gitlab/ai-review.yaml` parsing discards validation warnings and silently accepts unknown fields, so invalid config is not surfaced as required."
+      "description": "Runtime provider construction in `cmd/worker/main.go` is still hard-coded to `default`/`secondary` route names and never consumes effective project/group `ProviderRoute` policy end-to-end."
     }
   ],
   "appliedUpdates": [],
@@ -79,6 +84,12 @@
       "target": "skills",
       "suggestion": "Clarify how workers should handle features whose intended behavior is already present in dirty branch state or prior commits: require them to distinguish between true implementation work and tree-state finalization/validation-unblock commits, and to verify end-to-end runtime behavior rather than only metadata/tests.",
       "evidence": "`beta-command-webhooks-idempotency-atomicity-fix`, `beta-provider-route-runtime-wiring-fix`, and `beta-degradation-summary-persistence-fix` all lacked a concrete fix session or end-to-end proof, forcing reviewers to conclude against the still-current original implementation rather than a dedicated corrective change.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Clarify rerun/fix-review procedure when a follow-up fix feature has no completed worker session, transcript, handoff, or commit: reviewers should explicitly record that absence and treat the original implementation as still current instead of assuming a fix exists.",
+      "evidence": "`beta-command-webhooks-idempotency-atomicity-fix`, `beta-degradation-summary-persistence-fix`, `beta-large-mr-benchmark-evidence`, and `beta-provider-route-runtime-wiring-fix` all had null `completedWorkerSessionId` values, leaving reviewers to infer from mission state and current repo history that no fix artifact had shipped.",
       "isSystemic": true
     }
   ],
