@@ -1,0 +1,34 @@
+{
+  "featureId": "beta-command-webhooks-idempotency-atomicity-fix",
+  "reviewedAt": "2026-03-18T22:26:20Z",
+  "commitId": "29ae864468dfe743886317306885fd4242d72954",
+  "transcriptSkeletonReviewed": false,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The requested fix is not implemented. There is no worker transcript or handoff for `beta-command-webhooks-idempotency-atomicity-fix`, no new fix commit to review, and the repository still contains the original blocking behaviors from `beta-command-webhooks`: rerun/focus idempotency keys are time-based rather than tied to a stable note delivery identifier, and note-hook persistence remains outside an atomic/deduplicated command-execution flow.",
+    "issues": [
+      {
+        "file": "internal/commands/commands.go",
+        "line": 470,
+        "severity": "blocking",
+        "description": "`computeCommandIdempotencyKey` still salts rerun/focus command keys with `time.Now().UnixNano()`. The same note delivery retried after a transient failure therefore produces a fresh idempotency key and can create duplicate rerun/focus side effects instead of at-most-once behavior keyed to a stable note delivery identifier."
+      },
+      {
+        "file": "internal/hooks/handler.go",
+        "line": 369,
+        "severity": "blocking",
+        "description": "`handleNoteEvent` still inserts the `hook_events` row before command execution and does so outside a transaction shared with command side effects. If command execution fails after that insert, a GitLab retry of the same delivery is later deduplicated by the existing hook row and the requested rerun/ignore/resolve/focus effect is permanently lost."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `go-integration` skill does not tell workers how to proceed when a follow-up fix feature has no concrete worker session, handoff, or commit to review. Reviewers had to infer from mission state that the original failing implementation is still current.",
+      "evidence": "`features.json` shows `beta-command-webhooks-idempotency-atomicity-fix` with `completedWorkerSessionId: null`, the worker transcript JSONL has no entry for that feature, and the only available handoff/commit for this area is the original `beta-command-webhooks` commit `29ae864468dfe743886317306885fd4242d72954`."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/beta-features/scrutiny/reviews/beta-command-webhooks.json",
+  "summary": "Reviewed the prior failed `beta-command-webhooks` handoff/diff, checked mission state for the requested fix feature, and inspected the current command/webhook implementation. The fix review fails because no fix session or diff exists and the original blocking idempotency/atomicity defects are still present in `internal/commands/commands.go` and `internal/hooks/handler.go`."
+}

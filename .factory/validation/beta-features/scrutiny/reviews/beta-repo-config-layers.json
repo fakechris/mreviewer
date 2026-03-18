@@ -1,34 +1,34 @@
 {
   "featureId": "beta-repo-config-layers",
-  "reviewedAt": "2026-03-18T16:15:34Z",
+  "reviewedAt": "2026-03-18T22:26:29.808936Z",
   "commitId": "c33ab81f7a101eebf13ea2528f4a268d4218fdf8",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The feature adds the intended config layers and coverage, but two blocking correctness gaps remain in the shipped implementation.",
+    "summary": "The original implementation still fails the prior scrutiny findings: directory-scoped REVIEW instructions are collapsed into one run-wide winner, and ai-review.yaml warnings/unknown fields are not surfaced anywhere in loader behavior.",
     "issues": [
       {
         "file": "internal/rules/loader.go",
-        "line": 307,
+        "line": 128,
         "severity": "blocking",
-        "description": "`loadDirectoryScopedReviews` returns the first deepest `REVIEW.md` found across all changed files, so changes spanning multiple directories discard sibling directory-scoped instructions instead of applying the nearest `REVIEW.md` per matching file as required. In a run touching `pkg/util.go` and `src/auth/login.go`, only one directory review is loaded globally, so one file is reviewed under the wrong instructions."
+        "description": "Directory-scoped REVIEW.md handling still loads a single deepest review and assigns it to TrustedRules.ReviewMarkdown for the whole run. This does not apply the nearest REVIEW.md per changed file/path as required by the fix feature and prior failure. With changed paths in different directories, one directory's instructions incorrectly govern all files."
       },
       {
-        "file": "internal/rules/loader.go",
-        "line": 120,
+        "file": "internal/rules/ai_review_config.go",
+        "line": 43,
         "severity": "blocking",
-        "description": "The loader explicitly discards all parse/validation warnings from `ParseAIReviewConfig` (`cfg, _, _ := ParseAIReviewConfig(aiBody)`), and the parser itself accepts unknown YAML fields silently. That means `.gitlab/ai-review.yaml` is not actually validating known fields as the feature contract requires: misspelled or unsupported keys are ignored with no surfaced warning, so invalid repository config can appear to apply successfully."
+        "description": "ParseAIReviewConfig still uses yaml.Unmarshal into a struct, so unknown keys are silently discarded, and Loader.Load drops the returned warnings (`cfg, _, _ := ParseAIReviewConfig(aiBody)`). Invalid and unknown-field config is therefore not surfaced through loader behavior, leaving the original failure unresolved."
       }
     ]
   },
   "sharedStateObservations": [
     {
-      "area": "knowledge",
-      "observation": "The beta config-layer worker established that current rule loading stores a single `TrustedRules.ReviewMarkdown` string, but beta requirements now need directory-scoped `REVIEW.md` to apply per changed file, not as one global winner. Shared-state docs do not capture this architectural limitation or the need for per-path trusted instruction scoping.",
-      "evidence": "internal/context/assembler.go:98-102 defines one `TrustedRules.ReviewMarkdown` field; internal/rules/loader.go:139-144 replaces root review text with a single directory review for the whole run."
+      "area": "conventions",
+      "observation": "The code still models trusted REVIEW instructions as one run-wide string, which is incompatible with beta's per-path directory REVIEW behavior.",
+      "evidence": "internal/context/assembler.go:98-103 defines TrustedRules with a single ReviewMarkdown string; internal/rules/loader.go:128-133 overwrites that single field with one directory review winner. .factory/library/architecture.md already notes this gap explicitly."
     }
   ],
-  "addressesFailureFrom": null,
-  "summary": "Reviewed handoff, transcript skeleton, skill, shared-state docs, and commit `c33ab81f7a101eebf13ea2528f4a268d4218fdf8`. The implementation is close, but it fails the per-directory REVIEW.md semantics and does not truly validate/surface invalid `.gitlab/ai-review.yaml` fields, so the feature should not pass scrutiny yet."
+  "addressesFailureFrom": ".factory/validation/beta-features/scrutiny/reviews/beta-repo-config-layers.json",
+  "summary": "Reviewed original failed feature beta-repo-config-layers (commit c33ab81) against the prior scrutiny findings. The fix has not been implemented in this repo state: per-path directory REVIEW layering is still absent and ai-review.yaml warnings/unknown fields are still suppressed, so the prior failure is not addressed."
 }

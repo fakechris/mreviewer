@@ -1,0 +1,34 @@
+{
+  "featureId": "beta-provider-route-runtime-wiring-fix",
+  "reviewedAt": "2026-03-18T22:26:24.703188+00:00",
+  "commitId": "9b988210f9a2b6f3f2dc2cad319f2f98fbbc04a6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The original provider-routing failure remains unresolved in the reviewed fix state: runtime provider selection is still hard-coded to `default`/`secondary` in worker wiring, and the claimed route-selection regression coverage still only asserts rules metadata or route labels on directly constructed providers rather than proving that effective project/group policy changes the real runtime path.",
+    "issues": [
+      {
+        "file": "cmd/worker/main.go",
+        "line": 54,
+        "severity": "blocking",
+        "description": "The worker still seeds `rules.PlatformDefaults.ProviderRoute` to `default`, constructs providers with fixed `RouteName` values `secondary` and `default`, and passes `llm.NewFallbackProvider(..., \"default\", ..., \"secondary\")` into the processor. No code reads `rules.Load(...).EffectivePolicy.ProviderRoute` and switches the runtime provider/fallback route accordingly, so configured project/group provider-route policy still cannot change the actual runtime provider choice end-to-end. This is the same blocking gap called out in the prior failed review."
+      },
+      {
+        "file": "internal/llm/provider_test.go",
+        "line": 150,
+        "severity": "blocking",
+        "description": "`TestProviderRouteSelection` still only checks that a fake rules loader returns `EffectivePolicy.ProviderRoute = \"project-route\"`; it never exercises `cmd/worker`/`llm.Processor` runtime wiring to prove that different policies produce different real provider selections. The nearby fallback and rate-limit tests instantiate providers with explicit route names, so they also do not validate policy-to-runtime threading. As a result, the fix lacks the end-to-end regression coverage required to demonstrate the original failure is resolved."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `go-reliability` skill tells workers to write failure-mode tests first, but this feature family spans runtime integration wiring as well as reliability behavior. The prior worker followed the skill and still shipped a metadata-only provider-route test that never proved policy-driven runtime selection, suggesting the shared procedure does not explicitly require end-to-end policy-to-runtime verification for mixed routing/reliability work.",
+      "evidence": "`.factory/skills/go-reliability/SKILL.md` emphasizes failure-mode tests, while the original handoff for `beta-provider-routing-rate-limits` says the worker added route-selection coverage; in practice `internal/llm/provider_test.go:150-157` only inspects `rules.LoadResult.EffectivePolicy.ProviderRoute`, and the live runtime in `cmd/worker/main.go:54-89` remains hard-coded."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/beta-features/scrutiny/reviews/beta-provider-routing-rate-limits.json",
+  "summary": "Review failed. I reviewed the prior failed feature report, the original provider-routing commit, the current fix-state commit/tree, the available worker transcript evidence, and the go-reliability/shared-state docs. The original failure is not fixed: provider routing is still hard-coded in worker runtime wiring, and the tests still do not prove that effective project/group provider-route policy changes real runtime provider selection."
+}
