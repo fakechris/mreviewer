@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
@@ -61,6 +62,10 @@ type RulesLoader interface {
 type Provider interface {
 	Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error)
 	RequestPayload(request ctxpkg.ReviewRequest) map[string]any
+}
+
+type RateLimiter interface {
+	Wait(context.Context, string) error
 }
 
 type AuditLogger interface {
@@ -115,8 +120,10 @@ type ProviderConfig struct {
 	Model          string
 	MaxTokens      int64
 	SystemPrompt   string
+	RouteName      string
 	TimeoutRetries int
 	HTTPClient     *http.Client
+	RateLimiter    RateLimiter
 	Now            func() time.Time
 	Sleep          func(context.Context, time.Duration) error
 }
@@ -126,9 +133,19 @@ type MiniMaxProvider struct {
 	model          string
 	maxTokens      int64
 	systemPrompt   string
+	routeName      string
+	rateLimiter    RateLimiter
 	now            func() time.Time
 	sleep          func(context.Context, time.Duration) error
 	timeoutRetries int
+}
+
+type FallbackProvider struct {
+	primary        Provider
+	secondary      Provider
+	primaryRoute   string
+	secondaryRoute string
+	logger         *slog.Logger
 }
 
 func NewProcessor(logger *slog.Logger, sqlDB *sql.DB, gitlabClient GitLabReader, rulesLoader RulesLoader, provider Provider, audit AuditLogger) *Processor {
@@ -187,7 +204,11 @@ func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
 		options = append(options, option.WithHTTPClient(cfg.HTTPClient))
 	}
 	client := anthropic.NewClient(options...)
-	return &MiniMaxProvider{client: client, model: cfg.Model, maxTokens: cfg.MaxTokens, systemPrompt: cfg.SystemPrompt, now: cfg.Now, sleep: cfg.Sleep, timeoutRetries: cfg.TimeoutRetries}, nil
+	routeName := strings.TrimSpace(cfg.RouteName)
+	if routeName == "" {
+		routeName = strings.TrimSpace(cfg.Model)
+	}
+	return &MiniMaxProvider{client: client, model: cfg.Model, maxTokens: cfg.MaxTokens, systemPrompt: cfg.SystemPrompt, routeName: routeName, rateLimiter: cfg.RateLimiter, now: cfg.Now, sleep: cfg.Sleep, timeoutRetries: cfg.TimeoutRetries}, nil
 }
 
 func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
@@ -330,6 +351,11 @@ func (p *MiniMaxProvider) RequestPayload(request ctxpkg.ReviewRequest) map[strin
 }
 
 func (p *MiniMaxProvider) Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
+	if p.rateLimiter != nil {
+		if err := p.rateLimiter.Wait(ctx, strings.TrimSpace(p.routeName)); err != nil {
+			return ProviderResponse{}, err
+		}
+	}
 	var lastErr error
 	maxAttempts := p.timeoutRetries
 	if maxAttempts <= 0 {
@@ -353,9 +379,164 @@ func (p *MiniMaxProvider) Review(ctx context.Context, request ctxpkg.ReviewReque
 		if parseErr != nil {
 			return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, parseErr)
 		}
-		return ProviderResponse{Result: result, RawText: text, Latency: p.now().Sub(started), Tokens: int64(message.Usage.OutputTokens), FallbackStage: stage, Model: p.model, ResponsePayload: map[string]any{"text": text, "fallback_stage": stage}}, nil
+		return ProviderResponse{Result: result, RawText: text, Latency: p.now().Sub(started), Tokens: int64(message.Usage.OutputTokens), FallbackStage: stage, Model: p.routeName, ResponsePayload: map[string]any{"text": text, "fallback_stage": stage}}, nil
 	}
 	return ProviderResponse{}, lastErr
+}
+
+func NewFallbackProvider(logger *slog.Logger, primary Provider, primaryRoute string, secondary Provider, secondaryRoute string) *FallbackProvider {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &FallbackProvider{primary: primary, secondary: secondary, primaryRoute: strings.TrimSpace(primaryRoute), secondaryRoute: strings.TrimSpace(secondaryRoute), logger: logger}
+}
+
+func (p *FallbackProvider) RequestPayload(request ctxpkg.ReviewRequest) map[string]any {
+	if p == nil || p.primary == nil {
+		return map[string]any{}
+	}
+	payload := p.primary.RequestPayload(request)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["provider_route"] = p.primaryRoute
+	if p.secondary != nil && p.secondaryRoute != "" {
+		payload["secondary_provider_route"] = p.secondaryRoute
+	}
+	return payload
+}
+
+func (p *FallbackProvider) Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
+	if p == nil || p.primary == nil {
+		return ProviderResponse{}, fmt.Errorf("llm: primary provider is required")
+	}
+	response, err := p.primary.Review(ctx, request)
+	if err == nil || p.secondary == nil || !shouldFallbackToSecondary(err) {
+		return response, err
+	}
+	p.logger.WarnContext(ctx, "primary provider failed, retrying with secondary provider", "primary_provider_route", p.primaryRoute, "secondary_provider_route", p.secondaryRoute, "error", err)
+	secondaryResponse, secondaryErr := p.secondary.Review(ctx, request)
+	if secondaryErr != nil {
+		return ProviderResponse{}, fmt.Errorf("llm: primary provider %q failed: %w; secondary provider %q failed: %v", p.primaryRoute, err, p.secondaryRoute, secondaryErr)
+	}
+	if secondaryResponse.ResponsePayload == nil {
+		secondaryResponse.ResponsePayload = map[string]any{}
+	}
+	secondaryResponse.ResponsePayload["fallback_from_provider_route"] = p.primaryRoute
+	secondaryResponse.ResponsePayload["provider_route"] = p.secondaryRoute
+	secondaryResponse.FallbackStage = strings.TrimSpace(joinNonEmpty(secondaryResponse.FallbackStage, "secondary_provider"))
+	if secondaryResponse.Model == "" {
+		secondaryResponse.Model = p.secondaryRoute
+	}
+	return secondaryResponse, nil
+}
+
+func shouldFallbackToSecondary(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isTimeoutError(err) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "provider_request_failed") || strings.Contains(message, "5xx") || strings.Contains(message, "status 500") || strings.Contains(message, "status 502") || strings.Contains(message, "status 503") || strings.Contains(message, "status 504")
+}
+
+func joinNonEmpty(parts ...string) string {
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	return strings.Join(filtered, ":")
+}
+
+type InMemoryRateLimiter struct {
+	mu         sync.Mutex
+	now        func() time.Time
+	sleep      func(context.Context, time.Duration) error
+	limits     map[string]RateLimitConfig
+	states     map[string]rateLimitState
+	defaultCfg RateLimitConfig
+}
+
+type RateLimitConfig struct {
+	Requests int
+	Window   time.Duration
+}
+
+type rateLimitState struct {
+	windowStart time.Time
+	count       int
+}
+
+func NewInMemoryRateLimiter(defaultCfg RateLimitConfig, now func() time.Time, sleep func(context.Context, time.Duration) error) *InMemoryRateLimiter {
+	if now == nil {
+		now = time.Now
+	}
+	if sleep == nil {
+		sleep = sleepContext
+	}
+	return &InMemoryRateLimiter{now: now, sleep: sleep, limits: make(map[string]RateLimitConfig), states: make(map[string]rateLimitState), defaultCfg: defaultCfg}
+}
+
+func (l *InMemoryRateLimiter) SetLimit(scope string, cfg RateLimitConfig) {
+	if l == nil {
+		return
+	}
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		scope = "global"
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.limits[scope] = cfg
+}
+
+func (l *InMemoryRateLimiter) Wait(ctx context.Context, scope string) error {
+	if l == nil {
+		return nil
+	}
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		scope = "global"
+	}
+	for {
+		now := l.now()
+		waitFor := time.Duration(0)
+
+		l.mu.Lock()
+		cfg := l.defaultCfg
+		if scoped, ok := l.limits[scope]; ok {
+			cfg = scoped
+		}
+		if cfg.Requests <= 0 || cfg.Window <= 0 {
+			l.mu.Unlock()
+			return nil
+		}
+		state := l.states[scope]
+		if state.windowStart.IsZero() || now.Sub(state.windowStart) >= cfg.Window {
+			state = rateLimitState{windowStart: now, count: 0}
+		}
+		if state.count < cfg.Requests {
+			state.count++
+			l.states[scope] = state
+			l.mu.Unlock()
+			return nil
+		}
+		waitFor = state.windowStart.Add(cfg.Window).Sub(now)
+		l.mu.Unlock()
+
+		if waitFor <= 0 {
+			continue
+		}
+		if err := l.sleep(ctx, waitFor); err != nil {
+			return err
+		}
+	}
 }
 
 func ParseReviewResult(raw string) (ReviewResult, string, error) {

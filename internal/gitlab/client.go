@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,6 +40,7 @@ type Client struct {
 	baseURL                string
 	token                  string
 	httpClient             HTTPClient
+	limiter                RateLimiter
 	sleep                  func(context.Context, time.Duration) error
 	now                    func() time.Time
 	diffNotReadyMaxRetries int
@@ -46,6 +48,10 @@ type Client struct {
 	rateLimitMaxRetries    int
 	rateLimitDelay         func(int) time.Duration
 	rateLimitJitter        func(time.Duration) time.Duration
+}
+
+type RateLimiter interface {
+	Wait(context.Context, string) error
 }
 
 type DiffRefs struct {
@@ -198,6 +204,12 @@ func NewClient(baseURL, token string, opts ...Option) (*Client, error) {
 func WithHTTPClient(httpClient HTTPClient) Option {
 	return func(c *Client) {
 		c.httpClient = httpClient
+	}
+}
+
+func WithRateLimiter(limiter RateLimiter) Option {
+	return func(c *Client) {
+		c.limiter = limiter
 	}
 }
 
@@ -395,6 +407,11 @@ func (c *Client) GetRepositoryFile(ctx context.Context, projectID int64, filePat
 }
 
 func (c *Client) doJSON(ctx context.Context, method, apiPath string, query url.Values, dest any) (http.Header, error) {
+	if c.limiter != nil {
+		if err := c.limiter.Wait(ctx, rateLimitScopeKey(apiPath)); err != nil {
+			return nil, err
+		}
+	}
 	requestURL, err := c.buildURL(apiPath, query)
 	if err != nil {
 		return nil, err
@@ -475,6 +492,101 @@ func (c *Client) doJSON(ctx context.Context, method, apiPath string, query url.V
 		}
 
 		return responseHeaders, nil
+	}
+}
+
+func rateLimitScopeKey(apiPath string) string {
+	parts := strings.Split(strings.Trim(apiPath, "/"), "/")
+	for i := 0; i < len(parts)-1; i++ {
+		if parts[i] == "projects" && parts[i+1] != "" {
+			return parts[i+1]
+		}
+	}
+	return "global"
+}
+
+type InMemoryRateLimiter struct {
+	mu         sync.Mutex
+	now        func() time.Time
+	sleep      func(context.Context, time.Duration) error
+	limits     map[string]RateLimitConfig
+	states     map[string]rateLimitState
+	defaultCfg RateLimitConfig
+}
+
+type RateLimitConfig struct {
+	Requests int
+	Window   time.Duration
+}
+
+type rateLimitState struct {
+	windowStart time.Time
+	count       int
+}
+
+func NewInMemoryRateLimiter(defaultCfg RateLimitConfig, now func() time.Time, sleep func(context.Context, time.Duration) error) *InMemoryRateLimiter {
+	if now == nil {
+		now = time.Now
+	}
+	if sleep == nil {
+		sleep = sleepContext
+	}
+	return &InMemoryRateLimiter{now: now, sleep: sleep, limits: make(map[string]RateLimitConfig), states: make(map[string]rateLimitState), defaultCfg: defaultCfg}
+}
+
+func (l *InMemoryRateLimiter) SetLimit(scope string, cfg RateLimitConfig) {
+	if l == nil {
+		return
+	}
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		scope = "global"
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.limits[scope] = cfg
+}
+
+func (l *InMemoryRateLimiter) Wait(ctx context.Context, scope string) error {
+	if l == nil {
+		return nil
+	}
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		scope = "global"
+	}
+	for {
+		now := l.now()
+		waitFor := time.Duration(0)
+
+		l.mu.Lock()
+		cfg := l.defaultCfg
+		if scoped, ok := l.limits[scope]; ok {
+			cfg = scoped
+		}
+		if cfg.Requests <= 0 || cfg.Window <= 0 {
+			l.mu.Unlock()
+			return nil
+		}
+		state := l.states[scope]
+		if state.windowStart.IsZero() || now.Sub(state.windowStart) >= cfg.Window {
+			state = rateLimitState{windowStart: now, count: 0}
+		}
+		if state.count < cfg.Requests {
+			state.count++
+			l.states[scope] = state
+			l.mu.Unlock()
+			return nil
+		}
+		waitFor = state.windowStart.Add(cfg.Window).Sub(now)
+		l.mu.Unlock()
+
+		if waitFor <= 0 {
+			continue
+		}
+		if err := l.sleep(ctx, waitFor); err != nil {
+			return err
+		}
 	}
 }
 

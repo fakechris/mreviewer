@@ -417,6 +417,58 @@ func TestRateLimitRetry(t *testing.T) {
 	}
 }
 
+func TestGitLabRateLimiting(t *testing.T) {
+	var slept []time.Duration
+	current := time.Unix(0, 0)
+	limiter := NewInMemoryRateLimiter(RateLimitConfig{Requests: 1, Window: time.Second}, func() time.Time { return current }, func(ctx context.Context, delay time.Duration) error {
+		slept = append(slept, delay)
+		current = current.Add(delay)
+		return nil
+	})
+	limiter.SetLimit("123", RateLimitConfig{Requests: 1, Window: time.Second})
+
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"id":            101,
+			"iid":           7,
+			"project_id":    123,
+			"title":         "Add reader client",
+			"state":         "opened",
+			"draft":         false,
+			"source_branch": "feature/readers",
+			"target_branch": "main",
+			"sha":           "head-sha",
+			"web_url":       "https://gitlab.example.com/group/project/-/merge_requests/7",
+			"diff_refs": map[string]any{
+				"base_sha":  "base-sha",
+				"head_sha":  "head-sha",
+				"start_sha": "start-sha",
+			},
+			"author": map[string]any{"username": "reviewer-bot"},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "test-token", WithHTTPClient(server.Client()), WithRateLimiter(limiter))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := client.GetMergeRequest(context.Background(), 123, 7); err != nil {
+		t.Fatalf("first GetMergeRequest: %v", err)
+	}
+	if _, err := client.GetMergeRequest(context.Background(), 123, 7); err != nil {
+		t.Fatalf("second GetMergeRequest: %v", err)
+	}
+	if requestCount != 2 {
+		t.Fatalf("requestCount = %d, want 2", requestCount)
+	}
+	if len(slept) != 1 || slept[0] != time.Second {
+		t.Fatalf("sleep durations = %#v, want [1s]", slept)
+	}
+}
+
 func newTestClient(t *testing.T, server *httptest.Server, opts ...Option) *Client {
 	t.Helper()
 	allOpts := append([]Option{WithHTTPClient(server.Client())}, opts...)

@@ -124,6 +124,65 @@ func TestProviderTimeoutRetry(t *testing.T) {
 	}
 }
 
+func TestSecondaryProviderFallback(t *testing.T) {
+	primary := fakeProvider{err: scheduler.NewRetryableError("provider_request_failed", errors.New("upstream status 503"))}
+	secondary := fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: "123", Summary: "ok", Findings: nil, Status: "completed"}, Model: "secondary", ResponsePayload: map[string]any{"provider": "secondary"}}}
+	provider := NewFallbackProvider(slog.New(slog.NewTextHandler(io.Discard, nil)), primary, "primary-route", secondary, "secondary-route")
+
+	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if response.Model != "secondary" {
+		t.Fatalf("response model = %q, want secondary", response.Model)
+	}
+	if response.ResponsePayload["fallback_from_provider_route"] != "primary-route" {
+		t.Fatalf("fallback_from_provider_route = %#v, want primary-route", response.ResponsePayload["fallback_from_provider_route"])
+	}
+	if response.ResponsePayload["provider_route"] != "secondary-route" {
+		t.Fatalf("provider_route = %#v, want secondary-route", response.ResponsePayload["provider_route"])
+	}
+	if !strings.Contains(response.FallbackStage, "secondary_provider") {
+		t.Fatalf("fallback stage = %q, want secondary provider marker", response.FallbackStage)
+	}
+}
+
+func TestProviderRouteSelection(t *testing.T) {
+	loader := fakeRulesLoader{result: rules.LoadResult{EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "project-route"}, Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	result, err := loader.Load(context.Background(), rules.LoadInput{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if result.EffectivePolicy.ProviderRoute != "project-route" {
+		t.Fatalf("provider route = %q, want project-route", result.EffectivePolicy.ProviderRoute)
+	}
+}
+
+func TestLLMRateLimiting(t *testing.T) {
+	var slept []time.Duration
+	current := time.Unix(0, 0)
+	limiter := NewInMemoryRateLimiter(RateLimitConfig{Requests: 1, Window: time.Second}, func() time.Time { return current }, func(ctx context.Context, delay time.Duration) error {
+		slept = append(slept, delay)
+		current = current.Add(delay)
+		return nil
+	})
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"text","text":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}],"usage":{"output_tokens":1}}`}
+	provider, err := NewMiniMaxProvider(ProviderConfig{BaseURL: "https://api.minimaxi.com/anthropic", APIKey: "secret-token", Model: "MiniMax-M2.5", RouteName: "project-route", RateLimiter: limiter, HTTPClient: &http.Client{Transport: transport}, Now: func() time.Time { return current }})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+	request := ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"}
+	if _, err := provider.Review(context.Background(), request); err != nil {
+		t.Fatalf("first Review: %v", err)
+	}
+	if _, err := provider.Review(context.Background(), request); err != nil {
+		t.Fatalf("second Review: %v", err)
+	}
+	if len(slept) != 1 || slept[0] != time.Second {
+		t.Fatalf("sleep durations = %#v, want [1s]", slept)
+	}
+}
+
 func TestRedactedLogging(t *testing.T) {
 	payload := map[string]any{"api_key": "secret", "Authorization": "Bearer abc", "messages": []any{map[string]any{"content": "very long prompt body"}}, "diff": stringsRepeat("x", 300)}
 	redacted := redactPayload(payload)
