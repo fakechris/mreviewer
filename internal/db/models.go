@@ -6,9 +6,37 @@ package db
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"time"
 )
+
+type NullRawMessage []byte
+
+func (m *NullRawMessage) Scan(src any) error {
+	if src == nil {
+		*m = nil
+		return nil
+	}
+
+	switch v := src.(type) {
+	case []byte:
+		*m = append((*m)[:0], v...)
+		return nil
+	case string:
+		*m = append((*m)[:0], v...)
+		return nil
+	default:
+		return nil
+	}
+}
+
+func (m NullRawMessage) Value() (driver.Value, error) {
+	if m == nil {
+		return nil, nil
+	}
+	return []byte(m), nil
+}
 
 type AuditLog struct {
 	ID                  int64           `json:"id"`
@@ -177,4 +205,5 @@ type ReviewRun struct {
 	IdempotencyKey      string         `json:"idempotency_key"`
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
+	ScopeJson           NullRawMessage `json:"scope_json"`
 }
