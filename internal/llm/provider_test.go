@@ -277,6 +277,45 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	}
 }
 
+func TestDegradationSummaryNote(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title", Author: struct {
+		Username string "json:\"username\""
+	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}, {OldPath: "other.go", NewPath: "other.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
+	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
+	project, err := q.GetProject(ctx, 1)
+	if err == nil {
+		_, _ = q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{ProjectID: project.ID, ConfidenceThreshold: 0.1, SeverityThreshold: "low", IncludePaths: json.RawMessage("[]"), ExcludePaths: json.RawMessage("[]"), Extra: json.RawMessage(`{"review":{"max_files":1}}`)})
+	}
+	provider := fakeProvider{}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+	actions, err := q.ListCommentActionsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListCommentActionsByRun: %v", err)
+	}
+	if len(actions) != 1 || actions[0].ActionType != "summary_note" {
+		t.Fatalf("comment actions = %#v, want one summary_note", actions)
+	}
+}
+
 func TestReviewedCleanPathBecomesFixed(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)

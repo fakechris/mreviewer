@@ -274,6 +274,33 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: assemble request: %w", err))
 	}
+	if assembled.Mode == ctxpkg.ReviewModeDegradation {
+		response := ProviderResponse{
+			Result: ReviewResult{
+				SchemaVersion: assembled.Request.SchemaVersion,
+				ReviewRunID:   assembled.Request.ReviewRunID,
+				Summary:       assembled.Coverage.Summary,
+				Status:        "completed",
+				Findings:      nil,
+				SummaryNote:   &SummaryNote{BodyMarkdown: buildDegradationSummaryNote(run, assembled)},
+			},
+			Latency:         0,
+			Tokens:          0,
+			FallbackStage:   "degradation_mode",
+			Model:           "degradation_mode",
+			ResponsePayload: map[string]any{"mode": assembled.Mode, "coverage": assembled.Coverage},
+		}
+		if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
+			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: update degraded run status: %w", err))
+		}
+		if err := persistSummaryNoteFallback(ctx, p.queries, run, response.Result); err != nil {
+			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist degradation summary note: %w", err))
+		}
+		if p.auditLogger != nil {
+			_ = p.auditLogger.LogRunLifecycle(ctx, run, "degradation_mode", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "coverage": assembled.Coverage})
+		}
+		return scheduler.ProcessOutcome{Status: response.Result.Status, ProviderLatencyMs: 0, ProviderTokensTotal: 0, ReviewFindings: nil}, nil
+	}
 
 	payload := p.provider.RequestPayload(assembled.Request)
 	providerCtx, endProvider := p.startSpan(ctx, "llm.request", nil)
@@ -1056,6 +1083,29 @@ func persistSummaryNoteFallback(ctx context.Context, queries *db.Queries, run db
 		return err
 	}
 	return nil
+}
+
+func buildDegradationSummaryNote(run db.ReviewRun, assembled ctxpkg.AssemblyResult) string {
+	parts := []string{
+		fmt.Sprintf("AI review summary for run %d", run.ID),
+		"",
+		"Large merge request degradation mode was activated.",
+		assembled.Coverage.Summary,
+	}
+	if len(assembled.Coverage.ReviewedPaths) > 0 {
+		parts = append(parts, "", "Reviewed highest-priority files:", "- "+strings.Join(assembled.Coverage.ReviewedPaths, "\n- "))
+	}
+	skipped := make([]string, 0, len(assembled.Excluded))
+	for _, file := range assembled.Excluded {
+		if file.Reason != ctxpkg.ExcludedReasonScopeLimit {
+			continue
+		}
+		skipped = append(skipped, fmt.Sprintf("- %s (%s)", file.Path, file.Reason))
+	}
+	if len(skipped) > 0 {
+		parts = append(parts, "", "Skipped files:", strings.Join(skipped, "\n"))
+	}
+	return strings.Join(parts, "\n")
 }
 
 type DBAuditLogger struct{ queries *db.Queries }

@@ -52,7 +52,17 @@ type AssemblyResult struct {
 	Excluded          []ExcludedFile `json:"excluded,omitempty"`
 	Truncated         bool           `json:"truncated"`
 	TotalChangedLines int            `json:"total_changed_lines"`
+	Mode              ReviewMode     `json:"mode"`
+	Coverage          CoverageReport `json:"coverage"`
 }
+
+type ReviewMode string
+
+const (
+	ReviewModeFullScope   ReviewMode = "full_scope"
+	ReviewModeTruncated   ReviewMode = "truncated"
+	ReviewModeDegradation ReviewMode = "degradation"
+)
 
 type ReviewRequest struct {
 	SchemaVersion     string              `json:"schema_version"`
@@ -133,6 +143,13 @@ type HistoricalFinding struct {
 type ExcludedFile struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
+}
+
+type CoverageReport struct {
+	ReviewedPaths []string `json:"reviewed_paths,omitempty"`
+	SkippedFiles  int      `json:"skipped_files,omitempty"`
+	SkippedLines  int      `json:"skipped_lines,omitempty"`
+	Summary       string   `json:"summary,omitempty"`
 }
 
 type PolicySettings struct {
@@ -271,16 +288,20 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 		if path == "" {
 			continue
 		}
+		result.Coverage.SkippedLines += countChangedLines(diff.Diff)
 
 		reason := excludedReason(path, diff, settings)
 		if reason != "" {
 			result.Excluded = append(result.Excluded, ExcludedFile{Path: path, Reason: reason})
+			result.Coverage.SkippedFiles++
 			continue
 		}
 
 		if len(result.Request.Changes) >= settings.maxFiles {
 			result.Truncated = true
+			result.Mode = ReviewModeDegradation
 			result.Excluded = append(result.Excluded, ExcludedFile{Path: path, Reason: ExcludedReasonScopeLimit})
+			result.Coverage.SkippedFiles++
 			continue
 		}
 
@@ -290,6 +311,7 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 		}
 		if len(parsedHunks) == 0 {
 			result.Excluded = append(result.Excluded, ExcludedFile{Path: path, Reason: ExcludedReasonNoHunks})
+			result.Coverage.SkippedFiles++
 			continue
 		}
 
@@ -335,13 +357,27 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 		if len(change.Hunks) == 0 {
 			if change.Truncated {
 				result.Excluded = append(result.Excluded, ExcludedFile{Path: path, Reason: ExcludedReasonScopeLimit})
+				result.Coverage.SkippedFiles++
 			}
 			continue
 		}
 
 		result.Request.Changes = append(result.Request.Changes, change)
+		result.Coverage.ReviewedPaths = append(result.Coverage.ReviewedPaths, change.Path)
+		result.Coverage.SkippedLines -= change.ChangedLines
 	}
 
+	if result.Mode == "" {
+		switch {
+		case len(result.Excluded) > 0 && hasScopeLimitExclusion(result.Excluded):
+			result.Mode = ReviewModeDegradation
+		case result.Truncated:
+			result.Mode = ReviewModeTruncated
+		default:
+			result.Mode = ReviewModeFullScope
+		}
+	}
+	result.Coverage.Summary = summarizeCoverage(result)
 	return result, nil
 }
 
@@ -724,4 +760,35 @@ func formatHunkHeader(oldStart, oldLines, newStart, newLines int, trailer string
 
 func isChangeLine(line string) bool {
 	return strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-")
+}
+
+func countChangedLines(diffText string) int {
+	hunks, err := parseHunks(diffText)
+	if err != nil {
+		return 0
+	}
+	total := 0
+	for _, hunk := range hunks {
+		total += hunk.changedLines()
+	}
+	return total
+}
+
+func hasScopeLimitExclusion(excluded []ExcludedFile) bool {
+	for _, file := range excluded {
+		if file.Reason == ExcludedReasonScopeLimit {
+			return true
+		}
+	}
+	return false
+}
+
+func summarizeCoverage(result AssemblyResult) string {
+	if result.Mode == ReviewModeDegradation {
+		return fmt.Sprintf("Partial coverage: reviewed %d file(s), skipped %d file(s) and %d changed line(s) because the merge request exceeded review limits.", len(result.Coverage.ReviewedPaths), result.Coverage.SkippedFiles, result.Coverage.SkippedLines)
+	}
+	if result.Mode == ReviewModeTruncated {
+		return fmt.Sprintf("Full-scope review with truncation: reviewed %d file(s) and truncated context after %d changed line(s).", len(result.Coverage.ReviewedPaths), result.TotalChangedLines)
+	}
+	return fmt.Sprintf("Full coverage: reviewed %d file(s).", len(result.Coverage.ReviewedPaths))
 }

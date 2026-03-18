@@ -591,6 +591,9 @@ func isTerminalRun(status string) bool {
 }
 
 func renderSummaryBody(run db.ReviewRun, findings []db.ReviewFinding) string {
+	if strings.TrimSpace(run.ErrorCode) == "degradation_mode" && run.ErrorDetail.Valid && strings.TrimSpace(run.ErrorDetail.String) != "" {
+		return run.ErrorDetail.String
+	}
 	active := 0
 	resolved := 0
 	filtered := 0

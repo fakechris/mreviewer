@@ -323,6 +323,9 @@ func TestLargeDiffTruncation(t *testing.T) {
 	if !result.Truncated {
 		t.Fatal("expected result to be truncated")
 	}
+	if result.Mode != ReviewModeTruncated {
+		t.Fatalf("mode = %q, want %q", result.Mode, ReviewModeTruncated)
+	}
 	if result.TotalChangedLines != 3 {
 		t.Fatalf("total changed lines = %d, want 3", result.TotalChangedLines)
 	}
@@ -334,6 +337,61 @@ func TestLargeDiffTruncation(t *testing.T) {
 	}
 	if strings.Contains(result.Request.Changes[1].Hunks[0].Patch, "+b-new-2") {
 		t.Fatalf("truncated patch still contains over-limit change: %q", result.Request.Changes[1].Hunks[0].Patch)
+	}
+}
+
+func TestLargeMRDegradation(t *testing.T) {
+	input := defaultAssembleInput()
+	input.Settings.MaxFiles = 1
+	input.Diffs = []gitlab.MergeRequestDiff{
+		{OldPath: "src/a.go", NewPath: "src/a.go", Diff: sampleDiff("a")},
+		{OldPath: "src/b.go", NewPath: "src/b.go", Diff: sampleDiff("b")},
+	}
+
+	result, err := NewAssembler().Assemble(input)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	if result.Mode != ReviewModeDegradation {
+		t.Fatalf("mode = %q, want %q", result.Mode, ReviewModeDegradation)
+	}
+	if len(result.Coverage.ReviewedPaths) != 1 || result.Coverage.ReviewedPaths[0] != "src/a.go" {
+		t.Fatalf("reviewed paths = %#v, want only src/a.go", result.Coverage.ReviewedPaths)
+	}
+	if result.Coverage.SkippedFiles != 1 {
+		t.Fatalf("skipped files = %d, want 1", result.Coverage.SkippedFiles)
+	}
+	if !strings.Contains(result.Coverage.Summary, "Partial coverage") {
+		t.Fatalf("coverage summary = %q, want partial coverage wording", result.Coverage.Summary)
+	}
+	if len(result.Excluded) != 1 || result.Excluded[0].Reason != ExcludedReasonScopeLimit {
+		t.Fatalf("excluded = %#v, want single scope_limit entry", result.Excluded)
+	}
+}
+
+func TestThresholdDeterminism(t *testing.T) {
+	input := defaultAssembleInput()
+	input.Settings.MaxChangedLines = 3
+	input.Diffs = []gitlab.MergeRequestDiff{
+		{OldPath: "src/a.go", NewPath: "src/a.go", Diff: sampleDiffWithChangedLines("a", 2)},
+		{OldPath: "src/b.go", NewPath: "src/b.go", Diff: sampleDiffWithChangedLines("b", 2)},
+	}
+
+	first, err := NewAssembler().Assemble(input)
+	if err != nil {
+		t.Fatalf("first Assemble: %v", err)
+	}
+	second, err := NewAssembler().Assemble(input)
+	if err != nil {
+		t.Fatalf("second Assemble: %v", err)
+	}
+
+	if first.Mode != second.Mode {
+		t.Fatalf("modes differ: %q vs %q", first.Mode, second.Mode)
+	}
+	if first.Coverage.Summary != second.Coverage.Summary {
+		t.Fatalf("coverage summaries differ: %q vs %q", first.Coverage.Summary, second.Coverage.Summary)
 	}
 }
 
