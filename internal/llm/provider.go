@@ -12,6 +12,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ type Processor struct {
 	rulesLoader    RulesLoader
 	assembler      *ctxpkg.Assembler
 	provider       Provider
+	registry       *ProviderRegistry
 	timeoutRetries int
 	auditLogger    AuditLogger
 	metrics        *metrics.Registry
@@ -148,6 +150,82 @@ type FallbackProvider struct {
 	logger         *slog.Logger
 }
 
+// ProviderRegistry maps route names to Provider instances, enabling
+// runtime selection of the correct provider based on effective policy.
+type ProviderRegistry struct {
+	providers     map[string]Provider
+	defaultRoute  string
+	fallbackRoute string
+	logger        *slog.Logger
+}
+
+// NewProviderRegistry creates a registry with a default and optional
+// fallback route. Additional routes can be registered via Register.
+func NewProviderRegistry(logger *slog.Logger, defaultRoute string, defaultProvider Provider) *ProviderRegistry {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	r := &ProviderRegistry{
+		providers:    make(map[string]Provider),
+		defaultRoute: strings.TrimSpace(defaultRoute),
+		logger:       logger,
+	}
+	r.providers[r.defaultRoute] = defaultProvider
+	return r
+}
+
+// Register adds a provider under the given route name.
+func (r *ProviderRegistry) Register(route string, provider Provider) {
+	route = strings.TrimSpace(route)
+	if route == "" || provider == nil {
+		return
+	}
+	r.providers[route] = provider
+}
+
+// SetFallbackRoute designates a route to try when the primary route
+// for a run fails with a retryable/fallback-eligible error.
+func (r *ProviderRegistry) SetFallbackRoute(route string) {
+	r.fallbackRoute = strings.TrimSpace(route)
+}
+
+// Resolve returns the Provider registered for the given route.
+// If the route is unknown, it falls back to the default route.
+func (r *ProviderRegistry) Resolve(route string) (Provider, string) {
+	route = strings.TrimSpace(route)
+	if route == "" {
+		route = r.defaultRoute
+	}
+	if p, ok := r.providers[route]; ok {
+		return p, route
+	}
+	r.logger.Warn("unknown provider route, falling back to default", "requested_route", route, "default_route", r.defaultRoute)
+	return r.providers[r.defaultRoute], r.defaultRoute
+}
+
+// ResolveWithFallback returns a FallbackProvider that uses the
+// requested route as primary and the registry's fallback route as
+// secondary. If the requested route equals the fallback route (or
+// no fallback is configured), a plain provider is returned.
+func (r *ProviderRegistry) ResolveWithFallback(route string) Provider {
+	primary, resolvedRoute := r.Resolve(route)
+	if r.fallbackRoute == "" || r.fallbackRoute == resolvedRoute {
+		return primary
+	}
+	secondary, secondaryRoute := r.Resolve(r.fallbackRoute)
+	return NewFallbackProvider(r.logger, primary, resolvedRoute, secondary, secondaryRoute)
+}
+
+// Routes returns the list of registered route names.
+func (r *ProviderRegistry) Routes() []string {
+	routes := make([]string, 0, len(r.providers))
+	for route := range r.providers {
+		routes = append(routes, route)
+	}
+	sort.Strings(routes)
+	return routes
+}
+
 func NewProcessor(logger *slog.Logger, sqlDB *sql.DB, gitlabClient GitLabReader, rulesLoader RulesLoader, provider Provider, audit AuditLogger) *Processor {
 	if logger == nil {
 		logger = slog.Default()
@@ -162,6 +240,15 @@ func NewProcessor(logger *slog.Logger, sqlDB *sql.DB, gitlabClient GitLabReader,
 		timeoutRetries: defaultTimeoutRetry,
 		auditLogger:    audit,
 	}
+}
+
+// WithRegistry sets a provider registry that enables policy-driven
+// provider route selection at runtime. When set, the processor uses
+// EffectivePolicy.ProviderRoute from rules.Load to resolve the
+// provider for each run instead of using the static p.provider.
+func (p *Processor) WithRegistry(registry *ProviderRegistry) *Processor {
+	p.registry = registry
+	return p
 }
 
 func (p *Processor) WithMetrics(registry *metrics.Registry) *Processor {
@@ -214,7 +301,7 @@ func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
 func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
 	ctx, endWebhookVerify := p.startSpan(ctx, "webhook.verify", map[string]string{"run_id": fmt.Sprintf("%d", run.ID)})
 	defer endWebhookVerify()
-	if p.queries == nil || p.gitlab == nil || p.rulesLoader == nil || p.assembler == nil || p.provider == nil {
+	if p.queries == nil || p.gitlab == nil || p.rulesLoader == nil || p.assembler == nil || (p.provider == nil && p.registry == nil) {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: processor dependencies are not configured"))
 	}
 
@@ -302,9 +389,17 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		return scheduler.ProcessOutcome{Status: response.Result.Status, ProviderLatencyMs: 0, ProviderTokensTotal: 0, ReviewFindings: nil}, nil
 	}
 
-	payload := p.provider.RequestPayload(assembled.Request)
+	// Select the provider based on effective policy ProviderRoute.
+	// When a registry is configured, resolve the route dynamically;
+	// otherwise fall back to the statically injected provider.
+	runProvider := p.provider
+	if p.registry != nil {
+		runProvider = p.registry.ResolveWithFallback(ruleResult.EffectivePolicy.ProviderRoute)
+	}
+
+	payload := runProvider.RequestPayload(assembled.Request)
 	providerCtx, endProvider := p.startSpan(ctx, "llm.request", nil)
-	response, err := p.provider.Review(providerCtx, assembled.Request)
+	response, err := runProvider.Review(providerCtx, assembled.Request)
 	endProvider()
 	if err != nil {
 		if p.auditLogger != nil {
@@ -324,7 +419,7 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	}
 	if p.auditLogger != nil {
 		_ = p.auditLogger.LogProviderCall(ctx, run, payload, response)
-		_ = p.auditLogger.LogRunLifecycle(ctx, run, "provider_called", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "provider_latency_ms": response.Latency.Milliseconds(), "provider_tokens_total": response.Tokens})
+		_ = p.auditLogger.LogRunLifecycle(ctx, run, "provider_response_received", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "provider_latency_ms": response.Latency.Milliseconds(), "provider_tokens_total": response.Tokens, "provider_model": response.Model})
 	}
 	p.recordProviderMetrics(response)
 	_, endParserValidate := p.startSpan(ctx, "parser.validate", nil)

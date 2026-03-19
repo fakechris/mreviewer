@@ -1735,5 +1735,423 @@ func TestIsTimeoutError(t *testing.T) {
 	}
 }
 
+// TestProviderRoutePolicySelectsRuntimeProvider proves that a ProviderRegistry
+// resolves different providers for different route names, and that the
+// Processor selects the correct provider based on EffectivePolicy.ProviderRoute.
+func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct{ Username string "json:\"username\"" }{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
+	}}
+
+	// Two providers that track which route was called.
+	defaultCalls := 0
+	enterpriseCalls := 0
+	defaultProv := routeTrackingProvider{
+		routeName: "default",
+		callCount: &defaultCalls,
+		response: ProviderResponse{
+			Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "ok", Status: "completed", Findings: nil},
+			Model:  "default", Tokens: 10, Latency: 5 * time.Millisecond,
+			ResponsePayload: map[string]any{},
+		},
+	}
+	enterpriseProv := routeTrackingProvider{
+		routeName: "enterprise",
+		callCount: &enterpriseCalls,
+		response: ProviderResponse{
+			Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "enterprise ok", Status: "completed", Findings: nil},
+			Model:  "enterprise", Tokens: 20, Latency: 10 * time.Millisecond,
+			ResponsePayload: map[string]any{},
+		},
+	}
+
+	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
+	registry.Register("enterprise", enterpriseProv)
+
+	// Test 1: When ProviderRoute is "enterprise", the enterprise provider is called.
+	rulesLoader := fakeRulesLoader{result: rules.LoadResult{
+		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "enterprise"},
+		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
+	}}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB)).WithRegistry(registry)
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-route", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun with enterprise route: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+	if enterpriseCalls != 1 {
+		t.Fatalf("enterprise provider calls = %d, want 1", enterpriseCalls)
+	}
+	if defaultCalls != 0 {
+		t.Fatalf("default provider calls = %d, want 0", defaultCalls)
+	}
+
+	// Test 2: When ProviderRoute is "default", the default provider is called.
+	defaultCalls = 0
+	enterpriseCalls = 0
+	rulesLoader2 := fakeRulesLoader{result: rules.LoadResult{
+		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "default"},
+		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
+	}}
+	// Seed a second run for the same MR.
+	res2, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID: run.ProjectID, MergeRequestID: run.MergeRequestID,
+		TriggerType: "webhook", HeadSha: "head-route-default",
+		Status: "pending", MaxRetries: 3,
+		IdempotencyKey: fmt.Sprintf("rr-route-default-%d", time.Now().UnixNano()),
+	})
+	if err != nil {
+		t.Fatalf("InsertReviewRun default: %v", err)
+	}
+	runID2, _ := res2.LastInsertId()
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-route-default", ID: runID2}); err != nil {
+		t.Fatalf("ClaimReviewRun default: %v", err)
+	}
+	run2, err := q.GetReviewRun(ctx, runID2)
+	if err != nil {
+		t.Fatalf("GetReviewRun default: %v", err)
+	}
+	// Update provider responses with correct run IDs.
+	defaultProv.response.Result.ReviewRunID = fmt.Sprintf("%d", runID2)
+	enterpriseProv.response.Result.ReviewRunID = fmt.Sprintf("%d", runID2)
+	registry2 := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
+	registry2.Register("enterprise", enterpriseProv)
+	processor2 := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader2, nil, NewDBAuditLogger(sqlDB)).WithRegistry(registry2)
+	outcome2, err := processor2.ProcessRun(ctx, run2)
+	if err != nil {
+		t.Fatalf("ProcessRun with default route: %v", err)
+	}
+	if outcome2.Status != "completed" {
+		t.Fatalf("outcome2 status = %q, want completed", outcome2.Status)
+	}
+	if defaultCalls != 1 {
+		t.Fatalf("default provider calls = %d, want 1", defaultCalls)
+	}
+	if enterpriseCalls != 0 {
+		t.Fatalf("enterprise provider calls = %d, want 0", enterpriseCalls)
+	}
+}
+
+// TestProviderRouteEndToEnd verifies that the full processor flow
+// resolves the provider through the registry based on the effective
+// policy's ProviderRoute, including proper audit logging.
+func TestProviderRouteEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, mrID, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct{ Username string "json:\"username\"" }{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
+	}}
+
+	projectRouteCalls := 0
+	projectRouteProv := routeTrackingProvider{
+		routeName: "project-custom-route",
+		callCount: &projectRouteCalls,
+		response: ProviderResponse{
+			Result: ReviewResult{
+				SchemaVersion: "1.0",
+				ReviewRunID:   fmt.Sprintf("%d", runID),
+				Summary:       "project route ok",
+				Status:        "completed",
+				Findings: []ReviewFinding{{
+					Category: "bug", Severity: "high", Confidence: 0.9,
+					Title: "Issue via project route", BodyMarkdown: "body",
+					Path: "main.go", AnchorKind: "new",
+				}},
+			},
+			Model: "project-custom-route", Tokens: 99, Latency: 15 * time.Millisecond,
+			ResponsePayload: map[string]any{},
+		},
+	}
+	defaultFallbackCalls := 0
+	defaultFallbackProv := routeTrackingProvider{
+		routeName: "default",
+		callCount: &defaultFallbackCalls,
+		response: ProviderResponse{
+			Result:          ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "default ok", Status: "completed", Findings: nil},
+			Model:           "default",
+			ResponsePayload: map[string]any{},
+		},
+	}
+
+	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultFallbackProv)
+	registry.Register("project-custom-route", projectRouteProv)
+
+	rulesLoader := fakeRulesLoader{result: rules.LoadResult{
+		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "project-custom-route"},
+		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
+	}}
+	processor := NewProcessor(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		sqlDB, gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB),
+	).WithRegistry(registry)
+
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-e2e", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+	if projectRouteCalls != 1 {
+		t.Fatalf("project route calls = %d, want 1", projectRouteCalls)
+	}
+	if defaultFallbackCalls != 0 {
+		t.Fatalf("default calls = %d, want 0 (project route should be used)", defaultFallbackCalls)
+	}
+	// Verify findings were persisted through the project route provider.
+	findings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(findings))
+	}
+	if findings[0].Title != "Issue via project route" {
+		t.Fatalf("finding title = %q, want 'Issue via project route'", findings[0].Title)
+	}
+	// Verify audit log captured the correct provider.
+	audits, err := q.ListAuditLogsByEntity(ctx, db.ListAuditLogsByEntityParams{EntityType: "review_run", EntityID: runID, Limit: 10, Offset: 0})
+	if err != nil {
+		t.Fatalf("ListAuditLogsByEntity: %v", err)
+	}
+	if len(audits) == 0 {
+		t.Fatal("expected audit logs")
+	}
+	foundProviderCall := false
+	for _, audit := range audits {
+		if audit.Action == "provider_called" {
+			foundProviderCall = true
+			var detail map[string]any
+			if err := json.Unmarshal(audit.Detail, &detail); err != nil {
+				t.Fatalf("unmarshal audit detail: %v", err)
+			}
+			if detail["provider_model"] != "project-custom-route" {
+				t.Fatalf("audit provider_model = %v, want project-custom-route", detail["provider_model"])
+			}
+		}
+	}
+	if !foundProviderCall {
+		t.Fatal("expected provider_called audit log")
+	}
+	// Verify the MR findings are present.
+	activeFindings, err := q.ListActiveFindingsByMR(ctx, mrID)
+	if err != nil {
+		t.Fatalf("ListActiveFindingsByMR: %v", err)
+	}
+	if len(activeFindings) != 1 {
+		t.Fatalf("active findings = %d, want 1", len(activeFindings))
+	}
+}
+
+// TestProviderFallbackStillWorksWithPolicyRoute proves that fallback
+// behavior continues to work when routing is driven by effective policy.
+// When the policy's provider route fails, the registry's fallback route
+// is used.
+func TestProviderFallbackStillWorksWithPolicyRoute(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct{ Username string "json:\"username\"" }{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
+	}}
+
+	// Primary provider fails with a 503 error (fallback-eligible).
+	primaryCalls := 0
+	primaryProv := routeTrackingProvider{
+		routeName: "primary-custom",
+		callCount: &primaryCalls,
+		err:       fmt.Errorf("provider_request_failed: upstream status 503"),
+	}
+	// Secondary/fallback provider succeeds.
+	secondaryCalls := 0
+	secondaryProv := routeTrackingProvider{
+		routeName: "fallback-secondary",
+		callCount: &secondaryCalls,
+		response: ProviderResponse{
+			Result: ReviewResult{
+				SchemaVersion: "1.0",
+				ReviewRunID:   fmt.Sprintf("%d", runID),
+				Summary:       "fallback ok",
+				Status:        "completed",
+				Findings:      nil,
+			},
+			Model: "fallback-secondary", Tokens: 50, Latency: 20 * time.Millisecond,
+			ResponsePayload: map[string]any{},
+		},
+	}
+
+	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "primary-custom", primaryProv)
+	registry.Register("fallback-secondary", secondaryProv)
+	registry.SetFallbackRoute("fallback-secondary")
+
+	rulesLoader := fakeRulesLoader{result: rules.LoadResult{
+		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "primary-custom"},
+		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
+	}}
+	processor := NewProcessor(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		sqlDB, gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB),
+	).WithRegistry(registry)
+
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-fallback", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun with fallback: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+	// Primary was attempted, then fallback succeeded.
+	if primaryCalls != 1 {
+		t.Fatalf("primary provider calls = %d, want 1", primaryCalls)
+	}
+	if secondaryCalls != 1 {
+		t.Fatalf("secondary/fallback provider calls = %d, want 1", secondaryCalls)
+	}
+}
+
+// TestProviderRegistryUnknownRouteFallsBackToDefault verifies that
+// requesting an unknown route from the registry returns the default.
+func TestProviderRegistryUnknownRouteFallsBackToDefault(t *testing.T) {
+	defaultProv := fakeProvider{response: ProviderResponse{Model: "default-model"}}
+	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
+
+	provider, route := registry.Resolve("unknown-route")
+	if route != "default" {
+		t.Fatalf("resolved route = %q, want default", route)
+	}
+	if provider == nil {
+		t.Fatal("expected non-nil provider for unknown route")
+	}
+
+	// Known route resolves correctly.
+	customProv := fakeProvider{response: ProviderResponse{Model: "custom-model"}}
+	registry.Register("custom", customProv)
+	provider2, route2 := registry.Resolve("custom")
+	if route2 != "custom" {
+		t.Fatalf("resolved route = %q, want custom", route2)
+	}
+	if provider2 == nil {
+		t.Fatal("expected non-nil provider for custom route")
+	}
+}
+
+// TestProviderRegistryResolveWithFallback verifies that
+// ResolveWithFallback returns a FallbackProvider when fallback is configured.
+func TestProviderRegistryResolveWithFallback(t *testing.T) {
+	defaultProv := fakeProvider{response: ProviderResponse{Model: "default"}}
+	secondaryProv := fakeProvider{response: ProviderResponse{Model: "secondary"}}
+	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
+	registry.Register("secondary", secondaryProv)
+	registry.SetFallbackRoute("secondary")
+
+	// When requesting "default" route, should get a FallbackProvider.
+	provider := registry.ResolveWithFallback("default")
+	if _, ok := provider.(*FallbackProvider); !ok {
+		t.Fatalf("expected FallbackProvider, got %T", provider)
+	}
+
+	// When requesting the fallback route itself, no wrapping needed.
+	provider2 := registry.ResolveWithFallback("secondary")
+	if _, ok := provider2.(*FallbackProvider); ok {
+		t.Fatal("expected plain provider when route equals fallback route")
+	}
+
+	// Registry with no fallback returns plain provider.
+	registry2 := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
+	provider3 := registry2.ResolveWithFallback("default")
+	if _, ok := provider3.(*FallbackProvider); ok {
+		t.Fatal("expected plain provider when no fallback is set")
+	}
+}
+
+// TestProviderRegistryRoutes verifies that Routes() returns all registered routes.
+func TestProviderRegistryRoutes(t *testing.T) {
+	defaultProv := fakeProvider{}
+	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
+	registry.Register("secondary", fakeProvider{})
+	registry.Register("enterprise", fakeProvider{})
+
+	routes := registry.Routes()
+	if len(routes) != 3 {
+		t.Fatalf("routes = %v, want 3 entries", routes)
+	}
+	// Routes should be sorted.
+	expected := []string{"default", "enterprise", "secondary"}
+	for i, want := range expected {
+		if routes[i] != want {
+			t.Fatalf("routes[%d] = %q, want %q", i, routes[i], want)
+		}
+	}
+}
+
+// routeTrackingProvider is a test helper that tracks which route was
+// called and how many times, proving policy-driven provider selection.
+type routeTrackingProvider struct {
+	routeName string
+	callCount *int
+	response  ProviderResponse
+	err       error
+}
+
+func (p routeTrackingProvider) Review(_ context.Context, _ ctxpkg.ReviewRequest) (ProviderResponse, error) {
+	*p.callCount++
+	if p.err != nil {
+		return ProviderResponse{}, p.err
+	}
+	return p.response, nil
+}
+
+func (p routeTrackingProvider) RequestPayload(_ ctxpkg.ReviewRequest) map[string]any {
+	return map[string]any{"route": p.routeName}
+}
+
 var _ = option.WithAPIKey
 var _ ssestream.Event
