@@ -413,6 +413,12 @@ type NormalizedNoteEvent struct {
 
 	// HookSource is "project", "group", or "system".
 	HookSource string `json:"hook_source"`
+
+	// DeliveryKey is the webhook delivery identifier (from X-Gitlab-Webhook-UUID,
+	// X-Gitlab-Delivery, or a synthetic fallback). Used to derive stable
+	// idempotency keys for command-triggered runs so replayed deliveries
+	// do not create duplicate side-effects.
+	DeliveryKey string `json:"delivery_key"`
 }
 
 // noteWebhookPayload extracts note/comment webhook fields.
@@ -433,7 +439,7 @@ type noteWebhookPayload struct {
 		WebURL            string `json:"web_url"`
 	} `json:"project"`
 	MergeRequest struct {
-		IID        int64  `json:"iid"`
+		IID        int64 `json:"iid"`
 		LastCommit struct {
 			ID string `json:"id"`
 		} `json:"last_commit"`

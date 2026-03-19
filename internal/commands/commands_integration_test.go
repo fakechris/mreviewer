@@ -482,3 +482,143 @@ func TestFocusCommandNoPath(t *testing.T) {
 		t.Errorf("expected 0 runs for empty focus, got %d", len(runs))
 	}
 }
+
+// TestCommandIdempotencyStableDeliveryKey verifies that replaying the same
+// delivery (same DeliveryKey) for a rerun or focus command produces the same
+// idempotency key and therefore does NOT create a duplicate review run, while
+// a genuinely new delivery (different DeliveryKey) DOES create a new run.
+// testDelivery builds a test delivery identifier from a prefix and suffix.
+func testDelivery(prefix, suffix string) string { return prefix + "-" + suffix }
+
+// noteEventWithDelivery creates a NormalizedNoteEvent with delivery set.
+func noteEventWithDelivery(noteBody, discussionID, delivery string) hooks.NormalizedNoteEvent {
+	ev := baseNoteEvent(noteBody, discussionID)
+	ev.DeliveryKey = delivery //nolint:gosec // test fixture, not a secret
+	return ev
+}
+
+func TestCommandIdempotencyStableDeliveryKey(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	_, _, mrID := seedProjectAndMR(t, sqlDB, "abc123def456")
+	ctx := context.Background()
+	processor := commands.NewProcessor(testLogger(), sqlDB)
+	queries := db.New(sqlDB)
+
+	t.Run("rerun: same delivery key deduplicates", func(t *testing.T) {
+		noteEvent := noteEventWithDelivery("/ai-review rerun", "", testDelivery("rerun", "1"))
+		cmd := commands.Parse(noteEvent.NoteBody)
+
+		// First execution: should create a run.
+		if err := processor.Execute(ctx, noteEvent, cmd); err != nil {
+			t.Fatalf("first rerun execute: %v", err)
+		}
+
+		// Replay: same delivery key should be deduplicated (no new run).
+		if err := processor.Execute(ctx, noteEvent, cmd); err != nil {
+			t.Fatalf("replay rerun execute: %v", err)
+		}
+
+		runs, err := queries.ListReviewRunsByMR(ctx, mrID)
+		if err != nil {
+			t.Fatalf("list runs: %v", err)
+		}
+		commandRuns := 0
+		for _, r := range runs {
+			if r.TriggerType == "command" {
+				commandRuns++
+			}
+		}
+		if commandRuns != 1 {
+			t.Errorf("expected exactly 1 command run after replay, got %d", commandRuns)
+		}
+	})
+
+	t.Run("rerun: different delivery key creates new run", func(t *testing.T) {
+		noteEvent := noteEventWithDelivery("/ai-review rerun", "", testDelivery("rerun", "2"))
+		cmd := commands.Parse(noteEvent.NoteBody)
+
+		if err := processor.Execute(ctx, noteEvent, cmd); err != nil {
+			t.Fatalf("second rerun execute: %v", err)
+		}
+
+		runs, err := queries.ListReviewRunsByMR(ctx, mrID)
+		if err != nil {
+			t.Fatalf("list runs: %v", err)
+		}
+		commandRuns := 0
+		for _, r := range runs {
+			if r.TriggerType == "command" {
+				commandRuns++
+			}
+		}
+		if commandRuns != 2 {
+			t.Errorf("expected 2 command runs after different delivery, got %d", commandRuns)
+		}
+	})
+
+	t.Run("focus: same delivery key deduplicates", func(t *testing.T) {
+		noteEvent := noteEventWithDelivery("/ai-review focus src/models/", "", testDelivery("focus", "1"))
+		cmd := commands.Parse(noteEvent.NoteBody)
+
+		// First execution.
+		if err := processor.Execute(ctx, noteEvent, cmd); err != nil {
+			t.Fatalf("first focus execute: %v", err)
+		}
+
+		// Replay with same delivery key.
+		if err := processor.Execute(ctx, noteEvent, cmd); err != nil {
+			t.Fatalf("replay focus execute: %v", err)
+		}
+
+		runs, err := queries.ListReviewRunsByMR(ctx, mrID)
+		if err != nil {
+			t.Fatalf("list runs: %v", err)
+		}
+		focusRuns := 0
+		for _, r := range runs {
+			if r.TriggerType == "command" && r.ScopeJson != nil {
+				var scope map[string]interface{}
+				if json.Unmarshal(r.ScopeJson, &scope) == nil {
+					if paths, ok := scope["focus_paths"]; ok {
+						if pList, ok := paths.([]interface{}); ok && len(pList) > 0 && pList[0] == "src/models/" {
+							focusRuns++
+						}
+					}
+				}
+			}
+		}
+		if focusRuns != 1 {
+			t.Errorf("expected exactly 1 focus run after replay, got %d", focusRuns)
+		}
+	})
+
+	t.Run("focus: different delivery key creates new run", func(t *testing.T) {
+		noteEvent := noteEventWithDelivery("/ai-review focus src/models/", "", testDelivery("focus", "2"))
+		cmd := commands.Parse(noteEvent.NoteBody)
+
+		if err := processor.Execute(ctx, noteEvent, cmd); err != nil {
+			t.Fatalf("second focus execute: %v", err)
+		}
+
+		runs, err := queries.ListReviewRunsByMR(ctx, mrID)
+		if err != nil {
+			t.Fatalf("list runs: %v", err)
+		}
+		focusRuns := 0
+		for _, r := range runs {
+			if r.TriggerType == "command" && r.ScopeJson != nil {
+				var scope map[string]interface{}
+				if json.Unmarshal(r.ScopeJson, &scope) == nil {
+					if paths, ok := scope["focus_paths"]; ok {
+						if pList, ok := paths.([]interface{}); ok && len(pList) > 0 && pList[0] == "src/models/" {
+							focusRuns++
+						}
+					}
+				}
+			}
+		}
+		if focusRuns != 2 {
+			t.Errorf("expected 2 focus runs after different delivery, got %d", focusRuns)
+		}
+	})
+}

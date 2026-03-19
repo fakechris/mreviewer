@@ -409,6 +409,263 @@ func TestUnknownCommandViaHandler(t *testing.T) {
 	}
 }
 
+// testDlv builds a test delivery identifier from a prefix and suffix.
+func testDlv(prefix, suffix string) string { return prefix + "-" + suffix }
+
+// TestCommandIdempotencyStableDeliveryKey verifies that replaying the same
+// note webhook delivery (same X-Gitlab-Delivery) for a rerun command does NOT
+// create a duplicate review run. The first delivery creates the run; the replay
+// is deduplicated at the hook_events level because the hook_event and command
+// are persisted atomically.
+func TestCommandIdempotencyStableDeliveryKey(t *testing.T) {
+	sqlDB := setupCommandTestDB(t)
+	handler := newCommandHandler(sqlDB)
+	_, mrID := seedMRForCommandTest(t, sqlDB)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+
+	deliveryKey := testDlv("idem", "rerun1")
+
+	// First delivery: creates hook_event + command run atomically.
+	rec := postCommandWebhook(
+		handler,
+		notePayload("/ai-review rerun", "MergeRequest", ""),
+		commandHeaders(deliveryKey, "Note Hook"),
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first delivery: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Replay: same delivery key should be deduplicated at the top-level
+	// delivery-key check (the hook_event was committed with the command).
+	rec = postCommandWebhook(
+		handler,
+		notePayload("/ai-review rerun", "MergeRequest", ""),
+		commandHeaders(deliveryKey, "Note Hook"),
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("replay delivery: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var replayResp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&replayResp); err != nil {
+		t.Fatalf("decode replay response: %v", err)
+	}
+	if replayResp["status"] != "duplicate" {
+		t.Errorf("expected status='duplicate' for replay, got %q", replayResp["status"])
+	}
+
+	// Verify exactly 1 command run was created (not 2).
+	allRuns, err := queries.ListReviewRunsByMR(ctx, mrID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	commandRuns := 0
+	for _, r := range allRuns {
+		if r.TriggerType == "command" {
+			commandRuns++
+		}
+	}
+	if commandRuns != 1 {
+		t.Errorf("expected exactly 1 command run after replay, got %d", commandRuns)
+	}
+
+	// Verify exactly 1 hook_event for this delivery key.
+	hookEvent, err := queries.GetHookEventByDeliveryKey(ctx, deliveryKey)
+	if err != nil {
+		t.Fatalf("get hook event: %v", err)
+	}
+	if hookEvent.ID == 0 {
+		t.Fatal("expected hook_event to exist")
+	}
+}
+
+// TestCommandRetryAfterPersistenceFailure verifies that if the command
+// execution fails (simulated by using a failing processor), the hook_event is
+// NOT committed, allowing the retry to succeed. This tests the atomicity of
+// the transactional flow.
+func TestCommandRetryAfterPersistenceFailure(t *testing.T) {
+	sqlDB := setupCommandTestDB(t)
+	logger := commandTestLogger()
+	runProc := runs.NewService(logger, sqlDB)
+	handler := hooks.NewHandler(logger, sqlDB, commandTestWebhookKey, runProc)
+
+	// Set up a failing command processor that fails on first call, succeeds on second.
+	failProc := &failOnceCommandProcessor{
+		real:      commands.NewProcessor(logger, sqlDB),
+		failCount: 1,
+	}
+	handler.SetCommandProcessor(failProc)
+
+	seedMRForCommandTest(t, sqlDB)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+
+	deliveryKey := testDlv("retry", "fail1")
+
+	// First attempt: command processor fails → hook_event should be rolled back.
+	rec := postCommandWebhook(
+		handler,
+		notePayload("/ai-review rerun", "MergeRequest", ""),
+		commandHeaders(deliveryKey, "Note Hook"),
+	)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("first attempt: expected 500 (command failure), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify no hook_event was committed for this delivery key.
+	_, err := queries.GetHookEventByDeliveryKey(ctx, deliveryKey)
+	if err == nil {
+		t.Fatal("expected no hook_event after failed attempt, but found one (not rolled back)")
+	}
+
+	// Retry: should succeed now (failOnceCommandProcessor passes on second call).
+	rec = postCommandWebhook(
+		handler,
+		notePayload("/ai-review rerun", "MergeRequest", ""),
+		commandHeaders(deliveryKey, "Note Hook"),
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode retry response: %v", err)
+	}
+	if resp["command"] != "processed" {
+		t.Errorf("expected command='processed' on retry, got %q", resp["command"])
+	}
+
+	// Verify the hook_event now exists.
+	hookEvent, err := queries.GetHookEventByDeliveryKey(ctx, deliveryKey)
+	if err != nil {
+		t.Fatalf("get hook event after retry: %v", err)
+	}
+	if hookEvent.ID == 0 {
+		t.Fatal("expected hook_event to exist after successful retry")
+	}
+}
+
+// TestCommandPersistenceAndExecutionAtomicity verifies that hook_event
+// persistence and command execution are atomic: either both succeed or both
+// are rolled back. This prevents the scenario where a hook_event is committed
+// but the command effect is lost, causing the retry to be deduplicated
+// (hook_event exists) while the command effect never took place.
+func TestCommandPersistenceAndExecutionAtomicity(t *testing.T) {
+	sqlDB := setupCommandTestDB(t)
+	logger := commandTestLogger()
+	runProc := runs.NewService(logger, sqlDB)
+	handler := hooks.NewHandler(logger, sqlDB, commandTestWebhookKey, runProc)
+
+	// Use a processor that always fails.
+	alwaysFailProc := &alwaysFailCommandProcessor{}
+	handler.SetCommandProcessor(alwaysFailProc)
+
+	_, mrID := seedMRForCommandTest(t, sqlDB)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+
+	deliveryKey := testDlv("atomic", "test1")
+
+	// Attempt: command always fails → everything should be rolled back.
+	rec := postCommandWebhook(
+		handler,
+		notePayload("/ai-review rerun", "MergeRequest", ""),
+		commandHeaders(deliveryKey, "Note Hook"),
+	)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 (command failure), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify NO hook_event was committed.
+	_, err := queries.GetHookEventByDeliveryKey(ctx, deliveryKey)
+	if err == nil {
+		t.Fatal("atomicity violation: hook_event was committed despite command failure")
+	}
+
+	// Verify NO command runs were created for this delivery.
+	allRuns, err := queries.ListReviewRunsByMR(ctx, mrID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	for _, r := range allRuns {
+		if r.TriggerType == "command" {
+			t.Errorf("atomicity violation: command run was created despite failure (id=%d)", r.ID)
+		}
+	}
+
+	// Now switch to a working processor and retry — the retry should succeed
+	// because the hook_event was never committed.
+	realProc := commands.NewProcessor(logger, sqlDB)
+	handler.SetCommandProcessor(realProc)
+
+	rec = postCommandWebhook(
+		handler,
+		notePayload("/ai-review rerun", "MergeRequest", ""),
+		commandHeaders(deliveryKey, "Note Hook"),
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry after atomicity failure: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Now verify the hook_event and command run both exist.
+	hookEvent, err := queries.GetHookEventByDeliveryKey(ctx, deliveryKey)
+	if err != nil {
+		t.Fatalf("get hook event after successful retry: %v", err)
+	}
+	if hookEvent.ID == 0 {
+		t.Fatal("expected hook_event to exist after successful retry")
+	}
+
+	allRuns, err = queries.ListReviewRunsByMR(ctx, mrID)
+	if err != nil {
+		t.Fatalf("list runs after retry: %v", err)
+	}
+	commandRunCount := 0
+	for _, r := range allRuns {
+		if r.TriggerType == "command" {
+			commandRunCount++
+		}
+	}
+	if commandRunCount != 1 {
+		t.Errorf("expected exactly 1 command run after retry, got %d", commandRunCount)
+	}
+}
+
+// failOnceCommandProcessor fails the first N calls then delegates to the real processor.
+type failOnceCommandProcessor struct {
+	real      *commands.Processor
+	failCount int
+	calls     int
+}
+
+func (f *failOnceCommandProcessor) Execute(ctx context.Context, noteEvent hooks.NormalizedNoteEvent, cmd interface{}) error {
+	f.calls++
+	if f.calls <= f.failCount {
+		return fmt.Errorf("simulated command failure (call %d)", f.calls)
+	}
+	return f.real.Execute(ctx, noteEvent, cmd)
+}
+
+func (f *failOnceCommandProcessor) ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent, cmd interface{}) error {
+	f.calls++
+	if f.calls <= f.failCount {
+		return fmt.Errorf("simulated command failure (call %d)", f.calls)
+	}
+	return f.real.ExecuteWithQuerier(ctx, q, noteEvent, cmd)
+}
+
+// alwaysFailCommandProcessor always returns an error.
+type alwaysFailCommandProcessor struct{}
+
+func (a *alwaysFailCommandProcessor) Execute(_ context.Context, _ hooks.NormalizedNoteEvent, _ interface{}) error {
+	return fmt.Errorf("simulated permanent command failure")
+}
+
+func (a *alwaysFailCommandProcessor) ExecuteWithQuerier(_ context.Context, _ *db.Queries, _ hooks.NormalizedNoteEvent, _ interface{}) error {
+	return fmt.Errorf("simulated permanent command failure")
+}
+
 // seedCommandFindingWithDiscussion creates a finding and discussion for
 // handler-level command integration tests.
 func seedCommandFindingWithDiscussion(t *testing.T, sqlDB *sql.DB, projectID, mrID int64, gitlabDiscID string) (int64, int64) {

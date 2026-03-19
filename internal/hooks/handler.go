@@ -44,6 +44,17 @@ type CommandProcessor interface {
 	Execute(ctx context.Context, noteEvent NormalizedNoteEvent, cmd interface{}) error
 }
 
+// TransactionalCommandProcessor extends CommandProcessor with the ability to
+// execute within a caller-managed transaction. This enables the handler to
+// atomically persist the hook_event and execute the command effect in a single
+// transaction, preventing the scenario where a retried delivery is
+// deduplicated (because the hook_event was committed) but the command effect
+// was lost (because the command execution failed after hook_event commit).
+type TransactionalCommandProcessor interface {
+	CommandProcessor
+	ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent NormalizedNoteEvent, cmd interface{}) error
+}
+
 // NewHandler creates a webhook handler. The secret is the expected value of
 // the X-Gitlab-Token header. An empty secret causes all requests to be
 // rejected with 401.
@@ -337,8 +348,11 @@ func (h *Handler) writeAuditLog(
 }
 
 // handleNoteEvent processes note/comment webhook events. If the note body
-// starts with /ai-review, it routes to the command processor. Otherwise
-// the note is accepted for audit but produces no downstream action.
+// starts with /ai-review, it routes to the command processor. Hook-event
+// persistence and command execution are wrapped in a single transaction so
+// that a retried delivery after a partial failure can be safely replayed:
+// if the command fails, the hook_event is rolled back and the retry will
+// not be deduplicated.
 func (h *Handler) handleNoteEvent(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -358,7 +372,10 @@ func (h *Handler) handleNoteEvent(
 		return
 	}
 
-	// Record the hook event for audit.
+	// Attach the delivery key so command-triggered idempotency keys are stable
+	// across replayed deliveries of the same note event.
+	noteEvent.DeliveryKey = deliveryKey
+
 	parsed := parsedEvent{
 		EventType: eventType,
 		Action:    "note",
@@ -366,8 +383,87 @@ func (h *Handler) handleNoteEvent(
 		MRIID:     noteEvent.MRIID,
 		HeadSHA:   noteEvent.HeadSHA,
 	}
+
+	// Check if the note body contains a /ai-review command.
+	isCmd := isCommandNote(noteEvent.NoteBody)
+
+	// If this is a command note AND we have a transactional command processor,
+	// wrap hook_event insertion and command execution in one atomic transaction.
+	if isCmd {
+		if h.commandProcessor == nil {
+			// Still insert the hook event for audit outside the command path.
+			if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+				if !isDuplicateKeyError(insertErr) {
+					l.WarnContext(ctx, "failed to insert hook_event for note",
+						"delivery_key", deliveryKey,
+						"error", insertErr,
+					)
+				}
+			}
+			h.writeAuditLog(ctx, deliveryKey, hookSource, "verified", "", eventType)
+			l.WarnContext(ctx, "note command received but no command processor configured",
+				"delivery_key", deliveryKey,
+				"note_body", noteEvent.NoteBody,
+			)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "command": "unprocessed"})
+			return
+		}
+
+		cmd := parseNoteCommand(noteEvent.NoteBody)
+
+		// Try transactional path: hook_event + command in one transaction.
+		txProc, isTx := h.commandProcessor.(TransactionalCommandProcessor)
+		if isTx {
+			err = db.RunTx(ctx, h.db, func(ctx context.Context, q *db.Queries) error {
+				if _, insertErr := h.insertHookEvent(ctx, q, deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+					return insertErr
+				}
+				return txProc.ExecuteWithQuerier(ctx, q, noteEvent, cmd)
+			})
+		} else {
+			// Fallback for non-transactional processors: insert hook_event
+			// then execute command (legacy path).
+			if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+				if !isDuplicateKeyError(insertErr) {
+					l.WarnContext(ctx, "failed to insert hook_event for note",
+						"delivery_key", deliveryKey,
+						"error", insertErr,
+					)
+				}
+			}
+			err = h.commandProcessor.Execute(ctx, noteEvent, cmd)
+		}
+
+		if err != nil {
+			if isDuplicateKeyError(err) {
+				l.InfoContext(ctx, "duplicate delivery key on note command insert, acknowledging",
+					"delivery_key", deliveryKey,
+				)
+				h.writeAuditLog(ctx, deliveryKey, hookSource, "deduplicated", "", eventType)
+				writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate"})
+				return
+			}
+			l.ErrorContext(ctx, "command execution failed",
+				"delivery_key", deliveryKey,
+				"note_body", noteEvent.NoteBody,
+				"error", err,
+			)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "command execution failed"})
+			return
+		}
+
+		h.writeAuditLog(ctx, deliveryKey, hookSource, "verified", "", eventType)
+		l.InfoContext(ctx, "note command processed",
+			"delivery_key", deliveryKey,
+			"mr_iid", noteEvent.MRIID,
+			"note_body", noteEvent.NoteBody,
+		)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "command": "processed"})
+		return
+	}
+
+	// Non-command note: insert hook_event for audit.
 	if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
-		// Log but do not fail — duplicate delivery keys may hit here.
 		if !isDuplicateKeyError(insertErr) {
 			l.WarnContext(ctx, "failed to insert hook_event for note",
 				"delivery_key", deliveryKey,
@@ -377,44 +473,11 @@ func (h *Handler) handleNoteEvent(
 	}
 	h.writeAuditLog(ctx, deliveryKey, hookSource, "verified", "", eventType)
 
-	// Check if the note body contains a /ai-review command.
-	if !isCommandNote(noteEvent.NoteBody) {
-		l.InfoContext(ctx, "note event accepted, no command found",
-			"delivery_key", deliveryKey,
-			"mr_iid", noteEvent.MRIID,
-		)
-		writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "command": "none"})
-		return
-	}
-
-	// Route to command processor.
-	if h.commandProcessor == nil {
-		l.WarnContext(ctx, "note command received but no command processor configured",
-			"delivery_key", deliveryKey,
-			"note_body", noteEvent.NoteBody,
-		)
-		writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "command": "unprocessed"})
-		return
-	}
-
-	// Parse the command and execute it.
-	cmd := parseNoteCommand(noteEvent.NoteBody)
-	if err := h.commandProcessor.Execute(ctx, noteEvent, cmd); err != nil {
-		l.ErrorContext(ctx, "command execution failed",
-			"delivery_key", deliveryKey,
-			"note_body", noteEvent.NoteBody,
-			"error", err,
-		)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "command execution failed"})
-		return
-	}
-
-	l.InfoContext(ctx, "note command processed",
+	l.InfoContext(ctx, "note event accepted, no command found",
 		"delivery_key", deliveryKey,
 		"mr_iid", noteEvent.MRIID,
-		"note_body", noteEvent.NoteBody,
 	)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "command": "processed"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "command": "none"})
 }
 
 // isCommandNote returns true if the note body starts with /ai-review.
