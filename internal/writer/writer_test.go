@@ -663,6 +663,52 @@ func TestGitLabOutageRecovery(t *testing.T) {
 	}
 }
 
+// TestWriterUsesPersistedDegradationSummary proves that when the writer renders
+// a summary note for a degradation-mode run, it uses the persisted ErrorDetail
+// (containing skipped files and reasons) instead of the generic summary.
+func TestWriterUsesPersistedDegradationSummary(t *testing.T) {
+	degradationDetail := "AI review summary for run 55\n\nLarge merge request degradation mode was activated.\nPartial coverage: reviewed 1 file(s), skipped 2 file(s).\n\nReviewed highest-priority files:\n- priority.go\n\nSkipped files:\n- skipped.go (scope_limit)\n- also_skipped.go (scope_limit)"
+	store := &fakeStore{
+		mr:            db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		version:       db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+		findingsByRun: map[int64][]db.ReviewFinding{55: {}},
+	}
+	client := &fakeDiscussionClient{}
+	w := New(client, store)
+
+	run := db.ReviewRun{
+		ID:             55,
+		MergeRequestID: 99,
+		Status:         "completed",
+		ErrorCode:      "degradation_mode",
+		ErrorDetail:    sql.NullString{String: degradationDetail, Valid: true},
+	}
+	if err := w.Write(context.Background(), run, nil); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(client.noteRequests) != 1 {
+		t.Fatalf("note requests = %d, want 1 summary note", len(client.noteRequests))
+	}
+	body := client.noteRequests[0].Body
+	// The writer must use the persisted degradation summary, not a generic message.
+	if !contains(body, "degradation mode was activated") {
+		t.Fatalf("summary note missing degradation mode text: %s", body)
+	}
+	if !contains(body, "skipped.go") || !contains(body, "also_skipped.go") {
+		t.Fatalf("summary note missing skipped file names: %s", body)
+	}
+	if !contains(body, "scope_limit") {
+		t.Fatalf("summary note missing scope_limit reason: %s", body)
+	}
+	if !contains(body, "priority.go") {
+		t.Fatalf("summary note missing reviewed file: %s", body)
+	}
+	// Verify it doesn't fall through to the generic summary.
+	if contains(body, "findings_posted") {
+		t.Fatalf("summary note should use persisted degradation text, not generic summary: %s", body)
+	}
+}
+
 type fakeDiscussionClient struct {
 	requests         []CreateDiscussionRequest
 	noteRequests     []CreateNoteRequest

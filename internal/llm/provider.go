@@ -377,7 +377,8 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 			Model:           "degradation_mode",
 			ResponsePayload: map[string]any{"mode": assembled.Mode, "coverage": assembled.Coverage},
 		}
-		if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
+		degradationSummary := buildDegradationSummaryNote(run, assembled)
+		if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "degradation_mode", ErrorDetail: sql.NullString{String: degradationSummary, Valid: true}, ID: run.ID}); err != nil {
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: update degraded run status: %w", err))
 		}
 		if err := persistSummaryNoteFallback(ctx, p.queries, run, response.Result); err != nil {

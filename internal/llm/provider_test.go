@@ -1747,7 +1747,9 @@ func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
 
 	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
 		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
-			Author: struct{ Username string "json:\"username\"" }{Username: "alice"},
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
 			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
 		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
 		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
@@ -1863,7 +1865,9 @@ func TestProviderRouteEndToEnd(t *testing.T) {
 
 	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
 		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
-			Author: struct{ Username string "json:\"username\"" }{Username: "alice"},
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
 			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
 		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
 		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
@@ -1990,7 +1994,9 @@ func TestProviderFallbackStillWorksWithPolicyRoute(t *testing.T) {
 
 	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
 		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
-			Author: struct{ Username string "json:\"username\"" }{Username: "alice"},
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
 			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
 		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
 		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
@@ -2151,6 +2157,144 @@ func (p routeTrackingProvider) Review(_ context.Context, _ ctxpkg.ReviewRequest)
 
 func (p routeTrackingProvider) RequestPayload(_ ctxpkg.ReviewRequest) map[string]any {
 	return map[string]any{"route": p.routeName}
+}
+
+// TestDegradationSummaryPersistedForWriter proves that the degradation path
+// persists ErrorCode="degradation_mode" and ErrorDetail containing the
+// skipped-file summary on the review_runs row, so the writer can read it.
+func TestDegradationSummaryPersistedForWriter(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs: []gitlab.MergeRequestDiff{
+			{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"},
+			{OldPath: "other.go", NewPath: "other.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"},
+		},
+	}}
+	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	project, err := q.GetProject(ctx, 1)
+	if err == nil {
+		_, _ = q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{
+			ProjectID:           project.ID,
+			ConfidenceThreshold: 0.1,
+			SeverityThreshold:   "low",
+			IncludePaths:        json.RawMessage("[]"),
+			ExcludePaths:        json.RawMessage("[]"),
+			Extra:               json.RawMessage(`{"review":{"max_files":1}}`),
+		})
+	}
+	provider := fakeProvider{}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+
+	// Reload the run to verify persisted fields.
+	updatedRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun after ProcessRun: %v", err)
+	}
+	if updatedRun.ErrorCode != "degradation_mode" {
+		t.Fatalf("error_code = %q, want degradation_mode", updatedRun.ErrorCode)
+	}
+	if !updatedRun.ErrorDetail.Valid {
+		t.Fatal("error_detail is NULL, want non-null degradation summary")
+	}
+	if !strings.Contains(updatedRun.ErrorDetail.String, "degradation mode") {
+		t.Fatalf("error_detail missing degradation mode text: %s", updatedRun.ErrorDetail.String)
+	}
+}
+
+// TestDegradationSummaryNoteIncludesSkippedFiles proves that the degradation
+// summary note persisted on the run includes the specific skipped files and
+// reasons, not just a generic message.
+func TestDegradationSummaryNoteIncludesSkippedFiles(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs: []gitlab.MergeRequestDiff{
+			{OldPath: "priority.go", NewPath: "priority.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"},
+			{OldPath: "skipped.go", NewPath: "skipped.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"},
+			{OldPath: "also_skipped.go", NewPath: "also_skipped.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"},
+		},
+	}}
+	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	project, err := q.GetProject(ctx, 1)
+	if err == nil {
+		_, _ = q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{
+			ProjectID:           project.ID,
+			ConfidenceThreshold: 0.1,
+			SeverityThreshold:   "low",
+			IncludePaths:        json.RawMessage("[]"),
+			ExcludePaths:        json.RawMessage("[]"),
+			Extra:               json.RawMessage(`{"review":{"max_files":1}}`),
+		})
+	}
+	provider := fakeProvider{}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	_, err = processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+
+	updatedRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if !updatedRun.ErrorDetail.Valid {
+		t.Fatal("error_detail is NULL, want skipped files")
+	}
+	detail := updatedRun.ErrorDetail.String
+	// The summary must mention skipped files with their reasons.
+	if !strings.Contains(detail, "Skipped files") {
+		t.Fatalf("error_detail missing 'Skipped files' section: %s", detail)
+	}
+	if !strings.Contains(detail, "skipped.go") || !strings.Contains(detail, "also_skipped.go") {
+		t.Fatalf("error_detail missing skipped file names: %s", detail)
+	}
+	if !strings.Contains(detail, "scope_limit") {
+		t.Fatalf("error_detail missing scope_limit reason: %s", detail)
+	}
 }
 
 var _ = option.WithAPIKey
