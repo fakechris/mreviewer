@@ -1,103 +1,83 @@
 {
   "milestone": "beta-features",
-  "round": 3,
+  "round": 4,
   "status": "fail",
   "validatorsRun": {
     "test": {
       "passed": true,
-      "command": "test -f /Users/chris/workspace/mreviewer/go.mod && cd \"/Users/chris/workspace/mreviewer\" && go test -p 5 ./...",
+      "command": "cd /Users/chris/workspace/mreviewer && go test -p 5 ./...",
       "exitCode": 0
     },
     "typecheck": {
       "passed": true,
-      "command": "test -f /Users/chris/workspace/mreviewer/go.mod && cd \"/Users/chris/workspace/mreviewer\" && go test -run '^$' ./...",
+      "command": "cd /Users/chris/workspace/mreviewer && go test -run '^$' ./...",
       "exitCode": 0
     },
     "lint": {
       "passed": true,
-      "command": "test -f /Users/chris/workspace/mreviewer/go.mod && cd \"/Users/chris/workspace/mreviewer\" && test -x ./.factory/bin/golangci-lint && ./.factory/bin/golangci-lint run --timeout 5m",
+      "command": "cd /Users/chris/workspace/mreviewer && ./.factory/bin/golangci-lint run --timeout 5m",
       "exitCode": 0
     }
   },
   "reviewsSummary": {
-    "total": 5,
+    "total": 0,
     "passed": 0,
-    "failed": 5,
+    "failed": 0,
     "failedFeatures": [
       "beta-repo-config-layer-correctness-fix",
       "beta-command-webhooks-idempotency-atomicity-fix",
       "beta-degradation-summary-persistence-fix",
       "beta-large-mr-benchmark-evidence",
       "beta-provider-route-runtime-wiring-fix"
-    ]
+    ],
+    "note": "No new fix features completed since round 3. All 5 fix features remain pending with no worker sessions. Prior round 3 blocking issues persist unchanged. No new reviews spawned."
   },
   "blockingIssues": [
     {
       "featureId": "beta-repo-config-layer-correctness-fix",
       "severity": "blocking",
-      "description": "Directory-scoped `REVIEW.md` is still collapsed into one run-wide `TrustedRules.ReviewMarkdown` winner rather than applying the nearest directory review per changed file/path."
+      "description": "Directory-scoped REVIEW.md is still collapsed into one run-wide TrustedRules.ReviewMarkdown winner rather than applying the nearest directory review per changed file/path. Fix feature remains pending (no worker session)."
     },
     {
       "featureId": "beta-repo-config-layer-correctness-fix",
       "severity": "blocking",
-      "description": "`.gitlab/ai-review.yaml` loader behavior still suppresses unknown-field and validation warnings because parser warnings are dropped and unknown keys are silently accepted."
+      "description": ".gitlab/ai-review.yaml loader still suppresses unknown-field and validation warnings because parser warnings are dropped and unknown keys are silently accepted. Fix feature remains pending (no worker session)."
     },
     {
       "featureId": "beta-command-webhooks-idempotency-atomicity-fix",
       "severity": "blocking",
-      "description": "`/ai-review rerun` and `/ai-review focus` generate idempotency keys with `time.Now().UnixNano()`, so command retries/replays can create duplicate runs instead of at-most-once command effects keyed to the note delivery."
+      "description": "/ai-review rerun and /ai-review focus generate idempotency keys with time.Now().UnixNano(), so command retries/replays can create duplicate runs instead of at-most-once command effects keyed to the note delivery. Fix feature remains pending (no worker session)."
     },
     {
       "featureId": "beta-command-webhooks-idempotency-atomicity-fix",
       "severity": "blocking",
-      "description": "Note hook persistence and command execution are not atomic; if command execution fails after the hook event insert, a retried delivery is deduplicated and the rerun/ignore/resolve/focus side effect is permanently lost."
+      "description": "Note hook persistence and command execution are not atomic; if command execution fails after the hook event insert, a retried delivery is deduplicated and the command side effect is permanently lost. Fix feature remains pending (no worker session)."
     },
     {
       "featureId": "beta-degradation-summary-persistence-fix",
       "severity": "blocking",
-      "description": "Degradation summary rendering now depends on `review_runs.error_detail`, but the degradation path never persists that summary there, so degraded runs fall back to a generic summary instead of the required explicit partial-coverage note."
-    },
-    {
-      "featureId": "beta-degradation-summary-persistence-fix",
-      "severity": "blocking",
-      "description": "The degradation branch does not persist the skipped-file/why summary where the writer can read it, so VAL-BETA-018 is not satisfied end-to-end."
+      "description": "Degradation path never persists the skipped-file/reason summary on the writer-visible run field, so degraded runs fall back to a generic summary instead of the required explicit partial-coverage note (VAL-BETA-018). Fix feature remains pending (no worker session)."
     },
     {
       "featureId": "beta-large-mr-benchmark-evidence",
       "severity": "blocking",
-      "description": "The requested VAL-PERF-001 benchmark corpus/report is still missing from the implementation and worker handoff."
-    },
-    {
-      "featureId": "beta-large-mr-benchmark-evidence",
-      "severity": "blocking",
-      "description": "The requested VAL-PERF-001 benchmark corpus, runnable harness, and checked-in runtime evidence are still missing from the repository and mission handoffs."
+      "description": "VAL-PERF-001 benchmark corpus, runnable harness, and checked-in runtime evidence are still missing from the repository. Fix feature remains pending (no worker session)."
     },
     {
       "featureId": "beta-provider-route-runtime-wiring-fix",
       "severity": "blocking",
-      "description": "Runtime provider construction in `cmd/worker/main.go` is still hard-coded to `default`/`secondary` route names and never consumes effective project/group `ProviderRoute` policy end-to-end."
+      "description": "Runtime provider construction in cmd/worker/main.go is still hard-coded to default/secondary route names and never consumes effective project/group ProviderRoute policy end-to-end. Fix feature remains pending (no worker session)."
     }
   ],
   "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
-      "target": "skills",
-      "suggestion": "Clarify how workers should handle features whose intended behavior is already present in dirty branch state or prior commits: require them to distinguish between true implementation work and tree-state finalization/validation-unblock commits, and to verify end-to-end runtime behavior rather than only metadata/tests.",
-      "evidence": "`beta-command-webhooks-idempotency-atomicity-fix`, `beta-provider-route-runtime-wiring-fix`, and `beta-degradation-summary-persistence-fix` all lacked a concrete fix session or end-to-end proof, forcing reviewers to conclude against the still-current original implementation rather than a dedicated corrective change.",
-      "isSystemic": true
-    },
-    {
-      "target": "skills",
-      "suggestion": "Clarify rerun/fix-review procedure when a follow-up fix feature has no completed worker session, transcript, handoff, or commit: reviewers should explicitly record that absence and treat the original implementation as still current instead of assuming a fix exists.",
-      "evidence": "`beta-command-webhooks-idempotency-atomicity-fix`, `beta-degradation-summary-persistence-fix`, `beta-large-mr-benchmark-evidence`, and `beta-provider-route-runtime-wiring-fix` all had null `completedWorkerSessionId` values, leaving reviewers to infer from mission state and current repo history that no fix artifact had shipped.",
+      "target": "AGENTS.md",
+      "suggestion": "Add guidance that fix features created by scrutiny must be scheduled and completed by implementation workers before the next scrutiny re-run. The current round 4 was triggered with all 5 fix features still pending, producing no new review material.",
+      "evidence": "Round 4 scrutiny found all 5 fix features (beta-repo-config-layer-correctness-fix, beta-command-webhooks-idempotency-atomicity-fix, beta-degradation-summary-persistence-fix, beta-large-mr-benchmark-evidence, beta-provider-route-runtime-wiring-fix) still in pending status with null completedWorkerSessionId.",
       "isSystemic": true
     }
   ],
-  "rejectedObservations": [
-    {
-      "observation": "The library already records that trusted REVIEW instructions are modeled as one run-wide string today, which is incompatible with beta's per-path directory REVIEW behavior.",
-      "reason": "already-documented"
-    }
-  ],
-  "previousRound": ".factory/validation/beta-features/scrutiny/synthesis.round1.json"
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/beta-features/scrutiny/synthesis.round3.json"
 }
