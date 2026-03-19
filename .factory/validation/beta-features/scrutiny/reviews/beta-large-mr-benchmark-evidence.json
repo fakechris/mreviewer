@@ -1,33 +1,28 @@
 {
   "featureId": "beta-large-mr-benchmark-evidence",
-  "reviewedAt": "2026-03-19T15:26:03Z",
-  "commitId": "ea73dd92f5e3d89b04afd1a45b3a69b540727da8",
+  "reviewedAt": "2026-03-19T23:33:24.205070Z",
+  "commitId": "95fb0fa108eb9f1f7b236293cbbfbfe158b16faf",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The follow-up commit only fixes a lint issue and leaves the benchmark evidence harness otherwise intact, but the checked-in benchmark implementation hard-codes the Go runtime version string instead of capturing the actual runtime used to generate evidence.",
+    "summary": "The rerun fix correctly replaces the benchmark evidence's hard-coded Go version with `runtime.Version()`, which addresses the prior scrutiny failure about unreliable environment evidence. However, the feature still does not satisfy its explicit acceptance requirement that the tree be clean after commit, because the worker's own handoff recorded an untracked repo-root `worker` binary after commit `95fb0fa108eb9f1f7b236293cbbfbfe158b16faf`.",
     "issues": [
       {
-        "file": "internal/bench/bench_test.go",
-        "line": 542,
+        "file": "worker",
+        "line": 1,
         "severity": "blocking",
-        "description": "`runtimeVersion()` returns a hard-coded `\"go1.25.6\"` string rather than reading the real runtime version. The checked-in `testdata/bench/runtime_evidence.json` therefore reports whatever constant is in source, not the environment that actually produced the benchmark evidence, which makes the required environment snapshot in VAL-PERF-001 unreliable and easy to falsify."
+        "description": "The feature description and follow-up instructions require the tree to be clean after commit, but the worker handoff for session `5b7b853a-b286-4bfe-a6eb-a07fc180fb39` explicitly reports `git status --short` still showing `?? worker` after commit `95fb0fa108eb9f1f7b236293cbbfbfe158b16faf`. Because the repo remained dirty, the acceptance-closing follow-up is still incomplete."
       }
     ]
   },
   "sharedStateObservations": [
     {
-      "area": "skills",
-      "observation": "The `go-reliability` skill requires failing tests first, but this feature was a scoped benchmark/lint follow-up where the worker reasonably reran existing validators instead of adding tests. The skill should explicitly allow validator-only fixes when the assignment is a non-behavioral lint cleanup or evidence refresh.",
-      "evidence": "Handoff skillFeedback for worker session b3488ca2-ef1f-470c-ad49-c540bfc619f8 marks `followedProcedure=false` solely because no new tests were added for the one-line gosimple cleanup; the worker transcript shows the change was limited to internal/bench/bench_test.go and then validators were rerun."
-    },
-    {
       "area": "knowledge",
-      "observation": "The benchmark harness embeds a fixed Go version string to populate runtime evidence, but neither AGENTS.md nor `.factory/library/*` documents how runtime/environment metadata for checked-in benchmark evidence must be captured. Shared guidance should state that benchmark evidence must record the actual tool/runtime versions from the executing environment rather than hard-coded literals.",
-      "evidence": "internal/bench/bench_test.go:542 hard-codes `\"go1.25.6\"`; testdata/bench/runtime_evidence.json records `environment.go_version: \"1.25.6\"`; no matching guidance appears in mission AGENTS.md, .factory/library/architecture.md, or .factory/library/environment.md."
+      "observation": "Repo-root build artifacts can invalidate 'clean tree' claims for benchmark/fix handoffs, so this recurring `worker` binary residue needs to remain part of shared environment knowledge for future validation and handoff hygiene.",
+      "evidence": "The benchmark-evidence fix handoff reports `git status --short` still showed `?? worker` after the commit, and `.factory/library/environment.md` was previously updated by scrutiny to note this recurring untracked repo-root binary residue."
     }
   ],
-  "addressesFailureFrom": null,
-  "summary": "Fail: the reviewed follow-up commit resolves the lint blocker, but the underlying benchmark evidence still hard-codes the Go runtime version, so the checked-in environment snapshot for VAL-PERF-001 is not trustworthy. Blocking issues: 1. Non-blocking issues: 0. Shared-state observations: 2."
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-large-mr-degradation.json",
+  "summary": "Review failed. The runtime-version evidence fix itself is correct and addresses the prior benchmark-environment issue, but the feature still fails scrutiny because the repo was not clean after commit due to the untracked `worker` binary."
 }

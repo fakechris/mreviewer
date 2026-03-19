@@ -1,6 +1,6 @@
 {
   "milestone": "beta-features",
-  "round": 5,
+  "round": 8,
   "status": "fail",
   "validatorsRun": {
     "test": {
@@ -20,54 +20,95 @@
     }
   },
   "reviewsSummary": {
-    "total": 5,
-    "passed": 1,
-    "failed": 4,
+    "total": 11,
+    "passed": 4,
+    "failed": 7,
     "failedFeatures": [
-      "beta-repo-config-layer-correctness-fix",
-      "beta-provider-route-runtime-wiring-fix",
-      "beta-command-webhooks-idempotency-atomicity-fix",
-      "beta-large-mr-benchmark-evidence"
+      "beta-command-webhooks",
+      "beta-comment-extensions",
+      "beta-comment-extensions-tree-state-finalization",
+      "beta-large-mr-benchmark-evidence",
+      "beta-large-mr-degradation",
+      "beta-provider-routing-rate-limits",
+      "beta-repo-config-layers"
     ]
   },
   "blockingIssues": [
     {
-      "featureId": "beta-repo-config-layer-correctness-fix",
+      "featureId": "beta-command-webhooks",
       "severity": "blocking",
-      "description": "ReviewRequest still exposes a single top-level `Rules TrustedRules` object and each `Change` lacks any per-file trusted-instruction field. Although `TrustedRules.ReviewForPath()` was added, `Assembler.Assemble()` never calls it when constructing each change, so downstream provider requests cannot know which directory-scoped REVIEW.md applies to which changed file. The implementation therefore does not satisfy the requirement to apply directory-scoped REVIEW.md per changed file/path instead of collapsing to a single run-wide winner."
+      "description": "`/ai-review rerun` and `/ai-review focus` generate idempotency keys with `time.Now().UnixNano()`, so command retries after a transient database error are not idempotent. The feature description says the system should accept note/comment webhooks and trigger reruns safely; with a retry/replay of the same command delivery, this implementation can create duplicate review runs instead of at-most-once command effects keyed to the webhook/note event."
     },
     {
-      "featureId": "beta-command-webhooks-idempotency-atomicity-fix",
+      "featureId": "beta-command-webhooks",
       "severity": "blocking",
-      "description": "`handleNoteEvent` still falls back to inserting the `hook_events` row before calling `commandProcessor.Execute` when the processor does not implement `TransactionalCommandProcessor`. If a non-transactional processor is configured and command execution fails after the insert, the delivery is permanently deduplicated while the command side effect is lost, which violates the feature requirement that persistence plus side effects remain atomic/retry-safe across failures."
+      "description": "`handleNoteEvent` writes the `hook_events` row and audit log before executing the command, but command execution is not wrapped in the same transaction or tied to the delivery key for deduplication. If command execution fails after the hook event insert, a GitLab retry of the same delivery is treated as a duplicate and skipped, permanently dropping the requested command side effect (rerun/ignore/resolve/focus)."
+    },
+    {
+      "featureId": "beta-comment-extensions-tree-state-finalization",
+      "severity": "blocking",
+      "description": "This feature introduced an entirely new command-processing package with rerun/ignore/resolve/focus behavior instead of only finalizing an existing dirty tree. Shipping ~490 lines of new product logic in a tree-state finalization feature violates the requirement to avoid new behavioral work and makes the handoff non-isolated."
+    },
+    {
+      "featureId": "beta-comment-extensions-tree-state-finalization",
+      "severity": "blocking",
+      "description": "The commit changed webhook runtime behavior by routing note events into command processing and wiring a new command processor into ingress. Tree-state finalization was required to legalize existing residue only; changing live webhook behavior here broadens feature scope beyond finalization."
+    },
+    {
+      "featureId": "beta-comment-extensions-tree-state-finalization",
+      "severity": "blocking",
+      "description": "The commit added new writer behavior for range anchors and suggestion rendering, including policy-dependent suggestion gating. Those are substantive beta-comment-extensions/product changes, not tree cleanup, so this feature does not satisfy its own no-new-behavior contract."
+    },
+    {
+      "featureId": "beta-comment-extensions",
+      "severity": "blocking",
+      "description": "`renderSummaryBody` now returns `run.ErrorDetail` whenever `run.ErrorCode == \"degradation_mode\"`, but the processor never persists the degradation summary into `review_runs.error_detail` (it clears the field in `UpdateReviewRunStatus` and stores the text only via `persistSummaryNoteFallback`). As a result, degraded runs fall back to the generic summary body instead of the explicit partial-coverage summary required by the large-MR/degradation flow. This later regression affects the reviewed beta comment-extension surface because `internal/writer/writer.go` was modified again after the feature commit."
     },
     {
       "featureId": "beta-large-mr-benchmark-evidence",
       "severity": "blocking",
-      "description": "`runtimeVersion()` returns a hard-coded `\"go1.25.6\"` string rather than reading the real runtime version. The checked-in `testdata/bench/runtime_evidence.json` therefore reports whatever constant is in source, not the environment that actually produced the benchmark evidence, which makes the required environment snapshot in VAL-PERF-001 unreliable and easy to falsify."
-    }
-  ],
-  "appliedUpdates": [
-    {
-      "target": "library",
-      "description": "Updated architecture note to reflect per-path directory-scoped REVIEW.md handling rather than a single global TrustedRules.ReviewMarkdown value.",
-      "sourceFeature": "beta-provider-route-runtime-wiring-fix"
-    }
-  ],
-  "suggestedGuidanceUpdates": [
-    {
-      "target": "skill",
-      "suggestion": "Relax go-reliability procedure for validator-only lint/evidence-refresh follow-ups so workers are not forced to invent failing tests when no behavioral change is intended.",
-      "evidence": "Handoff skillFeedback for worker session b3488ca2-ef1f-470c-ad49-c540bfc619f8 marks `followedProcedure=false` solely because no new tests were added for the one-line gosimple cleanup; the worker transcript shows the change was limited to internal/bench/bench_test.go and then validators were rerun.",
-      "isSystemic": false
+      "description": "The feature description and follow-up instructions require the tree to be clean after commit, but the worker handoff for session `5b7b853a-b286-4bfe-a6eb-a07fc180fb39` explicitly reports `git status --short` still showing `?? worker` after commit `95fb0fa108eb9f1f7b236293cbbfbfe158b16faf`. Because the repo remained dirty, the acceptance-closing follow-up is still incomplete."
     },
     {
-      "target": "AGENTS.md",
-      "suggestion": "Document that benchmark evidence and environment snapshots must capture actual runtime/tool versions from the executing environment, not hard-coded literals.",
-      "evidence": "internal/bench/bench_test.go:542 hard-codes `\"go1.25.6\"`; testdata/bench/runtime_evidence.json records `environment.go_version: \"1.25.6\"`; no matching guidance appears in mission AGENTS.md, .factory/library/architecture.md, or .factory/library/environment.md.",
+      "featureId": "beta-large-mr-degradation",
+      "severity": "blocking",
+      "description": "The degradation short-circuit marks the run completed and inserts a pending `summary_note` action, but it never stores the generated degradation summary on `review_runs.error_detail` or any other field that the writer reads. `writer.renderSummaryBody` only emits the detailed partial-coverage body when `run.ErrorCode == \"degradation_mode\"` and `run.ErrorDetail` contains that summary, yet this branch clears `error_code`/`error_detail` before returning. As a result, the eventual summary note falls back to the generic counts-only body and does not explicitly state which files were skipped and why, so VAL-BETA-018 is not actually satisfied end-to-end."
+    },
+    {
+      "featureId": "beta-large-mr-degradation",
+      "severity": "blocking",
+      "description": "This feature\u2019s handoff explicitly records that the VAL-PERF-001 benchmark corpus/harness was not implemented, and the committed diff contains no benchmark package, fixtures, or runtime-report generation. Because the feature description and fulfills list include benchmarking end-to-end runtime against the mission target, the implementation is incomplete for VAL-PERF-001."
+    },
+    {
+      "featureId": "beta-provider-routing-rate-limits",
+      "severity": "blocking",
+      "description": "The worker hard-codes the primary/secondary provider routes as `default` and `secondary` and always passes the same fallback provider into `llm.NewProcessor`, but nothing threads `rules.Load(...).EffectivePolicy.ProviderRoute` into provider selection. As a result, project/group policy cannot choose the provider route used for a run, so the implementation does not satisfy the feature's required route-selection behavior."
+    },
+    {
+      "featureId": "beta-repo-config-layers",
+      "severity": "blocking",
+      "description": "Directory-scoped REVIEW.md handling still loads a single deepest review and assigns it to TrustedRules.ReviewMarkdown for the whole run. This does not apply the nearest REVIEW.md per changed file/path as required by the fix feature and prior failure. With changed paths in different directories, one directory's instructions incorrectly govern all files."
+    },
+    {
+      "featureId": "beta-repo-config-layers",
+      "severity": "blocking",
+      "description": "ParseAIReviewConfig still uses yaml.Unmarshal into a struct, so unknown keys are silently discarded, and Loader.Load drops the returned warnings (`cfg, _, _ := ParseAIReviewConfig(aiBody)`). Invalid and unknown-field config is therefore not surfaced through loader behavior, leaving the original failure unresolved."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Clarify scrutiny and worker handoff guidance so clean-tree claims must explicitly account for repo-root build artifacts such as an untracked `worker` binary before a feature can be considered acceptance-complete.",
+      "evidence": "The rerun review for beta-large-mr-benchmark-evidence still failed because the worker handoff for commit 95fb0fa recorded `?? worker` after claiming a clean tree, showing this hygiene failure can survive multiple fix rounds.",
       "isSystemic": true
     }
   ],
-  "rejectedObservations": [],
-  "previousRound": ".factory/validation/beta-features/scrutiny/synthesis.round4.json"
+  "rejectedObservations": [
+    {
+      "observation": "Repo-root build artifacts can invalidate 'clean tree' claims for benchmark/fix handoffs, so this recurring `worker` binary residue needs to remain part of shared environment knowledge for future validation and handoff hygiene.",
+      "reason": "already-documented"
+    }
+  ],
+  "previousRound": ".factory/validation/beta-features/scrutiny/synthesis.json"
 }
