@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -539,7 +540,7 @@ func writeEvidenceReport(t testing.TB, report EvidenceReport) {
 }
 
 func runtimeVersion() string {
-	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace("go1.25.6"))), "\n", "")), "go version ")), "go"))
+	return strings.TrimSpace(strings.TrimPrefix(runtime.Version(), "go"))
 }
 
 var _ scheduler.Processor = (*llm.Processor)(nil)
