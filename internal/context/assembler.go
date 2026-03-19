@@ -96,10 +96,34 @@ type VersionContext struct {
 }
 
 type TrustedRules struct {
-	PlatformPolicy string `json:"platform_policy,omitempty"`
-	ProjectPolicy  string `json:"project_policy,omitempty"`
-	ReviewMarkdown string `json:"review_markdown,omitempty"`
-	RulesDigest    string `json:"rules_digest,omitempty"`
+	PlatformPolicy   string            `json:"platform_policy,omitempty"`
+	ProjectPolicy    string            `json:"project_policy,omitempty"`
+	ReviewMarkdown   string            `json:"review_markdown,omitempty"`
+	DirectoryReviews map[string]string `json:"directory_reviews,omitempty"`
+	RulesDigest      string            `json:"rules_digest,omitempty"`
+}
+
+// ReviewForPath returns the nearest applicable REVIEW.md content for the given
+// file path. It checks DirectoryReviews from deepest ancestor to shallowest,
+// and falls back to the root ReviewMarkdown if no directory-scoped match is
+// found.
+func (t TrustedRules) ReviewForPath(filePath string) string {
+	if len(t.DirectoryReviews) == 0 {
+		return t.ReviewMarkdown
+	}
+	filePath = normalizePath(filePath)
+	for {
+		idx := strings.LastIndex(filePath, "/")
+		if idx <= 0 {
+			break
+		}
+		dir := filePath[:idx]
+		if review, ok := t.DirectoryReviews[dir]; ok {
+			return review
+		}
+		filePath = dir
+	}
+	return t.ReviewMarkdown
 }
 
 type Change struct {

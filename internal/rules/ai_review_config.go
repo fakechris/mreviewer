@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -23,6 +24,19 @@ type AIReviewConfig struct {
 	MaxChangedLines     *int     `yaml:"max_changed_lines"`
 	ContextLinesBefore  *int     `yaml:"context_lines_before"`
 	ContextLinesAfter   *int     `yaml:"context_lines_after"`
+
+	// unknownFields is populated during parsing with any top-level YAML keys
+	// not in knownAIReviewFields. These produce warnings but do not block parsing.
+	unknownFields []string
+}
+
+// UnknownFields returns the list of unrecognised top-level YAML keys found
+// during parsing.
+func (c *AIReviewConfig) UnknownFields() []string {
+	if c == nil {
+		return nil
+	}
+	return c.unknownFields
 }
 
 const aiReviewYAMLPath = ".gitlab/ai-review.yaml"
@@ -43,9 +57,28 @@ var validGateModes = map[string]bool{
 	"disabled":         true,
 }
 
+// knownAIReviewFields is the set of top-level field names recognised by
+// AIReviewConfig. Any field not in this set is treated as unknown and
+// produces a warning.
+var knownAIReviewFields = map[string]bool{
+	"enabled":              true,
+	"confidence_threshold": true,
+	"severity_threshold":   true,
+	"include_paths":        true,
+	"exclude_paths":        true,
+	"context_mode":         true,
+	"gate_mode":            true,
+	"provider_route":       true,
+	"max_files":            true,
+	"max_changed_lines":    true,
+	"context_lines_before": true,
+	"context_lines_after":  true,
+}
+
 // ParseAIReviewConfig parses YAML content into an AIReviewConfig. It returns
 // a nil config and no error for empty input. It returns a nil config and no
-// error for invalid YAML (falls back to defaults).
+// error for invalid YAML (falls back to defaults). Unknown fields and
+// validation problems are surfaced as warnings in the returned slice.
 func ParseAIReviewConfig(content string) (*AIReviewConfig, []string, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
@@ -57,14 +90,32 @@ func ParseAIReviewConfig(content string) (*AIReviewConfig, []string, error) {
 		return nil, []string{fmt.Sprintf("ai-review.yaml: invalid YAML syntax: %v", err)}, nil
 	}
 
+	// Detect unknown fields by decoding into a generic map and comparing
+	// keys against the known set.
+	var raw map[string]any
+	if err := yaml.Unmarshal([]byte(content), &raw); err == nil {
+		for key := range raw {
+			if !knownAIReviewFields[key] {
+				cfg.unknownFields = append(cfg.unknownFields, key)
+			}
+		}
+		sort.Strings(cfg.unknownFields)
+	}
+
 	warnings := validateAIReviewConfig(&cfg)
 	return &cfg, warnings, nil
 }
 
 // validateAIReviewConfig checks field values and returns warnings for invalid
-// ones. Invalid fields are nil'd out so they don't get applied.
+// ones. Invalid fields are nil'd out so they don't get applied. Unknown fields
+// detected during parsing are also surfaced as warnings.
 func validateAIReviewConfig(cfg *AIReviewConfig) []string {
 	var warnings []string
+
+	// Surface unknown-field warnings.
+	for _, field := range cfg.unknownFields {
+		warnings = append(warnings, fmt.Sprintf("ai-review.yaml: unknown field %q, ignoring", field))
+	}
 
 	if cfg.ConfidenceThreshold != nil {
 		if *cfg.ConfidenceThreshold < 0 || *cfg.ConfidenceThreshold > 1 {

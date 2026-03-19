@@ -135,8 +135,17 @@ context_lines_after: 15
 		if cfg == nil || cfg.ConfidenceThreshold == nil || *cfg.ConfidenceThreshold != 0.9 {
 			t.Errorf("confidence_threshold not parsed correctly")
 		}
-		// Unknown fields should not produce warnings (YAML unmarshal is lenient).
-		_ = warnings
+		// Unknown fields should now produce warnings with strict decoding.
+		hasUnknownWarning := false
+		for _, w := range warnings {
+			if strings.Contains(w, "unknown field") && strings.Contains(w, "unknown_field") {
+				hasUnknownWarning = true
+				break
+			}
+		}
+		if !hasUnknownWarning {
+			t.Errorf("expected warning for unknown_field, got warnings: %v", warnings)
+		}
 	})
 }
 
@@ -261,8 +270,17 @@ func TestDirectoryScopedReviewPriority(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 
-		if result.Trusted.ReviewMarkdown != "# Auth-specific review\n" {
-			t.Errorf("ReviewMarkdown = %q, want auth-specific review", result.Trusted.ReviewMarkdown)
+		// Root REVIEW.md is still in ReviewMarkdown.
+		if result.Trusted.ReviewMarkdown != "# Root review guidance\n" {
+			t.Errorf("ReviewMarkdown = %q, want root review guidance", result.Trusted.ReviewMarkdown)
+		}
+		// Directory REVIEW.md stored per-path.
+		if got := result.Trusted.DirectoryReviews["src/auth"]; got != "# Auth-specific review\n" {
+			t.Errorf("DirectoryReviews[src/auth] = %q, want auth-specific review", got)
+		}
+		// Per-path lookup returns the nearest directory review.
+		if got := result.Trusted.ReviewForPath("src/auth/login.go"); got != "# Auth-specific review\n" {
+			t.Errorf("ReviewForPath(src/auth/login.go) = %q, want auth-specific review", got)
 		}
 		if !strings.Contains(result.SystemPrompt, "Auth-specific review") {
 			t.Errorf("system prompt should contain auth-specific review")
@@ -287,8 +305,12 @@ func TestDirectoryScopedReviewPriority(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 
-		if result.Trusted.ReviewMarkdown != "# OAuth review\n" {
-			t.Errorf("ReviewMarkdown = %q, want deepest OAuth review", result.Trusted.ReviewMarkdown)
+		// Per-path lookup for the changed file should return the deepest match.
+		if got := result.Trusted.ReviewForPath("src/auth/oauth/handler.go"); got != "# OAuth review\n" {
+			t.Errorf("ReviewForPath(src/auth/oauth/handler.go) = %q, want deepest OAuth review", got)
+		}
+		if got := result.Trusted.DirectoryReviews["src/auth/oauth"]; got != "# OAuth review\n" {
+			t.Errorf("DirectoryReviews[src/auth/oauth] = %q, want OAuth review", got)
 		}
 	})
 
@@ -309,6 +331,10 @@ func TestDirectoryScopedReviewPriority(t *testing.T) {
 
 		if result.Trusted.ReviewMarkdown != "# Root review\n" {
 			t.Errorf("ReviewMarkdown = %q, want root review", result.Trusted.ReviewMarkdown)
+		}
+		// Per-path lookup should fall back to root.
+		if got := result.Trusted.ReviewForPath("src/main.go"); got != "# Root review\n" {
+			t.Errorf("ReviewForPath(src/main.go) = %q, want root review", got)
 		}
 	})
 
@@ -331,9 +357,12 @@ func TestDirectoryScopedReviewPriority(t *testing.T) {
 		if result.Trusted.ReviewMarkdown != "# Root review\n" {
 			t.Errorf("ReviewMarkdown = %q, want root review when no changed paths", result.Trusted.ReviewMarkdown)
 		}
+		if len(result.Trusted.DirectoryReviews) != 0 {
+			t.Errorf("DirectoryReviews = %v, want empty when no changed paths", result.Trusted.DirectoryReviews)
+		}
 	})
 
-	t.Run("multiple_changed_dirs_picks_deepest_review", func(t *testing.T) {
+	t.Run("multiple_changed_dirs_each_gets_own_review", func(t *testing.T) {
 		reader := stubFileReader{content: map[string]string{
 			"REVIEW.md@head-sha":          "# Root\n",
 			"pkg/REVIEW.md@head-sha":      "# Pkg review\n",
@@ -350,9 +379,19 @@ func TestDirectoryScopedReviewPriority(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 
-		// src/auth is deeper than pkg, so auth review should win.
-		if result.Trusted.ReviewMarkdown != "# Auth review\n" {
-			t.Errorf("ReviewMarkdown = %q, want auth review (deeper)", result.Trusted.ReviewMarkdown)
+		// Each changed file should get its own nearest directory review.
+		if got := result.Trusted.ReviewForPath("pkg/util.go"); got != "# Pkg review\n" {
+			t.Errorf("ReviewForPath(pkg/util.go) = %q, want pkg review", got)
+		}
+		if got := result.Trusted.ReviewForPath("src/auth/login.go"); got != "# Auth review\n" {
+			t.Errorf("ReviewForPath(src/auth/login.go) = %q, want auth review", got)
+		}
+		// Both directories should be in the map.
+		if _, ok := result.Trusted.DirectoryReviews["pkg"]; !ok {
+			t.Errorf("DirectoryReviews should contain pkg")
+		}
+		if _, ok := result.Trusted.DirectoryReviews["src/auth"]; !ok {
+			t.Errorf("DirectoryReviews should contain src/auth")
 		}
 	})
 }
@@ -788,6 +827,382 @@ func TestDirectoryReviewCandidates(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// TestDirectoryScopedReviewPerFile — proves each changed file in a different
+// directory gets its own nearest directory REVIEW.md rather than a single
+// run-wide winner.
+// ---------------------------------------------------------------------------
+func TestDirectoryScopedReviewPerFile(t *testing.T) {
+	reader := stubFileReader{content: map[string]string{
+		"REVIEW.md@head-sha":          "# Root review\n",
+		"src/auth/REVIEW.md@head-sha": "# Auth review\n",
+		"src/api/REVIEW.md@head-sha":  "# API review\n",
+		"pkg/REVIEW.md@head-sha":      "# Pkg review\n",
+	}}
+	loader := NewLoader(reader, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{
+		ProjectID: 123,
+		HeadSHA:   "head-sha",
+		ChangedPaths: []string{
+			"src/auth/login.go",
+			"src/api/handler.go",
+			"pkg/util.go",
+			"main.go", // root-level file, no directory review
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Root REVIEW.md stays in ReviewMarkdown.
+	if result.Trusted.ReviewMarkdown != "# Root review\n" {
+		t.Errorf("ReviewMarkdown = %q, want root review", result.Trusted.ReviewMarkdown)
+	}
+
+	// Each file should resolve to its own nearest directory review.
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"src/auth/login.go", "# Auth review\n"},
+		{"src/api/handler.go", "# API review\n"},
+		{"pkg/util.go", "# Pkg review\n"},
+		{"main.go", "# Root review\n"}, // falls back to root
+	}
+	for _, tc := range cases {
+		got := result.Trusted.ReviewForPath(tc.path)
+		if got != tc.want {
+			t.Errorf("ReviewForPath(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+
+	// DirectoryReviews should contain all three directories (not root).
+	if len(result.Trusted.DirectoryReviews) != 3 {
+		t.Errorf("len(DirectoryReviews) = %d, want 3", len(result.Trusted.DirectoryReviews))
+	}
+	for _, dir := range []string{"src/auth", "src/api", "pkg"} {
+		if _, ok := result.Trusted.DirectoryReviews[dir]; !ok {
+			t.Errorf("DirectoryReviews missing directory %q", dir)
+		}
+	}
+
+	// System prompt should contain all directory reviews.
+	for _, content := range []string{"Auth review", "API review", "Pkg review"} {
+		if !strings.Contains(result.SystemPrompt, content) {
+			t.Errorf("system prompt missing %q", content)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestNearestDirectoryReviewWinsPerPath — proves that when a file is in a
+// deeply nested directory, the nearest (deepest) ancestor REVIEW.md applies
+// to that specific file, while files in other directories get their own.
+// ---------------------------------------------------------------------------
+func TestNearestDirectoryReviewWinsPerPath(t *testing.T) {
+	reader := stubFileReader{content: map[string]string{
+		"REVIEW.md@head-sha":                "# Root review\n",
+		"src/REVIEW.md@head-sha":            "# Src review\n",
+		"src/auth/REVIEW.md@head-sha":       "# Auth review\n",
+		"src/auth/oauth/REVIEW.md@head-sha": "# OAuth review\n",
+	}}
+	loader := NewLoader(reader, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{
+		ProjectID: 123,
+		HeadSHA:   "head-sha",
+		ChangedPaths: []string{
+			"src/auth/oauth/provider.go", // nearest: src/auth/oauth
+			"src/auth/session.go",        // nearest: src/auth
+			"src/utils/helper.go",        // nearest: src
+			"README.md",                  // no directory review, falls back to root
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Each path resolves to its own nearest directory review.
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"src/auth/oauth/provider.go", "# OAuth review\n"},
+		{"src/auth/session.go", "# Auth review\n"},
+		{"src/utils/helper.go", "# Src review\n"},
+		{"README.md", "# Root review\n"},
+	}
+	for _, tc := range cases {
+		got := result.Trusted.ReviewForPath(tc.path)
+		if got != tc.want {
+			t.Errorf("ReviewForPath(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+
+	// DirectoryReviews should have entries for directories that matched.
+	if _, ok := result.Trusted.DirectoryReviews["src/auth/oauth"]; !ok {
+		t.Error("DirectoryReviews should contain src/auth/oauth")
+	}
+	if _, ok := result.Trusted.DirectoryReviews["src/auth"]; !ok {
+		t.Error("DirectoryReviews should contain src/auth")
+	}
+	if _, ok := result.Trusted.DirectoryReviews["src"]; !ok {
+		t.Error("DirectoryReviews should contain src")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestAIReviewConfigUnknownFieldWarning — proves that unknown top-level fields
+// in .gitlab/ai-review.yaml are surfaced as warnings rather than silently
+// discarded.
+// ---------------------------------------------------------------------------
+func TestAIReviewConfigUnknownFieldWarning(t *testing.T) {
+	t.Run("single_unknown_field", func(t *testing.T) {
+		cfg, warnings, err := ParseAIReviewConfig("confidence_threshold: 0.8\nextra_setting: true\n")
+		if err != nil {
+			t.Fatalf("ParseAIReviewConfig: %v", err)
+		}
+		if cfg == nil || cfg.ConfidenceThreshold == nil || *cfg.ConfidenceThreshold != 0.8 {
+			t.Error("known field confidence_threshold should be parsed correctly")
+		}
+		hasWarning := false
+		for _, w := range warnings {
+			if strings.Contains(w, "unknown field") && strings.Contains(w, "extra_setting") {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			t.Errorf("expected warning for unknown field 'extra_setting', got: %v", warnings)
+		}
+	})
+
+	t.Run("multiple_unknown_fields", func(t *testing.T) {
+		cfg, warnings, err := ParseAIReviewConfig("confidence_threshold: 0.9\nfoo: bar\nbaz: 42\n")
+		if err != nil {
+			t.Fatalf("ParseAIReviewConfig: %v", err)
+		}
+		if cfg == nil {
+			t.Fatal("cfg should not be nil")
+		}
+		unknownWarnings := 0
+		for _, w := range warnings {
+			if strings.Contains(w, "unknown field") {
+				unknownWarnings++
+			}
+		}
+		if unknownWarnings != 2 {
+			t.Errorf("expected 2 unknown-field warnings, got %d: %v", unknownWarnings, warnings)
+		}
+	})
+
+	t.Run("no_unknown_fields_no_warning", func(t *testing.T) {
+		_, warnings, err := ParseAIReviewConfig("confidence_threshold: 0.8\nseverity_threshold: high\n")
+		if err != nil {
+			t.Fatalf("ParseAIReviewConfig: %v", err)
+		}
+		for _, w := range warnings {
+			if strings.Contains(w, "unknown field") {
+				t.Errorf("unexpected unknown-field warning: %s", w)
+			}
+		}
+	})
+
+	t.Run("unknown_fields_exposed_via_accessor", func(t *testing.T) {
+		cfg, _, err := ParseAIReviewConfig("confidence_threshold: 0.8\nalpha: 1\nbeta: 2\n")
+		if err != nil {
+			t.Fatalf("ParseAIReviewConfig: %v", err)
+		}
+		unknown := cfg.UnknownFields()
+		if !reflect.DeepEqual(unknown, []string{"alpha", "beta"}) {
+			t.Errorf("UnknownFields() = %v, want [alpha beta]", unknown)
+		}
+	})
+
+	t.Run("warnings_surfaced_through_loader", func(t *testing.T) {
+		reader := stubFileReader{content: map[string]string{
+			".gitlab/ai-review.yaml@head-sha": "confidence_threshold: 0.85\nunknown_option: test\n",
+		}}
+		loader := NewLoader(reader, defaultPlatformDefaults())
+
+		result, err := loader.Load(context.Background(), LoadInput{
+			ProjectID: 123,
+			HeadSHA:   "head-sha",
+		})
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		hasWarning := false
+		for _, w := range result.Warnings {
+			if strings.Contains(w, "unknown field") && strings.Contains(w, "unknown_option") {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			t.Errorf("LoadResult.Warnings should contain unknown-field warning, got: %v", result.Warnings)
+		}
+		// Known field should still be applied.
+		if result.EffectivePolicy.ConfidenceThreshold != 0.85 {
+			t.Errorf("ConfidenceThreshold = %v, want 0.85", result.EffectivePolicy.ConfidenceThreshold)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAIReviewConfigValidationWarning — proves that validation problems
+// (out-of-range values, unknown enum values) are surfaced as warnings through
+// the loader return values rather than silently discarded.
+// ---------------------------------------------------------------------------
+func TestAIReviewConfigValidationWarning(t *testing.T) {
+	t.Run("out_of_range_confidence_surfaced", func(t *testing.T) {
+		cfg, warnings, _ := ParseAIReviewConfig("confidence_threshold: 2.5\n")
+		if cfg != nil && cfg.ConfidenceThreshold != nil {
+			t.Error("out-of-range confidence_threshold should be nil'd out")
+		}
+		hasWarning := false
+		for _, w := range warnings {
+			if strings.Contains(w, "confidence_threshold") && strings.Contains(w, "out of range") {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			t.Errorf("expected validation warning for confidence_threshold, got: %v", warnings)
+		}
+	})
+
+	t.Run("unknown_severity_surfaced", func(t *testing.T) {
+		cfg, warnings, _ := ParseAIReviewConfig("severity_threshold: critical\n")
+		if cfg != nil && cfg.SeverityThreshold != nil {
+			t.Error("unknown severity_threshold should be nil'd out")
+		}
+		hasWarning := false
+		for _, w := range warnings {
+			if strings.Contains(w, "severity_threshold") && strings.Contains(w, "unknown") {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			t.Errorf("expected validation warning for severity_threshold, got: %v", warnings)
+		}
+	})
+
+	t.Run("invalid_gate_mode_surfaced", func(t *testing.T) {
+		cfg, warnings, _ := ParseAIReviewConfig("gate_mode: nonexistent\n")
+		if cfg != nil && cfg.GateMode != nil {
+			t.Error("unknown gate_mode should be nil'd out")
+		}
+		hasWarning := false
+		for _, w := range warnings {
+			if strings.Contains(w, "gate_mode") && strings.Contains(w, "unknown") {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			t.Errorf("expected validation warning for gate_mode, got: %v", warnings)
+		}
+	})
+
+	t.Run("negative_max_files_surfaced", func(t *testing.T) {
+		cfg, warnings, _ := ParseAIReviewConfig("max_files: -10\n")
+		if cfg != nil && cfg.MaxFiles != nil {
+			t.Error("negative max_files should be nil'd out")
+		}
+		hasWarning := false
+		for _, w := range warnings {
+			if strings.Contains(w, "max_files") && strings.Contains(w, "positive") {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			t.Errorf("expected validation warning for max_files, got: %v", warnings)
+		}
+	})
+
+	t.Run("validation_warnings_through_loader", func(t *testing.T) {
+		reader := stubFileReader{content: map[string]string{
+			".gitlab/ai-review.yaml@head-sha": "confidence_threshold: 5.0\ngate_mode: invalid\nunknown_key: val\n",
+		}}
+		loader := NewLoader(reader, defaultPlatformDefaults())
+
+		result, err := loader.Load(context.Background(), LoadInput{
+			ProjectID: 123,
+			HeadSHA:   "head-sha",
+		})
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		// Should have at least three warnings: unknown field, confidence, gate_mode.
+		if len(result.Warnings) < 3 {
+			t.Errorf("expected at least 3 warnings, got %d: %v", len(result.Warnings), result.Warnings)
+		}
+
+		hasConfidence := false
+		hasGate := false
+		hasUnknown := false
+		for _, w := range result.Warnings {
+			if strings.Contains(w, "confidence_threshold") {
+				hasConfidence = true
+			}
+			if strings.Contains(w, "gate_mode") {
+				hasGate = true
+			}
+			if strings.Contains(w, "unknown field") {
+				hasUnknown = true
+			}
+		}
+		if !hasConfidence {
+			t.Error("missing confidence_threshold validation warning in LoadResult.Warnings")
+		}
+		if !hasGate {
+			t.Error("missing gate_mode validation warning in LoadResult.Warnings")
+		}
+		if !hasUnknown {
+			t.Error("missing unknown-field warning in LoadResult.Warnings")
+		}
+
+		// Effective policy should use defaults (invalid values were rejected).
+		defaults := defaultPlatformDefaults()
+		if result.EffectivePolicy.ConfidenceThreshold != defaults.ConfidenceThreshold {
+			t.Errorf("ConfidenceThreshold = %v, want default %v (invalid was rejected)",
+				result.EffectivePolicy.ConfidenceThreshold, defaults.ConfidenceThreshold)
+		}
+	})
+
+	t.Run("malformed_yaml_warning_through_loader", func(t *testing.T) {
+		reader := stubFileReader{content: map[string]string{
+			".gitlab/ai-review.yaml@head-sha": "{{broken yaml[[[",
+		}}
+		loader := NewLoader(reader, defaultPlatformDefaults())
+
+		result, err := loader.Load(context.Background(), LoadInput{
+			ProjectID: 123,
+			HeadSHA:   "head-sha",
+		})
+		if err != nil {
+			t.Fatalf("Load should not fail on malformed YAML: %v", err)
+		}
+
+		hasSyntaxWarning := false
+		for _, w := range result.Warnings {
+			if strings.Contains(w, "invalid YAML syntax") {
+				hasSyntaxWarning = true
+				break
+			}
+		}
+		if !hasSyntaxWarning {
+			t.Errorf("expected YAML syntax warning in LoadResult.Warnings, got: %v", result.Warnings)
+		}
+	})
 }
 
 // Compile-time assertions.

@@ -85,6 +85,7 @@ type LoadResult struct {
 	EffectivePolicy   EffectivePolicy              `json:"effective_policy"`
 	SystemPrompt      string                       `json:"system_prompt"`
 	SuspiciousSources []SuspiciousSource           `json:"suspicious_sources,omitempty"`
+	Warnings          []string                     `json:"warnings,omitempty"`
 }
 
 type Loader struct {
@@ -110,6 +111,8 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 
 	canFetchFiles := l.files != nil && strings.TrimSpace(input.HeadSHA) != ""
 
+	var warnings []string
+
 	// 2. Load and apply .gitlab/ai-review.yaml (above project policy, below REVIEW.md).
 	if canFetchFiles {
 		aiBody, err := l.files.GetRepositoryFile(ctx, input.ProjectID, aiReviewYAMLPath, input.HeadSHA)
@@ -117,7 +120,8 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 			return LoadResult{}, fmt.Errorf("rules: load %s: %w", aiReviewYAMLPath, err)
 		}
 		if err == nil {
-			cfg, _, _ := ParseAIReviewConfig(aiBody)
+			cfg, yamlWarnings, _ := ParseAIReviewConfig(aiBody)
+			warnings = append(warnings, yamlWarnings...)
 			applyAIReviewConfig(&effective, cfg)
 		}
 	}
@@ -134,12 +138,11 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 		}
 	}
 
-	// 4. Load directory-scoped REVIEW.md for changed files.
+	// 4. Load per-path directory-scoped REVIEW.md for changed files.
 	if canFetchFiles && len(input.ChangedPaths) > 0 {
-		dirReview := loadDirectoryScopedReviews(ctx, l.files, input.ProjectID, input.HeadSHA, input.ChangedPaths)
-		if dirReview != "" {
-			// Directory-scoped REVIEW.md overrides root REVIEW.md.
-			trusted.ReviewMarkdown = dirReview
+		dirReviews := loadDirectoryScopedReviews(ctx, l.files, input.ProjectID, input.HeadSHA, input.ChangedPaths)
+		if len(dirReviews) > 0 {
+			trusted.DirectoryReviews = dirReviews
 		}
 	}
 
@@ -151,6 +154,7 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 		EffectivePolicy:   effective,
 		SystemPrompt:      buildSystemPrompt(trusted, effective),
 		SuspiciousSources: suspicious,
+		Warnings:          warnings,
 	}, nil
 }
 
@@ -301,22 +305,60 @@ func applyGroupPolicyToEffective(effective *EffectivePolicy, group *GroupPolicy)
 }
 
 // loadDirectoryScopedReviews loads the nearest directory-scoped REVIEW.md for
-// each changed path and returns the highest-priority one (the deepest
-// directory match). Multiple different directory REVIEW.md files are combined
-// with the deepest one winning.
-func loadDirectoryScopedReviews(ctx context.Context, files RepositoryFileReader, projectID int64, headSHA string, changedPaths []string) string {
+// each changed path and returns a map from directory path to REVIEW.md content.
+// The map contains one entry per unique directory that has a REVIEW.md
+// applicable to at least one changed file, enabling per-path lookup at context
+// assembly time via TrustedRules.ReviewForPath.
+func loadDirectoryScopedReviews(ctx context.Context, files RepositoryFileReader, projectID int64, headSHA string, changedPaths []string) map[string]string {
 	// Collect all unique parent directories from changed paths, sorted
 	// deepest-first so we can check the nearest ancestor first.
 	candidates := directoryReviewCandidates(changedPaths)
-	// Try each candidate from deepest to shallowest. Return the first hit.
+
+	// Cache fetched REVIEW.md content by directory path.
+	// Value is the content string; empty string means no REVIEW.md found.
+	cache := map[string]string{}
+	fetched := map[string]bool{} // tracks whether we've already tried this dir
+
+	// For each candidate directory (deepest first), try to fetch the REVIEW.md.
 	for _, dir := range candidates {
+		if fetched[dir] {
+			continue
+		}
 		reviewPath := dir + "/REVIEW.md"
 		body, err := files.GetRepositoryFile(ctx, projectID, reviewPath, headSHA)
+		fetched[dir] = true
 		if err == nil && strings.TrimSpace(body) != "" {
-			return body
+			cache[dir] = body
 		}
 	}
-	return ""
+
+	if len(cache) == 0 {
+		return nil
+	}
+
+	// Build the result map: for each changed file path, find the nearest
+	// ancestor directory with a REVIEW.md.
+	result := map[string]string{}
+	for _, changedPath := range changedPaths {
+		p := normalizePath(changedPath)
+		for {
+			idx := strings.LastIndex(p, "/")
+			if idx <= 0 {
+				break
+			}
+			dir := p[:idx]
+			if content, ok := cache[dir]; ok {
+				result[dir] = content
+				break
+			}
+			p = dir
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // directoryReviewCandidates returns all unique parent directories of the given
@@ -487,6 +529,18 @@ func buildSystemPrompt(trusted internalcontext.TrustedRules, effective Effective
 	}
 	if trusted.ReviewMarkdown != "" {
 		sections = append(sections, "Trusted REVIEW.md instructions:\n"+strings.TrimSpace(trusted.ReviewMarkdown))
+	}
+	// Include per-directory REVIEW.md instructions in the system prompt so
+	// the LLM can apply scoped guidance per changed file path.
+	if len(trusted.DirectoryReviews) > 0 {
+		dirs := make([]string, 0, len(trusted.DirectoryReviews))
+		for dir := range trusted.DirectoryReviews {
+			dirs = append(dirs, dir)
+		}
+		sort.Strings(dirs)
+		for _, dir := range dirs {
+			sections = append(sections, fmt.Sprintf("Directory REVIEW.md (%s):\n%s", dir, strings.TrimSpace(trusted.DirectoryReviews[dir])))
+		}
 	}
 	sections = append(sections, fmt.Sprintf("Effective thresholds:\nconfidence_threshold: %.2f\nseverity_threshold: %s", effective.ConfidenceThreshold, effective.SeverityThreshold))
 	return strings.Join(sections, "\n\n")
