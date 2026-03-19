@@ -1,34 +1,33 @@
 {
   "featureId": "beta-large-mr-benchmark-evidence",
-  "reviewedAt": "2026-03-18T22:42:05.298811Z",
-  "commitId": "bf7ba981b33b0e68aa5ca570ad05e54ca556c3d2",
+  "reviewedAt": "2026-03-19T15:26:03Z",
+  "commitId": "ea73dd92f5e3d89b04afd1a45b3a69b540727da8",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The rerun still does not include the required VAL-PERF-001 deliverables. Repository history after the prior failure contains no benchmark-specific commit, there is still no benchmark corpus/harness package or checked-in runtime report, and the only related implementation remains the original large-MR degradation commit, which itself still clears the run fields the writer would need for degradation-mode summary rendering.",
+    "summary": "The follow-up commit only fixes a lint issue and leaves the benchmark evidence harness otherwise intact, but the checked-in benchmark implementation hard-codes the Go runtime version string instead of capturing the actual runtime used to generate evidence.",
     "issues": [
       {
-        "file": "internal/bench",
-        "line": 1,
+        "file": "internal/bench/bench_test.go",
+        "line": 542,
         "severity": "blocking",
-        "description": "The repository still has no benchmark corpus, runnable harness, or checked-in runtime evidence for VAL-PERF-001. Searches across the tree and current history found no `internal/bench` package, no benchmark fixtures, and no report artifact proving the required P90 completion measurement path, so the feature's stated benchmark deliverable remains absent."
-      },
-      {
-        "file": "internal/llm/provider.go",
-        "line": 294,
-        "severity": "blocking",
-        "description": "The only post-failure code relevant to large-MR handling is still commit `bf7ba981b33b0e68aa5ca570ad05e54ca556c3d2` from `beta-large-mr-degradation`. In degradation mode it calls `UpdateReviewRunStatus` with empty `ErrorCode` and `ErrorDetail`, while `internal/writer/writer.go:594` renders the explicit degraded partial-coverage summary only when `run.ErrorCode == \"degradation_mode\"` and `run.ErrorDetail` contains the body. Because no separate benchmark-evidence fix shipped, the prior failure remains unresolved and there is still no end-to-end evidence/reporting path for the required benchmark target."
+        "description": "`runtimeVersion()` returns a hard-coded `\"go1.25.6\"` string rather than reading the real runtime version. The checked-in `testdata/bench/runtime_evidence.json` therefore reports whatever constant is in source, not the environment that actually produced the benchmark evidence, which makes the required environment snapshot in VAL-PERF-001 unreliable and easy to falsify."
       }
     ]
   },
   "sharedStateObservations": [
     {
       "area": "skills",
-      "observation": "The `go-reliability` skill explicitly calls out benchmark harness work and package-specific benchmark verification for large-MR features, but this mission still has no worker session, transcript entry, or handoff for `beta-large-mr-benchmark-evidence`, so there is no evidence that the required benchmark procedure was executed at all.",
-      "evidence": "`/Users/chris/workspace/mreviewer/.factory/skills/go-reliability/SKILL.md` says the skill applies to 'large-MR degradation and benchmark harnesses' and requires benchmark/concurrency verification, while `/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/features.json` still marks `beta-large-mr-benchmark-evidence` pending with `completedWorkerSessionId: null`, `/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/worker-transcripts.jsonl` has no transcript for the feature, and `/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/handoffs/` contains no handoff file for it."
+      "observation": "The `go-reliability` skill requires failing tests first, but this feature was a scoped benchmark/lint follow-up where the worker reasonably reran existing validators instead of adding tests. The skill should explicitly allow validator-only fixes when the assignment is a non-behavioral lint cleanup or evidence refresh.",
+      "evidence": "Handoff skillFeedback for worker session b3488ca2-ef1f-470c-ad49-c540bfc619f8 marks `followedProcedure=false` solely because no new tests were added for the one-line gosimple cleanup; the worker transcript shows the change was limited to internal/bench/bench_test.go and then validators were rerun."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The benchmark harness embeds a fixed Go version string to populate runtime evidence, but neither AGENTS.md nor `.factory/library/*` documents how runtime/environment metadata for checked-in benchmark evidence must be captured. Shared guidance should state that benchmark evidence must record the actual tool/runtime versions from the executing environment rather than hard-coded literals.",
+      "evidence": "internal/bench/bench_test.go:542 hard-codes `\"go1.25.6\"`; testdata/bench/runtime_evidence.json records `environment.go_version: \"1.25.6\"`; no matching guidance appears in mission AGENTS.md, .factory/library/architecture.md, or .factory/library/environment.md."
     }
   ],
-  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-large-mr-benchmark-evidence.json",
-  "summary": "Review failed. The repository still lacks the missing VAL-PERF-001 benchmark corpus, harness, and checked-in runtime evidence, and there is still no worker session or commit implementing this fix beyond the original large-MR degradation change. The prior failure therefore remains unresolved."
+  "addressesFailureFrom": null,
+  "summary": "Fail: the reviewed follow-up commit resolves the lint blocker, but the underlying benchmark evidence still hard-codes the Go runtime version, so the checked-in environment snapshot for VAL-PERF-001 is not trustworthy. Blocking issues: 1. Non-blocking issues: 0. Shared-state observations: 2."
 }

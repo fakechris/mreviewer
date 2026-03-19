@@ -1,39 +1,28 @@
 {
   "featureId": "beta-provider-route-runtime-wiring-fix",
-  "reviewedAt": "2026-03-18T22:42:02.730354+00:00",
-  "commitId": "9b988210f9a2b6f3f2dc2cad319f2f98fbbc04a6",
+  "reviewedAt": "2026-03-19T15:26:27Z",
+  "commitId": "f5864ee",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The fix still does not thread effective project/group ProviderRoute policy into the real worker runtime. Runtime provider construction remains hard-coded to `default`/`secondary`, and the added coverage still does not prove that changing policy changes actual provider selection end-to-end.",
+    "summary": "Runtime provider selection is now driven through a registry and fallback path, but the new end-to-end audit regression does not actually validate the renamed lifecycle event introduced by this fix.",
     "issues": [
       {
-        "file": "cmd/worker/main.go",
-        "line": 48,
-        "severity": "blocking",
-        "description": "The worker still seeds platform defaults with `ProviderRoute: \"default\"`, creates the primary provider with `RouteName: \"default\"`, the secondary provider with `RouteName: \"secondary\"`, and wraps them with `llm.NewFallbackProvider(..., \"default\", ..., \"secondary\")`. No runtime path reads `rules.Load(...).EffectivePolicy.ProviderRoute` and selects providers from that effective policy, so configured project/group provider-route policy still cannot change real runtime provider choice end-to-end."
-      },
-      {
         "file": "internal/llm/provider_test.go",
-        "line": 150,
-        "severity": "blocking",
-        "description": "`TestProviderRouteSelection` still only asserts that a fake rules loader returns `EffectivePolicy.ProviderRoute = \"project-route\"`; it never exercises `cmd/worker` or `llm.Processor` wiring to prove that different effective policies produce different real provider selections. The surrounding fallback/rate-limit tests instantiate providers with explicit route names, so they also do not verify policy-to-runtime threading."
+        "line": 1955,
+        "severity": "non_blocking",
+        "description": "The feature changed the lifecycle audit action from `provider_called` to `provider_response_received`, but TestProviderRouteEndToEnd still only asserts the separate `provider_called` audit emitted by LogProviderCall. That leaves the specific regression this fix claims to cover\u2014the renamed lifecycle audit carrying `provider_model`\u2014untested, so a future change could silently break the new action without failing this suite."
       }
     ]
   },
   "sharedStateObservations": [
     {
-      "area": "skills",
-      "observation": "The `go-reliability` skill focuses on failure-mode tests, but this feature required end-to-end runtime wiring verification across rules loading and worker/provider construction. The shipped tests stayed at metadata/unit level and missed the runtime contract, so the shared procedure does not appear to push mixed reliability/integration features to prove policy-to-runtime behavior explicitly.",
-      "evidence": "`.factory/skills/go-reliability/SKILL.md` emphasizes failure-mode tests, while `internal/llm/provider_test.go:150` only checks `EffectivePolicy.ProviderRoute` metadata and `cmd/worker/main.go:48-89` still hard-codes route names in runtime provider construction."
-    },
-    {
       "area": "knowledge",
-      "observation": "The project architecture note already records that directory-scoped `REVIEW.md` is still modeled as a single global winner, but there is no similar shared-state note that provider-route policy is not yet wired into runtime provider construction. That missing note makes it easier for follow-up workers to assume provider routing already works because `EffectivePolicy.ProviderRoute` exists in rule loading.",
-      "evidence": "`.factory/library/architecture.md` documents the REVIEW.md global-winner limitation, but no comparable library note calls out that `cmd/worker/main.go` still hard-codes provider routes instead of consuming `rules.LoadResult.EffectivePolicy.ProviderRoute`."
+      "observation": "The shared architecture note still says trusted review instructions are modeled as a single global `TrustedRules.ReviewMarkdown` string, which is stale after the beta config correctness fix introduced per-path directory review handling.",
+      "evidence": "/Users/chris/workspace/mreviewer/.factory/library/architecture.md:28 \u2014 'Trusted review instructions are still modeled as a single `TrustedRules.ReviewMarkdown` string today' conflicts with the completed beta config fix and current rules behavior."
     }
   ],
-  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-provider-routing-rate-limits.json",
-  "summary": "Review failed: I checked the prior failed review, original handoff, current fix-state code, diff history, transcript evidence, and shared-state docs. The original failure remains unresolved because runtime provider routing is still hard-coded in worker wiring and the tests still do not prove policy-driven runtime provider selection end-to-end."
+  "addressesFailureFrom": null,
+  "summary": "Fail: runtime routing code looks sound, but the added audit regression coverage misses the actual renamed lifecycle event, leaving part of the claimed fix unverified. One non-blocking shared-state knowledge gap was also noted in .factory/library/architecture.md."
 }

@@ -36,7 +36,7 @@ Architectural decisions and implementation patterns for this mission.
 - Use transaction boundaries for multi-row state changes.
 - When `head_sha` is unavailable at webhook-ingest time, keep deferred trigger recovery context by linking `review_runs.hook_event_id` back to the stored `hook_events.payload`; later recovery should resolve the real SHA from that persisted payload instead of collapsing distinct deferred triggers onto one synthetic key.
 - Favor DB-backed correctness over Redis-backed coordination.
-- Trusted review instructions are still modeled as a single `TrustedRules.ReviewMarkdown` string today, but beta requirements need directory-scoped `REVIEW.md` to apply per changed file/path rather than as one global winner for the whole run.
+- Trusted review instructions now support per-path directory-scoped `REVIEW.md` selection; consumers should resolve the applicable trusted review text for each changed file/path instead of assuming one global `TrustedRules.ReviewMarkdown` winner for the whole run.
 - Finding lifecycle currently infers rerun review scope from persisted surviving findings because `review_runs` does not yet persist the actual reviewed-file scope. That is not sufficient to distinguish "reviewed and clean" from "not reviewed" for missing-finding transitions, so scope-aware lifecycle fixes need either persisted review scope on the run or direct access to assembler/request scope during persistence.
 - Retry-scheduled runs remain active work: `review_runs.status='failed'` with a due `next_retry_at` is still claimable by the scheduler, so lifecycle/cancellation logic must treat those rows like pending work until retries are exhausted or the run is cancelled.
 - All writeback actions must be idempotent and auditable.

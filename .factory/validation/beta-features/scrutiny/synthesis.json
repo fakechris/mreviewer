@@ -1,6 +1,6 @@
 {
   "milestone": "beta-features",
-  "round": 4,
+  "round": 5,
   "status": "fail",
   "validatorsRun": {
     "test": {
@@ -20,64 +20,54 @@
     }
   },
   "reviewsSummary": {
-    "total": 0,
-    "passed": 0,
-    "failed": 0,
+    "total": 5,
+    "passed": 1,
+    "failed": 4,
     "failedFeatures": [
       "beta-repo-config-layer-correctness-fix",
+      "beta-provider-route-runtime-wiring-fix",
       "beta-command-webhooks-idempotency-atomicity-fix",
-      "beta-degradation-summary-persistence-fix",
-      "beta-large-mr-benchmark-evidence",
-      "beta-provider-route-runtime-wiring-fix"
-    ],
-    "note": "No new fix features completed since round 3. All 5 fix features remain pending with no worker sessions. Prior round 3 blocking issues persist unchanged. No new reviews spawned."
+      "beta-large-mr-benchmark-evidence"
+    ]
   },
   "blockingIssues": [
     {
       "featureId": "beta-repo-config-layer-correctness-fix",
       "severity": "blocking",
-      "description": "Directory-scoped REVIEW.md is still collapsed into one run-wide TrustedRules.ReviewMarkdown winner rather than applying the nearest directory review per changed file/path. Fix feature remains pending (no worker session)."
-    },
-    {
-      "featureId": "beta-repo-config-layer-correctness-fix",
-      "severity": "blocking",
-      "description": ".gitlab/ai-review.yaml loader still suppresses unknown-field and validation warnings because parser warnings are dropped and unknown keys are silently accepted. Fix feature remains pending (no worker session)."
+      "description": "ReviewRequest still exposes a single top-level `Rules TrustedRules` object and each `Change` lacks any per-file trusted-instruction field. Although `TrustedRules.ReviewForPath()` was added, `Assembler.Assemble()` never calls it when constructing each change, so downstream provider requests cannot know which directory-scoped REVIEW.md applies to which changed file. The implementation therefore does not satisfy the requirement to apply directory-scoped REVIEW.md per changed file/path instead of collapsing to a single run-wide winner."
     },
     {
       "featureId": "beta-command-webhooks-idempotency-atomicity-fix",
       "severity": "blocking",
-      "description": "/ai-review rerun and /ai-review focus generate idempotency keys with time.Now().UnixNano(), so command retries/replays can create duplicate runs instead of at-most-once command effects keyed to the note delivery. Fix feature remains pending (no worker session)."
-    },
-    {
-      "featureId": "beta-command-webhooks-idempotency-atomicity-fix",
-      "severity": "blocking",
-      "description": "Note hook persistence and command execution are not atomic; if command execution fails after the hook event insert, a retried delivery is deduplicated and the command side effect is permanently lost. Fix feature remains pending (no worker session)."
-    },
-    {
-      "featureId": "beta-degradation-summary-persistence-fix",
-      "severity": "blocking",
-      "description": "Degradation path never persists the skipped-file/reason summary on the writer-visible run field, so degraded runs fall back to a generic summary instead of the required explicit partial-coverage note (VAL-BETA-018). Fix feature remains pending (no worker session)."
+      "description": "`handleNoteEvent` still falls back to inserting the `hook_events` row before calling `commandProcessor.Execute` when the processor does not implement `TransactionalCommandProcessor`. If a non-transactional processor is configured and command execution fails after the insert, the delivery is permanently deduplicated while the command side effect is lost, which violates the feature requirement that persistence plus side effects remain atomic/retry-safe across failures."
     },
     {
       "featureId": "beta-large-mr-benchmark-evidence",
       "severity": "blocking",
-      "description": "VAL-PERF-001 benchmark corpus, runnable harness, and checked-in runtime evidence are still missing from the repository. Fix feature remains pending (no worker session)."
-    },
-    {
-      "featureId": "beta-provider-route-runtime-wiring-fix",
-      "severity": "blocking",
-      "description": "Runtime provider construction in cmd/worker/main.go is still hard-coded to default/secondary route names and never consumes effective project/group ProviderRoute policy end-to-end. Fix feature remains pending (no worker session)."
+      "description": "`runtimeVersion()` returns a hard-coded `\"go1.25.6\"` string rather than reading the real runtime version. The checked-in `testdata/bench/runtime_evidence.json` therefore reports whatever constant is in source, not the environment that actually produced the benchmark evidence, which makes the required environment snapshot in VAL-PERF-001 unreliable and easy to falsify."
     }
   ],
-  "appliedUpdates": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated architecture note to reflect per-path directory-scoped REVIEW.md handling rather than a single global TrustedRules.ReviewMarkdown value.",
+      "sourceFeature": "beta-provider-route-runtime-wiring-fix"
+    }
+  ],
   "suggestedGuidanceUpdates": [
     {
+      "target": "skill",
+      "suggestion": "Relax go-reliability procedure for validator-only lint/evidence-refresh follow-ups so workers are not forced to invent failing tests when no behavioral change is intended.",
+      "evidence": "Handoff skillFeedback for worker session b3488ca2-ef1f-470c-ad49-c540bfc619f8 marks `followedProcedure=false` solely because no new tests were added for the one-line gosimple cleanup; the worker transcript shows the change was limited to internal/bench/bench_test.go and then validators were rerun.",
+      "isSystemic": false
+    },
+    {
       "target": "AGENTS.md",
-      "suggestion": "Add guidance that fix features created by scrutiny must be scheduled and completed by implementation workers before the next scrutiny re-run. The current round 4 was triggered with all 5 fix features still pending, producing no new review material.",
-      "evidence": "Round 4 scrutiny found all 5 fix features (beta-repo-config-layer-correctness-fix, beta-command-webhooks-idempotency-atomicity-fix, beta-degradation-summary-persistence-fix, beta-large-mr-benchmark-evidence, beta-provider-route-runtime-wiring-fix) still in pending status with null completedWorkerSessionId.",
+      "suggestion": "Document that benchmark evidence and environment snapshots must capture actual runtime/tool versions from the executing environment, not hard-coded literals.",
+      "evidence": "internal/bench/bench_test.go:542 hard-codes `\"go1.25.6\"`; testdata/bench/runtime_evidence.json records `environment.go_version: \"1.25.6\"`; no matching guidance appears in mission AGENTS.md, .factory/library/architecture.md, or .factory/library/environment.md.",
       "isSystemic": true
     }
   ],
   "rejectedObservations": [],
-  "previousRound": ".factory/validation/beta-features/scrutiny/synthesis.round3.json"
+  "previousRound": ".factory/validation/beta-features/scrutiny/synthesis.round4.json"
 }

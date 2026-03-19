@@ -1,39 +1,22 @@
 {
   "featureId": "beta-repo-config-layer-correctness-fix",
-  "reviewedAt": "2026-03-18T22:41:56Z",
-  "commitId": "c33ab81f7a101eebf13ea2528f4a268d4218fdf8",
+  "reviewedAt": "2026-03-19T15:25:37.763384Z",
+  "commitId": "91f81064f25e4fe2d24fba0dcd45290ab12a2665",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The current repository state still does not satisfy the prior blocking scrutiny findings: directory-scoped REVIEW.md instructions are still collapsed into one run-wide string, and ai-review.yaml unknown-field or validation warnings are still not surfaced through loader behavior.",
+    "summary": "The feature fixes loader-side per-path REVIEW selection and YAML warning surfacing, but the assembled review request still serializes only one shared rules object and never applies directory-scoped REVIEW content per changed file/path.",
     "issues": [
       {
-        "file": "internal/rules/loader.go",
-        "line": 127,
+        "file": "internal/context/assembler.go",
+        "line": 61,
         "severity": "blocking",
-        "description": "Loader.Load still assigns one TrustedRules.ReviewMarkdown string for the whole run and loadDirectoryScopedReviews returns a single deepest match across all changed paths. That means files in different directories cannot each receive their own nearest directory REVIEW.md instructions, so the fix does not address the original per-path layering failure."
-      },
-      {
-        "file": "internal/rules/ai_review_config.go",
-        "line": 54,
-        "severity": "blocking",
-        "description": "ParseAIReviewConfig still uses yaml.Unmarshal into a struct, so unknown keys are silently discarded, and Loader.Load ignores the returned warnings via `cfg, _, _ := ParseAIReviewConfig(aiBody)`. Invalid fields and unknown-field validation problems therefore remain suppressed instead of being surfaced through loader behavior as required."
+        "description": "ReviewRequest still exposes a single top-level `Rules TrustedRules` object and each `Change` lacks any per-file trusted-instruction field. Although `TrustedRules.ReviewForPath()` was added, `Assembler.Assemble()` never calls it when constructing each change, so downstream provider requests cannot know which directory-scoped REVIEW.md applies to which changed file. The implementation therefore does not satisfy the requirement to apply directory-scoped REVIEW.md per changed file/path instead of collapsing to a single run-wide winner."
       }
     ]
   },
-  "sharedStateObservations": [
-    {
-      "area": "conventions",
-      "observation": "Trusted REVIEW instructions are still modeled as one run-wide string, which blocks beta's required per-path directory REVIEW application semantics.",
-      "evidence": "internal/context/assembler.go:98-102 defines TrustedRules with a single ReviewMarkdown string, and internal/rules/loader.go:127-143 overwrites that one field with a single directory review winner for the entire load result. .factory/library/architecture.md already documents this gap."
-    },
-    {
-      "area": "skills",
-      "observation": "The go-integration worker handoff claimed unknown-field warnings were implemented, but the code path and tests only exercised ParseAIReviewConfig directly and never surfaced warnings from Loader.Load or runtime behavior.",
-      "evidence": "Handoff 2026-03-18T12-39-22-051Z__beta-repo-config-layers__1dedc456-5738-458b-bfd8-181852e71614.json says '.gitlab/ai-review.yaml' warnings are surfaced, yet internal/rules/loader.go:120 drops warnings and beta_config_test.go only checks ParseAIReviewConfig warning slices in parser unit tests."
-    }
-  ],
-  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-repo-config-layers.json",
-  "summary": "Reviewed the rerun/fix request against the original beta-repo-config-layers commit and the current repository state. The prior blocking issues remain unresolved: directory REVIEW instructions still collapse to one global winner and ai-review.yaml warning/unknown-field diagnostics are still not surfaced through loader behavior, so the fix review fails."
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Fail: one blocking issue remains. Directory-scoped REVIEW.md lookup was added in the loader, but the assembled ReviewRequest still carries only one shared rules object and does not attach per-path instructions to individual changed files, so the feature does not fully implement path-scoped application of REVIEW.md. No non-blocking issues or shared-state gaps were identified from the reviewed evidence."
 }

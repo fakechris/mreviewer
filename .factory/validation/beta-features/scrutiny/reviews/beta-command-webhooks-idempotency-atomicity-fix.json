@@ -1,34 +1,22 @@
 {
   "featureId": "beta-command-webhooks-idempotency-atomicity-fix",
-  "reviewedAt": "2026-03-18T22:41:59Z",
-  "commitId": "29ae864468dfe743886317306885fd4242d72954",
-  "transcriptSkeletonReviewed": false,
+  "reviewedAt": "2026-03-19T15:25:43Z",
+  "commitId": "3e9636f3583b8bd9c882257ae1d6e03c7d138c1c",
+  "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The requested fix is not implemented. There is no worker transcript or handoff for `beta-command-webhooks-idempotency-atomicity-fix`, no new fix commit to review, and the repository still contains the original blocking behaviors from `beta-command-webhooks`: rerun/focus idempotency keys are time-based rather than tied to a stable note delivery identifier, and note-hook persistence remains outside an atomic/deduplicated command-execution flow.",
+    "summary": "The feature correctly stabilizes rerun/focus idempotency keys with the webhook delivery key and adds transactional note-hook persistence for handlers wired to a transactional command processor, but the handler still retains a non-atomic fallback path that can reproduce the exact partial-failure bug the feature was meant to eliminate.",
     "issues": [
       {
-        "file": "internal/commands/commands.go",
-        "line": 470,
-        "severity": "blocking",
-        "description": "`computeCommandIdempotencyKey` still salts rerun/focus command keys with `time.Now().UnixNano()`. The same note delivery retried after a transient failure therefore produces a fresh idempotency key and can create duplicate rerun/focus side effects instead of at-most-once behavior keyed to a stable note delivery identifier."
-      },
-      {
         "file": "internal/hooks/handler.go",
-        "line": 369,
+        "line": 423,
         "severity": "blocking",
-        "description": "`handleNoteEvent` still inserts the `hook_events` row before command execution and does so outside a transaction shared with command side effects. If command execution fails after that insert, a GitLab retry of the same delivery is later deduplicated by the existing hook row and the requested rerun/ignore/resolve/focus effect is permanently lost."
+        "description": "`handleNoteEvent` still falls back to inserting the `hook_events` row before calling `commandProcessor.Execute` when the processor does not implement `TransactionalCommandProcessor`. If a non-transactional processor is configured and command execution fails after the insert, the delivery is permanently deduplicated while the command side effect is lost, which violates the feature requirement that persistence plus side effects remain atomic/retry-safe across failures."
       }
     ]
   },
-  "sharedStateObservations": [
-    {
-      "area": "skills",
-      "observation": "The `go-integration` skill does not tell workers how to proceed when a follow-up fix feature has no concrete worker session, handoff, or commit to review. Reviewers had to infer from mission state that the original failing implementation is still current.",
-      "evidence": "`features.json` shows `beta-command-webhooks-idempotency-atomicity-fix` with `completedWorkerSessionId: null`, the worker transcript JSONL has no entry for that feature, and the only available handoff/commit for this area is the original `beta-command-webhooks` commit `29ae864468dfe743886317306885fd4242d72954`."
-    }
-  ],
-  "addressesFailureFrom": ".factory/validation/beta-features/scrutiny/reviews/beta-command-webhooks.json",
-  "summary": "Reviewed the prior failed `beta-command-webhooks` handoff/diff, checked mission state for the requested fix feature, and inspected the current command/webhook implementation. The fix review fails because no fix session or diff exists and the original blocking idempotency/atomicity defects are still present in `internal/commands/commands.go` and `internal/hooks/handler.go`."
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Fail: stable delivery-key idempotency and regression tests are in place, but `internal/hooks/handler.go` still preserves a legacy non-transactional command path that can commit `hook_events` without the command effect, leaving the atomicity/retry-safe requirement unmet for that configuration. No non-blocking issues or shared-state observations."
 }

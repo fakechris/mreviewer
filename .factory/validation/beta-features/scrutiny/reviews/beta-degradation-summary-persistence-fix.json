@@ -1,34 +1,15 @@
 {
   "featureId": "beta-degradation-summary-persistence-fix",
-  "reviewedAt": "2026-03-18T22:42:21.492827Z",
-  "commitId": "bf7ba981b33b0e68aa5ca570ad05e54ca556c3d2",
+  "reviewedAt": "2026-03-19T23:24:00Z",
+  "commitId": "9a4c752c6bb05b8445f24ba44f329f998dc1ae5a",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The claimed fix feature has no worker session, handoff, or code diff of its own, and the current degradation implementation still leaves the writer-visible persistence bug unfixed. The degradation path inserts a summary-note action, but it clears review_runs.error_code/error_detail, so the writer cannot render the explicit partial-coverage summary it is coded to use.",
-    "issues": [
-      {
-        "file": "internal/llm/provider.go",
-        "line": 293,
-        "severity": "blocking",
-        "description": "The degradation short-circuit still updates the run with empty ErrorCode and ErrorDetail before returning. writer.renderSummaryBody only emits the persisted degradation summary when run.ErrorCode == \"degradation_mode\" and run.ErrorDetail contains the summary text, so the skipped-file explanation is not stored where the writer reads it and degraded summary rendering still falls back to the generic counts-only body. This means the original failure from .factory/validation/beta-features/scrutiny/reviews/beta-large-mr-degradation.json is not actually addressed."
-      },
-      {
-        "file": "internal/llm/provider_test.go",
-        "line": 280,
-        "severity": "blocking",
-        "description": "The added regression only asserts that one summary_note action is queued; it never verifies that the run persisted error_code/error_detail for writer consumption or that the rendered note body includes the skipped files and reasons. Because the test omits the writer-visible persistence contract called for by the fix feature, it would pass even while the original bug remains."
-      }
-    ]
+    "summary": "Implementation satisfies the feature requirements: the degradation path now persists the explicit degradation summary on writer-visible run fields, writer summary rendering already consumes that persisted value for degradation-mode runs, and regression tests cover persistence plus writer rendering with skipped files and reasons.",
+    "issues": []
   },
-  "sharedStateObservations": [
-    {
-      "area": "skills",
-      "observation": "The go-integration skill says to capture the exact external contract and add a higher-level integration test proving the feature from its public entrypoint, but there is no worker session or handoff for this fix feature and the available regression coverage only checks comment-action insertion instead of the writer-visible persistence path that the contract depends on.",
-      "evidence": "features.json shows beta-degradation-summary-persistence-fix.completedWorkerSessionId is null, there is no matching handoff in /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/handoffs, and internal/llm/provider_test.go:280 only checks ListCommentActionsByRun for a summary_note row."
-    }
-  ],
-  "addressesFailureFrom": ".factory/validation/beta-features/scrutiny/reviews/beta-large-mr-degradation.json",
-  "summary": "Review failed. There is no distinct fix implementation to review, and the current degradation path still clears the run fields that writer.renderSummaryBody requires for degraded partial-coverage output, so the skipped-file summary is not persisted end-to-end and the prior failure remains unresolved."
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Pass. No blocking or non-blocking issues found. The reviewed commit persists degradation summaries via review_run error fields consumed by the writer and adds regression coverage for persistence and rendered summary-note behavior. No shared-state gaps were identified from the transcript, skill, or mission artifacts."
 }
