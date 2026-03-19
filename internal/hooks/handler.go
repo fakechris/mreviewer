@@ -39,19 +39,11 @@ type RunProcessor interface {
 	ProcessEventWithQuerier(ctx context.Context, q db.Querier, ev NormalizedEvent, hookEventID int64) error
 }
 
-// CommandProcessor handles /ai-review commands from note webhook events.
+// CommandProcessor handles /ai-review commands from note webhook events and
+// must support execution inside a caller-managed transaction so hook-event
+// persistence and command side effects remain atomic across retries.
 type CommandProcessor interface {
 	Execute(ctx context.Context, noteEvent NormalizedNoteEvent, cmd interface{}) error
-}
-
-// TransactionalCommandProcessor extends CommandProcessor with the ability to
-// execute within a caller-managed transaction. This enables the handler to
-// atomically persist the hook_event and execute the command effect in a single
-// transaction, preventing the scenario where a retried delivery is
-// deduplicated (because the hook_event was committed) but the command effect
-// was lost (because the command execution failed after hook_event commit).
-type TransactionalCommandProcessor interface {
-	CommandProcessor
 	ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent NormalizedNoteEvent, cmd interface{}) error
 }
 
@@ -71,6 +63,10 @@ func NewHandler(logger *slog.Logger, database *sql.DB, secret string, runProcess
 // note commands. This is separated from the constructor to avoid a circular
 // dependency.
 func (h *Handler) SetCommandProcessor(cp CommandProcessor) {
+	if cp == nil {
+		h.commandProcessor = nil
+		return
+	}
 	h.commandProcessor = cp
 }
 
@@ -411,28 +407,12 @@ func (h *Handler) handleNoteEvent(
 
 		cmd := parseNoteCommand(noteEvent.NoteBody)
 
-		// Try transactional path: hook_event + command in one transaction.
-		txProc, isTx := h.commandProcessor.(TransactionalCommandProcessor)
-		if isTx {
-			err = db.RunTx(ctx, h.db, func(ctx context.Context, q *db.Queries) error {
-				if _, insertErr := h.insertHookEvent(ctx, q, deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
-					return insertErr
-				}
-				return txProc.ExecuteWithQuerier(ctx, q, noteEvent, cmd)
-			})
-		} else {
-			// Fallback for non-transactional processors: insert hook_event
-			// then execute command (legacy path).
-			if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
-				if !isDuplicateKeyError(insertErr) {
-					l.WarnContext(ctx, "failed to insert hook_event for note",
-						"delivery_key", deliveryKey,
-						"error", insertErr,
-					)
-				}
+		err = db.RunTx(ctx, h.db, func(ctx context.Context, q *db.Queries) error {
+			if _, insertErr := h.insertHookEvent(ctx, q, deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+				return insertErr
 			}
-			err = h.commandProcessor.Execute(ctx, noteEvent, cmd)
-		}
+			return h.commandProcessor.ExecuteWithQuerier(ctx, q, noteEvent, cmd)
+		})
 
 		if err != nil {
 			if isDuplicateKeyError(err) {
