@@ -444,6 +444,58 @@ func TestOutboundScopeLimit(t *testing.T) {
 	}
 }
 
+func TestDirectoryScopedReviewThreadedIntoChanges(t *testing.T) {
+	input := defaultAssembleInput()
+	input.Rules = TrustedRules{
+		ReviewMarkdown: "# Root review\n",
+		DirectoryReviews: map[string]string{
+			"src/auth": "# Auth review\n",
+			"pkg":      "# Pkg review\n",
+		},
+		RulesDigest: "sha256:scoped",
+	}
+	input.Diffs = []gitlab.MergeRequestDiff{
+		{OldPath: "src/auth/login.go", NewPath: "src/auth/login.go", Diff: sampleDiff("auth")},
+		{OldPath: "pkg/util.go", NewPath: "pkg/util.go", Diff: sampleDiff("pkg")},
+		{OldPath: "main.go", NewPath: "main.go", Diff: sampleDiff("root")},
+	}
+
+	result, err := NewAssembler().Assemble(input)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	if len(result.Request.Changes) != 3 {
+		t.Fatalf("len(changes) = %d, want 3", len(result.Request.Changes))
+	}
+
+	gotReviews := map[string]string{}
+	for _, change := range result.Request.Changes {
+		gotReviews[change.Path] = change.Review
+	}
+
+	if gotReviews["src/auth/login.go"] != "# Auth review\n" {
+		t.Fatalf("review for src/auth/login.go = %q, want auth review", gotReviews["src/auth/login.go"])
+	}
+	if gotReviews["pkg/util.go"] != "# Pkg review\n" {
+		t.Fatalf("review for pkg/util.go = %q, want pkg review", gotReviews["pkg/util.go"])
+	}
+	if gotReviews["main.go"] != "# Root review\n" {
+		t.Fatalf("review for main.go = %q, want root review", gotReviews["main.go"])
+	}
+
+	payload, err := json.Marshal(result.Request)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	text := string(payload)
+	for _, want := range []string{"\"path\":\"src/auth/login.go\",\"old_path\":\"src/auth/login.go\",\"review\":\"# Auth review\\n\"", "\"path\":\"pkg/util.go\",\"old_path\":\"pkg/util.go\",\"review\":\"# Pkg review\\n\"", "\"path\":\"main.go\",\"old_path\":\"main.go\",\"review\":\"# Root review\\n\""} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("payload missing per-change review %q: %s", want, text)
+		}
+	}
+}
+
 func defaultAssembleInput() AssembleInput {
 	return AssembleInput{
 		ReviewRunID: 42,

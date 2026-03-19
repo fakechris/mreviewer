@@ -343,7 +343,18 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	}
 
 	rulesCtx, endRulesLoad := p.startSpan(ctx, "rules.load", nil)
-	ruleResult, err := p.rulesLoader.Load(rulesCtx, rules.LoadInput{ProjectID: project.GitlabProjectID, HeadSHA: snapshot.Version.HeadSHA, ProjectPolicy: policyPtr})
+	changedPaths := make([]string, 0, len(snapshot.Diffs))
+	for _, diff := range snapshot.Diffs {
+		if path := normalizePath(diff.NewPath); path != "" {
+			changedPaths = append(changedPaths, path)
+			continue
+		}
+		if path := normalizePath(diff.OldPath); path != "" {
+			changedPaths = append(changedPaths, path)
+		}
+	}
+
+	ruleResult, err := p.rulesLoader.Load(rulesCtx, rules.LoadInput{ProjectID: project.GitlabProjectID, HeadSHA: snapshot.Version.HeadSHA, ProjectPolicy: policyPtr, ChangedPaths: changedPaths})
 	endRulesLoad()
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load rules: %w", err))

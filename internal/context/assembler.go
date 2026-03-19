@@ -129,6 +129,7 @@ func (t TrustedRules) ReviewForPath(filePath string) string {
 type Change struct {
 	Path         string `json:"path"`
 	OldPath      string `json:"old_path,omitempty"`
+	Review       string `json:"review,omitempty"`
 	Status       string `json:"status"`
 	Generated    bool   `json:"generated"`
 	TooLarge     bool   `json:"too_large"`
@@ -342,6 +343,7 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 		change := Change{
 			Path:      path,
 			OldPath:   normalizePath(diff.OldPath),
+			Review:    input.Rules.ReviewForPath(path),
 			Status:    changeStatus(diff),
 			Generated: diff.GeneratedFile,
 			TooLarge:  diff.TooLarge,

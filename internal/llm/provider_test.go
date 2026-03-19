@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -125,8 +126,8 @@ func TestProviderTimeoutRetry(t *testing.T) {
 }
 
 func TestSecondaryProviderFallback(t *testing.T) {
-	primary := fakeProvider{err: scheduler.NewRetryableError("provider_request_failed", errors.New("upstream status 503"))}
-	secondary := fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: "123", Summary: "ok", Findings: nil, Status: "completed"}, Model: "secondary", ResponsePayload: map[string]any{"provider": "secondary"}}}
+	primary := &fakeProvider{err: scheduler.NewRetryableError("provider_request_failed", errors.New("upstream status 503"))}
+	secondary := &fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: "123", Summary: "ok", Findings: nil, Status: "completed"}, Model: "secondary", ResponsePayload: map[string]any{"provider": "secondary"}}}
 	provider := NewFallbackProvider(slog.New(slog.NewTextHandler(io.Discard, nil)), primary, "primary-route", secondary, "secondary-route")
 
 	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
@@ -148,7 +149,7 @@ func TestSecondaryProviderFallback(t *testing.T) {
 }
 
 func TestProviderRouteSelection(t *testing.T) {
-	loader := fakeRulesLoader{result: rules.LoadResult{EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "project-route"}, Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	loader := &fakeRulesLoader{result: rules.LoadResult{EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "project-route"}, Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
 	result, err := loader.Load(context.Background(), rules.LoadInput{})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -214,8 +215,8 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title", Author: struct {
 		Username string "json:\"username\""
 	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
-	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
-	provider := fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{{Category: "bug", Severity: "high", Confidence: 0.9, Title: "Issue", BodyMarkdown: "body", Path: "main.go", AnchorKind: "new"}}}, Model: "MiniMax-M2.5", Tokens: 77, Latency: 25 * time.Millisecond, ResponsePayload: map[string]any{"token": "secret", "content": "prompt body"}}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
+	provider := &fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{{Category: "bug", Severity: "high", Confidence: 0.9, Title: "Issue", BodyMarkdown: "body", Path: "main.go", AnchorKind: "new"}}}, Model: "MiniMax-M2.5", Tokens: 77, Latency: 25 * time.Millisecond, ResponsePayload: map[string]any{"token": "secret", "content": "prompt body"}}}
 	registry := metrics2.NewRegistry()
 	tracer := tracing.NewRecorder()
 	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithMetrics(registry).WithTracer(tracer)
@@ -277,6 +278,52 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	}
 }
 
+func TestWorkerThreadsPerPathReviewIntoReviewRequest(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title", Author: struct {
+		Username string "json:\"username\""
+	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "src/auth/login.go", NewPath: "src/auth/login.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}, {OldPath: "pkg/util.go", NewPath: "pkg/util.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}, {OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ReviewMarkdown: "# Root review\n", DirectoryReviews: map[string]string{"src/auth": "# Auth review\n", "pkg": "# Pkg review\n"}, RulesDigest: "digest"}}}
+	provider := &fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: nil}, Model: "MiniMax-M2.5", ResponsePayload: map[string]any{}}}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-path-review", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if _, err := processor.ProcessRun(ctx, run); err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+
+	if provider.request.Rules.ReviewForPath("src/auth/login.go") != "# Auth review\n" {
+		t.Fatalf("rules ReviewForPath(auth) = %q, want auth review", provider.request.Rules.ReviewForPath("src/auth/login.go"))
+	}
+
+	gotReviews := map[string]string{}
+	for _, change := range provider.request.Changes {
+		gotReviews[change.Path] = change.Review
+	}
+	if gotReviews["src/auth/login.go"] != "# Auth review\n" {
+		t.Fatalf("auth change review = %q, want auth review", gotReviews["src/auth/login.go"])
+	}
+	if gotReviews["pkg/util.go"] != "# Pkg review\n" {
+		t.Fatalf("pkg change review = %q, want pkg review", gotReviews["pkg/util.go"])
+	}
+	if gotReviews["main.go"] != "# Root review\n" {
+		t.Fatalf("root change review = %q, want root review", gotReviews["main.go"])
+	}
+	if !reflect.DeepEqual(rulesLoader.inputs[0].ChangedPaths, []string{"src/auth/login.go", "pkg/util.go", "main.go"}) {
+		t.Fatalf("loader changed paths = %#v, want all diff paths", rulesLoader.inputs[0].ChangedPaths)
+	}
+}
+
 func TestDegradationSummaryNote(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
@@ -286,12 +333,12 @@ func TestDegradationSummaryNote(t *testing.T) {
 	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title", Author: struct {
 		Username string "json:\"username\""
 	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}, {OldPath: "other.go", NewPath: "other.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
-	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
 	project, err := q.GetProject(ctx, 1)
 	if err == nil {
 		_, _ = q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{ProjectID: project.ID, ConfidenceThreshold: 0.1, SeverityThreshold: "low", IncludePaths: json.RawMessage("[]"), ExcludePaths: json.RawMessage("[]"), Extra: json.RawMessage(`{"review":{"max_files":1}}`)})
 	}
-	provider := fakeProvider{}
+	provider := &fakeProvider{}
 	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
@@ -385,8 +432,8 @@ func TestParserErrorStructuredResult(t *testing.T) {
 	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title", Author: struct {
 		Username string "json:\"username\""
 	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
-	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
-	provider := fakeProvider{err: scheduler.NewTerminalError("parser_error", errors.New("unparseable provider output"))}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
+	provider := &fakeProvider{err: scheduler.NewTerminalError("parser_error", errors.New("unparseable provider output"))}
 	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
@@ -1647,18 +1694,24 @@ func (f *fakeGitLabReader) GetMergeRequestSnapshot(context.Context, int64, int64
 	return f.snapshot, nil
 }
 
-type fakeRulesLoader struct{ result rules.LoadResult }
+type fakeRulesLoader struct {
+	result rules.LoadResult
+	inputs []rules.LoadInput
+}
 
-func (f fakeRulesLoader) Load(context.Context, rules.LoadInput) (rules.LoadResult, error) {
+func (f *fakeRulesLoader) Load(_ context.Context, input rules.LoadInput) (rules.LoadResult, error) {
+	f.inputs = append(f.inputs, input)
 	return f.result, nil
 }
 
 type fakeProvider struct {
 	response ProviderResponse
 	err      error
+	request  ctxpkg.ReviewRequest
 }
 
-func (f fakeProvider) Review(context.Context, ctxpkg.ReviewRequest) (ProviderResponse, error) {
+func (f *fakeProvider) Review(_ context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
+	f.request = request
 	if f.err != nil {
 		f.response.Latency = 13 * time.Millisecond
 		f.response.Tokens = 21
@@ -1666,7 +1719,7 @@ func (f fakeProvider) Review(context.Context, ctxpkg.ReviewRequest) (ProviderRes
 	}
 	return f.response, f.err
 }
-func (f fakeProvider) RequestPayload(ctxpkg.ReviewRequest) map[string]any {
+func (f *fakeProvider) RequestPayload(ctxpkg.ReviewRequest) map[string]any {
 	return map[string]any{"token": "secret", "content": "prompt body"}
 }
 
@@ -1781,7 +1834,7 @@ func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
 	registry.Register("enterprise", enterpriseProv)
 
 	// Test 1: When ProviderRoute is "enterprise", the enterprise provider is called.
-	rulesLoader := fakeRulesLoader{result: rules.LoadResult{
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{
 		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "enterprise"},
 		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
 	}}
@@ -1810,7 +1863,7 @@ func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
 	// Test 2: When ProviderRoute is "default", the default provider is called.
 	defaultCalls = 0
 	enterpriseCalls = 0
-	rulesLoader2 := fakeRulesLoader{result: rules.LoadResult{
+	rulesLoader2 := &fakeRulesLoader{result: rules.LoadResult{
 		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "default"},
 		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
 	}}
@@ -1907,7 +1960,7 @@ func TestProviderRouteEndToEnd(t *testing.T) {
 	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultFallbackProv)
 	registry.Register("project-custom-route", projectRouteProv)
 
-	rulesLoader := fakeRulesLoader{result: rules.LoadResult{
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{
 		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "project-custom-route"},
 		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
 	}}
@@ -2031,7 +2084,7 @@ func TestProviderFallbackStillWorksWithPolicyRoute(t *testing.T) {
 	registry.Register("fallback-secondary", secondaryProv)
 	registry.SetFallbackRoute("fallback-secondary")
 
-	rulesLoader := fakeRulesLoader{result: rules.LoadResult{
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{
 		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "primary-custom"},
 		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
 	}}
@@ -2066,7 +2119,7 @@ func TestProviderFallbackStillWorksWithPolicyRoute(t *testing.T) {
 // TestProviderRegistryUnknownRouteFallsBackToDefault verifies that
 // requesting an unknown route from the registry returns the default.
 func TestProviderRegistryUnknownRouteFallsBackToDefault(t *testing.T) {
-	defaultProv := fakeProvider{response: ProviderResponse{Model: "default-model"}}
+	defaultProv := &fakeProvider{response: ProviderResponse{Model: "default-model"}}
 	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
 
 	provider, route := registry.Resolve("unknown-route")
@@ -2078,7 +2131,7 @@ func TestProviderRegistryUnknownRouteFallsBackToDefault(t *testing.T) {
 	}
 
 	// Known route resolves correctly.
-	customProv := fakeProvider{response: ProviderResponse{Model: "custom-model"}}
+	customProv := &fakeProvider{response: ProviderResponse{Model: "custom-model"}}
 	registry.Register("custom", customProv)
 	provider2, route2 := registry.Resolve("custom")
 	if route2 != "custom" {
@@ -2092,8 +2145,8 @@ func TestProviderRegistryUnknownRouteFallsBackToDefault(t *testing.T) {
 // TestProviderRegistryResolveWithFallback verifies that
 // ResolveWithFallback returns a FallbackProvider when fallback is configured.
 func TestProviderRegistryResolveWithFallback(t *testing.T) {
-	defaultProv := fakeProvider{response: ProviderResponse{Model: "default"}}
-	secondaryProv := fakeProvider{response: ProviderResponse{Model: "secondary"}}
+	defaultProv := &fakeProvider{response: ProviderResponse{Model: "default"}}
+	secondaryProv := &fakeProvider{response: ProviderResponse{Model: "secondary"}}
 	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
 	registry.Register("secondary", secondaryProv)
 	registry.SetFallbackRoute("secondary")
@@ -2120,10 +2173,10 @@ func TestProviderRegistryResolveWithFallback(t *testing.T) {
 
 // TestProviderRegistryRoutes verifies that Routes() returns all registered routes.
 func TestProviderRegistryRoutes(t *testing.T) {
-	defaultProv := fakeProvider{}
+	defaultProv := &fakeProvider{}
 	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
-	registry.Register("secondary", fakeProvider{})
-	registry.Register("enterprise", fakeProvider{})
+	registry.Register("secondary", &fakeProvider{})
+	registry.Register("enterprise", &fakeProvider{})
 
 	routes := registry.Routes()
 	if len(routes) != 3 {
@@ -2181,7 +2234,7 @@ func TestDegradationSummaryPersistedForWriter(t *testing.T) {
 			{OldPath: "other.go", NewPath: "other.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"},
 		},
 	}}
-	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
 	project, err := q.GetProject(ctx, 1)
 	if err == nil {
 		_, _ = q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{
@@ -2193,7 +2246,7 @@ func TestDegradationSummaryPersistedForWriter(t *testing.T) {
 			Extra:               json.RawMessage(`{"review":{"max_files":1}}`),
 		})
 	}
-	provider := fakeProvider{}
+	provider := &fakeProvider{}
 	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
@@ -2250,7 +2303,7 @@ func TestDegradationSummaryNoteIncludesSkippedFiles(t *testing.T) {
 			{OldPath: "also_skipped.go", NewPath: "also_skipped.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"},
 		},
 	}}
-	rulesLoader := fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
 	project, err := q.GetProject(ctx, 1)
 	if err == nil {
 		_, _ = q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{
@@ -2262,7 +2315,7 @@ func TestDegradationSummaryNoteIncludesSkippedFiles(t *testing.T) {
 			Extra:               json.RawMessage(`{"review":{"max_files":1}}`),
 		})
 	}
-	provider := fakeProvider{}
+	provider := &fakeProvider{}
 	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
