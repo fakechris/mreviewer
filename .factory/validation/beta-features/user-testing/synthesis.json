@@ -1,0 +1,104 @@
+{
+  "milestone": "beta-features",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 22,
+    "passed": 22,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-BETA-001",
+    "VAL-BETA-002",
+    "VAL-BETA-003",
+    "VAL-BETA-004",
+    "VAL-BETA-005",
+    "VAL-BETA-006",
+    "VAL-BETA-007",
+    "VAL-BETA-008",
+    "VAL-BETA-009",
+    "VAL-BETA-010",
+    "VAL-BETA-011",
+    "VAL-BETA-012",
+    "VAL-BETA-013",
+    "VAL-BETA-014",
+    "VAL-BETA-015",
+    "VAL-BETA-016",
+    "VAL-BETA-017",
+    "VAL-BETA-018",
+    "VAL-BETA-019",
+    "VAL-CROSS-010",
+    "VAL-CROSS-015",
+    "VAL-PERF-001"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "validation-state.json",
+      "description": "Marked all beta-features user-testing assertions as passed after targeted and full validator coverage confirmed the implemented behavior.",
+      "source": "flow-report"
+    }
+  ],
+  "previousRound": null,
+  "flowReports": [
+    {
+      "group": "repo-config-layers",
+      "surface": "go test",
+      "assertions": [
+        "VAL-BETA-001",
+        "VAL-BETA-002",
+        "VAL-BETA-003",
+        "VAL-BETA-004",
+        "VAL-CROSS-010"
+      ],
+      "evidence": "go test ./internal/rules -run 'TestAIReviewYAMLLoad|TestInvalidAIReviewYAMLFallback|TestDirectoryScopedReviewPriority|TestConfigLayerPrecedence|TestConfigChangeAffectsNextRun'"
+    },
+    {
+      "group": "command-webhooks",
+      "surface": "go test",
+      "assertions": [
+        "VAL-BETA-006",
+        "VAL-BETA-007",
+        "VAL-BETA-008",
+        "VAL-BETA-009",
+        "VAL-BETA-010",
+        "VAL-BETA-011"
+      ],
+      "evidence": "go test ./internal/commands -run 'TestRerunCommand|TestIgnoreCommand|TestResolveCommand|TestFocusCommand|TestUnknownCommandIgnored|TestCommandIdempotencyStableDeliveryKey' && go test ./internal/hooks -run 'TestNoteWebhookRouting|TestRerunCommandViaHandler|TestIgnoreCommandViaHandler|TestResolveCommandViaHandler|TestFocusCommandViaHandler|TestUnknownCommandViaHandler|TestCommandIdempotencyStableDeliveryKey|TestCommandRetryAfterPersistenceFailure|TestCommandPersistenceAndExecutionAtomicity'"
+    },
+    {
+      "group": "comment-extensions",
+      "surface": "go test",
+      "assertions": [
+        "VAL-BETA-012",
+        "VAL-BETA-013"
+      ],
+      "evidence": "Validated by writer range/suggestion tests in the suite and full go test ./... pass."
+    },
+    {
+      "group": "provider-routing-rate-limits",
+      "surface": "go test",
+      "assertions": [
+        "VAL-BETA-005",
+        "VAL-BETA-014",
+        "VAL-BETA-015",
+        "VAL-BETA-016",
+        "VAL-CROSS-015"
+      ],
+      "evidence": "go test ./internal/llm -run 'TestProviderRoutePolicySelectsRuntimeProvider|TestProviderFallbackStillWorksWithPolicyRoute|TestDegradationSummaryPersistedForWriter|TestDegradationSummaryNoteIncludesSkippedFiles' && go test ./internal/ratelimit -run 'TestRedisDegradedFallback'"
+    },
+    {
+      "group": "large-mr-degradation-benchmark",
+      "surface": "go test",
+      "assertions": [
+        "VAL-BETA-017",
+        "VAL-BETA-018",
+        "VAL-BETA-019",
+        "VAL-PERF-001"
+      ],
+      "evidence": "go test ./internal/bench -run 'TestBenchmarkCorpus' plus full go test ./... pass validating persisted degradation evidence and deterministic benchmark corpus checks."
+    }
+  ]
+}
