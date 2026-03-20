@@ -48,7 +48,7 @@ func makeUpdateEvent(headSHA string) hooks.NormalizedEvent {
 // makeCloseEvent returns a NormalizedEvent for an MR close action.
 func makeCloseEvent() hooks.NormalizedEvent {
 	ev, _ := hooks.NormalizeWebhook(
-		makePayload("close", "abc123def456", false),
+		makePayload("close", "head-sha-sample-001", false),
 		"Merge Request Hook", "project",
 	)
 	return ev
@@ -84,12 +84,12 @@ func makePayload(action, headSHA string, isDraft bool) []byte {
 			"target_branch": "main",
 			"state": "opened",
 			"draft": ` + draft + `,
-			"url": "https://gitlab.example.com/mygroup/myrepo/-/merge_requests/42"` + lastCommit + `
+			"url": "https://gitlab.example.com/samplegroup/samplerepo/-/merge_requests/42"` + lastCommit + `
 		},
 		"project": {
 			"id": 100,
-			"path_with_namespace": "mygroup/myrepo",
-			"web_url": "https://gitlab.example.com/mygroup/myrepo"
+			"path_with_namespace": "samplegroup/samplerepo",
+			"web_url": "https://gitlab.example.com/samplegroup/samplerepo"
 		},
 		"user": {"username": "johndoe"}
 	}`)
@@ -108,13 +108,13 @@ func makeMergePayload() []byte {
 			"target_branch": "main",
 			"state": "merged",
 			"draft": false,
-			"url": "https://gitlab.example.com/mygroup/myrepo/-/merge_requests/42",
-			"last_commit": {"id": "abc123def456"}
+			"url": "https://gitlab.example.com/samplegroup/samplerepo/-/merge_requests/42",
+			"last_commit": {"id": "head-sha-sample-001"}
 		},
 		"project": {
 			"id": 100,
-			"path_with_namespace": "mygroup/myrepo",
-			"web_url": "https://gitlab.example.com/mygroup/myrepo"
+			"path_with_namespace": "samplegroup/samplerepo",
+			"web_url": "https://gitlab.example.com/samplegroup/samplerepo"
 		},
 		"user": {"username": "johndoe"}
 	}`)
@@ -126,7 +126,7 @@ func TestOpenCreatesPendingRun(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	svc := NewService(testLogger(), sqlDB)
 
-	ev := makeOpenEvent("abc123def456")
+	ev := makeOpenEvent("head-sha-sample-001")
 
 	if err := svc.ProcessEvent(context.Background(), ev, 0); err != nil {
 		t.Fatalf("ProcessEvent: %v", err)
@@ -141,8 +141,8 @@ func TestOpenCreatesPendingRun(t *testing.T) {
 	if run.Status != "pending" {
 		t.Errorf("expected status 'pending', got %q", run.Status)
 	}
-	if run.HeadSha != "abc123def456" {
-		t.Errorf("expected head_sha 'abc123def456', got %q", run.HeadSha)
+	if run.HeadSha != "head-sha-sample-001" {
+		t.Errorf("expected head_sha 'head-sha-sample-001', got %q", run.HeadSha)
 	}
 	if run.TriggerType != "webhook" {
 		t.Errorf("expected trigger_type 'webhook', got %q", run.TriggerType)
@@ -156,8 +156,8 @@ func TestOpenCreatesPendingRun(t *testing.T) {
 	if mr.MrIid != 42 {
 		t.Errorf("expected mr_iid=42, got %d", mr.MrIid)
 	}
-	if mr.HeadSha != "abc123def456" {
-		t.Errorf("expected mr head_sha='abc123def456', got %q", mr.HeadSha)
+	if mr.HeadSha != "head-sha-sample-001" {
+		t.Errorf("expected mr head_sha='head-sha-sample-001', got %q", mr.HeadSha)
 	}
 }
 
@@ -212,7 +212,7 @@ func TestCloseCancelsRuns(t *testing.T) {
 	svc := NewService(testLogger(), sqlDB)
 
 	// Create a pending run via open event.
-	openEv := makeOpenEvent("abc123def456")
+	openEv := makeOpenEvent("head-sha-sample-001")
 	if err := svc.ProcessEvent(context.Background(), openEv, 0); err != nil {
 		t.Fatalf("ProcessEvent open: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestMergeCancelsRuns(t *testing.T) {
 	svc := NewService(testLogger(), sqlDB)
 
 	// Create a pending run via open event.
-	openEv := makeOpenEvent("abc123def456")
+	openEv := makeOpenEvent("head-sha-sample-001")
 	if err := svc.ProcessEvent(context.Background(), openEv, 0); err != nil {
 		t.Fatalf("ProcessEvent open: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestCloseCancelsRetryScheduledRuns(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	svc := NewService(testLogger(), sqlDB)
 
-	openEv := makeOpenEvent("abc123def456")
+	openEv := makeOpenEvent("head-sha-sample-001")
 	if err := svc.ProcessEvent(context.Background(), openEv, 0); err != nil {
 		t.Fatalf("ProcessEvent open: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestMergeCancelsRetryScheduledRuns(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	svc := NewService(testLogger(), sqlDB)
 
-	openEv := makeOpenEvent("abc123def456")
+	openEv := makeOpenEvent("head-sha-sample-001")
 	if err := svc.ProcessEvent(context.Background(), openEv, 0); err != nil {
 		t.Fatalf("ProcessEvent open: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestReplayDoesNotDuplicateRun(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	svc := NewService(testLogger(), sqlDB)
 
-	ev := makeOpenEvent("abc123def456")
+	ev := makeOpenEvent("head-sha-sample-001")
 
 	// First call: should create a run.
 	if err := svc.ProcessEvent(context.Background(), ev, 0); err != nil {
@@ -401,7 +401,7 @@ func TestDraftMRCreatesRun(t *testing.T) {
 	svc := NewService(testLogger(), sqlDB)
 
 	ev, _ := hooks.NormalizeWebhook(
-		makePayload("open", "abc123def456", true),
+		makePayload("open", "head-sha-sample-001", true),
 		"Merge Request Hook", "project",
 	)
 
@@ -446,7 +446,7 @@ func TestHookEventIDLinked(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	svc := NewService(testLogger(), sqlDB)
 
-	ev := makeOpenEvent("abc123def456")
+	ev := makeOpenEvent("head-sha-sample-001")
 
 	// Insert a fake hook_event to get a valid ID.
 	result, err := db.New(sqlDB).InsertHookEvent(context.Background(), db.InsertHookEventParams{
@@ -456,8 +456,8 @@ func TestHookEventIDLinked(t *testing.T) {
 		ProjectID:           sql.NullInt64{Int64: 100, Valid: true},
 		MrIid:               sql.NullInt64{Int64: 42, Valid: true},
 		Action:              "open",
-		HeadSha:             "abc123def456",
-		Payload:             makePayload("open", "abc123def456", false),
+		HeadSha:             "head-sha-sample-001",
+		Payload:             makePayload("open", "head-sha-sample-001", false),
 		VerificationOutcome: "verified",
 	})
 	if err != nil {

@@ -55,7 +55,7 @@ func lifecycleHeaders(deliveryKey, eventType string) map[string]string {
 	}
 }
 
-const lifecycleTestWebhookKey = "CHANGEME" //nolint:gosec
+const lifecycleTestWebhookKey = "test-webhook-sample" //nolint:gosec
 
 func lifecycleOpenPayload() string {
 	return `{
@@ -64,8 +64,8 @@ func lifecycleOpenPayload() string {
 		"user": {"username": "testuser"},
 		"project": {
 			"id": 42,
-			"path_with_namespace": "test/repo",
-			"web_url": "https://gitlab.example.com/test/repo"
+			"path_with_namespace": "sample/repo",
+			"web_url": "https://gitlab.example.com/sample/repo"
 		},
 		"object_attributes": {
 			"iid": 7,
@@ -74,8 +74,8 @@ func lifecycleOpenPayload() string {
 			"title": "Add feature X",
 			"source_branch": "feature-x",
 			"target_branch": "main",
-			"url": "https://gitlab.example.com/test/repo/-/merge_requests/7",
-			"last_commit": {"id": "abc123def456"}
+			"url": "https://gitlab.example.com/sample/repo/-/merge_requests/7",
+			"last_commit": {"id": "head-sha-sample-001"}
 		}
 	}`
 }
@@ -87,8 +87,8 @@ func lifecycleUpdatePayload(newHeadSHA string) string {
 		"user": {"username": "testuser"},
 		"project": {
 			"id": 42,
-			"path_with_namespace": "test/repo",
-			"web_url": "https://gitlab.example.com/test/repo"
+			"path_with_namespace": "sample/repo",
+			"web_url": "https://gitlab.example.com/sample/repo"
 		},
 		"object_attributes": {
 			"iid": 7,
@@ -97,7 +97,7 @@ func lifecycleUpdatePayload(newHeadSHA string) string {
 			"title": "Add feature X",
 			"source_branch": "feature-x",
 			"target_branch": "main",
-			"url": "https://gitlab.example.com/test/repo/-/merge_requests/7",
+			"url": "https://gitlab.example.com/sample/repo/-/merge_requests/7",
 			"oldrev": "old-head-sha",
 			"last_commit": {"id": %q}
 		}
@@ -117,8 +117,8 @@ func lifecyclePayload(action, state, headSHA string) string {
 		"user": {"username": "testuser"},
 		"project": {
 			"id": 42,
-			"path_with_namespace": "test/repo",
-			"web_url": "https://gitlab.example.com/test/repo"
+			"path_with_namespace": "sample/repo",
+			"web_url": "https://gitlab.example.com/sample/repo"
 		},
 		"object_attributes": {
 			"iid": 7,
@@ -127,7 +127,7 @@ func lifecyclePayload(action, state, headSHA string) string {
 			"title": "Add feature X",
 			"source_branch": "feature-x",
 			"target_branch": "main",
-			"url": "https://gitlab.example.com/test/repo/-/merge_requests/7"%s
+			"url": "https://gitlab.example.com/sample/repo/-/merge_requests/7"%s
 		}
 	}`, action, state, lastCommit)
 }
@@ -166,8 +166,8 @@ func lifecycleScopedPayload(action, state, headSHA, updatedAt, oldrev string, gr
 		"user": {"username": "testuser"},
 		"project": {
 			"id": 42,
-			"path_with_namespace": "test/repo",
-			"web_url": "https://gitlab.example.com/test/repo"
+			"path_with_namespace": "sample/repo",
+			"web_url": "https://gitlab.example.com/sample/repo"
 		}%s,
 		"object_attributes": {
 			"iid": 7,
@@ -176,7 +176,7 @@ func lifecycleScopedPayload(action, state, headSHA, updatedAt, oldrev string, gr
 			"title": "Add feature X",
 			"source_branch": "feature-x",
 			"target_branch": "main",
-			"url": "https://gitlab.example.com/test/repo/-/merge_requests/7"%s%s%s
+			"url": "https://gitlab.example.com/sample/repo/-/merge_requests/7"%s%s%s
 		}
 	}`,
 		groupFields,
@@ -221,7 +221,7 @@ func TestOpenCreatesPendingRun(t *testing.T) {
 	sqlDB := setupLifecycleTestDB(t)
 	handler := newLifecycleHandler(sqlDB)
 	ctx := context.Background()
-	deliveryKey := "lifecycle-open-1"
+	deliveryKey := "dispatch-open-001"
 
 	rec := postLifecycleWebhook(handler, lifecycleOpenPayload(), lifecycleHeaders(deliveryKey, "Merge Request Hook"))
 	if rec.Code != http.StatusOK {
@@ -246,8 +246,8 @@ func TestOpenCreatesPendingRun(t *testing.T) {
 	if run.Status != "pending" {
 		t.Errorf("expected status 'pending', got %q", run.Status)
 	}
-	if run.HeadSha != "abc123def456" {
-		t.Errorf("expected head_sha 'abc123def456', got %q", run.HeadSha)
+	if run.HeadSha != "head-sha-sample-001" {
+		t.Errorf("expected head_sha 'head-sha-sample-001', got %q", run.HeadSha)
 	}
 	if !run.HookEventID.Valid || run.HookEventID.Int64 != hookEvent.ID {
 		t.Errorf("expected hook_event_id=%d, got %v", hookEvent.ID, run.HookEventID)
@@ -285,7 +285,7 @@ func TestUpdateCreatesNewHeadRun(t *testing.T) {
 		runsByHeadSHA[run.HeadSha] = run
 	}
 
-	if run, ok := runsByHeadSHA["abc123def456"]; !ok {
+	if run, ok := runsByHeadSHA["head-sha-sample-001"]; !ok {
 		t.Fatal("expected open-event run for original HEAD SHA")
 	} else if run.Status != "pending" {
 		t.Errorf("open-event run: expected status 'pending', got %q", run.Status)
@@ -338,7 +338,7 @@ func TestRuntimeGroupHookSource(t *testing.T) {
 	handler := newLifecycleHandler(sqlDB)
 	ctx := context.Background()
 	deliveryKey := "runtime-group-source-1"
-	payload := lifecycleScopedPayload("open", "opened", "abc123def456", "", "", true)
+	payload := lifecycleScopedPayload("open", "opened", "head-sha-sample-001", "", "", true)
 
 	rec := postLifecycleWebhook(handler, payload, lifecycleHeaders(deliveryKey, "Merge Request Hook"))
 	if rec.Code != http.StatusOK {
