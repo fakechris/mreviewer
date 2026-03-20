@@ -1,34 +1,21 @@
 {
   "featureId": "beta-large-mr-degradation",
-  "reviewedAt": "2026-03-18T16:13:34.807184Z",
+  "reviewedAt": "2026-03-20T00:00:00Z",
   "commitId": "bf7ba981b33b0e68aa5ca570ad05e54ca556c3d2",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "Large-MR degradation mode and partial-coverage summaries are implemented, but the degradation path never persists the summary body onto the run, so the final writer summary note cannot publish the explicit skipped-file summary required by the feature. The requested VAL-PERF-001 benchmark target is also still unimplemented in this feature.",
-    "issues": [
-      {
-        "file": "internal/llm/provider.go",
-        "line": 295,
-        "severity": "blocking",
-        "description": "The degradation short-circuit marks the run completed and inserts a pending `summary_note` action, but it never stores the generated degradation summary on `review_runs.error_detail` or any other field that the writer reads. `writer.renderSummaryBody` only emits the detailed partial-coverage body when `run.ErrorCode == \"degradation_mode\"` and `run.ErrorDetail` contains that summary, yet this branch clears `error_code`/`error_detail` before returning. As a result, the eventual summary note falls back to the generic counts-only body and does not explicitly state which files were skipped and why, so VAL-BETA-018 is not actually satisfied end-to-end."
-      },
-      {
-        "file": "internal/llm/provider.go",
-        "line": 274,
-        "severity": "blocking",
-        "description": "This feature\u2019s handoff explicitly records that the VAL-PERF-001 benchmark corpus/harness was not implemented, and the committed diff contains no benchmark package, fixtures, or runtime-report generation. Because the feature description and fulfills list include benchmarking end-to-end runtime against the mission target, the implementation is incomplete for VAL-PERF-001."
-      }
-    ]
+    "summary": "Reviewed the original large-MR degradation feature together with the follow-up fixes for degradation-summary persistence and benchmark evidence. The original commit does deterministically choose truncation versus degradation and restricts partial coverage to highest-priority files; the persistence fix now stores the degradation summary on writer-visible run fields and the benchmark evidence follow-up adds a checked-in benchmark corpus, harness, and runtime evidence covering VAL-PERF-001.",
+    "issues": []
   },
   "sharedStateObservations": [
     {
       "area": "skills",
-      "observation": "The worker used the `go-reliability` skill appropriately and followed its documented procedure; no skill gap was evident from the transcript skeleton for this feature.",
-      "evidence": "Transcript skeleton for worker session e4c99ae4-091a-40d2-b343-bf2cfe57302d shows mission docs review, targeted tests, gofmt, compile/full test passes, and the handoff reports `skillFeedback.followedProcedure = true`."
+      "observation": "The original worker followed the go-reliability procedure, but the benchmark/runtime evidence portion of this feature had to be completed in a separate follow-up feature, which suggests the skill guidance could more strongly emphasize that large-MR reliability work is not complete until checked-in performance evidence exists when the feature contract calls for it.",
+      "evidence": "The beta-large-mr-degradation handoff for session e4c99ae4-091a-40d2-b343-bf2cfe57302d explicitly recorded VAL-PERF-001 as undone, while features.json later added and completed beta-large-mr-benchmark-evidence to supply `internal/bench/bench_test.go` and `testdata/bench/runtime_evidence.json`."
     }
   ],
-  "addressesFailureFrom": null,
-  "summary": "Review failed. The large-MR degradation branch does choose degradation deterministically and records partial-coverage metadata, but it does not persist that degradation summary for the writer\u2019s final summary note, so explicit skipped-file coverage reporting is lost end-to-end. The requested benchmark deliverable for VAL-PERF-001 is also still missing per both the diff and the worker\u2019s own handoff."
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-large-mr-degradation.json",
+  "summary": "Review passed on rerun-after-fixes. I reviewed the prior failed review, the original degradation commit, the degradation-summary persistence fix, the benchmark-evidence follow-up, the relevant transcript skeletons/hand-offs, and the current code. Degradation summaries are now persisted via `review_runs.error_code/error_detail` and rendered end-to-end by the writer, while `internal/bench/bench_test.go` plus `testdata/bench/runtime_evidence.json` provide the requested benchmark corpus and runtime evidence path for VAL-PERF-001."
 }

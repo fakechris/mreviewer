@@ -1,28 +1,28 @@
 {
   "featureId": "beta-large-mr-benchmark-evidence",
-  "reviewedAt": "2026-03-19T23:33:24.205070Z",
+  "reviewedAt": "2026-03-20T08:43:00Z",
   "commitId": "95fb0fa108eb9f1f7b236293cbbfbfe158b16faf",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The rerun fix correctly replaces the benchmark evidence's hard-coded Go version with `runtime.Version()`, which addresses the prior scrutiny failure about unreliable environment evidence. However, the feature still does not satisfy its explicit acceptance requirement that the tree be clean after commit, because the worker's own handoff recorded an untracked repo-root `worker` binary after commit `95fb0fa108eb9f1f7b236293cbbfbfe158b16faf`.",
+    "summary": "The rerun commit correctly changes benchmark environment evidence generation to use `runtime.Version()`, so the prior hard-coded Go-version issue is fixed. However, the feature still misses its acceptance requirement that the tree be clean after commit: the worker's own handoff says `git status --short` still reported an untracked repo-root `worker` binary after commit `95fb0fa108eb9f1f7b236293cbbfbfe158b16faf`, so the previously reported dirty-tree issue remains unresolved.",
     "issues": [
       {
         "file": "worker",
         "line": 1,
         "severity": "blocking",
-        "description": "The feature description and follow-up instructions require the tree to be clean after commit, but the worker handoff for session `5b7b853a-b286-4bfe-a6eb-a07fc180fb39` explicitly reports `git status --short` still showing `?? worker` after commit `95fb0fa108eb9f1f7b236293cbbfbfe158b16faf`. Because the repo remained dirty, the acceptance-closing follow-up is still incomplete."
+        "description": "The feature description explicitly requires 'tree must be clean after commit', but the reviewed rerun handoff for session `5b7b853a-b286-4bfe-a6eb-a07fc180fb39` records `git status --short` with `?? worker` remaining after commit `95fb0fa108eb9f1f7b236293cbbfbfe158b16faf`. Because this rerun still left the repository dirty, the dirty-tree acceptance failure is not resolved."
       }
     ]
   },
   "sharedStateObservations": [
     {
       "area": "knowledge",
-      "observation": "Repo-root build artifacts can invalidate 'clean tree' claims for benchmark/fix handoffs, so this recurring `worker` binary residue needs to remain part of shared environment knowledge for future validation and handoff hygiene.",
-      "evidence": "The benchmark-evidence fix handoff reports `git status --short` still showed `?? worker` after the commit, and `.factory/library/environment.md` was previously updated by scrutiny to note this recurring untracked repo-root binary residue."
+      "observation": "Repo-root build artifact residue is already a known environment hazard and directly affected this feature's acceptance check again; future workers need to account for the untracked `worker` binary before claiming a clean tree in handoffs.",
+      "evidence": "`.factory/library/environment.md` notes that some worker runs leave an untracked repo-root `worker` binary behind, and this rerun handoff again reported `git status --short` showing `?? worker` after the commit."
     }
   ],
-  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-large-mr-degradation.json",
-  "summary": "Review failed. The runtime-version evidence fix itself is correct and addresses the prior benchmark-environment issue, but the feature still fails scrutiny because the repo was not clean after commit due to the untracked `worker` binary."
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-large-mr-benchmark-evidence.json",
+  "summary": "Review failed. Commit `95fb0fa108eb9f1f7b236293cbbfbfe158b16faf` fixes the benchmark Go-version evidence to derive from the runtime environment, but the rerun still does not satisfy the feature's clean-tree requirement because the untracked repo-root `worker` binary remained after commit."
 }

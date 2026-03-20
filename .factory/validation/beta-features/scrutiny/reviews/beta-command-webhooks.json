@@ -1,34 +1,21 @@
 {
   "featureId": "beta-command-webhooks",
-  "reviewedAt": "2026-03-19T00:00:00Z",
-  "commitId": "29ae864468dfe743886317306885fd4242d72954",
+  "reviewedAt": "2026-03-20T00:41:45Z",
+  "commitId": "8f7e52f",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The control-plane implementation for /ai-review note commands is present and test-covered, but the reviewed commit only changes sqlc model scanning for nullable review run scopes and leaves the intended feature behavior in pre-existing tree state. No new blocking implementation defects were found in the command/webhook flow itself.",
-    "issues": [
-      {
-        "file": "internal/commands/commands.go",
-        "line": 204,
-        "severity": "blocking",
-        "description": "`/ai-review rerun` and `/ai-review focus` generate idempotency keys with `time.Now().UnixNano()`, so command retries after a transient database error are not idempotent. The feature description says the system should accept note/comment webhooks and trigger reruns safely; with a retry/replay of the same command delivery, this implementation can create duplicate review runs instead of at-most-once command effects keyed to the webhook/note event."
-      },
-      {
-        "file": "internal/hooks/handler.go",
-        "line": 355,
-        "severity": "blocking",
-        "description": "`handleNoteEvent` writes the `hook_events` row and audit log before executing the command, but command execution is not wrapped in the same transaction or tied to the delivery key for deduplication. If command execution fails after the hook event insert, a GitLab retry of the same delivery is treated as a duplicate and skipped, permanently dropping the requested command side effect (rerun/ignore/resolve/focus)."
-      }
-    ]
+    "summary": "Reviewed the original beta-command-webhooks handoff/commit together with the follow-up fix commit. The original failure on stable command idempotency and retry-safe atomic note-command effects is addressed: command-triggered rerun/focus runs now derive deterministic keys from the delivery identifier, and note hook persistence plus command execution now share one transaction so failed attempts roll back cleanly and can be retried without losing side effects.",
+    "issues": []
   },
   "sharedStateObservations": [
     {
       "area": "skills",
-      "observation": "The worker deviated from the `go-integration` skill because the feature logic was already present in the branch and the actual commit was only a validation unblock. The skill does not describe how to handle 'pre-implemented feature on dirty branch' situations where the right action is a minimal enabling fix plus regression verification.",
-      "evidence": "Handoff skillFeedback marks `followedProcedure=false` with a suggested skill change; transcript shows the worker inspected existing command/webhook code and only committed `internal/db/models.go`."
+      "observation": "The go-integration skill still assumes integration fixes typically add new tests, but this rerun fix correctly closed the issue by tightening the transactional interface and reusing pre-existing regression coverage.",
+      "evidence": "Handoff 2026-03-19T18:57:25.005Z for beta-command-webhooks-idempotency-atomicity-fix reports followedProcedure=false with suggestedChanges noting that updating existing regression coverage was sufficient; the fix commit 8f7e52f only changes internal/hooks/handler.go while targeted tests TestCommandIdempotencyStableDeliveryKey, TestCommandRetryAfterPersistenceFailure, and TestCommandPersistenceAndExecutionAtomicity already existed in internal/hooks/handler_command_integration_test.go."
     }
   ],
-  "addressesFailureFrom": null,
-  "summary": "Reviewed the feature metadata, worker handoff/transcript, go-integration skill, shared-state files, and commit `29ae864468dfe743886317306885fd4242d72954`. The command/webhook flow is implemented and covered by tests, but I found two blocking correctness gaps around command-delivery idempotency and loss of side effects on webhook retry after partial note handling failure, so the feature review fails."
+  "addressesFailureFrom": ".factory/validation/beta-features/scrutiny/reviews/beta-command-webhooks.json",
+  "summary": "Pass. I reviewed feature metadata, the prior failed review, both handoffs/transcript skeleton evidence, commits 29ae864468dfe743886317306885fd4242d72954 and 8f7e52f, the command and webhook implementation, and the targeted regression tests. The fix adequately resolves the prior blocking concerns: delivery-based idempotency keys prevent duplicate rerun/focus effects for replayed note deliveries, and transactional note-command handling prevents a persisted hook_event from suppressing a retried command after partial failure."
 }

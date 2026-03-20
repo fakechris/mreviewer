@@ -1,34 +1,40 @@
 {
   "featureId": "beta-comment-extensions-tree-state-finalization",
-  "reviewedAt": "2026-03-18T16:15:03.613162+00:00",
-  "commitId": "a3a89ad",
+  "reviewedAt": "2026-03-20T00:41:45Z",
+  "commitId": "a3a89ada788fa32b8a2217745d7dd6d17b6bb20f",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The feature was supposed to only legalize and commit pre-existing tree residue, but commit a3a89ad bundled substantial new beta behavior including the new /ai-review command processor, note-webhook routing, scope_json persistence, and writer range/suggestion logic. That broad behavioral scope violates the feature contract for tree-state finalization.",
+    "summary": "The reviewed commit did return the repository to a clean tree, but it clearly exceeded the feature's finalization-only contract by introducing substantive webhook, command-processing, persistence, migration, and writer behavior. This rerun review focuses on scope containment, and the commit did not stay within tree-state finalization.",
     "issues": [
       {
         "file": "internal/commands/commands.go",
         "line": 1,
         "severity": "blocking",
-        "description": "This feature introduced an entirely new command-processing package with rerun/ignore/resolve/focus behavior instead of only finalizing an existing dirty tree. Shipping ~490 lines of new product logic in a tree-state finalization feature violates the requirement to avoid new behavioral work and makes the handoff non-isolated."
+        "description": "This feature was explicitly limited to legalizing an existing dirty tree with no new behavioral work, but the commit adds an entire new `internal/commands` package plus command parsing/execution logic for `/ai-review rerun|ignore|resolve|focus`. Shipping a 490-line new runtime package is substantive product behavior, not tree-state finalization."
       },
       {
         "file": "internal/hooks/handler.go",
-        "line": 141,
+        "line": 34,
         "severity": "blocking",
-        "description": "The commit changed webhook runtime behavior by routing note events into command processing and wiring a new command processor into ingress. Tree-state finalization was required to legalize existing residue only; changing live webhook behavior here broadens feature scope beyond finalization."
+        "description": "The finalization commit changes webhook runtime behavior by introducing a `CommandProcessor` contract, note-event command handling, merge-request note detection helpers, and atomic note-command execution paths. Those are behavior changes on the ingress surface and violate the feature's requirement to avoid introducing new behavior beyond cleaning the tree."
       },
       {
         "file": "internal/writer/writer.go",
-        "line": 720,
+        "line": 24,
         "severity": "blocking",
-        "description": "The commit added new writer behavior for range anchors and suggestion rendering, including policy-dependent suggestion gating. Those are substantive beta-comment-extensions/product changes, not tree cleanup, so this feature does not satisfy its own no-new-behavior contract."
+        "description": "The commit also extends comment-writing semantics with line-range payload generation, suggestion-block gating against project policy, and new range-position helpers. Those user-visible writeback changes belong to beta comment-extension work, not to a tree-state finalization-only feature."
+      },
+      {
+        "file": "migrations/002_add_scope_json_to_review_runs.sql",
+        "line": 1,
+        "severity": "blocking",
+        "description": "Adding a new schema migration and corresponding sqlc/query updates changes the persisted data model (`review_runs.scope_json`) and is substantive implementation scope. A feature whose only purpose is to legalize pre-existing dirt should not introduce new schema behavior."
       }
     ]
   },
   "sharedStateObservations": [],
-  "addressesFailureFrom": null,
-  "summary": "Reviewed the handoff, transcript skeleton, shared-state files, and commit a3a89ad. The feature fails review because the supposed tree-state-finalization commit bundled substantial new beta behavioral work instead of only isolating and legalizing pre-existing dirty-tree residue."
+  "addressesFailureFrom": ".factory/validation/beta-features/scrutiny/reviews/beta-comment-extensions-tree-state-finalization.json",
+  "summary": "Reviewed the feature metadata, prior scrutiny context, worker transcript skeleton, handoff, go-integration skill, and commit `a3a89ada788fa32b8a2217745d7dd6d17b6bb20f`. Although the worker achieved a clean working tree, the commit bundled major command-webhook, writer, and persistence behavior into a feature that was contractually limited to tree-state finalization, so this rerun review fails on scope contamination grounds."
 }

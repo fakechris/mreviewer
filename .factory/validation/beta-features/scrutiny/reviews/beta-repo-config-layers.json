@@ -1,34 +1,15 @@
 {
   "featureId": "beta-repo-config-layers",
-  "reviewedAt": "2026-03-18T22:26:29.808936Z",
-  "commitId": "c33ab81f7a101eebf13ea2528f4a268d4218fdf8",
+  "reviewedAt": "2026-03-20T00:41:48Z",
+  "commitId": "08beeb4e7d2f80af4395505be33e8867b463b08d",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The original implementation still fails the prior scrutiny findings: directory-scoped REVIEW instructions are collapsed into one run-wide winner, and ai-review.yaml warnings/unknown fields are not surfaced anywhere in loader behavior.",
-    "issues": [
-      {
-        "file": "internal/rules/loader.go",
-        "line": 128,
-        "severity": "blocking",
-        "description": "Directory-scoped REVIEW.md handling still loads a single deepest review and assigns it to TrustedRules.ReviewMarkdown for the whole run. This does not apply the nearest REVIEW.md per changed file/path as required by the fix feature and prior failure. With changed paths in different directories, one directory's instructions incorrectly govern all files."
-      },
-      {
-        "file": "internal/rules/ai_review_config.go",
-        "line": 43,
-        "severity": "blocking",
-        "description": "ParseAIReviewConfig still uses yaml.Unmarshal into a struct, so unknown keys are silently discarded, and Loader.Load drops the returned warnings (`cfg, _, _ := ParseAIReviewConfig(aiBody)`). Invalid and unknown-field config is therefore not surfaced through loader behavior, leaving the original failure unresolved."
-      }
-    ]
+    "summary": "Reviewed the original failing feature together with fix commit 08beeb4. The fix addresses both prior blocking issues: nearest directory REVIEW.md guidance is now resolved per changed path and threaded into assembled changes/downstream review requests, and ai-review.yaml parsing now surfaces unknown-field and validation warnings through loader results instead of silently dropping them.",
+    "issues": []
   },
-  "sharedStateObservations": [
-    {
-      "area": "conventions",
-      "observation": "The code still models trusted REVIEW instructions as one run-wide string, which is incompatible with beta's per-path directory REVIEW behavior.",
-      "evidence": "internal/context/assembler.go:98-103 defines TrustedRules with a single ReviewMarkdown string; internal/rules/loader.go:128-133 overwrites that single field with one directory review winner. .factory/library/architecture.md already notes this gap explicitly."
-    }
-  ],
+  "sharedStateObservations": [],
   "addressesFailureFrom": ".factory/validation/beta-features/scrutiny/reviews/beta-repo-config-layers.json",
-  "summary": "Reviewed original failed feature beta-repo-config-layers (commit c33ab81) against the prior scrutiny findings. The fix has not been implemented in this repo state: per-path directory REVIEW layering is still absent and ai-review.yaml warnings/unknown fields are still suppressed, so the prior failure is not addressed."
+  "summary": "Pass. The rerun-after-fixes commit threads per-path nearest REVIEW.md instructions end-to-end via TrustedRules.ReviewForPath into each assembled change/request, and strict ai-review.yaml warnings are surfaced by ParseAIReviewConfig and propagated from Loader.Load. Targeted regressions in internal/rules, internal/context, and internal/llm cover the original failures and the downstream request path."
 }
