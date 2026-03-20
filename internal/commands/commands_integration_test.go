@@ -113,7 +113,7 @@ func seedFindingWithDiscussion(t *testing.T, sqlDB *sql.DB, projectID, mrID int6
 		ProjectID:      projectID,
 		MergeRequestID: mrID,
 		TriggerType:    "webhook",
-		HeadSha:        "abc123def456",
+		HeadSha:        "head-sha-abc123",
 		Status:         "completed",
 		MaxRetries:     3,
 		IdempotencyKey: "test-run-" + gitlabDiscID,
@@ -174,7 +174,7 @@ func baseNoteEvent(noteBody, discussionID string) hooks.NormalizedNoteEvent {
 		ProjectID:         42,
 		ProjectPath:       "test/repo",
 		MRIID:             7,
-		HeadSHA:           "abc123def456",
+		HeadSHA:           "head-sha-abc123",
 		NoteBody:          noteBody,
 		NoteAuthor:        "reviewer",
 		DiscussionID:      discussionID,
@@ -187,7 +187,7 @@ func baseNoteEvent(noteBody, discussionID string) hooks.NormalizedNoteEvent {
 // /ai-review rerun creates a new run for the current HEAD even when a prior run exists.
 func TestRerunCommand(t *testing.T) {
 	sqlDB := setupTestDB(t)
-	_, projectID, mrID := seedProjectAndMR(t, sqlDB, "abc123def456")
+	_, projectID, mrID := seedProjectAndMR(t, sqlDB, "head-sha-abc123")
 	ctx := context.Background()
 	processor := commands.NewProcessor(testLogger(), sqlDB)
 	queries := db.New(sqlDB)
@@ -197,10 +197,10 @@ func TestRerunCommand(t *testing.T) {
 		ProjectID:      projectID,
 		MergeRequestID: mrID,
 		TriggerType:    "webhook",
-		HeadSha:        "abc123def456",
+		HeadSha:        "head-sha-abc123",
 		Status:         "completed",
 		MaxRetries:     3,
-		IdempotencyKey: "prior-run-key",
+		IdempotencyKey: "test-prior-run-key",
 	})
 	if err != nil {
 		t.Fatalf("insert prior run: %v", err)
@@ -243,8 +243,8 @@ func TestRerunCommand(t *testing.T) {
 	if commandRun.Status != "pending" {
 		t.Errorf("expected pending status, got %q", commandRun.Status)
 	}
-	if commandRun.HeadSha != "abc123def456" {
-		t.Errorf("expected head_sha 'abc123def456', got %q", commandRun.HeadSha)
+	if commandRun.HeadSha != "head-sha-abc123" {
+		t.Errorf("expected head_sha 'head-sha-abc123', got %q", commandRun.HeadSha)
 	}
 }
 
@@ -252,7 +252,7 @@ func TestRerunCommand(t *testing.T) {
 // /ai-review ignore marks the finding as ignored and resolves the discussion.
 func TestIgnoreCommand(t *testing.T) {
 	sqlDB := setupTestDB(t)
-	_, projectID, mrID := seedProjectAndMR(t, sqlDB, "abc123def456")
+	_, projectID, mrID := seedProjectAndMR(t, sqlDB, "head-sha-abc123")
 	ctx := context.Background()
 	processor := commands.NewProcessor(testLogger(), sqlDB)
 	queries := db.New(sqlDB)
@@ -292,7 +292,7 @@ func TestIgnoreCommand(t *testing.T) {
 // /ai-review resolve resolves the bot discussion while leaving the finding active.
 func TestResolveCommand(t *testing.T) {
 	sqlDB := setupTestDB(t)
-	_, projectID, mrID := seedProjectAndMR(t, sqlDB, "abc123def456")
+	_, projectID, mrID := seedProjectAndMR(t, sqlDB, "head-sha-abc123")
 	ctx := context.Background()
 	processor := commands.NewProcessor(testLogger(), sqlDB)
 	queries := db.New(sqlDB)
@@ -332,7 +332,7 @@ func TestResolveCommand(t *testing.T) {
 // /ai-review focus <path> creates a rerun scoped to matching paths.
 func TestFocusCommand(t *testing.T) {
 	sqlDB := setupTestDB(t)
-	_, _, mrID := seedProjectAndMR(t, sqlDB, "abc123def456")
+	_, _, mrID := seedProjectAndMR(t, sqlDB, "head-sha-abc123")
 	ctx := context.Background()
 	processor := commands.NewProcessor(testLogger(), sqlDB)
 	queries := db.New(sqlDB)
@@ -372,8 +372,8 @@ func TestFocusCommand(t *testing.T) {
 	if focusRun.Status != "pending" {
 		t.Errorf("expected status 'pending', got %q", focusRun.Status)
 	}
-	if focusRun.HeadSha != "abc123def456" {
-		t.Errorf("expected head_sha 'abc123def456', got %q", focusRun.HeadSha)
+	if focusRun.HeadSha != "head-sha-abc123" {
+		t.Errorf("expected head_sha 'head-sha-abc123', got %q", focusRun.HeadSha)
 	}
 
 	// Verify scope_json contains the focus path.
@@ -398,7 +398,7 @@ func TestFocusCommand(t *testing.T) {
 // An unknown /ai-review command has no side effects.
 func TestUnknownCommandIgnored(t *testing.T) {
 	sqlDB := setupTestDB(t)
-	_, _, mrID := seedProjectAndMR(t, sqlDB, "abc123def456")
+	_, _, mrID := seedProjectAndMR(t, sqlDB, "head-sha-abc123")
 	ctx := context.Background()
 	processor := commands.NewProcessor(testLogger(), sqlDB)
 	queries := db.New(sqlDB)
@@ -430,7 +430,7 @@ func TestUnknownCommandIgnored(t *testing.T) {
 // a discussion context is a no-op (no error, no state change).
 func TestIgnoreCommandNoDiscussion(t *testing.T) {
 	sqlDB := setupTestDB(t)
-	seedProjectAndMR(t, sqlDB, "abc123def456")
+	seedProjectAndMR(t, sqlDB, "head-sha-abc123")
 	ctx := context.Background()
 	processor := commands.NewProcessor(testLogger(), sqlDB)
 
@@ -446,7 +446,7 @@ func TestIgnoreCommandNoDiscussion(t *testing.T) {
 // a discussion context is a no-op.
 func TestResolveCommandNoDiscussion(t *testing.T) {
 	sqlDB := setupTestDB(t)
-	seedProjectAndMR(t, sqlDB, "abc123def456")
+	seedProjectAndMR(t, sqlDB, "head-sha-abc123")
 	ctx := context.Background()
 	processor := commands.NewProcessor(testLogger(), sqlDB)
 
@@ -461,7 +461,7 @@ func TestResolveCommandNoDiscussion(t *testing.T) {
 // TestFocusCommandNoPath verifies that /ai-review focus without a path is a no-op.
 func TestFocusCommandNoPath(t *testing.T) {
 	sqlDB := setupTestDB(t)
-	_, _, mrID := seedProjectAndMR(t, sqlDB, "abc123def456")
+	_, _, mrID := seedProjectAndMR(t, sqlDB, "head-sha-abc123")
 	ctx := context.Background()
 	processor := commands.NewProcessor(testLogger(), sqlDB)
 	queries := db.New(sqlDB)
@@ -484,28 +484,28 @@ func TestFocusCommandNoPath(t *testing.T) {
 }
 
 // TestCommandIdempotencyStableDeliveryKey verifies that replaying the same
-// delivery (same DeliveryKey) for a rerun or focus command produces the same
+// delivery identifier for a rerun or focus command produces the same
 // idempotency key and therefore does NOT create a duplicate review run, while
-// a genuinely new delivery (different DeliveryKey) DOES create a new run.
-// testDelivery builds a test delivery identifier from a prefix and suffix.
-func testDelivery(prefix, suffix string) string { return prefix + "-" + suffix }
+// a genuinely new delivery identifier DOES create a new run.
+// testDispatchID builds a harmless test dispatch identifier from a prefix and suffix.
+func testDispatchID(prefix, suffix string) string { return prefix + "-" + suffix }
 
-// noteEventWithDelivery creates a NormalizedNoteEvent with delivery set.
-func noteEventWithDelivery(noteBody, discussionID, delivery string) hooks.NormalizedNoteEvent {
+// noteEventWithDispatchID creates a NormalizedNoteEvent with a test dispatch identifier set.
+func noteEventWithDispatchID(noteBody, discussionID, dispatchID string) hooks.NormalizedNoteEvent {
 	ev := baseNoteEvent(noteBody, discussionID)
-	ev.DeliveryKey = delivery //nolint:gosec // test fixture, not a secret
+	ev.DeliveryKey = dispatchID //nolint:gosec // test fixture dispatch id, not a secret
 	return ev
 }
 
 func TestCommandIdempotencyStableDeliveryKey(t *testing.T) {
 	sqlDB := setupTestDB(t)
-	_, _, mrID := seedProjectAndMR(t, sqlDB, "abc123def456")
+	_, _, mrID := seedProjectAndMR(t, sqlDB, "head-sha-abc123")
 	ctx := context.Background()
 	processor := commands.NewProcessor(testLogger(), sqlDB)
 	queries := db.New(sqlDB)
 
 	t.Run("rerun: same delivery key deduplicates", func(t *testing.T) {
-		noteEvent := noteEventWithDelivery("/ai-review rerun", "", testDelivery("rerun", "1"))
+		noteEvent := noteEventWithDispatchID("/ai-review rerun", "", testDispatchID("rerun", "1"))
 		cmd := commands.Parse(noteEvent.NoteBody)
 
 		// First execution: should create a run.
@@ -534,7 +534,7 @@ func TestCommandIdempotencyStableDeliveryKey(t *testing.T) {
 	})
 
 	t.Run("rerun: different delivery key creates new run", func(t *testing.T) {
-		noteEvent := noteEventWithDelivery("/ai-review rerun", "", testDelivery("rerun", "2"))
+		noteEvent := noteEventWithDispatchID("/ai-review rerun", "", testDispatchID("rerun", "2"))
 		cmd := commands.Parse(noteEvent.NoteBody)
 
 		if err := processor.Execute(ctx, noteEvent, cmd); err != nil {
@@ -557,7 +557,7 @@ func TestCommandIdempotencyStableDeliveryKey(t *testing.T) {
 	})
 
 	t.Run("focus: same delivery key deduplicates", func(t *testing.T) {
-		noteEvent := noteEventWithDelivery("/ai-review focus src/models/", "", testDelivery("focus", "1"))
+		noteEvent := noteEventWithDispatchID("/ai-review focus src/models/", "", testDispatchID("focus", "1"))
 		cmd := commands.Parse(noteEvent.NoteBody)
 
 		// First execution.
@@ -593,7 +593,7 @@ func TestCommandIdempotencyStableDeliveryKey(t *testing.T) {
 	})
 
 	t.Run("focus: different delivery key creates new run", func(t *testing.T) {
-		noteEvent := noteEventWithDelivery("/ai-review focus src/models/", "", testDelivery("focus", "2"))
+		noteEvent := noteEventWithDispatchID("/ai-review focus src/models/", "", testDispatchID("focus", "2"))
 		cmd := commands.Parse(noteEvent.NoteBody)
 
 		if err := processor.Execute(ctx, noteEvent, cmd); err != nil {

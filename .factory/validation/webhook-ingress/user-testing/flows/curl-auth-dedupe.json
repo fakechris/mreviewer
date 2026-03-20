@@ -5,9 +5,9 @@
   "isolation": {
     "apiBaseUrl": "http://127.0.0.1:3100",
     "mysql": "mreviewer on 127.0.0.1:3306 via docker exec mreviewer-mysql",
-    "identifierPrefix": "curl-auth-dedupe",
+    "identifierPrefix": "validation-auth-dedupe",
     "evidenceDir": "/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe",
-    "webhookTokenUsed": "test-secret"
+    "webhookTokenUsed": "test-webhook-placeholder"
   },
   "toolsUsed": [
     "curl",
@@ -19,8 +19,8 @@
       "title": "Webhook verification outcome is audit-logged",
       "status": "pass",
       "evidence": {
-        "acceptedDeliveryKey": "curl-auth-dedupe-valid-001",
-        "rejectedDeliveryKey": "curl-auth-dedupe-wrong-001",
+        "acceptedDispatchId": "validation-auth-valid-001",
+        "rejectedDispatchId": "validation-auth-invalid-001",
         "curl": [
           {
             "request": "accepted webhook",
@@ -52,7 +52,7 @@
       "title": "Valid webhook with correct token is accepted",
       "status": "pass",
       "evidence": {
-        "deliveryKey": "curl-auth-dedupe-valid-001",
+        "dispatchId": "validation-auth-valid-001",
         "curl": {
           "status": 200,
           "body": {
@@ -99,7 +99,7 @@
       "title": "Duplicate webhook is deduplicated",
       "status": "pass",
       "evidence": {
-        "deliveryKey": "curl-auth-dedupe-dedupe-001",
+        "dispatchId": "validation-auth-repeat-001",
         "firstRequest": {
           "status": 200,
           "body": {
@@ -129,7 +129,7 @@
       "title": "Malformed JSON payload returns 400",
       "status": "pass",
       "evidence": {
-        "deliveryKey": "curl-auth-dedupe-malformed-001",
+        "dispatchId": "validation-auth-malformed-001",
         "curl": {
           "status": 400,
           "body": {
@@ -148,7 +148,7 @@
       "title": "Unknown event type is accepted but ignored",
       "status": "pass",
       "evidence": {
-        "deliveryKey": "curl-auth-dedupe-unknown-001",
+        "dispatchId": "validation-auth-unknown-001",
         "curl": {
           "status": 200,
           "body": {
@@ -170,7 +170,7 @@
       "status": "pass",
       "evidence": {
         "scope": "webhook-ingress",
-        "deliveryKey": "curl-auth-dedupe-dedupe-001",
+        "dispatchId": "validation-auth-repeat-001",
         "curl": [
           {
             "request": "first webhook",
@@ -217,30 +217,30 @@
   "blockers": [],
   "commandsRun": [
     "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/health.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/health.body.json http://127.0.0.1:3100/health",
-    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-001.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-001.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-valid-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/valid-webhook.json",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-001.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-001.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-valid-001' -H 'X-Gitlab-Token: test-webhook-placeholder' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/valid-webhook.json",
     "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-002-missing.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-002-missing.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-missing-001' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/valid-webhook.json",
-    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-002-wrong.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-002-wrong.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-wrong-001' -H 'X-Gitlab-Token: BADVALUE' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/valid-webhook.json",
-    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-009.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-009.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-malformed-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/malformed.json",
-    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-010.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-010.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Pipeline Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-unknown-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/unknown-pipeline.json",
-    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-006-first.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-006-first.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-dedupe-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/dedupe-webhook.json",
-    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-006-second.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-006-second.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-dedupe-001' -H 'X-Gitlab-Token: test-secret' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/dedupe-webhook.json",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'event_type'\"'\"', event_type, '\"'\"'project_id'\"'\"', project_id, '\"'\"'mr_iid'\"'\"', mr_iid, '\"'\"'action'\"'\"', action, '\"'\"'head_sha'\"'\"', head_sha, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-valid-001'\"'\"';'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'hook_event_id'\"'\"', rr.hook_event_id, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 991101 AND mr.mr_iid = 7001 ORDER BY rr.id;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-valid-001'\"'\"' ORDER BY id;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT COUNT(*) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-missing-001'\"'\"';'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-missing-001'\"'\"' ORDER BY id;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT COUNT(*) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-wrong-001'\"'\"';'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-wrong-001'\"'\"' ORDER BY id;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT COUNT(*) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-malformed-001'\"'\"';'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-malformed-001'\"'\"' ORDER BY id;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'event_type'\"'\"', event_type, '\"'\"'project_id'\"'\"', project_id, '\"'\"'mr_iid'\"'\"', mr_iid, '\"'\"'action'\"'\"', action, '\"'\"'head_sha'\"'\"', head_sha, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-unknown-001'\"'\"';'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT COUNT(*) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 991103;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-unknown-001'\"'\"' ORDER BY id;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'event_type'\"'\"', event_type, '\"'\"'project_id'\"'\"', project_id, '\"'\"'mr_iid'\"'\"', mr_iid, '\"'\"'action'\"'\"', action, '\"'\"'head_sha'\"'\"', head_sha, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-dedupe-001'\"'\"' ORDER BY id;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT COUNT(*) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-dedupe-001'\"'\"';'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'hook_event_id'\"'\"', rr.hook_event_id, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 991102 AND mr.mr_iid = 7002 ORDER BY rr.id;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT COUNT(*) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 991102 AND mr.mr_iid = 7002;'",
-    "docker exec mreviewer-mysql mysql -umreviewer -pmreviewer_password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-dedupe-001'\"'\"' ORDER BY id;'"
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-002-wrong.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-002-wrong.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-wrong-001' -H 'X-Gitlab-Token: test-webhook-invalid' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/valid-webhook.json",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-009.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-009.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-malformed-001' -H 'X-Gitlab-Token: test-webhook-placeholder' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/malformed.json",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-010.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-010.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Pipeline Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-unknown-001' -H 'X-Gitlab-Token: test-webhook-placeholder' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/unknown-pipeline.json",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-006-first.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-006-first.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-dedupe-001' -H 'X-Gitlab-Token: test-webhook-placeholder' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/dedupe-webhook.json",
+    "curl -sS -D /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-006-second.headers.txt -o /Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/VAL-INGRESS-006-second.body.json -X POST http://127.0.0.1:3100/webhook -H 'Content-Type: application/json' -H 'X-Gitlab-Event: Merge Request Hook' -H 'X-Gitlab-Delivery: curl-auth-dedupe-dedupe-001' -H 'X-Gitlab-Token: test-webhook-placeholder' --data-binary @/Users/chris/.factory/missions/e68ebab7-a1ca-41e1-9c85-d3b7d9b36400/evidence/webhook-ingress/curl-auth-dedupe/dedupe-webhook.json",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'event_type'\"'\"', event_type, '\"'\"'project_id'\"'\"', project_id, '\"'\"'mr_iid'\"'\"', mr_iid, '\"'\"'action'\"'\"', action, '\"'\"'head_sha'\"'\"', head_sha, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-valid-001'\"'\"';'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'hook_event_id'\"'\"', rr.hook_event_id, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 991101 AND mr.mr_iid = 7001 ORDER BY rr.id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-valid-001'\"'\"' ORDER BY id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT COUNT(*) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-missing-001'\"'\"';'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-missing-001'\"'\"' ORDER BY id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT COUNT(*) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-wrong-001'\"'\"';'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-wrong-001'\"'\"' ORDER BY id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT COUNT(*) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-malformed-001'\"'\"';'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-malformed-001'\"'\"' ORDER BY id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'event_type'\"'\"', event_type, '\"'\"'project_id'\"'\"', project_id, '\"'\"'mr_iid'\"'\"', mr_iid, '\"'\"'action'\"'\"', action, '\"'\"'head_sha'\"'\"', head_sha, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-unknown-001'\"'\"';'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT COUNT(*) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 991103;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-unknown-001'\"'\"' ORDER BY id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'event_type'\"'\"', event_type, '\"'\"'project_id'\"'\"', project_id, '\"'\"'mr_iid'\"'\"', mr_iid, '\"'\"'action'\"'\"', action, '\"'\"'head_sha'\"'\"', head_sha, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-dedupe-001'\"'\"' ORDER BY id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT COUNT(*) FROM hook_events WHERE delivery_key = '\"'\"'curl-auth-dedupe-dedupe-001'\"'\"';'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'id'\"'\"', rr.id, '\"'\"'status'\"'\"', rr.status, '\"'\"'head_sha'\"'\"', rr.head_sha, '\"'\"'hook_event_id'\"'\"', rr.hook_event_id, '\"'\"'idempotency_key'\"'\"', rr.idempotency_key) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 991102 AND mr.mr_iid = 7002 ORDER BY rr.id;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT COUNT(*) FROM review_runs rr JOIN projects p ON rr.project_id = p.id JOIN merge_requests mr ON rr.merge_request_id = mr.id WHERE p.gitlab_project_id = 991102 AND mr.mr_iid = 7002;'",
+    "docker exec mreviewer-mysql mysql -umreviewer -ptest-db-password -D mreviewer -Nse 'SELECT JSON_OBJECT('\"'\"'delivery_key'\"'\"', delivery_key, '\"'\"'hook_source'\"'\"', hook_source, '\"'\"'verification_outcome'\"'\"', verification_outcome, '\"'\"'rejection_reason'\"'\"', rejection_reason, '\"'\"'detail'\"'\"', detail) FROM audit_logs WHERE delivery_key = '\"'\"'curl-auth-dedupe-dedupe-001'\"'\"' ORDER BY id;'"
   ],
   "summary": "Tested 7 assertions: 7 passed, 0 failed, 0 blocked, 0 skipped."
 }

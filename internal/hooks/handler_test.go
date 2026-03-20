@@ -21,7 +21,7 @@ const migrationsDir = "../../migrations"
 
 // testWebhookKey is a dummy webhook verification key used exclusively in tests.
 // It is NOT a real secret.
-const testWebhookKey = "CHANGEME" //nolint:gosec
+const testWebhookKey = "test-webhook-placeholder" //nolint:gosec
 
 // testLogger returns a silent logger for tests.
 func testLogger() *slog.Logger {
@@ -82,7 +82,7 @@ func mrOpenPayload(dlvID string) string {
 			"source_branch": "feature-x",
 			"target_branch": "main",
 			"url": "https://gitlab.example.com/test/repo/-/merge_requests/7",
-			"last_commit": {"id": "abc123def456"}
+			"last_commit": {"id": "head-sha-abc123"}
 		}
 	}`
 }
@@ -109,7 +109,7 @@ func TestWebhookAuth(t *testing.T) {
 	handler := newTestHandler(sqlDB)
 
 	t.Run("valid token returns 200", func(t *testing.T) {
-		dlvID := "dk-valid-200"
+		dlvID := "test-dispatch-valid-200"
 		rec := postWebhook(handler, mrOpenPayload(dlvID), map[string]string{
 			"X-Gitlab-Token":    secret,
 			"X-Gitlab-Event":    "Merge Request Hook",
@@ -132,7 +132,7 @@ func TestWebhookAuth(t *testing.T) {
 	})
 
 	t.Run("missing token returns 401", func(t *testing.T) {
-		dlvID := "dk-noheader-401"
+		dlvID := "test-dispatch-missing-401"
 		rec := postWebhook(handler, mrOpenPayload(dlvID), map[string]string{
 			"X-Gitlab-Event":    "Merge Request Hook",
 			"X-Gitlab-Delivery": dlvID,
@@ -151,9 +151,9 @@ func TestWebhookAuth(t *testing.T) {
 	})
 
 	t.Run("wrong token returns 401", func(t *testing.T) {
-		dlvID := "dk-badvalue-401"
+		dlvID := "test-dispatch-invalid-401"
 		rec := postWebhook(handler, mrOpenPayload(dlvID), map[string]string{
-			"X-Gitlab-Token":    "BADVALUE",
+			"X-Gitlab-Token":    "test-webhook-invalid",
 			"X-Gitlab-Event":    "Merge Request Hook",
 			"X-Gitlab-Delivery": dlvID,
 			"Content-Type":      "application/json",
@@ -471,7 +471,7 @@ func TestWebhookAuditLogging(t *testing.T) {
 
 	t.Run("rejected webhook has audit record with reason", func(t *testing.T) {
 		dlvID := "audit-rejected-1"
-		postWebhook(handler, mrOpenPayload(dlvID), webhookHeaders("BADVALUE", map[string]string{
+		postWebhook(handler, mrOpenPayload(dlvID), webhookHeaders("test-webhook-invalid", map[string]string{
 			"X-Gitlab-Delivery": dlvID,
 		}))
 
@@ -702,7 +702,7 @@ func TestVerifyTokenConstantTime(t *testing.T) {
 	if !h.verifyToken(testWebhookKey) {
 		t.Error("expected valid token to pass")
 	}
-	if h.verifyToken("BADVALUE") {
+	if h.verifyToken("test-webhook-invalid") {
 		t.Error("expected wrong token to fail")
 	}
 	if h.verifyToken("") {
@@ -710,7 +710,7 @@ func TestVerifyTokenConstantTime(t *testing.T) {
 	}
 
 	h2 := &Handler{secret: ""}
-	if h2.verifyToken("BADVALUE") {
+	if h2.verifyToken("test-webhook-invalid") {
 		t.Error("expected empty secret to reject all tokens")
 	}
 }
