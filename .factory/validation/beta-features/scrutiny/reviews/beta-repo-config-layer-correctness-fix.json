@@ -1,22 +1,21 @@
 {
   "featureId": "beta-repo-config-layer-correctness-fix",
-  "reviewedAt": "2026-03-19T15:25:37.763384Z",
-  "commitId": "91f81064f25e4fe2d24fba0dcd45290ab12a2665",
+  "reviewedAt": "2026-03-19T23:12:52.837797Z",
+  "commitId": "08beeb4e7d2f80af4395505be33e8867b463b08d",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The feature fixes loader-side per-path REVIEW selection and YAML warning surfacing, but the assembled review request still serializes only one shared rules object and never applies directory-scoped REVIEW content per changed file/path.",
-    "issues": [
-      {
-        "file": "internal/context/assembler.go",
-        "line": 61,
-        "severity": "blocking",
-        "description": "ReviewRequest still exposes a single top-level `Rules TrustedRules` object and each `Change` lacks any per-file trusted-instruction field. Although `TrustedRules.ReviewForPath()` was added, `Assembler.Assemble()` never calls it when constructing each change, so downstream provider requests cannot know which directory-scoped REVIEW.md applies to which changed file. The implementation therefore does not satisfy the requirement to apply directory-scoped REVIEW.md per changed file/path instead of collapsing to a single run-wide winner."
-      }
-    ]
+    "summary": "Reviewed the original failed feature diff (c33ab81f7a101eebf13ea2528f4a268d4218fdf8) and the fix diff (08beeb4e7d2f80af4395505be33e8867b463b08d). The fix addresses the prior blocking gap by carrying directory-scoped REVIEW.md instructions as per-path trusted data, resolving the nearest review text for each changed file during context assembly, threading those per-change instructions into downstream ReviewRequest payloads, and preserving strict ai-review.yaml warning surfacing through loader warnings with targeted regression coverage.",
+    "issues": []
   },
-  "sharedStateObservations": [],
-  "addressesFailureFrom": null,
-  "summary": "Fail: one blocking issue remains. Directory-scoped REVIEW.md lookup was added in the loader, but the assembled ReviewRequest still carries only one shared rules object and does not attach per-path instructions to individual changed files, so the feature does not fully implement path-scoped application of REVIEW.md. No non-blocking issues or shared-state gaps were identified from the reviewed evidence."
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker completed a rules/context threading fix under the go-integration skill, but the work and tests were primarily backend/rules/context logic that more closely matches go-backend's stated scope.",
+      "evidence": "features.json lists beta-repo-config-layer-correctness-fix with skillName=go-integration, while the implementation changed internal/rules/loader.go, internal/context/assembler.go, and related unit tests; .factory/skills/go-backend/SKILL.md explicitly covers 'rules loading and config precedence' plus 'diff/context assembly'."
+    }
+  ],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-repo-config-layers.json",
+  "summary": "Pass. I reviewed the fix transcript skeleton plus both commits. The original commit still had a single run-wide REVIEW winner and dropped ai-review warnings; the fix commit corrects that by storing directory reviews per path, using ReviewForPath during assembly, passing changed paths into rules.Load from the processor, and proving end-to-end per-change request threading along with surfaced YAML warnings."
 }

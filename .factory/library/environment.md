@@ -42,3 +42,7 @@ Environment variables, external dependencies, and setup notes.
 
 - Source docs may still mention PostgreSQL.
 - Workers must treat MySQL 8.4 as the single source of truth for persistence design and implementation.
+
+## Working tree hygiene
+
+- Some worker runs have left an untracked repo-root `worker` binary behind after local builds. Treat repo-root build artifacts as residue to remove before claiming a clean tree in handoffs or validation evidence.

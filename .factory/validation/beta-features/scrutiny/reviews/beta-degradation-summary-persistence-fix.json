@@ -1,15 +1,21 @@
 {
   "featureId": "beta-degradation-summary-persistence-fix",
-  "reviewedAt": "2026-03-19T23:24:00Z",
+  "reviewedAt": "2026-03-19T23:12:49Z",
   "commitId": "9a4c752c6bb05b8445f24ba44f329f998dc1ae5a",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
   "status": "pass",
   "codeReview": {
-    "summary": "Implementation satisfies the feature requirements: the degradation path now persists the explicit degradation summary on writer-visible run fields, writer summary rendering already consumes that persisted value for degradation-mode runs, and regression tests cover persistence plus writer rendering with skipped files and reasons.",
+    "summary": "The fix addresses the prior blocking defect by persisting the degradation summary on writer-visible run fields and adding regression tests that prove the writer renders skipped files and reasons from persisted run state. The original large-MR degradation diff still lacks benchmark evidence, but that prior blocking item was handled by the separate benchmark-evidence follow-up rather than this scoped fix.",
     "issues": []
   },
-  "sharedStateObservations": [],
-  "addressesFailureFrom": null,
-  "summary": "Pass. No blocking or non-blocking issues found. The reviewed commit persists degradation summaries via review_run error fields consumed by the writer and adds regression coverage for persistence and rendered summary-note behavior. No shared-state gaps were identified from the transcript, skill, or mission artifacts."
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The mission shared state now documents the recurring repo-root `worker` binary residue, but this fix handoff still claims a clean tree without mentioning whether that known artifact was present during its validation. Reviewers needed the library note to interpret the worker's clean-tree claim consistently.",
+      "evidence": ".factory/library/environment.md:31-32 documents that some runs leave an untracked repo-root `worker` binary behind; the fix handoff for session 6e5b5271-0d98-42f1-81ea-a50aa8e57d11 says the tree was clean after commit without discussing this known residue pattern."
+    }
+  ],
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-large-mr-degradation.json",
+  "summary": "Review passed. I reviewed the original failure, both diffs, the fix handoff, transcript skeleton, and the go-integration skill. The fix persists `degradation_mode` plus the full degradation summary onto `review_runs.error_code/error_detail`, `internal/writer/writer.go` consumes those fields for summary rendering, and new llm/writer regression tests demonstrate skipped files and reasons survive end-to-end through writer output."
 }

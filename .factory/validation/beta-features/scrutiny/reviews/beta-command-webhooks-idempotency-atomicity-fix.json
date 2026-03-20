@@ -1,22 +1,15 @@
 {
   "featureId": "beta-command-webhooks-idempotency-atomicity-fix",
-  "reviewedAt": "2026-03-19T15:25:43Z",
-  "commitId": "3e9636f3583b8bd9c882257ae1d6e03c7d138c1c",
+  "reviewedAt": "2026-03-19T23:12:58Z",
+  "commitId": "8f7e52f2690d2a02406de9c40106ccbfd8409787",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "The feature correctly stabilizes rerun/focus idempotency keys with the webhook delivery key and adds transactional note-hook persistence for handlers wired to a transactional command processor, but the handler still retains a non-atomic fallback path that can reproduce the exact partial-failure bug the feature was meant to eliminate.",
-    "issues": [
-      {
-        "file": "internal/hooks/handler.go",
-        "line": 423,
-        "severity": "blocking",
-        "description": "`handleNoteEvent` still falls back to inserting the `hook_events` row before calling `commandProcessor.Execute` when the processor does not implement `TransactionalCommandProcessor`. If a non-transactional processor is configured and command execution fails after the insert, the delivery is permanently deduplicated while the command side effect is lost, which violates the feature requirement that persistence plus side effects remain atomic/retry-safe across failures."
-      }
-    ]
+    "summary": "The fix closes the previously reported loss-of-side-effect path by requiring note commands to execute through ExecuteWithQuerier inside the same db.RunTx that persists hook_events, while the earlier stable delivery-based idempotency key logic in commands.go already covers rerun/focus replay dedupe. Existing regression tests now exercise replay dedupe and retry-after-failure atomicity through the production webhook handler.",
+    "issues": []
   },
   "sharedStateObservations": [],
-  "addressesFailureFrom": null,
-  "summary": "Fail: stable delivery-key idempotency and regression tests are in place, but `internal/hooks/handler.go` still preserves a legacy non-transactional command path that can commit `hook_events` without the command effect, leaving the atomicity/retry-safe requirement unmet for that configuration. No non-blocking issues or shared-state observations."
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-command-webhooks.json",
+  "summary": "Reviewed the fix handoff/transcript, the prior failed review, and both commits (29ae864468dfe743886317306885fd4242d72954 and 8f7e52f2690d2a02406de9c40106ccbfd8409787). The original failure's two blocking gaps are now jointly addressed: stable delivery-derived idempotency for rerun/focus is present in commands.go, and handler.go now removes the non-transactional fallback so replay after a partial failure cannot lose command effects. I found no remaining blocking issues in scope."
 }

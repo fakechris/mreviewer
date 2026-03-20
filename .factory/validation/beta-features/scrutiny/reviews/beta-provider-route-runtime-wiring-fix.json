@@ -1,28 +1,21 @@
 {
   "featureId": "beta-provider-route-runtime-wiring-fix",
-  "reviewedAt": "2026-03-19T15:26:27Z",
-  "commitId": "f5864ee",
+  "reviewedAt": "2026-03-19T19:02:43.271578+00:00",
+  "commitId": "f5864ee8c3ce06141285dccd85a13a0d85078f89",
   "transcriptSkeletonReviewed": true,
   "diffReviewed": true,
-  "status": "fail",
+  "status": "pass",
   "codeReview": {
-    "summary": "Runtime provider selection is now driven through a registry and fallback path, but the new end-to-end audit regression does not actually validate the renamed lifecycle event introduced by this fix.",
-    "issues": [
-      {
-        "file": "internal/llm/provider_test.go",
-        "line": 1955,
-        "severity": "non_blocking",
-        "description": "The feature changed the lifecycle audit action from `provider_called` to `provider_response_received`, but TestProviderRouteEndToEnd still only asserts the separate `provider_called` audit emitted by LogProviderCall. That leaves the specific regression this fix claims to cover\u2014the renamed lifecycle audit carrying `provider_model`\u2014untested, so a future change could silently break the new action without failing this suite."
-      }
-    ]
+    "summary": "The fix closes the prior routing gap: cmd/worker now wires provider selection through a ProviderRegistry keyed by EffectivePolicy.ProviderRoute, and regression tests exercise runtime route selection, end-to-end persistence/audit behavior, and fallback under policy-driven routing.",
+    "issues": []
   },
   "sharedStateObservations": [
     {
       "area": "knowledge",
-      "observation": "The shared architecture note still says trusted review instructions are modeled as a single global `TrustedRules.ReviewMarkdown` string, which is stale after the beta config correctness fix introduced per-path directory review handling.",
-      "evidence": "/Users/chris/workspace/mreviewer/.factory/library/architecture.md:28 \u2014 'Trusted review instructions are still modeled as a single `TrustedRules.ReviewMarkdown` string today' conflicts with the completed beta config fix and current rules behavior."
+      "observation": "The repo already relies on `cmd/worker/main.go` to seed `rules.PlatformDefaults`, including the default provider route, but this runtime-policy source of truth is only captured in `.factory/library/integrations.md` and not in mission guidance. Workers extending provider routing could miss that runtime defaults and policy override behavior originate there.",
+      "evidence": ".factory/library/integrations.md:34 notes that `cmd/worker/main.go` seeds `rules.PlatformDefaults`; cmd/worker/main.go wires `platformDefaultRoute` into `rules.PlatformDefaults.ProviderRoute` and the runtime provider registry."
     }
   ],
-  "addressesFailureFrom": null,
-  "summary": "Fail: runtime routing code looks sound, but the added audit regression coverage misses the actual renamed lifecycle event, leaving part of the claimed fix unverified. One non-blocking shared-state knowledge gap was also noted in .factory/library/architecture.md."
+  "addressesFailureFrom": "/Users/chris/workspace/mreviewer/.factory/validation/beta-features/scrutiny/reviews/beta-provider-routing-rate-limits.json",
+  "summary": "Review passed: the fix removes hard-coded runtime provider routing, proves policy-driven provider selection in processor/runtime tests, and adequately addresses the original failure in beta-provider-routing-rate-limits. The repo is not fully clean because a pre-existing untracked repo-root `worker` binary remains, but that residue was already present before this fix and is called out in the handoff rather than introduced by this feature."
 }
