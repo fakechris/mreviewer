@@ -31,5 +31,69 @@ services:
       timeout: 5s
       retries: 10
 
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET_CMD: ./cmd/worker
+    container_name: mreviewer-migrate
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      GOOSE_DBSTRING: mreviewer:mreviewer_password@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci
+      GOOSE_MIGRATION_DIR: /app/migrations
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: ["/app/migrate"]
+
+  ingress:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET_CMD: ./cmd/ingress
+    container_name: mreviewer-ingress
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MYSQL_DSN: mreviewer:mreviewer_password@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci
+      REDIS_ADDR: redis:6379
+      PORT: 3100
+    ports:
+      - "${PORT:-3100}:3100"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET_CMD: ./cmd/worker
+    container_name: mreviewer-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MYSQL_DSN: mreviewer:mreviewer_password@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci
+      REDIS_ADDR: redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
 volumes:
   mysql_data:
