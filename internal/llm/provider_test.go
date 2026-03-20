@@ -81,6 +81,93 @@ func TestParseValidReviewResult(t *testing.T) {
 	}
 }
 
+func TestParseReviewResultWithNewFields(t *testing.T) {
+	raw := `{
+		"schema_version":"1.0",
+		"review_run_id":"rr-2",
+		"summary":"Found one issue",
+		"blind_spots":["concurrent access patterns not fully verified"],
+		"findings":[{
+			"category":"bug",
+			"severity":"high",
+			"confidence":0.95,
+			"title":"Nil dereference",
+			"body_markdown":"body",
+			"path":"main.go",
+			"anchor_kind":"new",
+			"new_line":12,
+			"trigger_condition":"pointer used without nil check on line 12",
+			"impact":"runtime panic in production if input is nil",
+			"introduced_by_this_change":true,
+			"blind_spots":["untested error path"],
+			"no_finding_reason":""
+		}]
+	}`
+	result, stage, err := ParseReviewResult(raw)
+	if err != nil {
+		t.Fatalf("ParseReviewResult: %v", err)
+	}
+	if stage != "direct" {
+		t.Fatalf("stage = %q, want direct", stage)
+	}
+	if len(result.BlindSpots) != 1 || result.BlindSpots[0] != "concurrent access patterns not fully verified" {
+		t.Fatalf("result blind_spots = %#v", result.BlindSpots)
+	}
+	finding := result.Findings[0]
+	if finding.TriggerCondition != "pointer used without nil check on line 12" {
+		t.Fatalf("trigger_condition = %q", finding.TriggerCondition)
+	}
+	if finding.Impact != "runtime panic in production if input is nil" {
+		t.Fatalf("impact = %q", finding.Impact)
+	}
+	if !finding.IntroducedByThisChange {
+		t.Fatal("introduced_by_this_change = false, want true")
+	}
+	if len(finding.BlindSpots) != 1 || finding.BlindSpots[0] != "untested error path" {
+		t.Fatalf("finding blind_spots = %#v", finding.BlindSpots)
+	}
+
+	// Verify normalization preserves new fields.
+	normalized := normalizeFinding(finding)
+	if normalized.TriggerCondition != "pointer used without nil check on line 12" {
+		t.Fatalf("normalized trigger_condition = %q", normalized.TriggerCondition)
+	}
+	if normalized.Impact != "runtime panic in production if input is nil" {
+		t.Fatalf("normalized impact = %q", normalized.Impact)
+	}
+	if !normalized.IntroducedByThisChange {
+		t.Fatal("normalized introduced_by_this_change = false, want true")
+	}
+	if len(normalized.BlindSpots) != 1 || normalized.BlindSpots[0] != "untested error path" {
+		t.Fatalf("normalized blind_spots = %#v", normalized.BlindSpots)
+	}
+}
+
+func TestParseReviewResultNewFieldsOptional(t *testing.T) {
+	// Verify that existing JSON without the new fields still parses correctly.
+	raw := `{"schema_version":"1.0","review_run_id":"rr-3","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}`
+	result, _, err := ParseReviewResult(raw)
+	if err != nil {
+		t.Fatalf("ParseReviewResult: %v", err)
+	}
+	finding := result.Findings[0]
+	if finding.TriggerCondition != "" {
+		t.Fatalf("trigger_condition = %q, want empty", finding.TriggerCondition)
+	}
+	if finding.Impact != "" {
+		t.Fatalf("impact = %q, want empty", finding.Impact)
+	}
+	if finding.IntroducedByThisChange {
+		t.Fatal("introduced_by_this_change = true, want false")
+	}
+	if len(finding.BlindSpots) != 0 {
+		t.Fatalf("blind_spots = %#v, want empty", finding.BlindSpots)
+	}
+	if len(result.BlindSpots) != 0 {
+		t.Fatalf("result blind_spots = %#v, want empty", result.BlindSpots)
+	}
+}
+
 func TestParserFallbackChain(t *testing.T) {
 	t.Run("marker extraction", func(t *testing.T) {
 		raw := "Here is the result:\n```json\n{\"schema_version\":\"1.0\",\"review_run_id\":\"rr-1\",\"summary\":\"ok\",\"findings\":[]}\n```"
@@ -2348,6 +2435,313 @@ func TestDegradationSummaryNoteIncludesSkippedFiles(t *testing.T) {
 	if !strings.Contains(detail, "scope_limit") {
 		t.Fatalf("error_detail missing scope_limit reason: %s", detail)
 	}
+}
+
+func TestParseSummaryResult(t *testing.T) {
+	raw := `{"schema_version":"1.0","review_run_id":"rr-1","walkthrough":"This MR adds a new endpoint for user registration.","risk_areas":[{"path":"src/auth/register.go","description":"No input validation on email field","severity":"high"}],"blind_spots":["Integration tests not reviewed"],"verdict":"comment"}`
+	result, err := ParseSummaryResult(raw)
+	if err != nil {
+		t.Fatalf("ParseSummaryResult: %v", err)
+	}
+	if result.SchemaVersion != "1.0" {
+		t.Fatalf("schema_version = %q, want 1.0", result.SchemaVersion)
+	}
+	if result.ReviewRunID != "rr-1" {
+		t.Fatalf("review_run_id = %q, want rr-1", result.ReviewRunID)
+	}
+	if result.Walkthrough != "This MR adds a new endpoint for user registration." {
+		t.Fatalf("walkthrough = %q", result.Walkthrough)
+	}
+	if len(result.RiskAreas) != 1 || result.RiskAreas[0].Path != "src/auth/register.go" {
+		t.Fatalf("risk_areas = %#v", result.RiskAreas)
+	}
+	if len(result.BlindSpots) != 1 || result.BlindSpots[0] != "Integration tests not reviewed" {
+		t.Fatalf("blind_spots = %#v", result.BlindSpots)
+	}
+	if result.Verdict != "comment" {
+		t.Fatalf("verdict = %q, want comment", result.Verdict)
+	}
+}
+
+func TestParseSummaryResultFallback(t *testing.T) {
+	t.Run("markdown wrapper", func(t *testing.T) {
+		raw := "Here is the summary:\n```json\n{\"schema_version\":\"1.0\",\"review_run_id\":\"rr-2\",\"walkthrough\":\"Refactored error handling.\",\"verdict\":\"approve\"}\n```"
+		result, err := ParseSummaryResult(raw)
+		if err != nil {
+			t.Fatalf("ParseSummaryResult: %v", err)
+		}
+		if result.Walkthrough != "Refactored error handling." {
+			t.Fatalf("walkthrough = %q", result.Walkthrough)
+		}
+		if result.Verdict != "approve" {
+			t.Fatalf("verdict = %q, want approve", result.Verdict)
+		}
+	})
+	t.Run("tolerant repair", func(t *testing.T) {
+		raw := `{"schema_version":"1.0","review_run_id":"rr-3","walkthrough":"Fixed tests.","verdict":"approve",}`
+		result, err := ParseSummaryResult(raw)
+		if err != nil {
+			t.Fatalf("ParseSummaryResult: %v", err)
+		}
+		if result.Walkthrough != "Fixed tests." {
+			t.Fatalf("walkthrough = %q", result.Walkthrough)
+		}
+	})
+	t.Run("empty input", func(t *testing.T) {
+		_, err := ParseSummaryResult("")
+		if err == nil {
+			t.Fatal("expected error for empty input")
+		}
+	})
+	t.Run("invalid json", func(t *testing.T) {
+		_, err := ParseSummaryResult("definitely not json")
+		if err == nil {
+			t.Fatal("expected error for invalid json")
+		}
+	})
+	t.Run("missing required fields", func(t *testing.T) {
+		raw := `{"schema_version":"1.0","review_run_id":"rr-4","verdict":"approve"}`
+		_, err := ParseSummaryResult(raw)
+		if err == nil {
+			t.Fatal("expected error when walkthrough is missing")
+		}
+	})
+}
+
+func TestRenderSummaryFromWalkthrough(t *testing.T) {
+	t.Run("full summary", func(t *testing.T) {
+		summary := SummaryResult{
+			SchemaVersion: "1.0",
+			ReviewRunID:   "rr-1",
+			Walkthrough:   "This MR refactors the auth module.",
+			RiskAreas: []RiskArea{
+				{Path: "src/auth/login.go", Description: "Session handling changed", Severity: "high"},
+				{Path: "src/auth/token.go", Description: "Token rotation logic", Severity: "medium"},
+			},
+			BlindSpots: []string{"No integration tests for SSO flow"},
+			Verdict:    "request_changes",
+		}
+		got := renderSummaryFromWalkthrough(summary)
+		if !strings.Contains(got, "## MR Walkthrough") {
+			t.Fatal("missing walkthrough header")
+		}
+		if !strings.Contains(got, "This MR refactors the auth module.") {
+			t.Fatal("missing walkthrough body")
+		}
+		if !strings.Contains(got, "### Risk Areas") {
+			t.Fatal("missing risk areas section")
+		}
+		if !strings.Contains(got, "**src/auth/login.go** (high)") {
+			t.Fatal("missing first risk area")
+		}
+		if !strings.Contains(got, "**src/auth/token.go** (medium)") {
+			t.Fatal("missing second risk area")
+		}
+		if !strings.Contains(got, "### Blind Spots") {
+			t.Fatal("missing blind spots section")
+		}
+		if !strings.Contains(got, "No integration tests for SSO flow") {
+			t.Fatal("missing blind spot")
+		}
+		if !strings.Contains(got, "**Verdict**: request_changes") {
+			t.Fatal("missing verdict")
+		}
+	})
+	t.Run("minimal summary", func(t *testing.T) {
+		summary := SummaryResult{
+			SchemaVersion: "1.0",
+			ReviewRunID:   "rr-2",
+			Walkthrough:   "Minor fix.",
+			Verdict:       "approve",
+		}
+		got := renderSummaryFromWalkthrough(summary)
+		if !strings.Contains(got, "## MR Walkthrough") {
+			t.Fatal("missing walkthrough header")
+		}
+		if !strings.Contains(got, "Minor fix.") {
+			t.Fatal("missing walkthrough body")
+		}
+		if strings.Contains(got, "### Risk Areas") {
+			t.Fatal("unexpected risk areas section for empty risk areas")
+		}
+		if strings.Contains(got, "### Blind Spots") {
+			t.Fatal("unexpected blind spots section for empty blind spots")
+		}
+		if !strings.Contains(got, "**Verdict**: approve") {
+			t.Fatal("missing verdict")
+		}
+	})
+}
+
+func TestProcessRunWithSummaryProvider(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
+	}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	provider := &fakeProvider{response: ProviderResponse{
+		Result:          ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: nil},
+		Model:           "MiniMax-M2.5",
+		Tokens:          50,
+		Latency:         10 * time.Millisecond,
+		ResponsePayload: map[string]any{},
+	}}
+	summaryProv := &fakeSummaryProvider{response: SummaryResponse{
+		Result: SummaryResult{
+			SchemaVersion: "1.0",
+			ReviewRunID:   fmt.Sprintf("%d", runID),
+			Walkthrough:   "This MR updates the main module.",
+			RiskAreas:     []RiskArea{{Path: "main.go", Description: "Core logic changed", Severity: "medium"}},
+			Verdict:       "approve",
+		},
+		Latency: 5 * time.Millisecond,
+		Tokens:  30,
+		Model:   "summary-model",
+	}}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithSummaryProvider(summaryProv)
+
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-summary", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+	if !summaryProv.called {
+		t.Fatal("expected summary provider to be called")
+	}
+	// Verify audit log has summary_chain_completed entry.
+	audits, err := q.ListAuditLogsByEntity(ctx, db.ListAuditLogsByEntityParams{EntityType: "review_run", EntityID: runID, Limit: 20, Offset: 0})
+	if err != nil {
+		t.Fatalf("ListAuditLogsByEntity: %v", err)
+	}
+	foundSummaryAudit := false
+	for _, audit := range audits {
+		if audit.Action == "summary_chain_completed" {
+			foundSummaryAudit = true
+		}
+	}
+	if !foundSummaryAudit {
+		t.Fatal("expected summary_chain_completed audit log")
+	}
+}
+
+func TestProcessRunWithSummaryProviderFailure(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
+	}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	provider := &fakeProvider{response: ProviderResponse{
+		Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{{
+			Category: "bug", Severity: "high", Confidence: 0.9, Title: "Issue", BodyMarkdown: "body", Path: "main.go", AnchorKind: "new",
+		}}},
+		Model: "MiniMax-M2.5", Tokens: 50, Latency: 10 * time.Millisecond, ResponsePayload: map[string]any{},
+	}}
+	// Summary provider that fails — should not block the review.
+	summaryProv := &fakeSummaryProvider{err: fmt.Errorf("summary provider error")}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithSummaryProvider(summaryProv)
+
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-summary-fail", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun should succeed even when summary fails: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+	if !summaryProv.called {
+		t.Fatal("expected summary provider to be called")
+	}
+}
+
+func TestProcessRunWithoutSummaryProvider(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
+	}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	provider := &fakeProvider{response: ProviderResponse{
+		Result:          ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: nil},
+		Model:           "MiniMax-M2.5",
+		Tokens:          50,
+		Latency:         10 * time.Millisecond,
+		ResponsePayload: map[string]any{},
+	}}
+	// No summary provider — should behave exactly as before.
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-no-summary", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+}
+
+type fakeSummaryProvider struct {
+	response SummaryResponse
+	err      error
+	called   bool
+}
+
+func (f *fakeSummaryProvider) Summarize(_ context.Context, _ ctxpkg.ReviewRequest) (SummaryResponse, error) {
+	f.called = true
+	return f.response, f.err
 }
 
 var _ = option.WithAPIKey

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -32,9 +33,34 @@ const (
 	ExcludedReasonScopeLimit      = "scope_limit"
 )
 
+type PRSizeCategory string
+
+const (
+	PRSizeSmall  PRSizeCategory = "small"   // < 100 changed lines
+	PRSizeMedium PRSizeCategory = "medium"  // 100-500 changed lines
+	PRSizeLarge  PRSizeCategory = "large"   // 500-2500 changed lines
+	PRSizeXLarge PRSizeCategory = "xlarge"  // > 2500 changed lines
+)
+
+type PRSizeStrategy struct {
+	Category        PRSizeCategory `json:"category"`
+	MaxContextLines int            `json:"max_context_lines"`
+	PrioritizeFiles bool           `json:"prioritize_files"`
+	ChunkReview     bool           `json:"chunk_review"`
+	FocusAreas      []string       `json:"focus_areas,omitempty"`
+}
+
 var hunkHeaderPattern = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$`)
 
-type Assembler struct{}
+type Assembler struct {
+	retriever ContextRetriever
+}
+
+type IncrementalState struct {
+	PreviousHeadSHA       string   `json:"previous_head_sha,omitempty"`
+	PreviousReviewedPaths []string `json:"previous_reviewed_paths,omitempty"`
+	IsIncremental         bool     `json:"is_incremental"`
+}
 
 type AssembleInput struct {
 	ReviewRunID       int64
@@ -45,6 +71,7 @@ type AssembleInput struct {
 	Settings          PolicySettings
 	Diffs             []gitlab.MergeRequestDiff
 	HistoricalContext HistoricalContext
+	IncrementalState  IncrementalState
 }
 
 type AssemblyResult struct {
@@ -54,6 +81,7 @@ type AssemblyResult struct {
 	TotalChangedLines int            `json:"total_changed_lines"`
 	Mode              ReviewMode     `json:"mode"`
 	Coverage          CoverageReport `json:"coverage"`
+	SizeStrategy      PRSizeStrategy `json:"size_strategy"`
 }
 
 type ReviewMode string
@@ -72,7 +100,8 @@ type ReviewRequest struct {
 	Version           VersionContext      `json:"version"`
 	Rules             TrustedRules        `json:"rules"`
 	Changes           []Change            `json:"changes,omitempty"`
-	HistoricalContext HistoricalContext   `json:"historical_context,omitempty"`
+	HistoricalContext HistoricalContext    `json:"historical_context,omitempty"`
+	IncrementalState  IncrementalState    `json:"incremental_state,omitempty"`
 }
 
 type ProjectContext struct {
@@ -127,16 +156,18 @@ func (t TrustedRules) ReviewForPath(filePath string) string {
 }
 
 type Change struct {
-	Path         string `json:"path"`
-	OldPath      string `json:"old_path,omitempty"`
-	Review       string `json:"review,omitempty"`
-	Status       string `json:"status"`
-	Generated    bool   `json:"generated"`
-	TooLarge     bool   `json:"too_large"`
-	Collapsed    bool   `json:"collapsed"`
-	Truncated    bool   `json:"truncated,omitempty"`
-	ChangedLines int    `json:"changed_lines"`
-	Hunks        []Hunk `json:"hunks,omitempty"`
+	Path               string        `json:"path"`
+	OldPath            string        `json:"old_path,omitempty"`
+	Review             string        `json:"review,omitempty"`
+	Status             string        `json:"status"`
+	Generated          bool          `json:"generated"`
+	TooLarge           bool          `json:"too_large"`
+	Collapsed          bool          `json:"collapsed"`
+	Truncated          bool          `json:"truncated,omitempty"`
+	ChangedLines       int           `json:"changed_lines"`
+	Hunks              []Hunk        `json:"hunks,omitempty"`
+	PreviouslyReviewed bool          `json:"previously_reviewed,omitempty"`
+	RelatedFiles       []RelatedFile `json:"related_files,omitempty"`
 }
 
 type Hunk struct {
@@ -191,8 +222,35 @@ type HistoricalStore interface {
 	GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg db.GetGitlabDiscussionByMergeRequestAndFindingParams) (db.GitlabDiscussion, error)
 }
 
+type ContextRetriever interface {
+	RetrieveContext(ctx context.Context, req ContextRetrievalRequest) (ContextRetrievalResult, error)
+}
+
+type ContextRetrievalRequest struct {
+	ProjectID int64    `json:"project_id"`
+	HeadSHA   string   `json:"head_sha"`
+	Paths     []string `json:"paths"`
+	Symbols   []string `json:"symbols,omitempty"`
+}
+
+type ContextRetrievalResult struct {
+	RelatedFiles []RelatedFile `json:"related_files,omitempty"`
+}
+
+type RelatedFile struct {
+	Path      string `json:"path"`
+	Relation  string `json:"relation"`
+	Snippet   string `json:"snippet,omitempty"`
+	Relevance string `json:"relevance,omitempty"`
+}
+
 func NewAssembler() *Assembler {
 	return &Assembler{}
+}
+
+func (a *Assembler) WithRetriever(r ContextRetriever) *Assembler {
+	a.retriever = r
+	return a
 }
 
 func DefaultPolicySettings() PolicySettings {
@@ -296,6 +354,8 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 		return AssemblyResult{}, err
 	}
 
+	sizeStrategy := classifyPRSize(input.Diffs, settings.PolicySettings)
+
 	result := AssemblyResult{
 		Request: ReviewRequest{
 			SchemaVersion:     defaultSchemaVersion,
@@ -305,10 +365,16 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 			Version:           input.Version,
 			Rules:             input.Rules,
 			HistoricalContext: input.HistoricalContext,
+			IncrementalState:  input.IncrementalState,
 		},
+		SizeStrategy: sizeStrategy,
 	}
 
-	for _, diff := range input.Diffs {
+	diffsToProcess := input.Diffs
+	if sizeStrategy.PrioritizeFiles {
+		diffsToProcess = prioritizeFiles(input.Diffs)
+	}
+	for _, diff := range diffsToProcess {
 		path := changePath(diff)
 		if path == "" {
 			continue
@@ -348,6 +414,15 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 			Generated: diff.GeneratedFile,
 			TooLarge:  diff.TooLarge,
 			Collapsed: diff.Collapsed,
+		}
+
+		if input.IncrementalState.IsIncremental {
+			for _, prev := range input.IncrementalState.PreviousReviewedPaths {
+				if normalizePath(prev) == path {
+					change.PreviouslyReviewed = true
+					break
+				}
+			}
 		}
 
 		remaining := settings.maxChangedLines - result.TotalChangedLines
@@ -391,6 +466,21 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 		result.Request.Changes = append(result.Request.Changes, change)
 		result.Coverage.ReviewedPaths = append(result.Coverage.ReviewedPaths, change.Path)
 		result.Coverage.SkippedLines -= change.ChangedLines
+	}
+
+	if a.retriever != nil && len(result.Request.Changes) > 0 {
+		paths := make([]string, 0, len(result.Request.Changes))
+		for _, c := range result.Request.Changes {
+			paths = append(paths, c.Path)
+		}
+		retrieved, err := a.retriever.RetrieveContext(context.Background(), ContextRetrievalRequest{
+			ProjectID: input.Project.ProjectID,
+			HeadSHA:   input.Version.HeadSHA,
+			Paths:     paths,
+		})
+		if err == nil {
+			enrichChangesWithRelatedFiles(result.Request.Changes, retrieved.RelatedFiles)
+		}
 	}
 
 	if result.Mode == "" {
@@ -817,4 +907,78 @@ func summarizeCoverage(result AssemblyResult) string {
 		return fmt.Sprintf("Full-scope review with truncation: reviewed %d file(s) and truncated context after %d changed line(s).", len(result.Coverage.ReviewedPaths), result.TotalChangedLines)
 	}
 	return fmt.Sprintf("Full coverage: reviewed %d file(s).", len(result.Coverage.ReviewedPaths))
+}
+
+func classifyPRSize(diffs []gitlab.MergeRequestDiff, settings PolicySettings) PRSizeStrategy {
+	totalChanged := 0
+	for _, diff := range diffs {
+		totalChanged += countChangedLines(diff.Diff)
+	}
+	switch {
+	case totalChanged < 100:
+		return PRSizeStrategy{
+			Category:        PRSizeSmall,
+			MaxContextLines: settings.ContextLinesBefore + settings.ContextLinesAfter,
+			PrioritizeFiles: false,
+			ChunkReview:     false,
+		}
+	case totalChanged < 500:
+		return PRSizeStrategy{
+			Category:        PRSizeMedium,
+			MaxContextLines: settings.ContextLinesBefore + settings.ContextLinesAfter,
+			PrioritizeFiles: false,
+			ChunkReview:     false,
+		}
+	case totalChanged <= settings.MaxChangedLines:
+		return PRSizeStrategy{
+			Category:        PRSizeLarge,
+			MaxContextLines: (settings.ContextLinesBefore + settings.ContextLinesAfter) / 2,
+			PrioritizeFiles: true,
+			ChunkReview:     false,
+		}
+	default:
+		return PRSizeStrategy{
+			Category:        PRSizeXLarge,
+			MaxContextLines: (settings.ContextLinesBefore + settings.ContextLinesAfter) / 4,
+			PrioritizeFiles: true,
+			ChunkReview:     true,
+		}
+	}
+}
+
+func prioritizeFiles(diffs []gitlab.MergeRequestDiff) []gitlab.MergeRequestDiff {
+	sorted := make([]gitlab.MergeRequestDiff, len(diffs))
+	copy(sorted, diffs)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return fileRiskScore(changePath(sorted[i])) > fileRiskScore(changePath(sorted[j]))
+	})
+	return sorted
+}
+
+func fileRiskScore(path string) int {
+	lower := strings.ToLower(path)
+	// Test files are lower priority
+	if strings.Contains(lower, "_test.") || strings.Contains(lower, "/test/") || strings.Contains(lower, "/tests/") || strings.HasPrefix(lower, "test") {
+		return 1
+	}
+	// Config/docs are lowest priority
+	for _, ext := range []string{".md", ".txt", ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg"} {
+		if strings.HasSuffix(lower, ext) {
+			return 0
+		}
+	}
+	// Implementation files are highest priority
+	return 2
+}
+
+func enrichChangesWithRelatedFiles(changes []Change, related []RelatedFile) {
+	byPath := make(map[string][]RelatedFile)
+	for _, rf := range related {
+		byPath[normalizePath(rf.Path)] = append(byPath[normalizePath(rf.Path)], rf)
+	}
+	for i := range changes {
+		if files, ok := byPath[normalizePath(changes[i].Path)]; ok {
+			changes[i].RelatedFiles = files
+		}
+	}
 }

@@ -618,3 +618,195 @@ func TestLoadHistoricalContextPropagatesStoreErrors(t *testing.T) {
 		t.Fatalf("LoadHistoricalContext error = %v, want boom", err)
 	}
 }
+
+func TestClassifyPRSizeSmall(t *testing.T) {
+	settings := DefaultPolicySettings()
+	diffs := []gitlab.MergeRequestDiff{
+		{OldPath: "a.go", NewPath: "a.go", Diff: sampleDiffWithChangedLines("a", 10)},
+	}
+	strategy := classifyPRSize(diffs, settings)
+	if strategy.Category != PRSizeSmall {
+		t.Fatalf("category = %q, want %q", strategy.Category, PRSizeSmall)
+	}
+	if strategy.MaxContextLines != settings.ContextLinesBefore+settings.ContextLinesAfter {
+		t.Fatalf("max_context_lines = %d, want %d", strategy.MaxContextLines, settings.ContextLinesBefore+settings.ContextLinesAfter)
+	}
+	if strategy.PrioritizeFiles {
+		t.Fatal("expected PrioritizeFiles=false for small PRs")
+	}
+	if strategy.ChunkReview {
+		t.Fatal("expected ChunkReview=false for small PRs")
+	}
+}
+
+func TestClassifyPRSizeLarge(t *testing.T) {
+	settings := DefaultPolicySettings()
+	// Generate a diff with >500 changed lines
+	lines := []string{"@@ -1,4 +1,504 @@", " context"}
+	for i := 0; i < 600; i++ {
+		lines = append(lines, "+added-line-"+itoa(i))
+	}
+	diffs := []gitlab.MergeRequestDiff{
+		{OldPath: "big.go", NewPath: "big.go", Diff: strings.Join(lines, "\n")},
+	}
+	strategy := classifyPRSize(diffs, settings)
+	if strategy.Category != PRSizeLarge {
+		t.Fatalf("category = %q, want %q", strategy.Category, PRSizeLarge)
+	}
+	if !strategy.PrioritizeFiles {
+		t.Fatal("expected PrioritizeFiles=true for large PRs")
+	}
+	if strategy.ChunkReview {
+		t.Fatal("expected ChunkReview=false for large PRs")
+	}
+	expectedMax := (settings.ContextLinesBefore + settings.ContextLinesAfter) / 2
+	if strategy.MaxContextLines != expectedMax {
+		t.Fatalf("max_context_lines = %d, want %d", strategy.MaxContextLines, expectedMax)
+	}
+}
+
+func TestPrioritizeFiles(t *testing.T) {
+	diffs := []gitlab.MergeRequestDiff{
+		{OldPath: "README.md", NewPath: "README.md", Diff: sampleDiff("doc")},
+		{OldPath: "pkg/handler_test.go", NewPath: "pkg/handler_test.go", Diff: sampleDiff("test")},
+		{OldPath: "pkg/handler.go", NewPath: "pkg/handler.go", Diff: sampleDiff("impl")},
+		{OldPath: "config.yaml", NewPath: "config.yaml", Diff: sampleDiff("cfg")},
+	}
+
+	sorted := prioritizeFiles(diffs)
+
+	// Implementation files first (score 2), then test (score 1), then config/docs (score 0)
+	if sorted[0].NewPath != "pkg/handler.go" {
+		t.Fatalf("first file = %q, want pkg/handler.go", sorted[0].NewPath)
+	}
+	if sorted[1].NewPath != "pkg/handler_test.go" {
+		t.Fatalf("second file = %q, want pkg/handler_test.go", sorted[1].NewPath)
+	}
+	// The two score-0 files keep stable order
+	if fileRiskScore(changePath(sorted[2])) != 0 || fileRiskScore(changePath(sorted[3])) != 0 {
+		t.Fatalf("last two files should have risk score 0, got %d and %d",
+			fileRiskScore(changePath(sorted[2])), fileRiskScore(changePath(sorted[3])))
+	}
+}
+
+func TestFileRiskScore(t *testing.T) {
+	cases := []struct {
+		path string
+		want int
+	}{
+		{"src/handler.go", 2},
+		{"cmd/main.go", 2},
+		{"internal/service.py", 2},
+		{"pkg/util_test.go", 1},
+		{"test/integration.go", 1},
+		{"tests/helper.go", 1},
+		{"README.md", 0},
+		{"config.yaml", 0},
+		{"data.json", 0},
+		{"notes.txt", 0},
+		{"settings.toml", 0},
+	}
+	for _, tc := range cases {
+		got := fileRiskScore(tc.path)
+		if got != tc.want {
+			t.Errorf("fileRiskScore(%q) = %d, want %d", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestIncrementalStatePreviouslyReviewed(t *testing.T) {
+	input := defaultAssembleInput()
+	input.IncrementalState = IncrementalState{
+		PreviousHeadSHA:       "prev-sha",
+		PreviousReviewedPaths: []string{"src/app.go"},
+		IsIncremental:         true,
+	}
+	input.Diffs = []gitlab.MergeRequestDiff{
+		{OldPath: "src/app.go", NewPath: "src/app.go", Diff: sampleDiff("app")},
+		{OldPath: "src/new.go", NewPath: "src/new.go", Diff: sampleDiff("new")},
+	}
+
+	result, err := NewAssembler().Assemble(input)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	if len(result.Request.Changes) != 2 {
+		t.Fatalf("len(changes) = %d, want 2", len(result.Request.Changes))
+	}
+
+	// src/app.go was previously reviewed
+	if !result.Request.Changes[0].PreviouslyReviewed {
+		t.Fatal("expected src/app.go to be marked PreviouslyReviewed")
+	}
+	// src/new.go was NOT previously reviewed
+	if result.Request.Changes[1].PreviouslyReviewed {
+		t.Fatal("expected src/new.go to NOT be marked PreviouslyReviewed")
+	}
+	// IncrementalState should be propagated to the request
+	if !result.Request.IncrementalState.IsIncremental {
+		t.Fatal("expected IncrementalState.IsIncremental=true in request")
+	}
+	if result.Request.IncrementalState.PreviousHeadSHA != "prev-sha" {
+		t.Fatalf("PreviousHeadSHA = %q, want prev-sha", result.Request.IncrementalState.PreviousHeadSHA)
+	}
+}
+
+func TestEnrichChangesWithRelatedFiles(t *testing.T) {
+	changes := []Change{
+		{Path: "src/handler.go"},
+		{Path: "src/service.go"},
+		{Path: "src/util.go"},
+	}
+	related := []RelatedFile{
+		{Path: "src/handler.go", Relation: "test", Snippet: "func TestHandler...", Relevance: "unit test"},
+		{Path: "src/handler.go", Relation: "caller", Snippet: "handler.New()", Relevance: "called from main"},
+		{Path: "src/service.go", Relation: "schema", Snippet: "CREATE TABLE...", Relevance: "database schema"},
+	}
+
+	enrichChangesWithRelatedFiles(changes, related)
+
+	if len(changes[0].RelatedFiles) != 2 {
+		t.Fatalf("handler.go related files = %d, want 2", len(changes[0].RelatedFiles))
+	}
+	if changes[0].RelatedFiles[0].Relation != "test" {
+		t.Fatalf("first relation = %q, want test", changes[0].RelatedFiles[0].Relation)
+	}
+	if len(changes[1].RelatedFiles) != 1 {
+		t.Fatalf("service.go related files = %d, want 1", len(changes[1].RelatedFiles))
+	}
+	if changes[1].RelatedFiles[0].Relation != "schema" {
+		t.Fatalf("service relation = %q, want schema", changes[1].RelatedFiles[0].Relation)
+	}
+	if len(changes[2].RelatedFiles) != 0 {
+		t.Fatalf("util.go related files = %d, want 0", len(changes[2].RelatedFiles))
+	}
+}
+
+func TestAssembleWithSizeStrategy(t *testing.T) {
+	input := defaultAssembleInput()
+	input.Diffs = []gitlab.MergeRequestDiff{
+		{OldPath: "src/app.go", NewPath: "src/app.go", Diff: sampleDiff("app")},
+	}
+
+	result, err := NewAssembler().Assemble(input)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	// A single 2-line diff should be classified as small
+	if result.SizeStrategy.Category != PRSizeSmall {
+		t.Fatalf("SizeStrategy.Category = %q, want %q", result.SizeStrategy.Category, PRSizeSmall)
+	}
+	if result.SizeStrategy.PrioritizeFiles {
+		t.Fatal("expected PrioritizeFiles=false for small PR")
+	}
+	if result.SizeStrategy.ChunkReview {
+		t.Fatal("expected ChunkReview=false for small PR")
+	}
+
+	expectedMax := input.Settings.ContextLinesBefore + input.Settings.ContextLinesAfter
+	if result.SizeStrategy.MaxContextLines != expectedMax {
+		t.Fatalf("MaxContextLines = %d, want %d", result.SizeStrategy.MaxContextLines, expectedMax)
+	}
+}

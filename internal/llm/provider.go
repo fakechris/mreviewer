@@ -40,17 +40,18 @@ const (
 )
 
 type Processor struct {
-	logger         *slog.Logger
-	queries        *db.Queries
-	gitlab         GitLabReader
-	rulesLoader    RulesLoader
-	assembler      *ctxpkg.Assembler
-	provider       Provider
-	registry       *ProviderRegistry
-	timeoutRetries int
-	auditLogger    AuditLogger
-	metrics        *metrics.Registry
-	tracer         *tracing.Recorder
+	logger          *slog.Logger
+	queries         *db.Queries
+	gitlab          GitLabReader
+	rulesLoader     RulesLoader
+	assembler       *ctxpkg.Assembler
+	provider        Provider
+	registry        *ProviderRegistry
+	timeoutRetries  int
+	auditLogger     AuditLogger
+	metrics         *metrics.Registry
+	tracer          *tracing.Recorder
+	summaryProvider SummaryProvider
 }
 
 type GitLabReader interface {
@@ -64,6 +65,18 @@ type RulesLoader interface {
 type Provider interface {
 	Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error)
 	RequestPayload(request ctxpkg.ReviewRequest) map[string]any
+}
+
+type SummaryProvider interface {
+	Summarize(ctx context.Context, request ctxpkg.ReviewRequest) (SummaryResponse, error)
+}
+
+type SummaryResponse struct {
+	Result  SummaryResult
+	RawText string
+	Latency time.Duration
+	Tokens  int64
+	Model   string
 }
 
 type RateLimiter interface {
@@ -93,27 +106,48 @@ type ReviewResult struct {
 	Findings      []ReviewFinding `json:"findings"`
 	Status        string          `json:"status,omitempty"`
 	SummaryNote   *SummaryNote    `json:"summary_note,omitempty"`
+	BlindSpots    []string        `json:"blind_spots,omitempty"`
 }
 
 type SummaryNote struct {
 	BodyMarkdown string `json:"body_markdown"`
 }
 
+type SummaryResult struct {
+	SchemaVersion string     `json:"schema_version"`
+	ReviewRunID   string     `json:"review_run_id"`
+	Walkthrough   string     `json:"walkthrough"`
+	RiskAreas     []RiskArea `json:"risk_areas,omitempty"`
+	BlindSpots    []string   `json:"blind_spots,omitempty"`
+	Verdict       string     `json:"verdict"`
+}
+
+type RiskArea struct {
+	Path        string `json:"path"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"`
+}
+
 type ReviewFinding struct {
-	Category       string   `json:"category"`
-	Severity       string   `json:"severity"`
-	Confidence     float64  `json:"confidence"`
-	Title          string   `json:"title"`
-	BodyMarkdown   string   `json:"body_markdown"`
-	Path           string   `json:"path"`
-	AnchorKind     string   `json:"anchor_kind"`
-	OldLine        *int32   `json:"old_line,omitempty"`
-	NewLine        *int32   `json:"new_line,omitempty"`
-	AnchorSnippet  string   `json:"anchor_snippet,omitempty"`
-	Evidence       []string `json:"evidence,omitempty"`
-	SuggestedPatch string   `json:"suggested_patch,omitempty"`
-	CanonicalKey   string   `json:"canonical_key,omitempty"`
-	Symbol         string   `json:"symbol,omitempty"`
+	Category               string   `json:"category"`
+	Severity               string   `json:"severity"`
+	Confidence             float64  `json:"confidence"`
+	Title                  string   `json:"title"`
+	BodyMarkdown           string   `json:"body_markdown"`
+	Path                   string   `json:"path"`
+	AnchorKind             string   `json:"anchor_kind"`
+	OldLine                *int32   `json:"old_line,omitempty"`
+	NewLine                *int32   `json:"new_line,omitempty"`
+	AnchorSnippet          string   `json:"anchor_snippet,omitempty"`
+	Evidence               []string `json:"evidence,omitempty"`
+	SuggestedPatch         string   `json:"suggested_patch,omitempty"`
+	CanonicalKey           string   `json:"canonical_key,omitempty"`
+	Symbol                 string   `json:"symbol,omitempty"`
+	TriggerCondition       string   `json:"trigger_condition,omitempty"`
+	Impact                 string   `json:"impact,omitempty"`
+	IntroducedByThisChange bool     `json:"introduced_by_this_change"`
+	BlindSpots             []string `json:"blind_spots,omitempty"`
+	NoFindingReason        string   `json:"no_finding_reason,omitempty"`
 }
 
 type ProviderConfig struct {
@@ -258,6 +292,11 @@ func (p *Processor) WithMetrics(registry *metrics.Registry) *Processor {
 
 func (p *Processor) WithTracer(recorder *tracing.Recorder) *Processor {
 	p.tracer = recorder
+	return p
+}
+
+func (p *Processor) WithSummaryProvider(sp SummaryProvider) *Processor {
+	p.summaryProvider = sp
 	return p
 }
 
@@ -436,6 +475,24 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	p.recordProviderMetrics(response)
 	_, endParserValidate := p.startSpan(ctx, "parser.validate", nil)
 	endParserValidate()
+
+	// Optional summary chain (independent of review chain).
+	if p.summaryProvider != nil && response.Result.Status != parserErrorCode {
+		summaryResp, summaryErr := p.summaryProvider.Summarize(ctx, assembled.Request)
+		if summaryErr != nil {
+			p.logger.WarnContext(ctx, "summary chain failed, continuing with review only", "run_id", run.ID, "error", summaryErr)
+		} else {
+			response.Result.SummaryNote = &SummaryNote{BodyMarkdown: renderSummaryFromWalkthrough(summaryResp.Result)}
+			if p.auditLogger != nil {
+				_ = p.auditLogger.LogRunLifecycle(ctx, run, "summary_chain_completed", map[string]any{
+					"trace_id":   tracing.CurrentTraceID(ctx),
+					"latency_ms": summaryResp.Latency.Milliseconds(),
+					"tokens":     summaryResp.Tokens,
+					"verdict":    summaryResp.Result.Verdict,
+				})
+			}
+		}
+	}
 
 	reviewedPaths, deletedPaths := reviewedScopeFromAssembly(assembled)
 	_, endDedupe := p.startSpan(ctx, "dedupe.match", nil)
@@ -1041,20 +1098,24 @@ func relocationMatches(current db.ReviewFinding, candidate normalizedFinding) bo
 }
 
 type normalizedFinding struct {
-	Category       string
-	Severity       string
-	Confidence     float64
-	Title          string
-	BodyMarkdown   string
-	Path           string
-	AnchorKind     string
-	OldLine        sql.NullInt32
-	NewLine        sql.NullInt32
-	AnchorSnippet  string
-	Evidence       string
-	SuggestedPatch string
-	CanonicalKey   string
-	Symbol         string
+	Category               string
+	Severity               string
+	Confidence             float64
+	Title                  string
+	BodyMarkdown           string
+	Path                   string
+	AnchorKind             string
+	OldLine                sql.NullInt32
+	NewLine                sql.NullInt32
+	AnchorSnippet          string
+	Evidence               string
+	SuggestedPatch         string
+	CanonicalKey           string
+	Symbol                 string
+	TriggerCondition       string
+	Impact                 string
+	IntroducedByThisChange bool
+	BlindSpots             []string
 }
 
 func (f normalizedFinding) isDeletedFile() bool {
@@ -1063,18 +1124,22 @@ func (f normalizedFinding) isDeletedFile() bool {
 
 func normalizeFinding(finding ReviewFinding) normalizedFinding {
 	normalized := normalizedFinding{
-		Category:       strings.TrimSpace(finding.Category),
-		Severity:       strings.TrimSpace(finding.Severity),
-		Confidence:     finding.Confidence,
-		Title:          strings.TrimSpace(finding.Title),
-		BodyMarkdown:   strings.TrimSpace(finding.BodyMarkdown),
-		Path:           normalizePath(finding.Path),
-		AnchorKind:     normalizeAnchorKind(finding.AnchorKind),
-		AnchorSnippet:  normalizeWhitespace(finding.AnchorSnippet),
-		Evidence:       normalizeEvidence(finding.Evidence),
-		SuggestedPatch: strings.TrimSpace(finding.SuggestedPatch),
-		CanonicalKey:   strings.TrimSpace(finding.CanonicalKey),
-		Symbol:         strings.TrimSpace(finding.Symbol),
+		Category:               strings.TrimSpace(finding.Category),
+		Severity:               strings.TrimSpace(finding.Severity),
+		Confidence:             finding.Confidence,
+		Title:                  strings.TrimSpace(finding.Title),
+		BodyMarkdown:           strings.TrimSpace(finding.BodyMarkdown),
+		Path:                   normalizePath(finding.Path),
+		AnchorKind:             normalizeAnchorKind(finding.AnchorKind),
+		AnchorSnippet:          normalizeWhitespace(finding.AnchorSnippet),
+		Evidence:               normalizeEvidence(finding.Evidence),
+		SuggestedPatch:         strings.TrimSpace(finding.SuggestedPatch),
+		CanonicalKey:           strings.TrimSpace(finding.CanonicalKey),
+		Symbol:                 strings.TrimSpace(finding.Symbol),
+		TriggerCondition:       strings.TrimSpace(finding.TriggerCondition),
+		Impact:                 strings.TrimSpace(finding.Impact),
+		IntroducedByThisChange: finding.IntroducedByThisChange,
+		BlindSpots:             finding.BlindSpots,
 	}
 	if finding.OldLine != nil {
 		normalized.OldLine = sql.NullInt32{Int32: *finding.OldLine, Valid: true}
@@ -1240,8 +1305,138 @@ func (l *DBAuditLogger) LogRunLifecycle(ctx context.Context, run db.ReviewRun, a
 	return err
 }
 
+const summarySystemPrompt = `You are a merge request summary writer. Your job is to produce a clear, concise walkthrough of what this merge request changes, identify risk areas, and give a verdict.
+
+Hard constraints:
+1. The walkthrough should explain WHAT changed and WHY at a high level. Do not list every line change.
+2. Risk areas should highlight files/modules where the changes have the highest potential for bugs or regressions.
+3. The verdict must be one of: approve (no issues found), request_changes (blocking issues exist), comment (non-blocking observations only).
+4. If you cannot fully verify certain areas, list them in blind_spots.
+5. Do NOT duplicate the findings from the review chain. The summary is a separate, complementary view.`
+
+func summaryResultSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"schema_version": map[string]any{"type": "string"},
+			"review_run_id":  map[string]any{"type": "string"},
+			"walkthrough":    map[string]any{"type": "string"},
+			"risk_areas": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path":        map[string]any{"type": "string"},
+						"description": map[string]any{"type": "string"},
+						"severity":    map[string]any{"type": "string"},
+					},
+					"required":             []string{"path", "description", "severity"},
+					"additionalProperties": false,
+				},
+			},
+			"blind_spots": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"verdict":     map[string]any{"type": "string"},
+		},
+		"required":             []string{"schema_version", "review_run_id", "walkthrough", "verdict"},
+		"additionalProperties": false,
+	}
+}
+
+func (p *MiniMaxProvider) SummaryRequestPayload(request ctxpkg.ReviewRequest) map[string]any {
+	return map[string]any{
+		"model":      p.model,
+		"max_tokens": p.maxTokens,
+		"system":     summarySystemPrompt,
+		"messages":   []map[string]any{{"role": "user", "content": mustJSON(request)}},
+		"output_config": map[string]any{
+			"format": map[string]any{
+				"type":   "json_schema",
+				"name":   "summary_result",
+				"schema": summaryResultSchema(),
+			},
+		},
+	}
+}
+
+func (p *MiniMaxProvider) Summarize(ctx context.Context, request ctxpkg.ReviewRequest) (SummaryResponse, error) {
+	if p.rateLimiter != nil {
+		if err := p.rateLimiter.Wait(ctx, strings.TrimSpace(p.routeName)); err != nil {
+			return SummaryResponse{}, err
+		}
+	}
+	started := p.now()
+	message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:     anthropic.Model(p.model),
+		MaxTokens: p.maxTokens,
+		System:    []anthropic.TextBlockParam{{Text: summarySystemPrompt}},
+		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))},
+		OutputConfig: anthropic.OutputConfigParam{
+			Format: anthropic.JSONOutputFormatParam{Schema: summaryResultSchema()},
+		},
+	})
+	if err != nil {
+		return SummaryResponse{}, err
+	}
+	text := collectMessageText(message)
+	var result SummaryResult
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		return SummaryResponse{}, fmt.Errorf("llm: parse summary response: %w", err)
+	}
+	return SummaryResponse{
+		Result:  result,
+		RawText: text,
+		Latency: p.now().Sub(started),
+		Tokens:  int64(message.Usage.OutputTokens),
+		Model:   p.routeName,
+	}, nil
+}
+
+func ParseSummaryResult(raw string) (SummaryResult, error) {
+	candidate := strings.TrimSpace(raw)
+	if candidate == "" {
+		return SummaryResult{}, fmt.Errorf("llm: empty summary response")
+	}
+	for _, extract := range []func(string) (string, bool){
+		func(s string) (string, bool) { return s, s != "" },
+		extractMarkedJSON,
+		tolerantRepairJSON,
+	} {
+		text, ok := extract(candidate)
+		if !ok {
+			continue
+		}
+		var result SummaryResult
+		if err := json.Unmarshal([]byte(text), &result); err == nil {
+			if strings.TrimSpace(result.SchemaVersion) != "" && strings.TrimSpace(result.ReviewRunID) != "" && strings.TrimSpace(result.Walkthrough) != "" {
+				return result, nil
+			}
+		}
+	}
+	return SummaryResult{}, fmt.Errorf("llm: unable to parse summary response")
+}
+
+func renderSummaryFromWalkthrough(summary SummaryResult) string {
+	var parts []string
+	parts = append(parts, "## MR Walkthrough\n")
+	parts = append(parts, summary.Walkthrough)
+	if len(summary.RiskAreas) > 0 {
+		parts = append(parts, "\n### Risk Areas\n")
+		for _, area := range summary.RiskAreas {
+			parts = append(parts, fmt.Sprintf("- **%s** (%s): %s", area.Path, area.Severity, area.Description))
+		}
+	}
+	if len(summary.BlindSpots) > 0 {
+		parts = append(parts, "\n### Blind Spots\n")
+		for _, spot := range summary.BlindSpots {
+			parts = append(parts, "- "+spot)
+		}
+	}
+	parts = append(parts, fmt.Sprintf("\n**Verdict**: %s", summary.Verdict))
+	return strings.Join(parts, "\n")
+}
+
 func reviewResultSchema() map[string]any {
-	return map[string]any{"type": "object", "properties": map[string]any{"schema_version": map[string]any{"type": "string"}, "review_run_id": map[string]any{"type": "string"}, "status": map[string]any{"type": "string"}, "summary": map[string]any{"type": "string"}, "summary_note": map[string]any{"type": "object", "properties": map[string]any{"body_markdown": map[string]any{"type": "string"}}, "required": []string{"body_markdown"}, "additionalProperties": false}, "findings": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"category": map[string]any{"type": "string"}, "severity": map[string]any{"type": "string"}, "confidence": map[string]any{"type": "number"}, "title": map[string]any{"type": "string"}, "body_markdown": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"}, "anchor_kind": map[string]any{"type": "string"}, "old_line": map[string]any{"type": "integer"}, "new_line": map[string]any{"type": "integer"}, "anchor_snippet": map[string]any{"type": "string"}, "evidence": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "suggested_patch": map[string]any{"type": "string"}, "canonical_key": map[string]any{"type": "string"}, "symbol": map[string]any{"type": "string"}}, "required": []string{"category", "severity", "confidence", "title", "body_markdown", "path", "anchor_kind"}, "additionalProperties": false}}}, "required": []string{"schema_version", "review_run_id", "summary", "findings"}, "additionalProperties": false}
+	return map[string]any{"type": "object", "properties": map[string]any{"schema_version": map[string]any{"type": "string"}, "review_run_id": map[string]any{"type": "string"}, "status": map[string]any{"type": "string"}, "summary": map[string]any{"type": "string"}, "summary_note": map[string]any{"type": "object", "properties": map[string]any{"body_markdown": map[string]any{"type": "string"}}, "required": []string{"body_markdown"}, "additionalProperties": false}, "blind_spots": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "findings": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"category": map[string]any{"type": "string"}, "severity": map[string]any{"type": "string"}, "confidence": map[string]any{"type": "number"}, "title": map[string]any{"type": "string"}, "body_markdown": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"}, "anchor_kind": map[string]any{"type": "string"}, "old_line": map[string]any{"type": "integer"}, "new_line": map[string]any{"type": "integer"}, "anchor_snippet": map[string]any{"type": "string"}, "evidence": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "suggested_patch": map[string]any{"type": "string"}, "canonical_key": map[string]any{"type": "string"}, "symbol": map[string]any{"type": "string"}, "trigger_condition": map[string]any{"type": "string"}, "impact": map[string]any{"type": "string"}, "introduced_by_this_change": map[string]any{"type": "boolean"}, "blind_spots": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "no_finding_reason": map[string]any{"type": "string"}}, "required": []string{"category", "severity", "confidence", "title", "body_markdown", "path", "anchor_kind"}, "additionalProperties": false}}}, "required": []string{"schema_version", "review_run_id", "summary", "findings"}, "additionalProperties": false}
 }
 
 func extractMarkedJSON(raw string) (string, bool) {
