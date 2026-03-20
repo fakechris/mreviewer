@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -469,8 +468,4 @@ func commandRunKey(baseURL string, projectID, mrIID int64, headSHA, deliveryKey 
 	payload := fmt.Sprintf("cmd|%s|%d|%d|%s|%s|%s", strings.TrimRight(baseURL, "/"), projectID, mrIID, headSHA, "command_rerun", deliveryKey)
 	sum := sha256.Sum256([]byte(payload))
 	return fmt.Sprintf("cmd-%x", sum[:16])
-}
-
-func intString(v int64) string {
-	return strconv.FormatInt(v, 10)
 }
