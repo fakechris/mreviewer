@@ -17,11 +17,13 @@ import (
 )
 
 const (
-	defaultPollInterval   = time.Second
-	defaultRetryBaseDelay = time.Second
-	defaultRetryMaxDelay  = 30 * time.Second
-	defaultClaimRetryWait = 10 * time.Millisecond
-	defaultFailureCode    = "run_failed"
+	defaultPollInterval      = time.Second
+	defaultRetryBaseDelay    = time.Second
+	defaultRetryMaxDelay     = 30 * time.Second
+	defaultClaimRetryWait    = 10 * time.Millisecond
+	defaultFailureCode       = "run_failed"
+	defaultClaimTimeoutMin   = 10
+	defaultReaperInterval    = 60 * time.Second
 )
 
 var ErrNoClaimableRuns = errors.New("scheduler: no claimable runs")
@@ -82,17 +84,19 @@ func NewTerminalError(code string, err error) error {
 type Option func(*Service)
 
 type Service struct {
-	logger         *slog.Logger
-	db             *sql.DB
-	processor      Processor
-	gateService    *gate.Service
-	workerID       string
-	pollInterval   time.Duration
-	retryBaseDelay time.Duration
-	retryMaxDelay  time.Duration
-	now            func() time.Time
-	metrics        *metrics.Registry
-	tracer         *tracing.Recorder
+	logger              *slog.Logger
+	db                  *sql.DB
+	processor           Processor
+	gateService         *gate.Service
+	workerID            string
+	pollInterval        time.Duration
+	retryBaseDelay      time.Duration
+	retryMaxDelay       time.Duration
+	claimTimeoutMinutes int
+	reaperInterval      time.Duration
+	now                 func() time.Time
+	metrics             *metrics.Registry
+	tracer              *tracing.Recorder
 }
 
 func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts ...Option) *Service {
@@ -101,14 +105,16 @@ func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts
 	}
 
 	svc := &Service{
-		logger:         logger,
-		db:             database,
-		processor:      processor,
-		workerID:       defaultWorkerID(),
-		pollInterval:   defaultPollInterval,
-		retryBaseDelay: defaultRetryBaseDelay,
-		retryMaxDelay:  defaultRetryMaxDelay,
-		now:            time.Now,
+		logger:              logger,
+		db:                  database,
+		processor:           processor,
+		workerID:            defaultWorkerID(),
+		pollInterval:        defaultPollInterval,
+		retryBaseDelay:      defaultRetryBaseDelay,
+		retryMaxDelay:       defaultRetryMaxDelay,
+		claimTimeoutMinutes: defaultClaimTimeoutMin,
+		reaperInterval:      defaultReaperInterval,
+		now:                 time.Now,
 	}
 
 	for _, opt := range opts {
@@ -125,6 +131,12 @@ func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts
 	}
 	if svc.pollInterval <= 0 {
 		svc.pollInterval = defaultPollInterval
+	}
+	if svc.claimTimeoutMinutes <= 0 {
+		svc.claimTimeoutMinutes = defaultClaimTimeoutMin
+	}
+	if svc.reaperInterval <= 0 {
+		svc.reaperInterval = defaultReaperInterval
 	}
 
 	return svc
@@ -174,6 +186,22 @@ func WithGateService(gateSvc *gate.Service) Option {
 	return func(s *Service) { s.gateService = gateSvc }
 }
 
+func WithClaimTimeout(minutes int) Option {
+	return func(s *Service) {
+		if minutes > 0 {
+			s.claimTimeoutMinutes = minutes
+		}
+	}
+}
+
+func WithReaperInterval(interval time.Duration) Option {
+	return func(s *Service) {
+		if interval > 0 {
+			s.reaperInterval = interval
+		}
+	}
+}
+
 func NewNoopProcessor(logger *slog.Logger) Processor {
 	return FuncProcessor(func(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error) {
 		if logger != nil {
@@ -191,6 +219,8 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.processor == nil {
 		return fmt.Errorf("scheduler: processor is required")
 	}
+
+	go s.startReaper(ctx)
 
 	if _, err := s.RunOnce(ctx); err != nil {
 		return err
@@ -289,6 +319,39 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
 	}
 
 	return nil, ErrNoClaimableRuns
+}
+
+// ReapStaleRuns resets running review runs that have exceeded the claim
+// timeout back to failed with a retry scheduled, allowing them to be
+// reclaimed by another worker.
+func (s *Service) ReapStaleRuns(ctx context.Context) (int64, error) {
+	reaped, err := db.New(s.db).ReapStaleRunningRuns(ctx, s.claimTimeoutMinutes)
+	if err != nil {
+		return 0, fmt.Errorf("scheduler: reap stale runs: %w", err)
+	}
+	if reaped > 0 {
+		s.logger.InfoContext(ctx, "reaped stale running runs",
+			"count", reaped,
+			"claim_timeout_minutes", s.claimTimeoutMinutes,
+		)
+	}
+	return reaped, nil
+}
+
+func (s *Service) startReaper(ctx context.Context) {
+	ticker := time.NewTicker(s.reaperInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := s.ReapStaleRuns(ctx); err != nil {
+				s.logger.ErrorContext(ctx, "reaper failed", "error", err)
+			}
+		}
+	}
 }
 
 func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error {

@@ -84,6 +84,17 @@ WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_
 ORDER BY created_at ASC
 LIMIT ?;
 
+-- name: ReapStaleRunningRuns :execrows
+UPDATE review_runs
+SET status = 'failed',
+    error_code = 'worker_timeout',
+    error_detail = 'Run exceeded claim timeout and was reaped for retry',
+    retry_count = retry_count + 1,
+    next_retry_at = NOW() + INTERVAL 30 SECOND,
+    updated_at = CURRENT_TIMESTAMP
+WHERE status = 'running'
+  AND claimed_at < NOW() - INTERVAL ? MINUTE;
+
 -- name: ListReviewRunsByMR :many
 SELECT * FROM review_runs
 WHERE merge_request_id = ?

@@ -358,6 +358,26 @@ func (q *Queries) MarkReviewRunRetryableFailure(ctx context.Context, arg MarkRev
 	return err
 }
 
+const reapStaleRunningRuns = `-- name: ReapStaleRunningRuns :execrows
+UPDATE review_runs
+SET status = 'failed',
+    error_code = 'worker_timeout',
+    error_detail = 'Run exceeded claim timeout and was reaped for retry',
+    retry_count = retry_count + 1,
+    next_retry_at = NOW() + INTERVAL 30 SECOND,
+    updated_at = CURRENT_TIMESTAMP
+WHERE status = 'running'
+  AND claimed_at < NOW() - INTERVAL ? MINUTE
+`
+
+func (q *Queries) ReapStaleRunningRuns(ctx context.Context, dateSUB interface{}) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reapStaleRunningRuns, dateSUB)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateReviewRunCompleted = `-- name: UpdateReviewRunCompleted :exec
 UPDATE review_runs
 SET status = 'completed', completed_at = CURRENT_TIMESTAMP,

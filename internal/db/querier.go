@@ -51,6 +51,7 @@ type Querier interface {
 	ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) ([]ReviewRun, error)
 	MarkReviewRunFailed(ctx context.Context, arg MarkReviewRunFailedParams) error
 	MarkReviewRunRetryableFailure(ctx context.Context, arg MarkReviewRunRetryableFailureParams) error
+	ReapStaleRunningRuns(ctx context.Context, dateSUB interface{}) (int64, error)
 	UpdateCommentActionStatus(ctx context.Context, arg UpdateCommentActionStatusParams) error
 	UpdateFindingDiscussionID(ctx context.Context, arg UpdateFindingDiscussionIDParams) error
 	UpdateFindingLastSeen(ctx context.Context, arg UpdateFindingLastSeenParams) error

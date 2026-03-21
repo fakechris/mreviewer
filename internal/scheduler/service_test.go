@@ -680,6 +680,98 @@ func TestCancelledRunNotReclaimed(t *testing.T) {
 	}
 }
 
+func TestReapStaleRunningRuns(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-reap")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{
+		status:         "pending",
+		retryCount:     1,
+		maxRetries:     5,
+		idempotencyKey: "reap-stale",
+	})
+
+	// Simulate a worker crash: claim the run and set claimed_at to 15 minutes ago.
+	staleTime := time.Now().Add(-15 * time.Minute)
+	if _, err := sqlDB.Exec(
+		"UPDATE review_runs SET status = 'running', claimed_by = 'dead-worker', claimed_at = ?, started_at = ? WHERE id = ?",
+		staleTime, staleTime, runID,
+	); err != nil {
+		t.Fatalf("set stale running state: %v", err)
+	}
+
+	svc := NewService(testLogger(), sqlDB, nil,
+		WithWorkerID("reaper-worker"),
+		WithClaimTimeout(10),
+	)
+
+	reaped, err := svc.ReapStaleRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ReapStaleRuns: %v", err)
+	}
+	if reaped != 1 {
+		t.Fatalf("reaped = %d, want 1", reaped)
+	}
+
+	run, err := db.New(sqlDB).GetReviewRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "failed" {
+		t.Fatalf("status = %q, want failed", run.Status)
+	}
+	if run.ErrorCode != "worker_timeout" {
+		t.Fatalf("error_code = %q, want worker_timeout", run.ErrorCode)
+	}
+	if run.RetryCount != 2 {
+		t.Fatalf("retry_count = %d, want 2", run.RetryCount)
+	}
+	if !run.NextRetryAt.Valid {
+		t.Fatal("next_retry_at was not set")
+	}
+	if run.ErrorDetail.String != "Run exceeded claim timeout and was reaped for retry" {
+		t.Fatalf("error_detail = %q, want reaper message", run.ErrorDetail.String)
+	}
+}
+
+func TestReapDoesNotTouchFreshRuns(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-fresh")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{
+		status:         "pending",
+		idempotencyKey: "fresh-running",
+	})
+
+	// Claim the run just now — should NOT be reaped.
+	if _, err := sqlDB.Exec(
+		"UPDATE review_runs SET status = 'running', claimed_by = 'active-worker', claimed_at = NOW(), started_at = NOW() WHERE id = ?",
+		runID,
+	); err != nil {
+		t.Fatalf("set fresh running state: %v", err)
+	}
+
+	svc := NewService(testLogger(), sqlDB, nil, WithClaimTimeout(10))
+
+	reaped, err := svc.ReapStaleRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ReapStaleRuns: %v", err)
+	}
+	if reaped != 0 {
+		t.Fatalf("reaped = %d, want 0", reaped)
+	}
+
+	run, err := db.New(sqlDB).GetReviewRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "running" {
+		t.Fatalf("status = %q, want running", run.Status)
+	}
+}
+
 type retryThenSucceedProcessor struct {
 	mu               sync.Mutex
 	attempts         map[int64]int
