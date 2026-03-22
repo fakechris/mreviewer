@@ -57,14 +57,60 @@ func TestMiniMaxRequestShape(t *testing.T) {
 	if payload["max_tokens"] != float64(4096) {
 		t.Fatalf("max_tokens = %#v", payload["max_tokens"])
 	}
+	if payload["temperature"] != 0.2 {
+		t.Fatalf("temperature = %#v, want 0.2", payload["temperature"])
+	}
 	if _, ok := payload["system"]; !ok {
 		t.Fatal("missing system prompt")
 	}
-	if _, ok := payload["output_config"]; !ok {
-		t.Fatal("missing output_config")
+	if _, ok := payload["output_config"]; ok {
+		t.Fatal("output_config should not be sent to MiniMax Anthropic-compatible endpoint")
 	}
 	if got := transport.header.Get("X-Api-Key"); got != "secret-token" {
 		t.Fatalf("x-api-key = %q", got)
+	}
+}
+
+func TestMiniMaxSummaryRequestShape(t *testing.T) {
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL: "https://api.minimaxi.com/anthropic",
+		APIKey:  "secret-token",
+		Model:   "MiniMax-M2.5",
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	payload := provider.SummaryRequestPayloadWithSystemPrompt(
+		ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"},
+		"summary system prompt",
+	)
+
+	if payload["model"] != "MiniMax-M2.5" {
+		t.Fatalf("model = %#v", payload["model"])
+	}
+	if payload["temperature"] != 0.2 {
+		t.Fatalf("temperature = %#v, want 0.2", payload["temperature"])
+	}
+	if _, ok := payload["system"]; !ok {
+		t.Fatal("missing system prompt")
+	}
+	if _, ok := payload["output_config"]; ok {
+		t.Fatal("output_config should not be sent to MiniMax Anthropic-compatible endpoint")
+	}
+}
+
+func TestBuildSummarySystemPromptRequiresStrictJSONOutput(t *testing.T) {
+	prompt := buildSummarySystemPrompt(reviewlang.DefaultOutputLanguage)
+
+	for _, want := range []string{
+		"Return ONLY valid JSON.",
+		"Do not wrap the JSON in markdown fences.",
+		`Required top-level fields: schema_version, review_run_id, walkthrough, verdict.`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("summary prompt missing %q: %s", want, prompt)
+		}
 	}
 }
 

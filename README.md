@@ -267,6 +267,34 @@ go run ./cmd/manual-trigger --project-id 123 --mr-iid 45 --wait --wait-timeout 1
 go run ./cmd/manual-trigger --project-id 123 --mr-iid 45 --wait --wait-timeout 10m --poll-interval 2s --json
 ```
 
+## 一键验证真实 MR
+
+如果你已经有 `.env`，并且只想验证某一条真实 GitLab MR，不想手工查 `project_id`，推荐直接用：
+
+```bash
+bash scripts/review-mr.sh "https://github.91jinrong.com/group/repo/-/merge_requests/123"
+```
+
+这条脚本会自动：
+
+- 启动 `mysql` / `redis` / `migrate` / `worker`
+- 从 MR 链接解析 `group/repo` 和 `mr_iid`
+- 调 GitLab API 查询 `project_id`
+- 在 compose 网络内执行 `cmd/manual-trigger --wait --json`
+
+它不是在宿主机直接调用数据库，而是在临时 Go 容器里跑 `manual-trigger`，因此可以稳定使用 compose 内的：
+
+- `mysql:3306`
+- `redis:6379`
+
+这能避免宿主机本地已经存在其他 MySQL 实例时，把 `127.0.0.1:3306` 误连到错误数据库。
+
+脚本退出后：
+
+- 如果返回 `{"ok":true,...}`，说明这条 MR review run 已完成
+- 如果模型产出 findings，会写回 GitLab discussion
+- 如果没有 findings，也会写一条中文 summary note
+
 命令会：
 
 - 通过 GitLab API 读取当前 MR 元数据

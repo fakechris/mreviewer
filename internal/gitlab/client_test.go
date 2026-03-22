@@ -242,6 +242,93 @@ func TestGetMergeRequestDiffsPagination(t *testing.T) {
 	}
 }
 
+func TestGetMergeRequestDiffsFallbackToNonPaginatedAndChanges(t *testing.T) {
+	tests := []struct {
+		name      string
+		paths     []string
+		wantPaths []string
+	}{
+		{
+			name: "fallback to plain diffs when paginated endpoint fails",
+			paths: []string{
+				"/api/v4/projects/123/merge_requests/7/diffs?page=1&per_page=100",
+				"/api/v4/projects/123/merge_requests/7/diffs",
+			},
+			wantPaths: []string{
+				"/api/v4/projects/123/merge_requests/7/diffs?page=1&per_page=100",
+				"/api/v4/projects/123/merge_requests/7/diffs",
+			},
+		},
+		{
+			name: "fallback to changes when both diffs endpoints fail",
+			paths: []string{
+				"/api/v4/projects/123/merge_requests/7/diffs?page=1&per_page=100",
+				"/api/v4/projects/123/merge_requests/7/diffs",
+				"/api/v4/projects/123/merge_requests/7/changes",
+			},
+			wantPaths: []string{
+				"/api/v4/projects/123/merge_requests/7/diffs?page=1&per_page=100",
+				"/api/v4/projects/123/merge_requests/7/diffs",
+				"/api/v4/projects/123/merge_requests/7/changes",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPaths []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPaths = append(gotPaths, r.URL.RequestURI())
+
+				switch r.URL.RequestURI() {
+				case "/api/v4/projects/123/merge_requests/7/diffs?page=1&per_page=100":
+					http.Error(w, `{"message":"500 Internal Server Error"}`, http.StatusInternalServerError)
+				case "/api/v4/projects/123/merge_requests/7/diffs":
+					if len(tc.paths) == 2 {
+						writeJSON(t, w, http.StatusOK, []map[string]any{{
+							"old_path": "a.go",
+							"new_path": "a.go",
+							"diff":     "@@ -1 +1 @@",
+						}})
+						return
+					}
+					http.Error(w, `{"message":"500 Internal Server Error"}`, http.StatusInternalServerError)
+				case "/api/v4/projects/123/merge_requests/7/changes":
+					writeJSON(t, w, http.StatusOK, map[string]any{
+						"changes": []map[string]any{{
+							"old_path": "fallback.go",
+							"new_path": "fallback.go",
+							"diff":     "@@ -1 +1 @@",
+						}},
+					})
+				default:
+					t.Fatalf("unexpected request URI %q", r.URL.RequestURI())
+				}
+			}))
+			defer server.Close()
+
+			client := newTestClient(t, server)
+
+			diffs, err := client.GetMergeRequestDiffs(context.Background(), 123, 7)
+			if err != nil {
+				t.Fatalf("GetMergeRequestDiffs: %v", err)
+			}
+			if !reflect.DeepEqual(gotPaths, tc.wantPaths) {
+				t.Fatalf("paths = %#v, want %#v", gotPaths, tc.wantPaths)
+			}
+			if len(diffs) != 1 {
+				t.Fatalf("len(diffs) = %d, want 1", len(diffs))
+			}
+			if tc.name == "fallback to plain diffs when paginated endpoint fails" && diffs[0].NewPath != "a.go" {
+				t.Fatalf("fallback plain diffs new path = %q, want a.go", diffs[0].NewPath)
+			}
+			if tc.name == "fallback to changes when both diffs endpoints fail" && diffs[0].NewPath != "fallback.go" {
+				t.Fatalf("fallback changes new path = %q, want fallback.go", diffs[0].NewPath)
+			}
+		})
+	}
+}
+
 func TestDiffNotReadyRetry(t *testing.T) {
 	var mu sync.Mutex
 	mrCalls := 0

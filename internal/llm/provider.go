@@ -34,6 +34,7 @@ import (
 const (
 	defaultSystemPrompt             = "You are an expert GitLab merge request reviewer. Return only valid JSON matching the provided schema."
 	defaultMaxTokens          int64 = 4096
+	defaultTemperature              = 0.2
 	defaultTimeoutRetry             = 3
 	parserErrorCode                 = "parser_error"
 	providerTimeoutCode             = "provider_timeout"
@@ -171,6 +172,7 @@ type ProviderConfig struct {
 	SystemPrompt   string
 	RouteName      string
 	TimeoutRetries int
+	Temperature    float64
 	HTTPClient     *http.Client
 	RateLimiter    RateLimiter
 	Now            func() time.Time
@@ -181,6 +183,7 @@ type MiniMaxProvider struct {
 	client         anthropic.Client
 	model          string
 	maxTokens      int64
+	temperature    float64
 	systemPrompt   string
 	routeName      string
 	rateLimiter    RateLimiter
@@ -330,6 +333,9 @@ func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
 	if cfg.TimeoutRetries <= 0 {
 		cfg.TimeoutRetries = defaultTimeoutRetry
 	}
+	if cfg.Temperature <= 0 {
+		cfg.Temperature = defaultTemperature
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -348,7 +354,7 @@ func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
 	if routeName == "" {
 		routeName = strings.TrimSpace(cfg.Model)
 	}
-	return &MiniMaxProvider{client: client, model: cfg.Model, maxTokens: cfg.MaxTokens, systemPrompt: cfg.SystemPrompt, routeName: routeName, rateLimiter: cfg.RateLimiter, now: cfg.Now, sleep: cfg.Sleep, timeoutRetries: cfg.TimeoutRetries}, nil
+	return &MiniMaxProvider{client: client, model: cfg.Model, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature, systemPrompt: cfg.SystemPrompt, routeName: routeName, rateLimiter: cfg.RateLimiter, now: cfg.Now, sleep: cfg.Sleep, timeoutRetries: cfg.TimeoutRetries}, nil
 }
 
 func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
@@ -587,7 +593,7 @@ func (p *MiniMaxProvider) RequestPayload(request ctxpkg.ReviewRequest) map[strin
 }
 
 func (p *MiniMaxProvider) RequestPayloadWithSystemPrompt(request ctxpkg.ReviewRequest, systemPrompt string) map[string]any {
-	return map[string]any{"model": p.model, "max_tokens": p.maxTokens, "system": systemPrompt, "messages": []map[string]any{{"role": "user", "content": mustJSON(request)}}, "output_config": map[string]any{"format": map[string]any{"type": "json_schema", "name": "review_result", "schema": reviewResultSchema()}}}
+	return map[string]any{"model": p.model, "max_tokens": p.maxTokens, "temperature": p.temperature, "system": systemPrompt, "messages": []map[string]any{{"role": "user", "content": mustJSON(request)}}}
 }
 
 func (p *MiniMaxProvider) Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
@@ -607,7 +613,7 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		started := p.now()
-		message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{Model: anthropic.Model(p.model), MaxTokens: p.maxTokens, System: []anthropic.TextBlockParam{{Text: systemPrompt}}, Messages: []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))}, OutputConfig: anthropic.OutputConfigParam{Format: anthropic.JSONOutputFormatParam{Schema: reviewResultSchema()}}})
+		message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{Model: anthropic.Model(p.model), MaxTokens: p.maxTokens, Temperature: anthropic.Float(p.temperature), System: []anthropic.TextBlockParam{{Text: systemPrompt}}, Messages: []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))}})
 		if err != nil {
 			lastErr = err
 			if !isTimeoutError(err) || attempt == maxAttempts-1 {
@@ -1463,6 +1469,12 @@ func buildSummarySystemPrompt(language string) string {
 	if reviewlang.IsChinese(language) {
 		return `你是一名合并请求摘要撰写助手。你的任务是用简体中文（zh-CN）产出清晰、简洁的变更 walkthrough，指出高风险区域，并给出结论。
 
+输出格式要求：
+1. Return ONLY valid JSON.
+2. Do not wrap the JSON in markdown fences.
+3. Do not add any prose before or after the JSON object.
+4. Required top-level fields: schema_version, review_run_id, walkthrough, verdict.
+
 硬性约束：
 1. walkthrough 需要解释“改了什么”和“为什么改”，不要逐行复述 diff。
 2. risk_areas 只保留最容易引入 bug 或回归的文件或模块。
@@ -1471,6 +1483,12 @@ func buildSummarySystemPrompt(language string) string {
 5. 不要重复 review findings；summary 是独立、互补的视角。`
 	}
 	return fmt.Sprintf(`You are a merge request summary writer. Your job is to produce a clear, concise walkthrough of what this merge request changes, identify risk areas, and give a verdict. All narrative text must be written in %s.
+
+Output format requirements:
+1. Return ONLY valid JSON.
+2. Do not wrap the JSON in markdown fences.
+3. Do not add any prose before or after the JSON object.
+4. Required top-level fields: schema_version, review_run_id, walkthrough, verdict.
 
 Hard constraints:
 1. The walkthrough should explain WHAT changed and WHY at a high level. Do not list every line change.
@@ -1514,17 +1532,11 @@ func (p *MiniMaxProvider) SummaryRequestPayload(request ctxpkg.ReviewRequest) ma
 
 func (p *MiniMaxProvider) SummaryRequestPayloadWithSystemPrompt(request ctxpkg.ReviewRequest, systemPrompt string) map[string]any {
 	return map[string]any{
-		"model":      p.model,
-		"max_tokens": p.maxTokens,
-		"system":     systemPrompt,
-		"messages":   []map[string]any{{"role": "user", "content": mustJSON(request)}},
-		"output_config": map[string]any{
-			"format": map[string]any{
-				"type":   "json_schema",
-				"name":   "summary_result",
-				"schema": summaryResultSchema(),
-			},
-		},
+		"model":       p.model,
+		"max_tokens":  p.maxTokens,
+		"temperature": p.temperature,
+		"system":      systemPrompt,
+		"messages":    []map[string]any{{"role": "user", "content": mustJSON(request)}},
 	}
 }
 
@@ -1540,13 +1552,11 @@ func (p *MiniMaxProvider) SummarizeWithSystemPrompt(ctx context.Context, request
 	}
 	started := p.now()
 	message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.Model(p.model),
-		MaxTokens: p.maxTokens,
-		System:    []anthropic.TextBlockParam{{Text: systemPrompt}},
-		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))},
-		OutputConfig: anthropic.OutputConfigParam{
-			Format: anthropic.JSONOutputFormatParam{Schema: summaryResultSchema()},
-		},
+		Model:       anthropic.Model(p.model),
+		MaxTokens:   p.maxTokens,
+		Temperature: anthropic.Float(p.temperature),
+		System:      []anthropic.TextBlockParam{{Text: systemPrompt}},
+		Messages:    []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))},
 	})
 	if err != nil {
 		return SummaryResponse{}, err

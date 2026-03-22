@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -412,6 +413,129 @@ func TestWorkerRuntimeWritesBackViaGitLabClient(t *testing.T) {
 	}
 }
 
+func TestWorkerRuntimeAllowsProcessorManagedCompletedStatus(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-processor-completed")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-processor-completed", "sha-processor-completed")
+	if _, err := sqlDB.Exec(`INSERT INTO mr_versions (merge_request_id, gitlab_version_id, base_sha, start_sha, head_sha, patch_id_sha)
+		VALUES (?, ?, ?, ?, ?, ?)`, mrID, 1, "base-sha", "start-sha", "sha-processor-completed", "patch-sha"); err != nil {
+		t.Fatalf("insert mr version: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, new_line, anchor_snippet, anchor_fingerprint, semantic_fingerprint, state)
+		VALUES (?, ?, 'bug', 'high', 0.95, 'Processor-managed completion', 'body', 'src/main.go', 'new_line', 42, 'snippet', 'anchor-processor-completed', 'semantic-processor-completed', 'active')`, runID, mrID); err != nil {
+		t.Fatalf("insert finding: %v", err)
+	}
+
+	client := &fakeDiscussionClient{}
+	queries := db.New(sqlDB)
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		findings, err := queries.ListFindingsByRun(ctx, runID)
+		if err != nil {
+			return scheduler.ProcessOutcome{}, err
+		}
+		if err := queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{ID: runID, Status: "completed"}); err != nil {
+			return scheduler.ProcessOutcome{}, err
+		}
+		return scheduler.ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
+	})
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, client, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
+
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(client.discussions) != 1 {
+		t.Fatalf("discussion requests = %d, want 1", len(client.discussions))
+	}
+	if len(client.notes) != 1 {
+		t.Fatalf("note requests = %d, want 1", len(client.notes))
+	}
+}
+
+func TestWorkerRuntimeAllowsProcessorManagedParserErrorStatus(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-processor-parser-error")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-processor-parser-error", "sha-processor-parser-error")
+
+	client := &fakeDiscussionClient{}
+	queries := db.New(sqlDB)
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		if err := queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{ID: runID, Status: "parser_error"}); err != nil {
+			return scheduler.ProcessOutcome{}, err
+		}
+		return scheduler.ProcessOutcome{Status: "parser_error"}, nil
+	})
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, client, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
+
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(client.discussions) != 0 {
+		t.Fatalf("discussion requests = %d, want 0", len(client.discussions))
+	}
+	if len(client.notes) != 1 {
+		t.Fatalf("note requests = %d, want 1 parser-error note", len(client.notes))
+	}
+}
+
+func TestWorkerRuntimeAllowsWriterManagedFailedStatus(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-writer-failed")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-writer-failed", "sha-writer-failed")
+	if _, err := sqlDB.Exec(`INSERT INTO mr_versions (merge_request_id, gitlab_version_id, base_sha, start_sha, head_sha, patch_id_sha)
+		VALUES (?, ?, ?, ?, ?, ?)`, mrID, 1, "base-sha", "start-sha", "sha-writer-failed", "patch-sha"); err != nil {
+		t.Fatalf("insert mr version: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, new_line, anchor_snippet, anchor_fingerprint, semantic_fingerprint, state)
+		VALUES (?, ?, 'bug', 'high', 0.95, 'Writer-managed failure', 'body', 'src/main.go', 'new_line', 42, 'snippet', 'anchor-writer-failed', 'semantic-writer-failed', 'active')`, runID, mrID); err != nil {
+		t.Fatalf("insert finding: %v", err)
+	}
+
+	client := &fakeDiscussionClient{discussionErr: errors.New("gitlab unavailable")}
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		findings, err := db.New(sqlDB).ListFindingsByRun(ctx, runID)
+		if err != nil {
+			return scheduler.ProcessOutcome{}, err
+		}
+		return scheduler.ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
+	})
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, client, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
+
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	run, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "failed" {
+		t.Fatalf("run status = %q, want failed", run.Status)
+	}
+	if run.ErrorCode == "" {
+		t.Fatal("expected run error code to be persisted")
+	}
+}
+
 type fakeStatusPublisher struct{ results []gate.Result }
 
 func (f *fakeStatusPublisher) PublishStatus(_ context.Context, result gate.Result) error {
@@ -430,21 +554,30 @@ type fakeDiscussionClient struct {
 	discussions    []writer.CreateDiscussionRequest
 	notes          []writer.CreateNoteRequest
 	resolveRequest []writer.ResolveDiscussionRequest
+	discussionErr  error
+	noteErr        error
+	resolveErr     error
 }
 
 func (f *fakeDiscussionClient) CreateDiscussion(_ context.Context, req writer.CreateDiscussionRequest) (writer.Discussion, error) {
 	f.discussions = append(f.discussions, req)
+	if f.discussionErr != nil {
+		return writer.Discussion{}, f.discussionErr
+	}
 	return writer.Discussion{ID: req.IdempotencyKey}, nil
 }
 
 func (f *fakeDiscussionClient) CreateNote(_ context.Context, req writer.CreateNoteRequest) (writer.Discussion, error) {
 	f.notes = append(f.notes, req)
+	if f.noteErr != nil {
+		return writer.Discussion{}, f.noteErr
+	}
 	return writer.Discussion{ID: req.IdempotencyKey}, nil
 }
 
 func (f *fakeDiscussionClient) ResolveDiscussion(_ context.Context, req writer.ResolveDiscussionRequest) error {
 	f.resolveRequest = append(f.resolveRequest, req)
-	return nil
+	return f.resolveErr
 }
 
 func writeRuntimeJSON(t *testing.T, w http.ResponseWriter, status int, payload any) {

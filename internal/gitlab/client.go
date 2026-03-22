@@ -112,6 +112,10 @@ type MergeRequestSnapshot struct {
 	Diffs        []MergeRequestDiff
 }
 
+type mergeRequestChangesResponse struct {
+	Changes []MergeRequestDiff `json:"changes"`
+}
+
 type HTTPStatusError struct {
 	Method     string
 	URL        string
@@ -292,6 +296,30 @@ func (c *Client) GetMergeRequestVersions(ctx context.Context, projectID, mergeRe
 }
 
 func (c *Client) GetMergeRequestDiffs(ctx context.Context, projectID, mergeRequestIID int64) ([]MergeRequestDiff, error) {
+	diffs, err := c.getMergeRequestDiffsPaginated(ctx, projectID, mergeRequestIID)
+	if err == nil {
+		return diffs, nil
+	}
+	if !isRetriableDiffEndpointError(err) {
+		return nil, err
+	}
+
+	diffs, plainErr := c.getMergeRequestDiffsPlain(ctx, projectID, mergeRequestIID)
+	if plainErr == nil {
+		return diffs, nil
+	}
+	if !isRetriableDiffEndpointError(plainErr) {
+		return nil, plainErr
+	}
+
+	diffs, changesErr := c.getMergeRequestDiffsFromChanges(ctx, projectID, mergeRequestIID)
+	if changesErr == nil {
+		return diffs, nil
+	}
+	return nil, changesErr
+}
+
+func (c *Client) getMergeRequestDiffsPaginated(ctx context.Context, projectID, mergeRequestIID int64) ([]MergeRequestDiff, error) {
 	path := mergeRequestPath(projectID, mergeRequestIID, "/diffs")
 	page := 1
 	allDiffs := make([]MergeRequestDiff, 0)
@@ -319,6 +347,32 @@ func (c *Client) GetMergeRequestDiffs(ctx context.Context, projectID, mergeReque
 		}
 		page = next
 	}
+}
+
+func (c *Client) getMergeRequestDiffsPlain(ctx context.Context, projectID, mergeRequestIID int64) ([]MergeRequestDiff, error) {
+	var diffs []MergeRequestDiff
+	_, err := c.doJSON(ctx, http.MethodGet, mergeRequestPath(projectID, mergeRequestIID, "/diffs"), nil, &diffs)
+	if err != nil {
+		return nil, err
+	}
+	return diffs, nil
+}
+
+func (c *Client) getMergeRequestDiffsFromChanges(ctx context.Context, projectID, mergeRequestIID int64) ([]MergeRequestDiff, error) {
+	var resp mergeRequestChangesResponse
+	_, err := c.doJSON(ctx, http.MethodGet, mergeRequestPath(projectID, mergeRequestIID, "/changes"), nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Changes, nil
+}
+
+func isRetriableDiffEndpointError(err error) bool {
+	var statusErr *HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.StatusCode >= http.StatusInternalServerError
 }
 
 func (c *Client) GetMergeRequestSnapshot(ctx context.Context, projectID, mergeRequestIID int64) (MergeRequestSnapshot, error) {

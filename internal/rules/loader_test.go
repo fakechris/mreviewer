@@ -233,6 +233,26 @@ func TestProjectPolicyOutputLanguageOverride(t *testing.T) {
 	}
 }
 
+func TestSystemPromptRequiresStrictJSONOutput(t *testing.T) {
+	loader := NewLoader(stubFileReader{}, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{ProjectID: 123, HeadSHA: "head-sha"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	for _, want := range []string{
+		"Return ONLY valid JSON.",
+		"Do not wrap the JSON in markdown fences.",
+		`Required top-level fields: schema_version, review_run_id, summary, findings.`,
+		`If there are no findings, return "findings": [].`,
+	} {
+		if !strings.Contains(result.SystemPrompt, want) {
+			t.Fatalf("system prompt missing %q: %s", want, result.SystemPrompt)
+		}
+	}
+}
+
 func TestAllowlistedRuleSourcesOnly(t *testing.T) {
 	loader := NewLoader(stubFileReader{content: map[string]string{"REVIEW.md@head-sha": "# Review Guidelines\n- Trusted guidance only\n"}}, defaultPlatformDefaults())
 
