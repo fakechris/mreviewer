@@ -5,7 +5,7 @@ GitLab Merge Request 自动 Code Review 服务，面向单机 Docker Compose 部
 ## 组件
 
 - `ingress`: 接收 GitLab webhook，请求入口，默认端口 `3100`
-- `worker`: 拉取 MR 上下文、调用模型、写回评论/结果
+- `worker`: 拉取 MR 上下文、调用模型、落库 review 结果
 - `mysql`: MySQL 8.4，业务主库
 - `redis`: Redis 7，限流/协调降级依赖
 
@@ -16,7 +16,7 @@ GitLab Merge Request 自动 Code Review 服务，面向单机 Docker Compose 部
 - GitLab -> `ingress` `/webhook`
 - `ingress` -> MySQL
 - `worker` -> MySQL / Redis / GitLab API / LLM Provider
-- `worker` -> GitLab 写回评论与状态
+- `worker` -> 持久化 findings / summary / gate 结果，并回写 GitLab discussion / note
 
 ## 环境变量
 
@@ -39,6 +39,40 @@ cp .env.example .env
 - `ANTHROPIC_API_KEY`: 模型 API Key
 - `ANTHROPIC_MODEL`: 模型名
 
+## Review 输出语言
+
+默认输出语言是简体中文 `zh-CN`。
+
+当前不是通过环境变量配置，而是通过项目策略配置：
+
+1. 仓库内 `.gitlab/ai-review.yaml`
+2. 或 `project_policies.extra` 的 JSON
+
+推荐直接在仓库里放 `.gitlab/ai-review.yaml`：
+
+```yaml
+output_language: zh-CN
+```
+
+如果想切成英文：
+
+```yaml
+output_language: en-US
+```
+
+完整示例：
+
+```yaml
+confidence_threshold: 0.85
+severity_threshold: high
+provider_route: default
+output_language: zh-CN
+max_files: 50
+max_changed_lines: 1500
+context_lines_before: 25
+context_lines_after: 15
+```
+
 ## GitLab 配置
 
 1. 在 GitLab 创建可读取 MR / diff / note，并可写评论的 token
@@ -52,13 +86,21 @@ cp .env.example .env
 
 当前实现使用 Anthropic-compatible 接口。
 
+代码里生产 `worker` 目前实例化的是 `llm.NewMiniMaxProvider(...)`，也就是通过 Anthropic-compatible 协议接 MiniMax。
+
 最少需要：
 
 - `ANTHROPIC_BASE_URL`
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_MODEL`
 
-示例已在 `.env.example` 中给出，默认是 MiniMax Anthropic-compatible 形式。
+如果你更习惯直接放 MiniMax 环境变量，也支持以下回退：
+
+- `MINIMAX_API_KEY`
+- `MINIMAX_BASE_URL`
+- `MINIMAX_MODEL`
+
+当 `ANTHROPIC_*` 没有配置时，worker 会自动回退到 `MINIMAX_*`。
 
 ## 安装与初始化
 
@@ -106,15 +148,16 @@ docker compose ps
 docker compose logs -f ingress
 ```
 
-6. 观察 `worker` 处理、拉取上下文、调用模型、写回评论：
+6. 观察 `worker` 处理、拉取上下文、调用模型、落库 findings / summary：
 
 ```bash
 docker compose logs -f worker
 ```
 
-7. 在 GitLab MR 页面确认：
-   - review comment 已写回
-   - note command（如 rerun / ignore / resolve / focus）可生效
+7. 当前主分支可确认：
+   - `review_runs` / `review_findings` 已落库
+   - worker 会把 finding 写回 GitLab discussion / summary note
+   - note command（如 rerun / ignore / resolve / focus）链路可继续验证
    - 大 MR 降级 summary / provider route / beta 行为正常
 
 ## 手动触发单个 MR
@@ -160,6 +203,11 @@ go run ./cmd/manual-trigger --project-id 123 --mr-iid 45 --wait --wait-timeout 1
 - 创建一条 `trigger_type=manual`、`status=pending` 的 `review_runs`
 
 后续由现有 `worker` 自动 claim 并处理这条 run。
+
+说明：
+
+- 当前主分支的生产 `worker` 会完成 GitLab 拉取、上下文组装、模型调用、finding 落库、gate 发布、GitLab discussion/note 回写
+- 如果 `--wait` 结束后状态为 `completed`，通常可以同时在 GitLab MR 页面看到 inline discussion 和 summary note
 
 可选参数：
 

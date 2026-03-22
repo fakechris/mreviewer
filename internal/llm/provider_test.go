@@ -24,6 +24,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	metrics2 "github.com/mreviewer/mreviewer/internal/metrics"
+	"github.com/mreviewer/mreviewer/internal/reviewlang"
 	"github.com/mreviewer/mreviewer/internal/rules"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
@@ -243,6 +244,72 @@ func TestProviderRouteSelection(t *testing.T) {
 	}
 	if result.EffectivePolicy.ProviderRoute != "project-route" {
 		t.Fatalf("provider route = %q, want project-route", result.EffectivePolicy.ProviderRoute)
+	}
+}
+
+func TestProcessRunUsesDynamicSystemPrompt(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{
+			GitLabID:  11,
+			IID:       7,
+			ProjectID: 101,
+			Title:     "Title",
+			Author: struct {
+				Username string `json:"username"`
+			}{Username: "alice"},
+			DiffRefs:     &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"},
+			HeadSHA:      "head",
+			WebURL:       "https://gitlab.example.com/group/proj/-/merge_requests/7",
+			State:        "opened",
+			SourceBranch: "feature",
+			TargetBranch: "main",
+		},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
+	}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{
+		SystemPrompt:    "dynamic system prompt: 输出语言 zh-CN",
+		EffectivePolicy: rules.EffectivePolicy{OutputLanguage: "zh-CN"},
+		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"},
+	}}
+	provider := &fakeDynamicPromptProvider{fakeProvider: fakeProvider{response: ProviderResponse{
+		Result: ReviewResult{
+			SchemaVersion: "1.0",
+			ReviewRunID:   fmt.Sprintf("%d", runID),
+			Summary:       "摘要",
+			Status:        "completed",
+			Findings: []ReviewFinding{{
+				Category:     "bug",
+				Severity:     "high",
+				Confidence:   0.9,
+				Title:        "问题",
+				BodyMarkdown: "内容",
+				Path:         "main.go",
+				AnchorKind:   "new",
+			}},
+		},
+		Model: "MiniMax-M2.5",
+	}}}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	if _, err := processor.ProcessRun(ctx, run); err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if provider.systemPrompt != "dynamic system prompt: 输出语言 zh-CN" {
+		t.Fatalf("system prompt = %q, want dynamic prompt from rules loader", provider.systemPrompt)
 	}
 }
 
@@ -1810,6 +1877,26 @@ func (f *fakeProvider) RequestPayload(ctxpkg.ReviewRequest) map[string]any {
 	return map[string]any{"token": "secret", "content": "prompt body"}
 }
 
+type fakeDynamicPromptProvider struct {
+	fakeProvider
+	systemPrompt string
+}
+
+func (f *fakeDynamicPromptProvider) ReviewWithSystemPrompt(_ context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (ProviderResponse, error) {
+	f.request = request
+	f.systemPrompt = systemPrompt
+	if f.err != nil {
+		f.response.Latency = 13 * time.Millisecond
+		f.response.Tokens = 21
+		f.response.Model = "MiniMax-M2.5"
+	}
+	return f.response, f.err
+}
+
+func (f *fakeDynamicPromptProvider) RequestPayloadWithSystemPrompt(ctxpkg.ReviewRequest, string) map[string]any {
+	return map[string]any{"token": "secret", "content": "prompt body"}
+}
+
 func seedRun(t *testing.T, ctx context.Context, q *db.Queries) (int64, int64, int64, int64) {
 	t.Helper()
 	res, err := q.UpsertGitlabInstance(ctx, db.UpsertGitlabInstanceParams{Url: "https://gitlab.example.com", Name: "GitLab"})
@@ -2362,7 +2449,7 @@ func TestDegradationSummaryPersistedForWriter(t *testing.T) {
 	if !updatedRun.ErrorDetail.Valid {
 		t.Fatal("error_detail is NULL, want non-null degradation summary")
 	}
-	if !strings.Contains(updatedRun.ErrorDetail.String, "degradation mode") {
+	if !strings.Contains(updatedRun.ErrorDetail.String, "降级审查模式") {
 		t.Fatalf("error_detail missing degradation mode text: %s", updatedRun.ErrorDetail.String)
 	}
 }
@@ -2426,8 +2513,8 @@ func TestDegradationSummaryNoteIncludesSkippedFiles(t *testing.T) {
 	}
 	detail := updatedRun.ErrorDetail.String
 	// The summary must mention skipped files with their reasons.
-	if !strings.Contains(detail, "Skipped files") {
-		t.Fatalf("error_detail missing 'Skipped files' section: %s", detail)
+	if !strings.Contains(detail, "已跳过的文件") {
+		t.Fatalf("error_detail missing skipped-files section: %s", detail)
 	}
 	if !strings.Contains(detail, "skipped.go") || !strings.Contains(detail, "also_skipped.go") {
 		t.Fatalf("error_detail missing skipped file names: %s", detail)
@@ -2521,29 +2608,29 @@ func TestRenderSummaryFromWalkthrough(t *testing.T) {
 			BlindSpots: []string{"No integration tests for SSO flow"},
 			Verdict:    "request_changes",
 		}
-		got := renderSummaryFromWalkthrough(summary)
-		if !strings.Contains(got, "## MR Walkthrough") {
+		got := renderSummaryFromWalkthrough(summary, reviewlang.DefaultOutputLanguage)
+		if !strings.Contains(got, "## 变更解读") {
 			t.Fatal("missing walkthrough header")
 		}
 		if !strings.Contains(got, "This MR refactors the auth module.") {
 			t.Fatal("missing walkthrough body")
 		}
-		if !strings.Contains(got, "### Risk Areas") {
+		if !strings.Contains(got, "### 风险区域") {
 			t.Fatal("missing risk areas section")
 		}
-		if !strings.Contains(got, "**src/auth/login.go** (high)") {
+		if !strings.Contains(got, "**src/auth/login.go**（high）") {
 			t.Fatal("missing first risk area")
 		}
-		if !strings.Contains(got, "**src/auth/token.go** (medium)") {
+		if !strings.Contains(got, "**src/auth/token.go**（medium）") {
 			t.Fatal("missing second risk area")
 		}
-		if !strings.Contains(got, "### Blind Spots") {
+		if !strings.Contains(got, "### 盲区") {
 			t.Fatal("missing blind spots section")
 		}
 		if !strings.Contains(got, "No integration tests for SSO flow") {
 			t.Fatal("missing blind spot")
 		}
-		if !strings.Contains(got, "**Verdict**: request_changes") {
+		if !strings.Contains(got, "**结论**：request_changes") {
 			t.Fatal("missing verdict")
 		}
 	})
@@ -2554,7 +2641,7 @@ func TestRenderSummaryFromWalkthrough(t *testing.T) {
 			Walkthrough:   "Minor fix.",
 			Verdict:       "approve",
 		}
-		got := renderSummaryFromWalkthrough(summary)
+		got := renderSummaryFromWalkthrough(summary, "en-US")
 		if !strings.Contains(got, "## MR Walkthrough") {
 			t.Fatal("missing walkthrough header")
 		}

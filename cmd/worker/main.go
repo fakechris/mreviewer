@@ -112,7 +112,7 @@ func run() int {
 	// At runtime, ProcessRun calls registry.ResolveWithFallback(effectivePolicy.ProviderRoute)
 	// to pick the provider for each run, instead of always using a static default.
 	processor := llm.NewProcessor(logger, db, gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(db)).WithRegistry(providerRegistry)
-	runtimeDeps := newRuntimeDeps(logger, db, processor)
+	runtimeDeps := newRuntimeDepsWithWriteback(logger, db, processor, gitlabClient)
 	worker := runtimeDeps.Scheduler
 	logger.Info("worker starting", "platform_default_route", platformDefaultRoute, "fallback_route", fallbackRoute, "registry_routes", providerRegistry.Routes())
 	if err := worker.Run(ctx); err != nil {

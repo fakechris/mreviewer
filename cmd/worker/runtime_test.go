@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gate"
+	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 	"github.com/mreviewer/mreviewer/internal/writer"
@@ -139,7 +142,7 @@ func TestWorkerRuntimeInjectsTelemetry(t *testing.T) {
 		return scheduler.ProcessOutcome{Status: "completed", ProviderLatencyMs: 25, ProviderTokensTotal: 77, ReviewFindings: findings}, nil
 	})
 	runtimeDeps := newRuntimeDeps(testLogger(), sqlDB, processor)
-	runtimeWriter := writer.New(&fakeDiscussionClient{}, &runtimeWriterStore{queries: db.New(sqlDB)}).WithMetrics(runtimeDeps.Metrics).WithTracer(runtimeDeps.Tracer)
+	runtimeWriter := writer.New(&fakeDiscussionClient{}, writer.NewSQLStore(sqlDB)).WithMetrics(runtimeDeps.Metrics).WithTracer(runtimeDeps.Tracer)
 	originalProcessor := processor
 	runtimeDeps.Scheduler = scheduler.NewService(testLogger(), sqlDB, scheduler.FuncProcessor(func(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
 		outcome, err := originalProcessor.ProcessRun(ctx, run)
@@ -270,6 +273,145 @@ func TestGatePublishesFromRuntimePath(t *testing.T) {
 	}
 }
 
+func TestWorkerRuntimeWritesBackFindings(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-writeback")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-writeback", "sha-writeback")
+	if _, err := sqlDB.Exec(`INSERT INTO mr_versions (merge_request_id, gitlab_version_id, base_sha, start_sha, head_sha, patch_id_sha)
+		VALUES (?, ?, ?, ?, ?, ?)`, mrID, 1, "base-sha", "start-sha", "sha-writeback", "patch-sha"); err != nil {
+		t.Fatalf("insert mr version: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, new_line, anchor_snippet, anchor_fingerprint, semantic_fingerprint, state)
+		VALUES (?, ?, 'bug', 'high', 0.95, 'Writeback issue', 'body', 'src/main.go', 'new_line', 42, 'snippet', 'anchor-writeback', 'semantic-writeback', 'active')`, runID, mrID); err != nil {
+		t.Fatalf("insert finding: %v", err)
+	}
+
+	client := &fakeDiscussionClient{}
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		findings, err := db.New(sqlDB).ListFindingsByRun(ctx, runID)
+		if err != nil {
+			return scheduler.ProcessOutcome{}, err
+		}
+		return scheduler.ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
+	})
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, client, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
+
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(client.discussions) != 1 {
+		t.Fatalf("discussion requests = %d, want 1", len(client.discussions))
+	}
+	if len(client.notes) != 1 {
+		t.Fatalf("note requests = %d, want 1 summary note", len(client.notes))
+	}
+	if client.discussions[0].ReviewFindingID == 0 {
+		t.Fatalf("discussion request = %+v, want review finding id", client.discussions[0])
+	}
+	actions, err := db.New(sqlDB).ListCommentActionsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListCommentActionsByRun: %v", err)
+	}
+	if len(actions) != 2 {
+		t.Fatalf("comment action count = %d, want 2", len(actions))
+	}
+}
+
+func TestWorkerRuntimeWritesBackViaGitLabClient(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-writeback-http")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-writeback-http", "sha-writeback-http")
+	if _, err := sqlDB.Exec(`INSERT INTO mr_versions (merge_request_id, gitlab_version_id, base_sha, start_sha, head_sha, patch_id_sha)
+		VALUES (?, ?, ?, ?, ?, ?)`, mrID, 1, "base-sha", "start-sha", "sha-writeback-http", "patch-sha"); err != nil {
+		t.Fatalf("insert mr version: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, new_line, anchor_snippet, anchor_fingerprint, semantic_fingerprint, state)
+		VALUES (?, ?, 'bug', 'high', 0.95, 'HTTP writeback issue', 'body', 'src/main.go', 'new_line', 42, 'snippet', 'anchor-http', 'semantic-http', 'active')`, runID, mrID); err != nil {
+		t.Fatalf("insert finding: %v", err)
+	}
+
+	var discussionRequests []map[string]any
+	var noteRequests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("PRIVATE-TOKEN"); got != "test-token" {
+			t.Fatalf("PRIVATE-TOKEN = %q, want test-token", got)
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/projects/101/merge_requests/1/discussions":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode discussion body: %v", err)
+			}
+			discussionRequests = append(discussionRequests, body)
+			writeRuntimeJSON(t, w, http.StatusCreated, map[string]any{"id": "discussion-http"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/projects/101/merge_requests/1/notes":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode note body: %v", err)
+			}
+			noteRequests = append(noteRequests, body)
+			writeRuntimeJSON(t, w, http.StatusCreated, map[string]any{"id": 99})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	gitlabClient, err := gitlab.NewClient(server.URL, "test-token", gitlab.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		findings, err := db.New(sqlDB).ListFindingsByRun(ctx, runID)
+		if err != nil {
+			return scheduler.ProcessOutcome{}, err
+		}
+		return scheduler.ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
+	})
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, gitlabClient, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
+
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(discussionRequests) != 1 {
+		t.Fatalf("discussion requests = %d, want 1", len(discussionRequests))
+	}
+	if len(noteRequests) != 1 {
+		t.Fatalf("note requests = %d, want 1", len(noteRequests))
+	}
+	position, ok := discussionRequests[0]["position"].(map[string]any)
+	if !ok {
+		t.Fatalf("discussion position = %#v, want object", discussionRequests[0]["position"])
+	}
+	if position["head_sha"] != "sha-writeback-http" {
+		t.Fatalf("position head_sha = %#v, want sha-writeback-http", position["head_sha"])
+	}
+	if noteRequests[0]["body"] == "" {
+		t.Fatal("expected summary note body to be populated")
+	}
+	discussions, err := db.New(sqlDB).ListCommentActionsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListCommentActionsByRun: %v", err)
+	}
+	if len(discussions) != 2 {
+		t.Fatalf("comment action count = %d, want 2", len(discussions))
+	}
+}
+
 type fakeStatusPublisher struct{ results []gate.Result }
 
 func (f *fakeStatusPublisher) PublishStatus(_ context.Context, result gate.Result) error {
@@ -284,90 +426,32 @@ func (f *fakeCIPublisher) PublishCIGate(_ context.Context, result gate.Result) e
 	return nil
 }
 
-type fakeDiscussionClient struct{}
+type fakeDiscussionClient struct {
+	discussions    []writer.CreateDiscussionRequest
+	notes          []writer.CreateNoteRequest
+	resolveRequest []writer.ResolveDiscussionRequest
+}
 
 func (f *fakeDiscussionClient) CreateDiscussion(_ context.Context, req writer.CreateDiscussionRequest) (writer.Discussion, error) {
+	f.discussions = append(f.discussions, req)
 	return writer.Discussion{ID: req.IdempotencyKey}, nil
 }
 
 func (f *fakeDiscussionClient) CreateNote(_ context.Context, req writer.CreateNoteRequest) (writer.Discussion, error) {
+	f.notes = append(f.notes, req)
 	return writer.Discussion{ID: req.IdempotencyKey}, nil
 }
 
-func (f *fakeDiscussionClient) ResolveDiscussion(context.Context, writer.ResolveDiscussionRequest) error {
+func (f *fakeDiscussionClient) ResolveDiscussion(_ context.Context, req writer.ResolveDiscussionRequest) error {
+	f.resolveRequest = append(f.resolveRequest, req)
 	return nil
 }
 
-type runtimeWriterStore struct{ queries *db.Queries }
-
-func (s *runtimeWriterStore) GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (db.MrVersion, error) {
-	return s.queries.GetLatestMRVersion(ctx, mergeRequestID)
-}
-
-func (s *runtimeWriterStore) GetMergeRequest(ctx context.Context, id int64) (db.MergeRequest, error) {
-	return s.queries.GetMergeRequest(ctx, id)
-}
-
-func (s *runtimeWriterStore) GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error) {
-	return s.queries.GetReviewRun(ctx, id)
-}
-
-func (s *runtimeWriterStore) GetProjectPolicy(ctx context.Context, projectID int64) (db.ProjectPolicy, error) {
-	return s.queries.GetProjectPolicy(ctx, projectID)
-}
-
-func (s *runtimeWriterStore) GetReviewFinding(ctx context.Context, id int64) (db.ReviewFinding, error) {
-	return s.queries.GetReviewFinding(ctx, id)
-}
-
-func (s *runtimeWriterStore) GetGitlabDiscussion(ctx context.Context, id int64) (db.GitlabDiscussion, error) {
-	return s.queries.GetGitlabDiscussion(ctx, id)
-}
-
-func (s *runtimeWriterStore) ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]db.ReviewFinding, error) {
-	return s.queries.ListFindingsByRun(ctx, reviewRunID)
-}
-
-func (s *runtimeWriterStore) ListFindingsByMergeRequest(ctx context.Context, mergeRequestID int64) ([]db.ReviewFinding, error) {
-	return s.queries.ListActiveFindingsByMR(ctx, mergeRequestID)
-}
-
-func (s *runtimeWriterStore) GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (db.CommentAction, error) {
-	return s.queries.GetCommentActionByIdempotencyKey(ctx, idempotencyKey)
-}
-
-func (s *runtimeWriterStore) GetGitlabDiscussionByFinding(ctx context.Context, reviewFindingID int64) (db.GitlabDiscussion, error) {
-	return s.queries.GetGitlabDiscussionByFinding(ctx, reviewFindingID)
-}
-
-func (s *runtimeWriterStore) GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg db.GetGitlabDiscussionByMergeRequestAndFindingParams) (db.GitlabDiscussion, error) {
-	return s.queries.GetGitlabDiscussionByMergeRequestAndFinding(ctx, arg)
-}
-
-func (s *runtimeWriterStore) InsertCommentAction(ctx context.Context, arg db.InsertCommentActionParams) (sql.Result, error) {
-	return s.queries.InsertCommentAction(ctx, arg)
-}
-
-func (s *runtimeWriterStore) UpdateCommentActionStatus(ctx context.Context, arg db.UpdateCommentActionStatusParams) error {
-	return s.queries.UpdateCommentActionStatus(ctx, arg)
-}
-
-func (s *runtimeWriterStore) InsertGitlabDiscussion(ctx context.Context, arg db.InsertGitlabDiscussionParams) (sql.Result, error) {
-	return s.queries.InsertGitlabDiscussion(ctx, arg)
-}
-
-func (s *runtimeWriterStore) UpdateFindingDiscussionID(ctx context.Context, arg db.UpdateFindingDiscussionIDParams) error {
-	return s.queries.UpdateFindingDiscussionID(ctx, arg)
-}
-
-func (s *runtimeWriterStore) UpdateGitlabDiscussionResolved(ctx context.Context, arg db.UpdateGitlabDiscussionResolvedParams) error {
-	return s.queries.UpdateGitlabDiscussionResolved(ctx, arg)
-}
-
-func (s *runtimeWriterStore) UpdateGitlabDiscussionSupersededBy(ctx context.Context, arg db.UpdateGitlabDiscussionSupersededByParams) error {
-	return s.queries.UpdateGitlabDiscussionSupersededBy(ctx, arg)
-}
-
-func (s *runtimeWriterStore) MarkReviewRunFailedIfRunning(ctx context.Context, arg db.MarkReviewRunFailedParams) (bool, error) {
-	return s.queries.MarkReviewRunFailedIfRunning(ctx, arg)
+func writeRuntimeJSON(t *testing.T, w http.ResponseWriter, status int, payload any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		t.Fatalf("encode response: %v", err)
+	}
 }

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mreviewer/mreviewer/internal/writer"
 )
 
 func TestGetMergeRequest(t *testing.T) {
@@ -466,6 +468,120 @@ func TestGitLabRateLimiting(t *testing.T) {
 	}
 	if len(slept) != 1 || slept[0] != time.Second {
 		t.Fatalf("sleep durations = %#v, want [1s]", slept)
+	}
+}
+
+func TestCreateDiscussion(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v4/projects/123/merge_requests/7/discussions" {
+			t.Fatalf("request path = %q, want discussions endpoint", r.URL.Path)
+		}
+		if got := r.Header.Get("PRIVATE-TOKEN"); got != "test-token" {
+			t.Fatalf("PRIVATE-TOKEN = %q, want test-token", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		writeJSON(t, w, http.StatusCreated, map[string]any{"id": "discussion-123"})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	discussion, err := client.CreateDiscussion(context.Background(), writer.CreateDiscussionRequest{
+		ProjectID:       123,
+		MergeRequestIID: 7,
+		Body:            "review body",
+		Position: writer.Position{
+			PositionType: "text",
+			BaseSHA:      "base",
+			StartSHA:     "start",
+			HeadSHA:      "head",
+			OldPath:      "old.go",
+			NewPath:      "new.go",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateDiscussion: %v", err)
+	}
+	if discussion.ID != "discussion-123" {
+		t.Fatalf("discussion ID = %q, want discussion-123", discussion.ID)
+	}
+	if requestBody["body"] != "review body" {
+		t.Fatalf("body = %#v, want review body", requestBody["body"])
+	}
+	position, ok := requestBody["position"].(map[string]any)
+	if !ok {
+		t.Fatalf("position = %#v, want object", requestBody["position"])
+	}
+	if position["base_sha"] != "base" || position["new_path"] != "new.go" {
+		t.Fatalf("position = %#v, want populated SHAs and paths", position)
+	}
+}
+
+func TestCreateNote(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v4/projects/123/merge_requests/7/notes" {
+			t.Fatalf("request path = %q, want notes endpoint", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		writeJSON(t, w, http.StatusCreated, map[string]any{"id": 456})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	note, err := client.CreateNote(context.Background(), writer.CreateNoteRequest{
+		ProjectID:       123,
+		MergeRequestIID: 7,
+		Body:            "summary body",
+	})
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	if note.ID != "456" {
+		t.Fatalf("note ID = %q, want 456", note.ID)
+	}
+	if requestBody["body"] != "summary body" {
+		t.Fatalf("body = %#v, want summary body", requestBody["body"])
+	}
+}
+
+func TestResolveDiscussion(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("method = %s, want PUT", r.Method)
+		}
+		if r.URL.Path != "/api/v4/projects/123/merge_requests/7/discussions/discussion-123" {
+			t.Fatalf("request path = %q, want discussion resolve endpoint", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		writeJSON(t, w, http.StatusOK, map[string]any{"id": "discussion-123"})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	if err := client.ResolveDiscussion(context.Background(), writer.ResolveDiscussionRequest{
+		ProjectID:       123,
+		MergeRequestIID: 7,
+		DiscussionID:    "discussion-123",
+		Resolved:        true,
+	}); err != nil {
+		t.Fatalf("ResolveDiscussion: %v", err)
+	}
+	if requestBody["resolved"] != true {
+		t.Fatalf("resolved = %#v, want true", requestBody["resolved"])
 	}
 }
 

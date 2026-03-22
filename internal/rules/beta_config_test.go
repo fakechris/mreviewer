@@ -27,6 +27,7 @@ exclude_paths:
   - "testdata/**"
 gate_mode: external_status
 provider_route: minimax-enterprise
+output_language: en-US
 max_files: 50
 max_changed_lines: 1500
 context_lines_before: 25
@@ -65,6 +66,9 @@ context_lines_after: 15
 		}
 		if ep.ProviderRoute != "minimax-enterprise" {
 			t.Errorf("ProviderRoute = %q, want minimax-enterprise", ep.ProviderRoute)
+		}
+		if ep.OutputLanguage != "en-US" {
+			t.Errorf("OutputLanguage = %q, want en-US", ep.OutputLanguage)
 		}
 		if ep.MaxFiles != 50 {
 			t.Errorf("MaxFiles = %d, want 50", ep.MaxFiles)

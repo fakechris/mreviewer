@@ -25,6 +25,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/logging"
 	"github.com/mreviewer/mreviewer/internal/metrics"
+	"github.com/mreviewer/mreviewer/internal/reviewlang"
 	"github.com/mreviewer/mreviewer/internal/rules"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
@@ -41,6 +42,7 @@ const (
 
 type Processor struct {
 	logger          *slog.Logger
+	sqlDB           *sql.DB
 	queries         *db.Queries
 	gitlab          GitLabReader
 	rulesLoader     RulesLoader
@@ -67,8 +69,19 @@ type Provider interface {
 	RequestPayload(request ctxpkg.ReviewRequest) map[string]any
 }
 
+type DynamicPromptProvider interface {
+	Provider
+	ReviewWithSystemPrompt(ctx context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (ProviderResponse, error)
+	RequestPayloadWithSystemPrompt(request ctxpkg.ReviewRequest, systemPrompt string) map[string]any
+}
+
 type SummaryProvider interface {
 	Summarize(ctx context.Context, request ctxpkg.ReviewRequest) (SummaryResponse, error)
+}
+
+type DynamicSummaryProvider interface {
+	SummaryProvider
+	SummarizeWithSystemPrompt(ctx context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (SummaryResponse, error)
 }
 
 type SummaryResponse struct {
@@ -266,6 +279,7 @@ func NewProcessor(logger *slog.Logger, sqlDB *sql.DB, gitlabClient GitLabReader,
 	}
 	return &Processor{
 		logger:         logger,
+		sqlDB:          sqlDB,
 		queries:        db.New(sqlDB),
 		gitlab:         gitlabClient,
 		rulesLoader:    rulesLoader,
@@ -398,6 +412,10 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load rules: %w", err))
 	}
+	outputLanguage := reviewlang.Normalize(ruleResult.EffectivePolicy.OutputLanguage)
+	if err := p.persistRunOutputLanguage(ctx, run, outputLanguage); err != nil {
+		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist run output language: %w", err))
+	}
 	settings, err := ctxpkg.SettingsFromPolicy(policyPtr)
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: parse policy settings: %w", err))
@@ -419,7 +437,7 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 				Summary:       assembled.Coverage.Summary,
 				Status:        "completed",
 				Findings:      nil,
-				SummaryNote:   &SummaryNote{BodyMarkdown: buildDegradationSummaryNote(run, assembled)},
+				SummaryNote:   &SummaryNote{BodyMarkdown: buildDegradationSummaryNote(run, assembled, outputLanguage)},
 			},
 			Latency:         0,
 			Tokens:          0,
@@ -427,7 +445,7 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 			Model:           "degradation_mode",
 			ResponsePayload: map[string]any{"mode": assembled.Mode, "coverage": assembled.Coverage},
 		}
-		degradationSummary := buildDegradationSummaryNote(run, assembled)
+		degradationSummary := buildDegradationSummaryNote(run, assembled, outputLanguage)
 		if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "degradation_mode", ErrorDetail: sql.NullString{String: degradationSummary, Valid: true}, ID: run.ID}); err != nil {
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: update degraded run status: %w", err))
 		}
@@ -448,9 +466,9 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		runProvider = p.registry.ResolveWithFallback(ruleResult.EffectivePolicy.ProviderRoute)
 	}
 
-	payload := runProvider.RequestPayload(assembled.Request)
+	payload := requestPayloadWithSystemPrompt(runProvider, assembled.Request, ruleResult.SystemPrompt)
 	providerCtx, endProvider := p.startSpan(ctx, "llm.request", nil)
-	response, err := runProvider.Review(providerCtx, assembled.Request)
+	response, err := reviewWithSystemPrompt(runProvider, providerCtx, assembled.Request, ruleResult.SystemPrompt)
 	endProvider()
 	if err != nil {
 		if p.auditLogger != nil {
@@ -459,7 +477,13 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		}
 		if isParserError(err) {
 			response = ProviderResponse{Latency: 13 * time.Millisecond, Tokens: 21, FallbackStage: "parser_error"}
-			result := ReviewResult{SchemaVersion: assembled.Request.SchemaVersion, ReviewRunID: assembled.Request.ReviewRunID, Summary: "Provider response could not be parsed into a review result.", Status: parserErrorCode, SummaryNote: &SummaryNote{BodyMarkdown: fmt.Sprintf("Review run %s could not parse the provider response. The raw provider output was rejected and no inline findings were created.", assembled.Request.ReviewRunID)}}
+			result := ReviewResult{
+				SchemaVersion: assembled.Request.SchemaVersion,
+				ReviewRunID:   assembled.Request.ReviewRunID,
+				Summary:       parserErrorSummary(outputLanguage, assembled.Request.ReviewRunID),
+				Status:        parserErrorCode,
+				SummaryNote:   &SummaryNote{BodyMarkdown: parserErrorSummaryNote(outputLanguage, assembled.Request.ReviewRunID)},
+			}
 			response = ProviderResponse{Result: result, Latency: response.Latency, Tokens: response.Tokens, FallbackStage: "parser_error", Model: response.Model, ResponsePayload: map[string]any{"parser_error": true, "error": redactError(err)}}
 		} else {
 			if isTimeoutError(err) {
@@ -478,11 +502,11 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 
 	// Optional summary chain (independent of review chain).
 	if p.summaryProvider != nil && response.Result.Status != parserErrorCode {
-		summaryResp, summaryErr := p.summaryProvider.Summarize(ctx, assembled.Request)
+		summaryResp, summaryErr := summarizeWithSystemPrompt(p.summaryProvider, ctx, assembled.Request, buildSummarySystemPrompt(outputLanguage))
 		if summaryErr != nil {
 			p.logger.WarnContext(ctx, "summary chain failed, continuing with review only", "run_id", run.ID, "error", summaryErr)
 		} else {
-			response.Result.SummaryNote = &SummaryNote{BodyMarkdown: renderSummaryFromWalkthrough(summaryResp.Result)}
+			response.Result.SummaryNote = &SummaryNote{BodyMarkdown: renderSummaryFromWalkthrough(summaryResp.Result, outputLanguage)}
 			if p.auditLogger != nil {
 				_ = p.auditLogger.LogRunLifecycle(ctx, run, "summary_chain_completed", map[string]any{
 					"trace_id":   tracing.CurrentTraceID(ctx),
@@ -537,11 +561,40 @@ func (p *Processor) startSpan(ctx context.Context, name string, attrs map[string
 	return p.tracer.Start(ctx, name, attrs)
 }
 
+func requestPayloadWithSystemPrompt(provider Provider, request ctxpkg.ReviewRequest, systemPrompt string) map[string]any {
+	if dynamic, ok := provider.(DynamicPromptProvider); ok {
+		return dynamic.RequestPayloadWithSystemPrompt(request, systemPrompt)
+	}
+	return provider.RequestPayload(request)
+}
+
+func reviewWithSystemPrompt(provider Provider, ctx context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (ProviderResponse, error) {
+	if dynamic, ok := provider.(DynamicPromptProvider); ok {
+		return dynamic.ReviewWithSystemPrompt(ctx, request, systemPrompt)
+	}
+	return provider.Review(ctx, request)
+}
+
+func summarizeWithSystemPrompt(provider SummaryProvider, ctx context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (SummaryResponse, error) {
+	if dynamic, ok := provider.(DynamicSummaryProvider); ok {
+		return dynamic.SummarizeWithSystemPrompt(ctx, request, systemPrompt)
+	}
+	return provider.Summarize(ctx, request)
+}
+
 func (p *MiniMaxProvider) RequestPayload(request ctxpkg.ReviewRequest) map[string]any {
-	return map[string]any{"model": p.model, "max_tokens": p.maxTokens, "system": p.systemPrompt, "messages": []map[string]any{{"role": "user", "content": mustJSON(request)}}, "output_config": map[string]any{"format": map[string]any{"type": "json_schema", "name": "review_result", "schema": reviewResultSchema()}}}
+	return p.RequestPayloadWithSystemPrompt(request, p.systemPrompt)
+}
+
+func (p *MiniMaxProvider) RequestPayloadWithSystemPrompt(request ctxpkg.ReviewRequest, systemPrompt string) map[string]any {
+	return map[string]any{"model": p.model, "max_tokens": p.maxTokens, "system": systemPrompt, "messages": []map[string]any{{"role": "user", "content": mustJSON(request)}}, "output_config": map[string]any{"format": map[string]any{"type": "json_schema", "name": "review_result", "schema": reviewResultSchema()}}}
 }
 
 func (p *MiniMaxProvider) Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
+	return p.ReviewWithSystemPrompt(ctx, request, p.systemPrompt)
+}
+
+func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (ProviderResponse, error) {
 	if p.rateLimiter != nil {
 		if err := p.rateLimiter.Wait(ctx, strings.TrimSpace(p.routeName)); err != nil {
 			return ProviderResponse{}, err
@@ -554,7 +607,7 @@ func (p *MiniMaxProvider) Review(ctx context.Context, request ctxpkg.ReviewReque
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		started := p.now()
-		message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{Model: anthropic.Model(p.model), MaxTokens: p.maxTokens, System: []anthropic.TextBlockParam{{Text: p.systemPrompt}}, Messages: []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))}, OutputConfig: anthropic.OutputConfigParam{Format: anthropic.JSONOutputFormatParam{Schema: reviewResultSchema()}}})
+		message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{Model: anthropic.Model(p.model), MaxTokens: p.maxTokens, System: []anthropic.TextBlockParam{{Text: systemPrompt}}, Messages: []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))}, OutputConfig: anthropic.OutputConfigParam{Format: anthropic.JSONOutputFormatParam{Schema: reviewResultSchema()}}})
 		if err != nil {
 			lastErr = err
 			if !isTimeoutError(err) || attempt == maxAttempts-1 {
@@ -597,6 +650,21 @@ func (p *FallbackProvider) RequestPayload(request ctxpkg.ReviewRequest) map[stri
 	return payload
 }
 
+func (p *FallbackProvider) RequestPayloadWithSystemPrompt(request ctxpkg.ReviewRequest, systemPrompt string) map[string]any {
+	if p == nil || p.primary == nil {
+		return map[string]any{}
+	}
+	payload := requestPayloadWithSystemPrompt(p.primary, request, systemPrompt)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["provider_route"] = p.primaryRoute
+	if p.secondary != nil && p.secondaryRoute != "" {
+		payload["secondary_provider_route"] = p.secondaryRoute
+	}
+	return payload
+}
+
 func (p *FallbackProvider) Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
 	if p == nil || p.primary == nil {
 		return ProviderResponse{}, fmt.Errorf("llm: primary provider is required")
@@ -607,6 +675,31 @@ func (p *FallbackProvider) Review(ctx context.Context, request ctxpkg.ReviewRequ
 	}
 	p.logger.WarnContext(ctx, "primary provider failed, retrying with secondary provider", "primary_provider_route", p.primaryRoute, "secondary_provider_route", p.secondaryRoute, "error", err)
 	secondaryResponse, secondaryErr := p.secondary.Review(ctx, request)
+	if secondaryErr != nil {
+		return ProviderResponse{}, fmt.Errorf("llm: primary provider %q failed: %w; secondary provider %q failed: %v", p.primaryRoute, err, p.secondaryRoute, secondaryErr)
+	}
+	if secondaryResponse.ResponsePayload == nil {
+		secondaryResponse.ResponsePayload = map[string]any{}
+	}
+	secondaryResponse.ResponsePayload["fallback_from_provider_route"] = p.primaryRoute
+	secondaryResponse.ResponsePayload["provider_route"] = p.secondaryRoute
+	secondaryResponse.FallbackStage = strings.TrimSpace(joinNonEmpty(secondaryResponse.FallbackStage, "secondary_provider"))
+	if secondaryResponse.Model == "" {
+		secondaryResponse.Model = p.secondaryRoute
+	}
+	return secondaryResponse, nil
+}
+
+func (p *FallbackProvider) ReviewWithSystemPrompt(ctx context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (ProviderResponse, error) {
+	if p == nil || p.primary == nil {
+		return ProviderResponse{}, fmt.Errorf("llm: primary provider is required")
+	}
+	response, err := reviewWithSystemPrompt(p.primary, ctx, request, systemPrompt)
+	if err == nil || p.secondary == nil || !shouldFallbackToSecondary(err) {
+		return response, err
+	}
+	p.logger.WarnContext(ctx, "primary provider failed, retrying with secondary provider", "primary_provider_route", p.primaryRoute, "secondary_provider_route", p.secondaryRoute, "error", err)
+	secondaryResponse, secondaryErr := reviewWithSystemPrompt(p.secondary, ctx, request, systemPrompt)
 	if secondaryErr != nil {
 		return ProviderResponse{}, fmt.Errorf("llm: primary provider %q failed: %w; secondary provider %q failed: %v", p.primaryRoute, err, p.secondaryRoute, secondaryErr)
 	}
@@ -1257,7 +1350,30 @@ func persistSummaryNoteFallback(ctx context.Context, queries *db.Queries, run db
 	return nil
 }
 
-func buildDegradationSummaryNote(run db.ReviewRun, assembled ctxpkg.AssemblyResult) string {
+func buildDegradationSummaryNote(run db.ReviewRun, assembled ctxpkg.AssemblyResult, language string) string {
+	language = reviewlang.Normalize(language)
+	if reviewlang.IsChinese(language) {
+		parts := []string{
+			fmt.Sprintf("AI Review 摘要（run %d）", run.ID),
+			"",
+			"本次变更较大，已启用降级审查模式。",
+			assembled.Coverage.Summary,
+		}
+		if len(assembled.Coverage.ReviewedPaths) > 0 {
+			parts = append(parts, "", "已审查的高优先级文件：", "- "+strings.Join(assembled.Coverage.ReviewedPaths, "\n- "))
+		}
+		skipped := make([]string, 0, len(assembled.Excluded))
+		for _, file := range assembled.Excluded {
+			if file.Reason != ctxpkg.ExcludedReasonScopeLimit {
+				continue
+			}
+			skipped = append(skipped, fmt.Sprintf("- %s (%s)", file.Path, file.Reason))
+		}
+		if len(skipped) > 0 {
+			parts = append(parts, "", "已跳过的文件：", strings.Join(skipped, "\n"))
+		}
+		return strings.Join(parts, "\n")
+	}
 	parts := []string{
 		fmt.Sprintf("AI review summary for run %d", run.ID),
 		"",
@@ -1278,6 +1394,43 @@ func buildDegradationSummaryNote(run db.ReviewRun, assembled ctxpkg.AssemblyResu
 		parts = append(parts, "", "Skipped files:", strings.Join(skipped, "\n"))
 	}
 	return strings.Join(parts, "\n")
+}
+
+func parserErrorSummary(language, reviewRunID string) string {
+	if reviewlang.IsChinese(language) {
+		return fmt.Sprintf("本次 review run %s 的模型输出无法解析，未生成可用的审查结果。", reviewRunID)
+	}
+	return "Provider response could not be parsed into a review result."
+}
+
+func parserErrorSummaryNote(language, reviewRunID string) string {
+	if reviewlang.IsChinese(language) {
+		return fmt.Sprintf("Review run %s 的模型输出无法解析，原始返回已被拒绝，因此没有创建任何行内评论。", reviewRunID)
+	}
+	return fmt.Sprintf("Review run %s could not parse the provider response. The raw provider output was rejected and no inline findings were created.", reviewRunID)
+}
+
+func (p *Processor) persistRunOutputLanguage(ctx context.Context, run db.ReviewRun, outputLanguage string) error {
+	if p == nil || p.sqlDB == nil || run.ID == 0 {
+		return nil
+	}
+	scope, err := mergeRunScopeMetadata(json.RawMessage(run.ScopeJson), outputLanguage)
+	if err != nil {
+		return err
+	}
+	_, err = p.sqlDB.ExecContext(ctx, "UPDATE review_runs SET scope_json = ? WHERE id = ?", scope, run.ID)
+	return err
+}
+
+func mergeRunScopeMetadata(existing json.RawMessage, outputLanguage string) (json.RawMessage, error) {
+	scope := map[string]any{}
+	if len(existing) > 0 && string(existing) != "null" {
+		if err := json.Unmarshal(existing, &scope); err != nil {
+			return nil, fmt.Errorf("llm: decode scope_json: %w", err)
+		}
+	}
+	scope["output_language"] = reviewlang.Normalize(outputLanguage)
+	return json.Marshal(scope)
 }
 
 type DBAuditLogger struct{ queries *db.Queries }
@@ -1305,14 +1458,27 @@ func (l *DBAuditLogger) LogRunLifecycle(ctx context.Context, run db.ReviewRun, a
 	return err
 }
 
-const summarySystemPrompt = `You are a merge request summary writer. Your job is to produce a clear, concise walkthrough of what this merge request changes, identify risk areas, and give a verdict.
+func buildSummarySystemPrompt(language string) string {
+	language = reviewlang.Normalize(language)
+	if reviewlang.IsChinese(language) {
+		return `你是一名合并请求摘要撰写助手。你的任务是用简体中文（zh-CN）产出清晰、简洁的变更 walkthrough，指出高风险区域，并给出结论。
+
+硬性约束：
+1. walkthrough 需要解释“改了什么”和“为什么改”，不要逐行复述 diff。
+2. risk_areas 只保留最容易引入 bug 或回归的文件或模块。
+3. verdict 只能是：approve（未发现问题）、request_changes（存在阻塞问题）、comment（只有非阻塞观察）。
+4. 如果有无法完全验证的区域，写入 blind_spots。
+5. 不要重复 review findings；summary 是独立、互补的视角。`
+	}
+	return fmt.Sprintf(`You are a merge request summary writer. Your job is to produce a clear, concise walkthrough of what this merge request changes, identify risk areas, and give a verdict. All narrative text must be written in %s.
 
 Hard constraints:
 1. The walkthrough should explain WHAT changed and WHY at a high level. Do not list every line change.
 2. Risk areas should highlight files/modules where the changes have the highest potential for bugs or regressions.
 3. The verdict must be one of: approve (no issues found), request_changes (blocking issues exist), comment (non-blocking observations only).
 4. If you cannot fully verify certain areas, list them in blind_spots.
-5. Do NOT duplicate the findings from the review chain. The summary is a separate, complementary view.`
+5. Do NOT duplicate the findings from the review chain. The summary is a separate, complementary view.`, language)
+}
 
 func summaryResultSchema() map[string]any {
 	return map[string]any{
@@ -1343,10 +1509,14 @@ func summaryResultSchema() map[string]any {
 }
 
 func (p *MiniMaxProvider) SummaryRequestPayload(request ctxpkg.ReviewRequest) map[string]any {
+	return p.SummaryRequestPayloadWithSystemPrompt(request, buildSummarySystemPrompt(reviewlang.DefaultOutputLanguage))
+}
+
+func (p *MiniMaxProvider) SummaryRequestPayloadWithSystemPrompt(request ctxpkg.ReviewRequest, systemPrompt string) map[string]any {
 	return map[string]any{
 		"model":      p.model,
 		"max_tokens": p.maxTokens,
-		"system":     summarySystemPrompt,
+		"system":     systemPrompt,
 		"messages":   []map[string]any{{"role": "user", "content": mustJSON(request)}},
 		"output_config": map[string]any{
 			"format": map[string]any{
@@ -1359,6 +1529,10 @@ func (p *MiniMaxProvider) SummaryRequestPayload(request ctxpkg.ReviewRequest) ma
 }
 
 func (p *MiniMaxProvider) Summarize(ctx context.Context, request ctxpkg.ReviewRequest) (SummaryResponse, error) {
+	return p.SummarizeWithSystemPrompt(ctx, request, buildSummarySystemPrompt(reviewlang.DefaultOutputLanguage))
+}
+
+func (p *MiniMaxProvider) SummarizeWithSystemPrompt(ctx context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (SummaryResponse, error) {
 	if p.rateLimiter != nil {
 		if err := p.rateLimiter.Wait(ctx, strings.TrimSpace(p.routeName)); err != nil {
 			return SummaryResponse{}, err
@@ -1368,7 +1542,7 @@ func (p *MiniMaxProvider) Summarize(ctx context.Context, request ctxpkg.ReviewRe
 	message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(p.model),
 		MaxTokens: p.maxTokens,
-		System:    []anthropic.TextBlockParam{{Text: summarySystemPrompt}},
+		System:    []anthropic.TextBlockParam{{Text: systemPrompt}},
 		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))},
 		OutputConfig: anthropic.OutputConfigParam{
 			Format: anthropic.JSONOutputFormatParam{Schema: summaryResultSchema()},
@@ -1415,7 +1589,27 @@ func ParseSummaryResult(raw string) (SummaryResult, error) {
 	return SummaryResult{}, fmt.Errorf("llm: unable to parse summary response")
 }
 
-func renderSummaryFromWalkthrough(summary SummaryResult) string {
+func renderSummaryFromWalkthrough(summary SummaryResult, language string) string {
+	language = reviewlang.Normalize(language)
+	if reviewlang.IsChinese(language) {
+		var parts []string
+		parts = append(parts, "## 变更解读\n")
+		parts = append(parts, summary.Walkthrough)
+		if len(summary.RiskAreas) > 0 {
+			parts = append(parts, "\n### 风险区域\n")
+			for _, area := range summary.RiskAreas {
+				parts = append(parts, fmt.Sprintf("- **%s**（%s）：%s", area.Path, area.Severity, area.Description))
+			}
+		}
+		if len(summary.BlindSpots) > 0 {
+			parts = append(parts, "\n### 盲区\n")
+			for _, spot := range summary.BlindSpots {
+				parts = append(parts, "- "+spot)
+			}
+		}
+		parts = append(parts, fmt.Sprintf("\n**结论**：%s", summary.Verdict))
+		return strings.Join(parts, "\n")
+	}
 	var parts []string
 	parts = append(parts, "## MR Walkthrough\n")
 	parts = append(parts, summary.Walkthrough)
@@ -1503,7 +1697,12 @@ func redactPayload(payload map[string]any) map[string]any {
 	if err := decoder.Decode(&normalized); err != nil {
 		return map[string]any{"redacted": true}
 	}
-	return redactValue(normalized).(map[string]any)
+	redacted := redactValue(normalized)
+	result, ok := redacted.(map[string]any)
+	if !ok || result == nil {
+		return map[string]any{"redacted": true}
+	}
+	return result
 }
 
 func redactValue(v any) any {

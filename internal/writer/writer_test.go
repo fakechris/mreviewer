@@ -72,7 +72,7 @@ func TestAnchorKindLineTargeting(t *testing.T) {
 
 func TestCommentBodyTemplate(t *testing.T) {
 	body := RenderCommentBody(db.ReviewFinding{ID: 42, Title: "Possible nil dereference", Confidence: 0.91, BodyMarkdown: sql.NullString{String: "This branch dereferences `user.profile` without a guard.", Valid: true}, Evidence: sql.NullString{String: "`user.profile` is optional\nThis branch runs before fallback logic", Valid: true}, SuggestedPatch: sql.NullString{String: "if user.profile == nil {\n    return\n}", Valid: true}, AnchorFingerprint: "anchor-fp", SemanticFingerprint: "semantic-fp"}, 0.9)
-	checks := []string{"**Possible nil dereference**", "This branch dereferences `user.profile` without a guard.", "Evidence:", "- `user.profile` is optional", "Suggested fix:", "```suggestion", "if user.profile == nil {", "<!-- ai-review:finding_id=42 anchor_fp=anchor-fp semantic_fp=semantic-fp confidence=0.91 -->"}
+	checks := []string{"**Possible nil dereference**", "This branch dereferences `user.profile` without a guard.", "证据：", "- `user.profile` is optional", "建议修改：", "```suggestion", "if user.profile == nil {", "<!-- ai-review:finding_id=42 anchor_fp=anchor-fp semantic_fp=semantic-fp confidence=0.91 -->"}
 	for _, check := range checks {
 		if !contains(body, check) {
 			t.Fatalf("body missing %q:\n%s", check, body)
@@ -171,7 +171,7 @@ func TestDiffFallbackToFile(t *testing.T) {
 	if client.requests[1].Position.PositionType != "file" {
 		t.Fatalf("fallback position type = %q, want file", client.requests[1].Position.PositionType)
 	}
-	if !contains(client.requests[1].Body, "Original target line: new_line=17") {
+	if !contains(client.requests[1].Body, "原始目标行： new_line=17") {
 		t.Fatalf("file fallback body missing original target line: %s", client.requests[1].Body)
 	}
 	if len(client.noteRequests) != 0 {
@@ -190,7 +190,7 @@ func TestFileFallbackToGeneralNote(t *testing.T) {
 	if len(client.noteRequests) != 1 {
 		t.Fatalf("note requests = %d, want 1", len(client.noteRequests))
 	}
-	if !contains(client.noteRequests[0].Body, "File: `pkg/file.go`") || !contains(client.noteRequests[0].Body, "Anchor context:") {
+	if !contains(client.noteRequests[0].Body, "文件： `pkg/file.go`") || !contains(client.noteRequests[0].Body, "锚点上下文：") {
 		t.Fatalf("general note body missing fallback context: %s", client.noteRequests[0].Body)
 	}
 }
@@ -230,7 +230,7 @@ func TestRunSummaryNote(t *testing.T) {
 	if len(client.noteRequests) != 1 {
 		t.Fatalf("note requests = %d, want 1", len(client.noteRequests))
 	}
-	if !contains(client.noteRequests[0].Body, "overall_risk: elevated") {
+	if !contains(client.noteRequests[0].Body, "总体风险： 较高") {
 		t.Fatalf("summary note missing risk summary: %s", client.noteRequests[0].Body)
 	}
 	if store.actions["run:55:summary_note"].ActionType != actionTypeSummaryNote {
@@ -257,8 +257,31 @@ func TestEmptyFindingsSummary(t *testing.T) {
 	if len(client.noteRequests) != 1 {
 		t.Fatalf("note requests = %d, want 1", len(client.noteRequests))
 	}
-	if !contains(client.noteRequests[0].Body, "No issues found.") {
+	if !contains(client.noteRequests[0].Body, "未发现需要处理的问题。") {
 		t.Fatalf("empty summary note missing clean-run text: %s", client.noteRequests[0].Body)
+	}
+}
+
+func TestSummaryUsesConfiguredEnglishOutputLanguage(t *testing.T) {
+	store := &fakeStore{
+		mr:      db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+		policy:  db.ProjectPolicy{Extra: []byte(`{"review":{"output_language":"en-US"}}`)},
+	}
+	client := &fakeDiscussionClient{}
+	w := New(client, store)
+	if err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "completed"}, nil); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(client.noteRequests) != 1 {
+		t.Fatalf("note requests = %d, want 1", len(client.noteRequests))
+	}
+	body := client.noteRequests[0].Body
+	if !contains(body, "No issues found.") {
+		t.Fatalf("english summary note missing clean-run text: %s", body)
+	}
+	if contains(body, "未发现需要处理的问题。") {
+		t.Fatalf("english summary note unexpectedly contains chinese default copy: %s", body)
 	}
 }
 
@@ -335,7 +358,7 @@ func TestSummaryUsesPersistedRunState(t *testing.T) {
 		t.Fatalf("note requests = %d, want 1", len(client.noteRequests))
 	}
 	body := client.noteRequests[0].Body
-	for _, want := range []string{"findings_posted: 1", "findings_resolved: 1", "findings_filtered: 1"} {
+	for _, want := range []string{"已发布问题： 1", "已解决问题： 1", "已过滤问题： 1"} {
 		if !contains(body, want) {
 			t.Fatalf("summary note missing %q: %s", want, body)
 		}
@@ -760,6 +783,7 @@ func (f *fakeDiscussionClient) ResolveDiscussion(_ context.Context, req ResolveD
 
 type fakeStore struct {
 	mr                        db.MergeRequest
+	project                   db.Project
 	version                   db.MrVersion
 	policy                    db.ProjectPolicy
 	actions                   map[string]db.CommentAction
@@ -780,6 +804,12 @@ func (f *fakeStore) GetLatestMRVersion(context.Context, int64) (db.MrVersion, er
 }
 func (f *fakeStore) GetMergeRequest(context.Context, int64) (db.MergeRequest, error) {
 	return f.mr, nil
+}
+func (f *fakeStore) GetProject(context.Context, int64) (db.Project, error) {
+	if f.project.ID != 0 || f.project.GitlabProjectID != 0 {
+		return f.project, nil
+	}
+	return db.Project{ID: f.mr.ProjectID, GitlabProjectID: f.mr.ProjectID}, nil
 }
 func (f *fakeStore) GetReviewRun(_ context.Context, id int64) (db.ReviewRun, error) {
 	if run, ok := f.runsByID[id]; ok {

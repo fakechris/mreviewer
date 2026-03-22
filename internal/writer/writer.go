@@ -3,6 +3,7 @@ package writer
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/metrics"
+	"github.com/mreviewer/mreviewer/internal/reviewlang"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
 
@@ -24,6 +26,7 @@ type DiscussionClient interface {
 type Store interface {
 	GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (db.MrVersion, error)
 	GetMergeRequest(ctx context.Context, id int64) (db.MergeRequest, error)
+	GetProject(ctx context.Context, id int64) (db.Project, error)
 	GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error)
 	GetProjectPolicy(ctx context.Context, projectID int64) (db.ProjectPolicy, error)
 	GetReviewFinding(ctx context.Context, id int64) (db.ReviewFinding, error)
@@ -154,31 +157,37 @@ func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.Revi
 	if err != nil {
 		return fmt.Errorf("writer: load merge request: %w", err)
 	}
+	project, err := w.store.GetProject(ctx, mr.ProjectID)
+	if err != nil {
+		return fmt.Errorf("writer: load project: %w", err)
+	}
+	gitlabProjectID := resolveGitLabProjectID(project, mr)
 	version, err := w.store.GetLatestMRVersion(ctx, run.MergeRequestID)
 	if err != nil {
 		return fmt.Errorf("writer: load latest MR version: %w", err)
 	}
 	for _, finding := range findings {
-		if err := w.writeFinding(ctx, run, mr, version, finding); err != nil {
+		if err := w.writeFinding(ctx, run, mr, version, finding, gitlabProjectID); err != nil {
 			return err
 		}
 	}
 	if !isTerminalRun(run.Status) {
 		return nil
 	}
-	if err := w.resolveCompletedFindings(ctx, run, mr); err != nil {
+	if err := w.resolveCompletedFindings(ctx, run, mr, gitlabProjectID); err != nil {
 		return err
 	}
-	return w.writeSummaryNote(ctx, run, mr, findings)
+	return w.writeSummaryNote(ctx, run, mr, findings, gitlabProjectID)
 }
 
-func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, version db.MrVersion, finding db.ReviewFinding) error {
+func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, version db.MrVersion, finding db.ReviewFinding, gitlabProjectID int64) error {
 	idempotencyKey := fmt.Sprintf("run:%d:finding:%d:%s", run.ID, finding.ID, actionTypeCreateDiscussion)
 	if action, err := w.store.GetCommentActionByIdempotencyKey(ctx, idempotencyKey); err == nil && action.Status == commentActionStatusSucceeded {
 		return nil
 	}
-	body := RenderCommentBody(finding, w.suggestionConfidenceThreshold(ctx, mr.ProjectID))
-	diffReq := CreateDiscussionRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, ReviewFindingID: finding.ID, IdempotencyKey: idempotencyKey, Body: body, Position: BuildPosition(version, finding)}
+	language := w.outputLanguage(ctx, run, mr.ProjectID)
+	body := renderCommentBodyWithLanguage(finding, w.suggestionConfidenceThreshold(ctx, mr.ProjectID), language)
+	diffReq := CreateDiscussionRequest{ProjectID: gitlabProjectID, MergeRequestIID: mr.MrIid, ReviewFindingID: finding.ID, IdempotencyKey: idempotencyKey, Body: body, Position: BuildPosition(version, finding)}
 	discussion, err := w.performDiscussionAction(ctx, run, finding, idempotencyKey, actionTypeCreateDiscussion, "diff", diffReq)
 	if err == nil {
 		return w.persistDiscussion(ctx, mr, finding, discussion, "diff")
@@ -190,7 +199,7 @@ func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.Merge
 	fileReq := diffReq
 	fileReq.IdempotencyKey = fmt.Sprintf("run:%d:finding:%d:%s", run.ID, finding.ID, actionTypeCreateFileDiscussion)
 	fileReq.Position = BuildFileLevelPosition(version, finding)
-	fileReq.Body = renderFallbackBody(finding, body)
+	fileReq.Body = renderFallbackBody(finding, body, language)
 	discussion, fileErr := w.performDiscussionAction(ctx, run, finding, fileReq.IdempotencyKey, actionTypeCreateFileDiscussion, "file", fileReq)
 	if fileErr == nil {
 		return w.persistDiscussion(ctx, mr, finding, discussion, "file")
@@ -199,7 +208,7 @@ func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.Merge
 		return w.persistRunFailure(ctx, run, classifyWriteError(fileErr), fileErr)
 	}
 
-	noteReq := CreateNoteRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, ReviewFindingID: finding.ID, IdempotencyKey: fmt.Sprintf("run:%d:finding:%d:%s", run.ID, finding.ID, actionTypeCreateGeneralNote), Body: renderGeneralNoteBody(finding, body)}
+	noteReq := CreateNoteRequest{ProjectID: gitlabProjectID, MergeRequestIID: mr.MrIid, ReviewFindingID: finding.ID, IdempotencyKey: fmt.Sprintf("run:%d:finding:%d:%s", run.ID, finding.ID, actionTypeCreateGeneralNote), Body: renderGeneralNoteBody(finding, body, language)}
 	note, noteErr := w.performNoteAction(ctx, run, finding, noteReq.IdempotencyKey, actionTypeCreateGeneralNote, noteReq)
 	if noteErr != nil {
 		return w.persistRunFailure(ctx, run, classifyWriteError(noteErr), noteErr)
@@ -216,7 +225,12 @@ func (w *Writer) writeParserErrorNote(ctx context.Context, run db.ReviewRun) err
 	if err != nil {
 		return fmt.Errorf("writer: load merge request: %w", err)
 	}
-	noteReq := CreateNoteRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: fmt.Sprintf("AI review could not parse provider output for review run %d. A general fallback note was emitted instead of inline comments.", run.ID)}
+	project, err := w.store.GetProject(ctx, mr.ProjectID)
+	if err != nil {
+		return fmt.Errorf("writer: load project: %w", err)
+	}
+	language := w.outputLanguage(ctx, run, mr.ProjectID)
+	noteReq := CreateNoteRequest{ProjectID: resolveGitLabProjectID(project, mr), MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: parserErrorNoteBody(run.ID, language)}
 	_, err = w.performNoteAction(ctx, run, db.ReviewFinding{}, idempotencyKey, actionTypeSummaryNote, noteReq)
 	if err != nil {
 		return w.persistRunFailure(ctx, run, writerErrorParserFallback, err)
@@ -224,7 +238,7 @@ func (w *Writer) writeParserErrorNote(ctx context.Context, run db.ReviewRun) err
 	return nil
 }
 
-func (w *Writer) resolveCompletedFindings(ctx context.Context, run db.ReviewRun, mr db.MergeRequest) error {
+func (w *Writer) resolveCompletedFindings(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, gitlabProjectID int64) error {
 	mrFindings, err := w.store.ListFindingsByMergeRequest(ctx, run.MergeRequestID)
 	if err != nil {
 		return fmt.Errorf("writer: list merge request findings: %w", err)
@@ -243,11 +257,11 @@ func (w *Writer) resolveCompletedFindings(ctx context.Context, run db.ReviewRun,
 	for _, finding := range mrFindings {
 		switch finding.State {
 		case "fixed", "stale":
-			if err := w.resolveFindingDiscussion(ctx, run, mr, finding, sql.NullInt64{}); err != nil {
+			if err := w.resolveFindingDiscussion(ctx, run, mr, finding, sql.NullInt64{}, gitlabProjectID); err != nil {
 				return err
 			}
 		case "superseded":
-			if err := w.resolveFindingDiscussion(ctx, run, mr, finding, nullableReplacementDiscussionID(finding.MatchedFindingID, newDiscussions)); err != nil {
+			if err := w.resolveFindingDiscussion(ctx, run, mr, finding, nullableReplacementDiscussionID(finding.MatchedFindingID, newDiscussions), gitlabProjectID); err != nil {
 				return err
 			}
 		}
@@ -266,7 +280,7 @@ func nullableReplacementDiscussionID(matched sql.NullInt64, discussions map[int6
 	return sql.NullInt64{Int64: replacementDiscussionID, Valid: true}
 }
 
-func (w *Writer) resolveFindingDiscussion(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, finding db.ReviewFinding, supersededBy sql.NullInt64) error {
+func (w *Writer) resolveFindingDiscussion(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, finding db.ReviewFinding, supersededBy sql.NullInt64, gitlabProjectID int64) error {
 	if finding.ID == 0 {
 		return nil
 	}
@@ -287,7 +301,7 @@ func (w *Writer) resolveFindingDiscussion(ctx context.Context, run db.ReviewRun,
 	}
 	if existing.Status != commentActionStatusSucceeded {
 		callErr := w.retryWrite(ctx, func() error {
-			return w.client.ResolveDiscussion(ctx, ResolveDiscussionRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, DiscussionID: discussion.GitlabDiscussionID, Resolved: true})
+			return w.client.ResolveDiscussion(ctx, ResolveDiscussionRequest{ProjectID: gitlabProjectID, MergeRequestIID: mr.MrIid, DiscussionID: discussion.GitlabDiscussionID, Resolved: true})
 		})
 		if err := w.finalizeAction(ctx, actionID, existing, callErr, classifyResolveError(callErr)); err != nil {
 			return err
@@ -305,7 +319,7 @@ func (w *Writer) resolveFindingDiscussion(ctx context.Context, run db.ReviewRun,
 	return nil
 }
 
-func (w *Writer) writeSummaryNote(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, findings []db.ReviewFinding) error {
+func (w *Writer) writeSummaryNote(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, findings []db.ReviewFinding, gitlabProjectID int64) error {
 	idempotencyKey := fmt.Sprintf("run:%d:summary_note", run.ID)
 	if action, err := w.store.GetCommentActionByIdempotencyKey(ctx, idempotencyKey); err == nil && action.Status == commentActionStatusSucceeded {
 		return nil
@@ -314,8 +328,8 @@ func (w *Writer) writeSummaryNote(ctx context.Context, run db.ReviewRun, mr db.M
 	if err != nil {
 		return fmt.Errorf("writer: list persisted run findings for summary: %w", err)
 	}
-	body := renderSummaryBody(run, persistedFindings)
-	_, err = w.performNoteAction(ctx, run, db.ReviewFinding{}, idempotencyKey, actionTypeSummaryNote, CreateNoteRequest{ProjectID: mr.ProjectID, MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: body})
+	body := renderSummaryBody(run, persistedFindings, w.outputLanguage(ctx, run, mr.ProjectID))
+	_, err = w.performNoteAction(ctx, run, db.ReviewFinding{}, idempotencyKey, actionTypeSummaryNote, CreateNoteRequest{ProjectID: gitlabProjectID, MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: body})
 	if err != nil {
 		return w.persistRunFailure(ctx, run, classifyWriteError(err), err)
 	}
@@ -553,24 +567,26 @@ func BuildFileLevelPosition(version db.MrVersion, finding db.ReviewFinding) Posi
 	return position
 }
 
-func renderFallbackBody(finding db.ReviewFinding, body string) string {
+func renderFallbackBody(finding db.ReviewFinding, body, language string) string {
+	copy := writerCopy(language)
 	parts := []string{body}
 	if line := renderTargetLine(finding); line != "" {
-		parts = append(parts, "Original target line: "+line)
+		parts = append(parts, copy.originalTargetLineLabel+" "+line)
 	}
 	return strings.Join(parts, "\n\n")
 }
 
-func renderGeneralNoteBody(finding db.ReviewFinding, body string) string {
+func renderGeneralNoteBody(finding db.ReviewFinding, body, language string) string {
+	copy := writerCopy(language)
 	parts := []string{body}
 	if path := strings.TrimSpace(finding.Path); path != "" {
-		parts = append(parts, "File: `"+path+"`")
+		parts = append(parts, copy.fileLabel+" `"+path+"`")
 	}
 	if snippet := strings.TrimSpace(finding.AnchorSnippet.String); snippet != "" {
-		parts = append(parts, "Anchor context:\n```\n"+snippet+"\n```")
+		parts = append(parts, copy.anchorContextLabel+"\n```\n"+snippet+"\n```")
 	}
 	if line := renderTargetLine(finding); line != "" {
-		parts = append(parts, "Original target line: "+line)
+		parts = append(parts, copy.originalTargetLineLabel+" "+line)
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -590,10 +606,11 @@ func isTerminalRun(status string) bool {
 	return status == "completed" || status == runStatusParserError
 }
 
-func renderSummaryBody(run db.ReviewRun, findings []db.ReviewFinding) string {
+func renderSummaryBody(run db.ReviewRun, findings []db.ReviewFinding, language string) string {
 	if strings.TrimSpace(run.ErrorCode) == "degradation_mode" && run.ErrorDetail.Valid && strings.TrimSpace(run.ErrorDetail.String) != "" {
 		return run.ErrorDetail.String
 	}
+	copy := writerCopy(language)
 	active := 0
 	resolved := 0
 	filtered := 0
@@ -611,10 +628,16 @@ func renderSummaryBody(run db.ReviewRun, findings []db.ReviewFinding) string {
 	if active > 0 {
 		overallRisk = "elevated"
 	}
-	if len(findings) == 0 {
-		return fmt.Sprintf("AI review summary for run %d\n\n- overall_risk: %s\n- findings_posted: 0\n- findings_resolved: 0\n- findings_filtered: 0\n\nNo issues found.", run.ID, overallRisk)
+	if copy.overallRiskNone != "" && overallRisk == "none" {
+		overallRisk = copy.overallRiskNone
 	}
-	return fmt.Sprintf("AI review summary for run %d\n\n- overall_risk: %s\n- findings_posted: %d\n- findings_resolved: %d\n- findings_filtered: %d", run.ID, overallRisk, active, resolved, filtered)
+	if copy.overallRiskElevated != "" && overallRisk == "elevated" {
+		overallRisk = copy.overallRiskElevated
+	}
+	if len(findings) == 0 {
+		return fmt.Sprintf("%s\n\n- %s %s\n- %s 0\n- %s 0\n- %s 0\n\n%s", summaryTitle(run.ID, language), copy.overallRiskLabel, overallRisk, copy.findingsPostedLabel, copy.findingsResolvedLabel, copy.findingsFilteredLabel, copy.noIssuesText)
+	}
+	return fmt.Sprintf("%s\n\n- %s %s\n- %s %d\n- %s %d\n- %s %d", summaryTitle(run.ID, language), copy.overallRiskLabel, overallRisk, copy.findingsPostedLabel, active, copy.findingsResolvedLabel, resolved, copy.findingsFilteredLabel, filtered)
 }
 
 func nullableFindingID(id int64) sql.NullInt64 {
@@ -764,14 +787,19 @@ func BuildPosition(version db.MrVersion, finding db.ReviewFinding) Position {
 }
 
 func RenderCommentBody(finding db.ReviewFinding, suggestionThreshold float64) string {
+	return renderCommentBodyWithLanguage(finding, suggestionThreshold, reviewlang.DefaultOutputLanguage)
+}
+
+func renderCommentBodyWithLanguage(finding db.ReviewFinding, suggestionThreshold float64, language string) string {
+	copy := writerCopy(language)
 	parts := []string{fmt.Sprintf("**%s**", strings.TrimSpace(finding.Title))}
 	if body := strings.TrimSpace(finding.BodyMarkdown.String); body != "" {
 		parts = append(parts, body)
 	}
 	if evidence := strings.TrimSpace(finding.Evidence.String); evidence != "" {
-		parts = append(parts, "Evidence:\n"+renderBulletList(evidence))
+		parts = append(parts, copy.evidenceLabel+"\n"+renderBulletList(evidence))
 	}
-	if suggestion := buildSuggestionBlock(finding, suggestionThreshold); suggestion != "" {
+	if suggestion := buildSuggestionBlock(finding, suggestionThreshold, language); suggestion != "" {
 		parts = append(parts, suggestion)
 	}
 	parts = append(parts, fmt.Sprintf("<!-- ai-review:finding_id=%d anchor_fp=%s semantic_fp=%s confidence=%.2f -->", finding.ID, finding.AnchorFingerprint, finding.SemanticFingerprint, finding.Confidence))
@@ -801,6 +829,13 @@ func resolvePaths(finding db.ReviewFinding) (string, string) {
 		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 	}
 	return path, path
+}
+
+func resolveGitLabProjectID(project db.Project, mr db.MergeRequest) int64 {
+	if project.GitlabProjectID != 0 {
+		return project.GitlabProjectID
+	}
+	return mr.ProjectID
 }
 
 func canonicalAnchorKind(kind string) string {
@@ -959,6 +994,68 @@ func lineCode(oldPath, newPath string, oldLine, newLine sql.NullInt32) string {
 	return fmt.Sprintf("%s_%d_%d", path, oldValue, newValue)
 }
 
+type localizedWriterCopy struct {
+	evidenceLabel           string
+	suggestedFixLabel       string
+	originalTargetLineLabel string
+	fileLabel               string
+	anchorContextLabel      string
+	overallRiskLabel        string
+	overallRiskElevated     string
+	overallRiskNone         string
+	findingsPostedLabel     string
+	findingsResolvedLabel   string
+	findingsFilteredLabel   string
+	noIssuesText            string
+	parserErrorNote         string
+}
+
+func writerCopy(language string) localizedWriterCopy {
+	if reviewlang.IsChinese(language) {
+		return localizedWriterCopy{
+			evidenceLabel:           "证据：",
+			suggestedFixLabel:       "建议修改：",
+			originalTargetLineLabel: "原始目标行：",
+			fileLabel:               "文件：",
+			anchorContextLabel:      "锚点上下文：",
+			overallRiskLabel:        "总体风险：",
+			overallRiskElevated:     "较高",
+			overallRiskNone:         "无",
+			findingsPostedLabel:     "已发布问题：",
+			findingsResolvedLabel:   "已解决问题：",
+			findingsFilteredLabel:   "已过滤问题：",
+			noIssuesText:            "未发现需要处理的问题。",
+			parserErrorNote:         "AI review 无法解析本次 review run %d 的模型输出，因此没有创建行内评论，只保留了一条通用说明。",
+		}
+	}
+	return localizedWriterCopy{
+		evidenceLabel:           "Evidence:",
+		suggestedFixLabel:       "Suggested fix:",
+		originalTargetLineLabel: "Original target line:",
+		fileLabel:               "File:",
+		anchorContextLabel:      "Anchor context:",
+		overallRiskLabel:        "overall_risk:",
+		overallRiskElevated:     "elevated",
+		overallRiskNone:         "none",
+		findingsPostedLabel:     "findings_posted:",
+		findingsResolvedLabel:   "findings_resolved:",
+		findingsFilteredLabel:   "findings_filtered:",
+		noIssuesText:            "No issues found.",
+		parserErrorNote:         "AI review could not parse provider output for review run %d. A general fallback note was emitted instead of inline comments.",
+	}
+}
+
+func summaryTitle(runID int64, language string) string {
+	if reviewlang.IsChinese(language) {
+		return fmt.Sprintf("AI Review 摘要（run %d）", runID)
+	}
+	return fmt.Sprintf("AI review summary for run %d", runID)
+}
+
+func parserErrorNoteBody(runID int64, language string) string {
+	return fmt.Sprintf(writerCopy(language).parserErrorNote, runID)
+}
+
 func (w *Writer) suggestionConfidenceThreshold(ctx context.Context, projectID int64) float64 {
 	policy, err := w.store.GetProjectPolicy(ctx, projectID)
 	if err != nil || policy.ConfidenceThreshold <= 0 {
@@ -967,12 +1064,64 @@ func (w *Writer) suggestionConfidenceThreshold(ctx context.Context, projectID in
 	return policy.ConfidenceThreshold
 }
 
-func buildSuggestionBlock(finding db.ReviewFinding, threshold float64) string {
+func (w *Writer) outputLanguage(ctx context.Context, run db.ReviewRun, projectID int64) string {
+	if outputLanguage := outputLanguageFromRunScope(run.ScopeJson); outputLanguage != "" {
+		return outputLanguage
+	}
+	if currentRun, err := w.store.GetReviewRun(ctx, run.ID); err == nil {
+		if outputLanguage := outputLanguageFromRunScope(currentRun.ScopeJson); outputLanguage != "" {
+			return outputLanguage
+		}
+	}
+	policy, err := w.store.GetProjectPolicy(ctx, projectID)
+	if err != nil {
+		return reviewlang.DefaultOutputLanguage
+	}
+	return outputLanguageFromPolicy(policy)
+}
+
+func outputLanguageFromRunScope(raw []byte) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var scope struct {
+		OutputLanguage string `json:"output_language"`
+	}
+	if err := json.Unmarshal(raw, &scope); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(scope.OutputLanguage) == "" {
+		return ""
+	}
+	return reviewlang.Normalize(scope.OutputLanguage)
+}
+
+func outputLanguageFromPolicy(policy db.ProjectPolicy) string {
+	var extra struct {
+		OutputLanguage string `json:"output_language"`
+		Review         struct {
+			OutputLanguage string `json:"output_language"`
+		} `json:"review"`
+	}
+	if len(policy.Extra) > 0 && string(policy.Extra) != "null" {
+		if err := json.Unmarshal(policy.Extra, &extra); err == nil {
+			if strings.TrimSpace(extra.Review.OutputLanguage) != "" {
+				return reviewlang.Normalize(extra.Review.OutputLanguage)
+			}
+			if strings.TrimSpace(extra.OutputLanguage) != "" {
+				return reviewlang.Normalize(extra.OutputLanguage)
+			}
+		}
+	}
+	return reviewlang.DefaultOutputLanguage
+}
+
+func buildSuggestionBlock(finding db.ReviewFinding, threshold float64, language string) string {
 	suggestion := strings.TrimSpace(finding.SuggestedPatch.String)
 	if suggestion == "" || finding.Confidence < threshold || !isValidSuggestionPatch(suggestion) {
 		return ""
 	}
-	return "Suggested fix:\n```suggestion\n" + suggestion + "\n```"
+	return writerCopy(language).suggestedFixLabel + "\n```suggestion\n" + suggestion + "\n```"
 }
 
 func isValidSuggestionPatch(suggestion string) bool {

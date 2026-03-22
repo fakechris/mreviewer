@@ -273,6 +273,10 @@ func (s *sqlWriterStore) GetMergeRequest(ctx context.Context, id int64) (db.Merg
 	return s.queries.GetMergeRequest(ctx, id)
 }
 
+func (s *sqlWriterStore) GetProject(ctx context.Context, id int64) (db.Project, error) {
+	return s.queries.GetProject(ctx, id)
+}
+
 func (s *sqlWriterStore) GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error) {
 	return s.queries.GetReviewRun(ctx, id)
 }

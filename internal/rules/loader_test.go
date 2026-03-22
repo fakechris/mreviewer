@@ -131,6 +131,12 @@ func TestPlatformProjectMerge(t *testing.T) {
 	if got := result.EffectivePolicy.MaxFiles; got != 80 {
 		t.Fatalf("MaxFiles = %d, want 80", got)
 	}
+	if got := result.EffectivePolicy.OutputLanguage; got != "zh-CN" {
+		t.Fatalf("OutputLanguage = %q, want zh-CN", got)
+	}
+	if !strings.Contains(result.SystemPrompt, "zh-CN") {
+		t.Fatalf("system prompt missing output language: %s", result.SystemPrompt)
+	}
 }
 
 func TestPlatformDefaultsPreservedWhenProjectMissing(t *testing.T) {
@@ -200,6 +206,30 @@ func TestPlatformDefaultsPreservedForPartialProjectPolicy(t *testing.T) {
 	}
 	if got := result.EffectivePolicy.MaxFiles; got != 17 {
 		t.Fatalf("MaxFiles = %d, want 17", got)
+	}
+}
+
+func TestProjectPolicyOutputLanguageOverride(t *testing.T) {
+	loader := NewLoader(stubFileReader{}, defaultPlatformDefaults())
+
+	projectPolicy := &db.ProjectPolicy{
+		Extra: mustRawJSON(t, map[string]any{
+			"review": map[string]any{
+				"output_language": "en-US",
+			},
+		}),
+	}
+
+	result, err := loader.Load(context.Background(), LoadInput{ProjectID: 123, HeadSHA: "head-sha", ProjectPolicy: projectPolicy})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := result.EffectivePolicy.OutputLanguage; got != "en-US" {
+		t.Fatalf("OutputLanguage = %q, want en-US", got)
+	}
+	if !strings.Contains(result.SystemPrompt, "en-US") {
+		t.Fatalf("system prompt missing project output language override: %s", result.SystemPrompt)
 	}
 }
 
