@@ -244,6 +244,40 @@ func TestRunSummaryNote(t *testing.T) {
 	}
 }
 
+func TestWriteFailsWithoutGitLabProjectID(t *testing.T) {
+	store := &fakeStore{
+		mr:      db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		project: db.Project{ID: 123},
+		version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+	}
+	client := &fakeDiscussionClient{}
+	w := New(client, store)
+	err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "running"}, []db.ReviewFinding{{ID: 1, Path: "pkg/file.go", AnchorKind: "new_line", NewLine: sql.NullInt32{Int32: 17, Valid: true}, Title: "Issue one", Confidence: 0.8}})
+	if err == nil {
+		t.Fatal("expected missing gitlab project id error")
+	}
+	if !contains(err.Error(), "gitlab project id") {
+		t.Fatalf("error = %q, want gitlab project id mention", err.Error())
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("discussion requests = %d, want 0", len(client.requests))
+	}
+}
+
+func TestOutputLanguagePrefersPolicyWithoutReloadingRun(t *testing.T) {
+	store := &fakeStore{
+		runsByID: map[int64]db.ReviewRun{
+			55: {ID: 55, ScopeJson: []byte(`{"output_language":"en-US"}`)},
+		},
+		policy: db.ProjectPolicy{ProjectID: 123, Extra: []byte(`{"review":{"output_language":"zh-CN"}}`)},
+	}
+	w := New(&fakeDiscussionClient{}, store)
+	language := w.outputLanguage(context.Background(), db.ReviewRun{ID: 55}, 123)
+	if language != "zh-CN" {
+		t.Fatalf("output language = %q, want zh-CN from policy fallback", language)
+	}
+}
+
 func TestEmptyFindingsSummary(t *testing.T) {
 	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}}
 	client := &fakeDiscussionClient{}

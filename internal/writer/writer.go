@@ -161,7 +161,10 @@ func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.Revi
 	if err != nil {
 		return fmt.Errorf("writer: load project: %w", err)
 	}
-	gitlabProjectID := resolveGitLabProjectID(project, mr)
+	gitlabProjectID := resolveGitLabProjectID(project)
+	if gitlabProjectID == 0 {
+		return fmt.Errorf("writer: gitlab project id is required")
+	}
 	version, err := w.store.GetLatestMRVersion(ctx, run.MergeRequestID)
 	if err != nil {
 		return fmt.Errorf("writer: load latest MR version: %w", err)
@@ -229,8 +232,12 @@ func (w *Writer) writeParserErrorNote(ctx context.Context, run db.ReviewRun) err
 	if err != nil {
 		return fmt.Errorf("writer: load project: %w", err)
 	}
+	gitlabProjectID := resolveGitLabProjectID(project)
+	if gitlabProjectID == 0 {
+		return fmt.Errorf("writer: gitlab project id is required")
+	}
 	language := w.outputLanguage(ctx, run, mr.ProjectID)
-	noteReq := CreateNoteRequest{ProjectID: resolveGitLabProjectID(project, mr), MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: parserErrorNoteBody(run.ID, language)}
+	noteReq := CreateNoteRequest{ProjectID: gitlabProjectID, MergeRequestIID: mr.MrIid, IdempotencyKey: idempotencyKey, Body: parserErrorNoteBody(run.ID, language)}
 	_, err = w.performNoteAction(ctx, run, db.ReviewFinding{}, idempotencyKey, actionTypeSummaryNote, noteReq)
 	if err != nil {
 		return w.persistRunFailure(ctx, run, writerErrorParserFallback, err)
@@ -831,11 +838,11 @@ func resolvePaths(finding db.ReviewFinding) (string, string) {
 	return path, path
 }
 
-func resolveGitLabProjectID(project db.Project, mr db.MergeRequest) int64 {
+func resolveGitLabProjectID(project db.Project) int64 {
 	if project.GitlabProjectID != 0 {
 		return project.GitlabProjectID
 	}
-	return mr.ProjectID
+	return 0
 }
 
 func canonicalAnchorKind(kind string) string {
@@ -1067,11 +1074,6 @@ func (w *Writer) suggestionConfidenceThreshold(ctx context.Context, projectID in
 func (w *Writer) outputLanguage(ctx context.Context, run db.ReviewRun, projectID int64) string {
 	if outputLanguage := outputLanguageFromRunScope(run.ScopeJson); outputLanguage != "" {
 		return outputLanguage
-	}
-	if currentRun, err := w.store.GetReviewRun(ctx, run.ID); err == nil {
-		if outputLanguage := outputLanguageFromRunScope(currentRun.ScopeJson); outputLanguage != "" {
-			return outputLanguage
-		}
 	}
 	policy, err := w.store.GetProjectPolicy(ctx, projectID)
 	if err != nil {

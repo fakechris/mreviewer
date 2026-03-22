@@ -414,7 +414,7 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	}
 	outputLanguage := reviewlang.Normalize(ruleResult.EffectivePolicy.OutputLanguage)
 	if err := p.persistRunOutputLanguage(ctx, run, outputLanguage); err != nil {
-		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist run output language: %w", err))
+		p.logger.WarnContext(ctx, "failed to persist run output language", "run_id", run.ID, "output_language", outputLanguage, "error", err)
 	}
 	settings, err := ctxpkg.SettingsFromPolicy(policyPtr)
 	if err != nil {

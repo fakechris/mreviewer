@@ -2820,6 +2820,55 @@ func TestProcessRunWithoutSummaryProvider(t *testing.T) {
 	}
 }
 
+func TestProcessRunContinuesWhenOutputLanguagePersistenceFails(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET scope_json = ? WHERE id = ?", []byte("[]"), runID); err != nil {
+		t.Fatalf("seed invalid scope_json: %v", err)
+	}
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
+	}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{
+		EffectivePolicy: rules.EffectivePolicy{OutputLanguage: "zh-CN"},
+		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
+	}}
+	provider := &fakeProvider{response: ProviderResponse{
+		Result:          ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: nil},
+		Model:           "MiniMax-M2.5",
+		Tokens:          50,
+		Latency:         10 * time.Millisecond,
+		ResponsePayload: map[string]any{},
+	}}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-output-language", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun should continue when scope metadata persistence fails: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+}
+
 type fakeSummaryProvider struct {
 	response SummaryResponse
 	err      error
