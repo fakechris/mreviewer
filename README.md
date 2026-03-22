@@ -26,18 +26,33 @@ GitLab Merge Request 自动 Code Review 服务，面向单机 Docker Compose 部
 cp .env.example .env
 ```
 
+如果你已经在当前 shell 里导出了 `GITLAB_TOKEN` 和 `MINIMAX_API_KEY`，也可以直接一键生成：
+
+```bash
+scripts/init-local-env.sh
+```
+
 关键变量：
 
 - `APP_ENV`: 建议生产设为 `production`
 - `PORT`: ingress 监听端口，默认 `3100`
-- `MYSQL_DSN`: MySQL 连接串
-- `REDIS_ADDR`: Redis 地址
 - `GITLAB_BASE_URL`: 你的 GitLab 地址，例如 `https://gitlab.example.com`
 - `GITLAB_TOKEN`: GitLab API Token
 - `GITLAB_WEBHOOK_SECRET`: GitLab webhook secret
 - `ANTHROPIC_BASE_URL`: 模型供应商 Anthropic-compatible 地址
 - `ANTHROPIC_API_KEY`: 模型 API Key
 - `ANTHROPIC_MODEL`: 模型名
+
+如果你使用默认 Docker Compose 部署：
+
+- 一般只需要填写 `GITLAB_*` 和模型供应商变量
+- `MYSQL_DSN` 和 `REDIS_ADDR` 通常不需要改
+- compose 会自动启动并初始化 MySQL / Redis
+
+`MYSQL_DSN` 和 `REDIS_ADDR` 主要给这两类场景使用：
+
+- 你在宿主机直接执行 `go run ./cmd/manual-trigger ...`
+- 你不用仓库自带的 compose，而是改接外部 MySQL / Redis
 
 ## Review 输出语言
 
@@ -110,7 +125,39 @@ context_lines_after: 15
 cp .env.example .env
 ```
 
-填写 `.env` 中的 GitLab 与模型供应商配置。
+或者直接使用初始化脚本自动生成：
+
+```bash
+scripts/init-local-env.sh
+```
+
+如果你使用默认 Docker Compose，最短配置就是修改 `.env` 里的这些值：
+
+```env
+GITLAB_BASE_URL=https://github.91jinrong.com
+GITLAB_TOKEN=你的_gitlab_token
+GITLAB_WEBHOOK_SECRET=自己生成的一串随机串
+
+MINIMAX_API_KEY=你的_minimax_token
+MINIMAX_BASE_URL=https://api.minimaxi.com/anthropic
+MINIMAX_MODEL=MiniMax-M2.7-highspeed
+```
+
+其余数据库和 Redis 配置默认就能工作，不需要你手动创建库、建表、配账号。
+
+如果你已经把 `GITLAB_TOKEN` 和 `MINIMAX_API_KEY` 导出在当前 shell，推荐直接执行：
+
+```bash
+scripts/init-local-env.sh --force
+```
+
+脚本会：
+
+- 生成默认 Compose 可用的 `.env`
+- 自动填入 `GITLAB_TOKEN` 和 `MINIMAX_API_KEY`
+- 默认把 `GITLAB_BASE_URL` 设为 `https://github.91jinrong.com`
+- 自动生成一个随机 `GITLAB_WEBHOOK_SECRET`
+- 如果 `.env` 已存在，会先备份成 `.env.bak.<timestamp>`
 
 ### 2. 启动依赖与服务
 
@@ -128,12 +175,35 @@ docker compose up -d --build
 
 `ingress` 和 `worker` 会在 `migrate` 成功后再启动，确保 MySQL schema 已完成初始化。
 
+默认 Compose 会自动初始化这套数据库：
+
+- MySQL host: `127.0.0.1:3306`
+- database: `mreviewer`
+- user: `mreviewer`
+- password: `mreviewer_password`
+
+其中：
+
+- `mysql` 容器负责创建数据库和账号
+- `migrate` 容器负责执行 `migrations/` 下的 Goose 迁移，自动创建表结构
+
+所以默认部署下，你不需要手工执行任何建库建表 SQL。
+
 ### 3. 健康检查
 
 ```bash
 curl -i http://127.0.0.1:3100/health
 docker compose ps
 ```
+
+### 4. 查看数据库是否初始化成功
+
+```bash
+docker compose logs migrate
+docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "show tables;"
+```
+
+如果 `migrate` 成功，你会看到 `gitlab_instances`、`projects`、`merge_requests`、`review_runs`、`review_findings` 等表。
 
 ## 本地 End-to-End 跑通步骤
 
@@ -168,6 +238,7 @@ docker compose logs -f worker
 
 - `mysql` / `redis` / `migrate` / `worker` 已启动
 - `.env` 中的 `GITLAB_BASE_URL` 与 `GITLAB_TOKEN` 已正确配置
+- 如果你在宿主机直接运行 `go run ./cmd/manual-trigger ...`，那么 `.env` 里的 `MYSQL_DSN` / `REDIS_ADDR` 也要能指向 compose 暴露出来的本地端口；默认模板已经是可用值
 
 执行：
 
@@ -203,6 +274,8 @@ go run ./cmd/manual-trigger --project-id 123 --mr-iid 45 --wait --wait-timeout 1
 - 创建一条 `trigger_type=manual`、`status=pending` 的 `review_runs`
 
 后续由现有 `worker` 自动 claim 并处理这条 run。
+
+也就是说，默认情况下你不需要先手工往数据库插入项目、MR 或策略配置。第一条 webhook 或第一条 manual trigger 就会自动把必要记录写进数据库。
 
 说明：
 
@@ -266,6 +339,14 @@ docker compose logs -f worker
 docker compose logs migrate
 docker compose logs -f mysql
 docker compose logs -f redis
+```
+
+### 查看数据库里的运行结果
+
+```bash
+docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "show tables;"
+docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "select id,trigger_type,status,created_at from review_runs order by id desc limit 10;"
+docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "select id,severity,title,path from review_findings order by id desc limit 20;"
 ```
 
 ### 重新构建
