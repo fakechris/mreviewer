@@ -5,8 +5,14 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	defaultMiniMaxBaseURL = "https://api.minimaxi.com/anthropic"
+	defaultMiniMaxModel   = "MiniMax-M2.7-highspeed"
 )
 
 // Config holds all application configuration values.
@@ -93,6 +99,34 @@ func applyEnv(cfg *Config) {
 	for _, m := range envMapping {
 		if v, ok := os.LookupEnv(m.envVar); ok {
 			m.setter(cfg, v)
+		}
+	}
+	applyMiniMaxFallback(cfg)
+}
+
+func applyMiniMaxFallback(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	minimaxKey := strings.TrimSpace(os.Getenv("MINIMAX_API_KEY"))
+	if minimaxKey == "" {
+		return
+	}
+	if strings.TrimSpace(cfg.AnthropicAPIKey) == "" {
+		cfg.AnthropicAPIKey = minimaxKey
+	}
+	if strings.TrimSpace(cfg.AnthropicBaseURL) == "" {
+		if baseURL := strings.TrimSpace(os.Getenv("MINIMAX_BASE_URL")); baseURL != "" {
+			cfg.AnthropicBaseURL = baseURL
+		} else {
+			cfg.AnthropicBaseURL = defaultMiniMaxBaseURL
+		}
+	}
+	if strings.TrimSpace(cfg.AnthropicModel) == "" {
+		if model := strings.TrimSpace(os.Getenv("MINIMAX_MODEL")); model != "" {
+			cfg.AnthropicModel = model
+		} else {
+			cfg.AnthropicModel = defaultMiniMaxModel
 		}
 	}
 }

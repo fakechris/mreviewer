@@ -83,6 +83,10 @@ app_env: "staging"`,
 				t.Setenv(m.envVar, "")
 				os.Unsetenv(m.envVar)
 			}
+			for _, envVar := range []string{"MINIMAX_API_KEY", "MINIMAX_BASE_URL", "MINIMAX_MODEL"} {
+				t.Setenv(envVar, "")
+				os.Unsetenv(envVar)
+			}
 
 			// Set test env vars.
 			for k, v := range tc.env {
@@ -121,6 +125,9 @@ app_env: "staging"`,
 }
 
 func TestConfigMissingYAML(t *testing.T) {
+	for _, envVar := range []string{"MINIMAX_API_KEY", "MINIMAX_BASE_URL", "MINIMAX_MODEL"} {
+		t.Setenv(envVar, "")
+	}
 	// Loading a non-existent YAML path should not error.
 	cfg, err := Load("/tmp/does-not-exist-config-xyz.yaml")
 	if err != nil {
@@ -144,6 +151,9 @@ func TestConfigInvalidYAML(t *testing.T) {
 }
 
 func TestConfigAllEnvVars(t *testing.T) {
+	for _, envVar := range []string{"MINIMAX_API_KEY", "MINIMAX_BASE_URL", "MINIMAX_MODEL"} {
+		t.Setenv(envVar, "")
+	}
 	// Verify every env var mapping works.
 	envVals := map[string]string{
 		"APP_ENV":               "test",
@@ -196,5 +206,29 @@ func TestConfigAllEnvVars(t *testing.T) {
 	}
 	if cfg.AnthropicModel != "test-model" {
 		t.Errorf("AnthropicModel = %q, want %q", cfg.AnthropicModel, "test-model")
+	}
+}
+
+func TestConfigMiniMaxEnvFallback(t *testing.T) {
+	t.Setenv("MINIMAX_API_KEY", "minimax-secret")
+	t.Setenv("MINIMAX_BASE_URL", "https://api.minimaxi.com/anthropic")
+	t.Setenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+	t.Setenv("ANTHROPIC_MODEL", "")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.AnthropicAPIKey != "minimax-secret" {
+		t.Errorf("AnthropicAPIKey = %q, want minimax-secret", cfg.AnthropicAPIKey)
+	}
+	if cfg.AnthropicBaseURL != "https://api.minimaxi.com/anthropic" {
+		t.Errorf("AnthropicBaseURL = %q, want MiniMax fallback URL", cfg.AnthropicBaseURL)
+	}
+	if cfg.AnthropicModel != "MiniMax-M2.7-highspeed" {
+		t.Errorf("AnthropicModel = %q, want MiniMax fallback model", cfg.AnthropicModel)
 	}
 }

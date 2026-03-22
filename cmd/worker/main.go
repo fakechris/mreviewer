@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +28,10 @@ func run() int {
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		logger.Error("failed to load configuration", "error", err)
+		return 1
+	}
+	if err := validateWorkerConfig(cfg); err != nil {
+		logger.Error("invalid worker configuration", "error", err)
 		return 1
 	}
 
@@ -112,7 +118,7 @@ func run() int {
 	// At runtime, ProcessRun calls registry.ResolveWithFallback(effectivePolicy.ProviderRoute)
 	// to pick the provider for each run, instead of always using a static default.
 	processor := llm.NewProcessor(logger, db, gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(db)).WithRegistry(providerRegistry)
-	runtimeDeps := newRuntimeDeps(logger, db, processor)
+	runtimeDeps := newRuntimeDepsWithWriteback(logger, db, processor, gitlabClient)
 	worker := runtimeDeps.Scheduler
 	logger.Info("worker starting", "platform_default_route", platformDefaultRoute, "fallback_route", fallbackRoute, "registry_routes", providerRegistry.Routes())
 	if err := worker.Run(ctx); err != nil {
@@ -122,4 +128,14 @@ func run() int {
 
 	logger.Info("worker shutdown complete")
 	return 0
+}
+
+func validateWorkerConfig(cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("worker: configuration is required")
+	}
+	if strings.TrimSpace(cfg.GitLabToken) == "" {
+		return fmt.Errorf("worker: GITLAB_TOKEN is required")
+	}
+	return nil
 }

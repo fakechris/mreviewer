@@ -20,6 +20,7 @@ type AIReviewConfig struct {
 	ContextMode         *string  `yaml:"context_mode"`
 	GateMode            *string  `yaml:"gate_mode"`
 	ProviderRoute       *string  `yaml:"provider_route"`
+	OutputLanguage      *string  `yaml:"output_language"`
 	MaxFiles            *int     `yaml:"max_files"`
 	MaxChangedLines     *int     `yaml:"max_changed_lines"`
 	ContextLinesBefore  *int     `yaml:"context_lines_before"`
@@ -69,6 +70,7 @@ var knownAIReviewFields = map[string]bool{
 	"context_mode":         true,
 	"gate_mode":            true,
 	"provider_route":       true,
+	"output_language":      true,
 	"max_files":            true,
 	"max_changed_lines":    true,
 	"context_lines_before": true,
@@ -144,6 +146,16 @@ func validateAIReviewConfig(cfg *AIReviewConfig) []string {
 		}
 	}
 
+	if cfg.OutputLanguage != nil {
+		v := strings.TrimSpace(*cfg.OutputLanguage)
+		if v == "" {
+			warnings = append(warnings, "ai-review.yaml: output_language is empty, ignoring")
+			cfg.OutputLanguage = nil
+		} else {
+			cfg.OutputLanguage = &v
+		}
+	}
+
 	if cfg.MaxFiles != nil && *cfg.MaxFiles <= 0 {
 		warnings = append(warnings, fmt.Sprintf("ai-review.yaml: max_files %d must be positive, ignoring", *cfg.MaxFiles))
 		cfg.MaxFiles = nil
@@ -197,6 +209,9 @@ func applyAIReviewConfig(effective *EffectivePolicy, cfg *AIReviewConfig) {
 	}
 	if cfg.ProviderRoute != nil {
 		effective.ProviderRoute = *cfg.ProviderRoute
+	}
+	if cfg.OutputLanguage != nil {
+		effective.OutputLanguage = normalizeOutputLanguage(*cfg.OutputLanguage)
 	}
 	if cfg.MaxFiles != nil {
 		effective.MaxFiles = *cfg.MaxFiles
