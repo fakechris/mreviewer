@@ -83,16 +83,9 @@ func run(args []string) int {
 	return runWithDeps(args, runtimeDeps{
 		loadConfig: config.Load,
 		openDB:     database.Open,
-		newService: func(cfg *config.Config, sqlDB *sql.DB, pollInterval time.Duration) manualTriggerService {
-			logger := logging.NewLogger(slog.LevelInfo)
-			client, err := gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken)
-			if err != nil {
-				return failingService{err: fmt.Errorf("configure gitlab client: %w", err)}
-			}
-			return manualtrigger.NewService(logger, sqlDB, client, cfg.GitLabBaseURL, manualtrigger.WithPollInterval(pollInterval))
-		},
-		stdout: os.Stdout,
-		stderr: os.Stderr,
+		newService: newDefaultService,
+		stdout:     os.Stdout,
+		stderr:     os.Stderr,
 	})
 }
 
@@ -104,14 +97,7 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 		deps.openDB = database.Open
 	}
 	if deps.newService == nil {
-		deps.newService = func(cfg *config.Config, sqlDB *sql.DB, pollInterval time.Duration) manualTriggerService {
-			logger := logging.NewLogger(slog.LevelInfo)
-			client, err := gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken)
-			if err != nil {
-				return failingService{err: fmt.Errorf("configure gitlab client: %w", err)}
-			}
-			return manualtrigger.NewService(logger, sqlDB, client, cfg.GitLabBaseURL, manualtrigger.WithPollInterval(pollInterval))
-		}
+		deps.newService = newDefaultService
 	}
 	if deps.stdout == nil {
 		deps.stdout = io.Discard
@@ -312,6 +298,15 @@ func writeJSONResponse(w io.Writer, payload jsonResponse) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	return enc.Encode(payload)
+}
+
+func newDefaultService(cfg *config.Config, sqlDB *sql.DB, pollInterval time.Duration) manualTriggerService {
+	logger := logging.NewLogger(slog.LevelInfo)
+	client, err := gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken)
+	if err != nil {
+		return failingService{err: fmt.Errorf("configure gitlab client: %w", err)}
+	}
+	return manualtrigger.NewService(logger, sqlDB, client, cfg.GitLabBaseURL, manualtrigger.WithPollInterval(pollInterval))
 }
 
 type failingService struct {

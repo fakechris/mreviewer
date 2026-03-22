@@ -300,3 +300,15 @@ func TestRunWithDepsRejectsInvalidWaitTimeout(t *testing.T) {
 		t.Fatalf("stderr = %q, want wait timeout validation message", stderr.String())
 	}
 }
+
+func TestNewDefaultServiceReturnsFailingServiceForInvalidGitLabConfig(t *testing.T) {
+	svc := newDefaultService(&config.Config{}, nil, time.Second)
+
+	_, err := svc.Trigger(context.Background(), manualtrigger.TriggerInput{})
+	if err == nil {
+		t.Fatal("Trigger error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "configure gitlab client") {
+		t.Fatalf("Trigger error = %q, want gitlab client configuration error", err.Error())
+	}
+}
