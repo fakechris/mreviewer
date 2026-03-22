@@ -386,6 +386,9 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 			if err := db.New(s.db).UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
 				return fmt.Errorf("scheduler: mark run %d parser_error: %w", run.ID, err)
 			}
+			if err := s.persistProviderMetricsIfNeeded(ctx, run.ID, currentRun, outcome); err != nil {
+				return err
+			}
 			s.logger.InfoContext(ctx, "completed review run with parser_error result",
 				"run_id", run.ID,
 				"worker_id", s.workerID,
@@ -411,6 +414,9 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 				return err
 			}
 			if currentRun.Status != "cancelled" {
+				if err := s.persistProviderMetricsIfNeeded(ctx, run.ID, currentRun, outcome); err != nil {
+					return err
+				}
 				s.logger.InfoContext(ctx, "completed review run",
 					"run_id", run.ID,
 					"worker_id", s.workerID,
@@ -613,6 +619,23 @@ func (s *Service) handleSkippedTerminalWrite(ctx context.Context, run db.ReviewR
 	}
 
 	return db.ReviewRun{}, fmt.Errorf("scheduler: skipped %s write for run %d with unexpected status %q", terminalState, run.ID, currentRun.Status)
+}
+
+func (s *Service) persistProviderMetricsIfNeeded(ctx context.Context, runID int64, currentRun db.ReviewRun, outcome ProcessOutcome) error {
+	if outcome.ProviderLatencyMs == 0 && outcome.ProviderTokensTotal == 0 {
+		return nil
+	}
+	if currentRun.ProviderLatencyMs == outcome.ProviderLatencyMs && currentRun.ProviderTokensTotal == outcome.ProviderTokensTotal {
+		return nil
+	}
+	if err := db.New(s.db).UpdateReviewRunProviderMetrics(ctx, db.UpdateReviewRunProviderMetricsParams{
+		ProviderLatencyMs:   outcome.ProviderLatencyMs,
+		ProviderTokensTotal: outcome.ProviderTokensTotal,
+		ID:                  runID,
+	}); err != nil {
+		return fmt.Errorf("scheduler: persist provider metrics for run %d: %w", runID, err)
+	}
+	return nil
 }
 
 func (s *Service) retryDelay(retryCount int32) time.Duration {

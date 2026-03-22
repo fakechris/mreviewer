@@ -439,7 +439,7 @@ func TestWorkerRuntimeAllowsProcessorManagedCompletedStatus(t *testing.T) {
 		if err := queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{ID: runID, Status: "completed"}); err != nil {
 			return scheduler.ProcessOutcome{}, err
 		}
-		return scheduler.ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
+		return scheduler.ProcessOutcome{Status: "completed", ProviderLatencyMs: 53, ProviderTokensTotal: 1200, ReviewFindings: findings}, nil
 	})
 	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, client, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
 
@@ -455,6 +455,16 @@ func TestWorkerRuntimeAllowsProcessorManagedCompletedStatus(t *testing.T) {
 	}
 	if len(client.notes) != 1 {
 		t.Fatalf("note requests = %d, want 1", len(client.notes))
+	}
+	run, err := queries.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.ProviderLatencyMs != 53 {
+		t.Fatalf("provider_latency_ms = %d, want 53", run.ProviderLatencyMs)
+	}
+	if run.ProviderTokensTotal != 1200 {
+		t.Fatalf("provider_tokens_total = %d, want 1200", run.ProviderTokensTotal)
 	}
 }
 
@@ -472,7 +482,7 @@ func TestWorkerRuntimeAllowsProcessorManagedParserErrorStatus(t *testing.T) {
 		if err := queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{ID: runID, Status: "parser_error"}); err != nil {
 			return scheduler.ProcessOutcome{}, err
 		}
-		return scheduler.ProcessOutcome{Status: "parser_error"}, nil
+		return scheduler.ProcessOutcome{Status: "parser_error", ProviderLatencyMs: 41, ProviderTokensTotal: 900}, nil
 	})
 	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, client, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
 
@@ -488,6 +498,16 @@ func TestWorkerRuntimeAllowsProcessorManagedParserErrorStatus(t *testing.T) {
 	}
 	if len(client.notes) != 1 {
 		t.Fatalf("note requests = %d, want 1 parser-error note", len(client.notes))
+	}
+	run, err := queries.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.ProviderLatencyMs != 41 {
+		t.Fatalf("provider_latency_ms = %d, want 41", run.ProviderLatencyMs)
+	}
+	if run.ProviderTokensTotal != 900 {
+		t.Fatalf("provider_tokens_total = %d, want 900", run.ProviderTokensTotal)
 	}
 }
 

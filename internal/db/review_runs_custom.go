@@ -33,6 +33,12 @@ SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
 WHERE id = ? AND status = 'running'
 `
 
+const updateReviewRunProviderMetrics = `
+UPDATE review_runs
+SET provider_latency_ms = ?, provider_tokens_total = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
 func (q *Queries) MarkReviewRunRetryableFailureIfRunning(ctx context.Context, arg MarkReviewRunRetryableFailureParams) (bool, error) {
 	result, err := q.db.ExecContext(ctx, markReviewRunRetryableFailureIfRunning,
 		arg.ErrorCode,
@@ -73,6 +79,21 @@ func (q *Queries) UpdateReviewRunCompletedIfRunning(ctx context.Context, arg Upd
 	}
 
 	return rowsAffected(result)
+}
+
+type UpdateReviewRunProviderMetricsParams struct {
+	ProviderLatencyMs   int64
+	ProviderTokensTotal int64
+	ID                  int64
+}
+
+func (q *Queries) UpdateReviewRunProviderMetrics(ctx context.Context, arg UpdateReviewRunProviderMetricsParams) error {
+	_, err := q.db.ExecContext(ctx, updateReviewRunProviderMetrics,
+		arg.ProviderLatencyMs,
+		arg.ProviderTokensTotal,
+		arg.ID,
+	)
+	return err
 }
 
 func rowsAffected(result interface{ RowsAffected() (int64, error) }) (bool, error) {

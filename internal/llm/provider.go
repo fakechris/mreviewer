@@ -113,6 +113,31 @@ type ProviderResponse struct {
 	ResponsePayload map[string]any
 }
 
+type providerParseError struct {
+	cause       error
+	rawResponse string
+	latency     time.Duration
+	tokens      int64
+	model       string
+}
+
+func (e *providerParseError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.rawResponse) == "" {
+		return e.cause.Error()
+	}
+	return fmt.Sprintf("%v: raw=%q", e.cause, e.rawResponse)
+}
+
+func (e *providerParseError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
 type ReviewResult struct {
 	SchemaVersion string          `json:"schema_version"`
 	ReviewRunID   string          `json:"review_run_id"`
@@ -482,7 +507,20 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 			_ = p.auditLogger.LogRunLifecycle(ctx, run, "provider_failed", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "error": redactError(err)})
 		}
 		if isParserError(err) {
-			response = ProviderResponse{Latency: 13 * time.Millisecond, Tokens: 21, FallbackStage: "parser_error"}
+			var parseErr *providerParseError
+			if errors.As(err, &parseErr) {
+				response = ProviderResponse{
+					Latency:       parseErr.latency,
+					Tokens:        parseErr.tokens,
+					FallbackStage: "parser_error",
+					Model:         parseErr.model,
+					ResponsePayload: map[string]any{
+						"parser_error": true,
+						"error":        redactError(err),
+						"text":         parseErr.rawResponse,
+					},
+				}
+			}
 			result := ReviewResult{
 				SchemaVersion: assembled.Request.SchemaVersion,
 				ReviewRunID:   assembled.Request.ReviewRunID,
@@ -490,7 +528,17 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 				Status:        parserErrorCode,
 				SummaryNote:   &SummaryNote{BodyMarkdown: parserErrorSummaryNote(outputLanguage, assembled.Request.ReviewRunID)},
 			}
-			response = ProviderResponse{Result: result, Latency: response.Latency, Tokens: response.Tokens, FallbackStage: "parser_error", Model: response.Model, ResponsePayload: map[string]any{"parser_error": true, "error": redactError(err)}}
+			response = ProviderResponse{
+				Result:          result,
+				Latency:         response.Latency,
+				Tokens:          response.Tokens,
+				FallbackStage:   "parser_error",
+				Model:           response.Model,
+				ResponsePayload: response.ResponsePayload,
+			}
+			if response.ResponsePayload == nil {
+				response.ResponsePayload = map[string]any{"parser_error": true, "error": redactError(err)}
+			}
 		} else {
 			if isTimeoutError(err) {
 				return scheduler.ProcessOutcome{}, scheduler.NewRetryableError(providerTimeoutCode, err)
@@ -627,7 +675,13 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 		text := collectMessageText(message)
 		result, stage, parseErr := ParseReviewResult(text)
 		if parseErr != nil {
-			return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, parseErr)
+			return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
+				cause:       parseErr,
+				rawResponse: text,
+				latency:     p.now().Sub(started),
+				tokens:      int64(message.Usage.OutputTokens),
+				model:       p.routeName,
+			})
 		}
 		return ProviderResponse{Result: result, RawText: text, Latency: p.now().Sub(started), Tokens: int64(message.Usage.OutputTokens), FallbackStage: stage, Model: p.routeName, ResponsePayload: map[string]any{"text": text, "fallback_stage": stage}}, nil
 	}
@@ -842,15 +896,198 @@ func ParseReviewResult(raw string) (ReviewResult, string, error) {
 		var result ReviewResult
 		if err := json.Unmarshal([]byte(candidate), &result); err == nil {
 			if err := validateReviewResult(result); err != nil {
-				continue
+				normalized, normErr := parseReviewResultWithAliases(candidate)
+				if normErr != nil {
+					continue
+				}
+				if normalized.Status == "" {
+					normalized.Status = "completed"
+				}
+				return normalized, stage.name, nil
 			}
 			if result.Status == "" {
 				result.Status = "completed"
 			}
 			return result, stage.name, nil
 		}
+		normalized, err := parseReviewResultWithAliases(candidate)
+		if err == nil {
+			if normalized.Status == "" {
+				normalized.Status = "completed"
+			}
+			return normalized, stage.name, nil
+		}
 	}
 	return ReviewResult{}, "", fmt.Errorf("llm: unable to parse provider response")
+}
+
+func parseReviewResultWithAliases(raw string) (ReviewResult, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil {
+		return ReviewResult{}, err
+	}
+	result := ReviewResult{
+		SchemaVersion: stringAlias(payload, "schema_version"),
+		ReviewRunID:   stringAlias(payload, "review_run_id"),
+		Summary:       stringAlias(payload, "summary"),
+		Status:        stringAlias(payload, "status"),
+		BlindSpots:    stringSliceAlias(payload, "blind_spots"),
+	}
+	if summaryNote, ok := payload["summary_note"].(map[string]any); ok {
+		body := stringAlias(summaryNote, "body_markdown")
+		if body != "" {
+			result.SummaryNote = &SummaryNote{BodyMarkdown: body}
+		}
+	}
+	findings, ok := payload["findings"].([]any)
+	if ok {
+		result.Findings = make([]ReviewFinding, 0, len(findings))
+		for _, item := range findings {
+			findingMap, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			newLine := int32Alias(findingMap, "new_line", "line_start", "line")
+			oldLine := int32Alias(findingMap, "old_line")
+			anchorKind := stringAlias(findingMap, "anchor_kind")
+			if anchorKind == "" && newLine != nil {
+				anchorKind = "new_line"
+			}
+			if anchorKind == "" && oldLine != nil {
+				anchorKind = "old_line"
+			}
+			category := stringAlias(findingMap, "category", "type")
+			if category == "" {
+				category = "code_defect"
+			}
+			result.Findings = append(result.Findings, ReviewFinding{
+				Category:               category,
+				Severity:               stringAlias(findingMap, "severity"),
+				Confidence:             float64Alias(findingMap, "confidence"),
+				Title:                  stringAlias(findingMap, "title", "description"),
+				BodyMarkdown:           stringAlias(findingMap, "body_markdown", "body", "description"),
+				Path:                   stringAlias(findingMap, "path", "file_path", "file"),
+				AnchorKind:             anchorKind,
+				OldLine:                oldLine,
+				NewLine:                newLine,
+				AnchorSnippet:          stringAlias(findingMap, "anchor_snippet"),
+				Evidence:               stringSliceAlias(findingMap, "evidence"),
+				SuggestedPatch:         stringAlias(findingMap, "suggested_patch", "actionable_fix", "suggested_action"),
+				CanonicalKey:           stringAlias(findingMap, "canonical_key"),
+				Symbol:                 stringAlias(findingMap, "symbol"),
+				TriggerCondition:       stringAlias(findingMap, "trigger_condition"),
+				Impact:                 stringAlias(findingMap, "impact"),
+				IntroducedByThisChange: boolAlias(findingMap, "introduced_by_this_change"),
+				BlindSpots:             stringSliceAlias(findingMap, "blind_spots"),
+				NoFindingReason:        stringAlias(findingMap, "no_finding_reason"),
+			})
+		}
+	}
+	if err := validateReviewResult(result); err != nil {
+		return ReviewResult{}, err
+	}
+	return result, nil
+}
+
+func stringAlias(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value, ok := payload[key]
+		if !ok {
+			continue
+		}
+		if text, ok := value.(string); ok {
+			text = strings.TrimSpace(text)
+			if text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func stringSliceAlias(payload map[string]any, keys ...string) []string {
+	for _, key := range keys {
+		value, ok := payload[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			text := strings.TrimSpace(typed)
+			if text != "" {
+				return []string{text}
+			}
+		case []any:
+			items := make([]string, 0, len(typed))
+			for _, item := range typed {
+				text, ok := item.(string)
+				if !ok {
+					continue
+				}
+				text = strings.TrimSpace(text)
+				if text != "" {
+					items = append(items, text)
+				}
+			}
+			if len(items) > 0 {
+				return items
+			}
+		}
+	}
+	return nil
+}
+
+func float64Alias(payload map[string]any, keys ...string) float64 {
+	for _, key := range keys {
+		value, ok := payload[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case float64:
+			return typed
+		case json.Number:
+			if parsed, err := typed.Float64(); err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func int32Alias(payload map[string]any, keys ...string) *int32 {
+	for _, key := range keys {
+		value, ok := payload[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case float64:
+			parsed := int32(typed)
+			return &parsed
+		case json.Number:
+			if parsed, err := typed.Int64(); err == nil {
+				value := int32(parsed)
+				return &value
+			}
+		}
+	}
+	return nil
+}
+
+func boolAlias(payload map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		value, ok := payload[key]
+		if !ok {
+			continue
+		}
+		if typed, ok := value.(bool); ok {
+			return typed
+		}
+	}
+	return false
 }
 
 func validateReviewResult(result ReviewResult) error {
@@ -1444,13 +1681,23 @@ type DBAuditLogger struct{ queries *db.Queries }
 func NewDBAuditLogger(sqlDB *sql.DB) *DBAuditLogger { return &DBAuditLogger{queries: db.New(sqlDB)} }
 
 func (l *DBAuditLogger) LogProviderCall(ctx context.Context, run db.ReviewRun, payload map[string]any, response ProviderResponse) error {
-	detail, _ := json.Marshal(map[string]any{"request": redactPayload(payload), "response": redactPayload(response.ResponsePayload), "provider_model": response.Model, "provider_latency_ms": response.Latency.Milliseconds(), "provider_tokens_total": response.Tokens, "fallback_stage": response.FallbackStage})
+	detail, _ := json.Marshal(map[string]any{"request": payload, "response": response.ResponsePayload, "provider_model": response.Model, "provider_latency_ms": response.Latency.Milliseconds(), "provider_tokens_total": response.Tokens, "fallback_stage": response.FallbackStage})
 	_, err := l.queries.InsertAuditLog(ctx, db.InsertAuditLogParams{EntityType: "review_run", EntityID: run.ID, Action: "provider_called", Actor: "system", Detail: detail})
 	return err
 }
 
 func (l *DBAuditLogger) LogProviderFailure(ctx context.Context, run db.ReviewRun, payload map[string]any, err error) error {
-	detail, _ := json.Marshal(map[string]any{"request": redactPayload(payload), "error": redactError(err)})
+	detailMap := map[string]any{"request": payload, "error": redactError(err)}
+	var parseErr *providerParseError
+	if errors.As(err, &parseErr) {
+		detailMap["response"] = map[string]any{"text": parseErr.rawResponse}
+		detailMap["provider_latency_ms"] = parseErr.latency.Milliseconds()
+		detailMap["provider_tokens_total"] = parseErr.tokens
+		if parseErr.model != "" {
+			detailMap["provider_model"] = parseErr.model
+		}
+	}
+	detail, _ := json.Marshal(detailMap)
 	_, insertErr := l.queries.InsertAuditLog(ctx, db.InsertAuditLogParams{EntityType: "review_run", EntityID: run.ID, Action: "provider_failed", Actor: "system", Detail: detail, ErrorCode: providerRequestFailedCode})
 	return insertErr
 }
@@ -1695,6 +1942,14 @@ func collectMessageText(message *anthropic.Message) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func truncateText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...[truncated]"
 }
 
 func mustJSON(v any) string { data, _ := json.Marshal(v); return string(data) }

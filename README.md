@@ -117,6 +117,10 @@ context_lines_after: 15
 
 当 `ANTHROPIC_*` 没有配置时，worker 会自动回退到 `MINIMAX_*`。
 
+MiniMax 当前的稳定性和已知问题，单独整理在：
+
+- [docs/minimax-known-issues.md](/Users/chris/workspace/mreviewer/docs/minimax-known-issues.md)
+
 ## 安装与初始化
 
 ### 1. 准备配置
@@ -288,6 +292,36 @@ bash scripts/review-mr.sh "https://github.91jinrong.com/group/repo/-/merge_reque
 - `redis:6379`
 
 这能避免宿主机本地已经存在其他 MySQL 实例时，把 `127.0.0.1:3306` 误连到错误数据库。
+
+## 现场审计与原始数据
+
+为了方便排查模型兼容性、解析失败、写回异常等问题，`worker` 会把 provider 调用现场完整落到 `audit_logs.detail`：
+
+- `provider_called`
+  - 保存完整 provider request
+  - 保存完整 provider response
+- `provider_failed`
+  - 保存完整 provider request
+  - 如果是解析失败，也会保存完整原始 response 文本
+
+推荐直接用脚本查看某次 run 的完整现场：
+
+```bash
+bash scripts/show-run-audit.sh --latest
+bash scripts/show-run-audit.sh 9
+```
+
+这会输出：
+
+- `review_runs` 当前状态、错误码、`scope_json`
+- `audit_logs` 里该 run 的完整 `detail` JSON
+
+如果你只想临时查数据库，也可以直接执行：
+
+```bash
+docker exec -i mreviewer-mysql mysql --default-character-set=utf8mb4 -umreviewer -pmreviewer_password mreviewer -e \
+"SELECT id, action, JSON_PRETTY(detail) AS detail FROM audit_logs WHERE entity_type='review_run' AND entity_id=9 ORDER BY id;"
+```
 
 脚本退出后：
 
