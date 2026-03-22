@@ -117,6 +117,69 @@ docker compose logs -f worker
    - note command（如 rerun / ignore / resolve / focus）可生效
    - 大 MR 降级 summary / provider route / beta 行为正常
 
+## 手动触发单个 MR
+
+如果你暂时不想接 webhook，可以先手动把指定 MR 入队，让现有 `worker` 按正常链路处理。
+
+先确保：
+
+- `mysql` / `redis` / `migrate` / `worker` 已启动
+- `.env` 中的 `GITLAB_BASE_URL` 与 `GITLAB_TOKEN` 已正确配置
+
+执行：
+
+```bash
+go run ./cmd/manual-trigger --project-id <gitlab_project_id> --mr-iid <mr_iid>
+```
+
+如果希望命令阻塞到 run 进入终态：
+
+```bash
+go run ./cmd/manual-trigger --project-id <gitlab_project_id> --mr-iid <mr_iid> --wait
+```
+
+如果希望输出结构化 JSON：
+
+```bash
+go run ./cmd/manual-trigger --project-id <gitlab_project_id> --mr-iid <mr_iid> --json
+go run ./cmd/manual-trigger --project-id <gitlab_project_id> --mr-iid <mr_iid> --wait --json
+```
+
+示例：
+
+```bash
+go run ./cmd/manual-trigger --project-id 123 --mr-iid 45
+go run ./cmd/manual-trigger --project-id 123 --mr-iid 45 --wait --wait-timeout 10m
+go run ./cmd/manual-trigger --project-id 123 --mr-iid 45 --wait --wait-timeout 10m --poll-interval 2s --json
+```
+
+命令会：
+
+- 通过 GitLab API 读取当前 MR 元数据
+- 自动 upsert 本地 `gitlab_instances` / `projects` / `merge_requests`
+- 创建一条 `trigger_type=manual`、`status=pending` 的 `review_runs`
+
+后续由现有 `worker` 自动 claim 并处理这条 run。
+
+可选参数：
+
+- `--wait`：阻塞直到 run 进入终态
+- `--wait-timeout <duration>`：等待超时，默认 `15m`
+- `--poll-interval <duration>`：等待时轮询间隔，默认 `1s`
+- `--json`：输出结构化 JSON；失败场景同样返回 JSON
+
+退出码：
+
+- `0`：创建成功；如果使用 `--wait`，则表示最终状态为 `completed` 或 `parser_error`
+- `1`：创建失败，或等待后最终状态为 `failed` / `cancelled`，或等待超时
+- `2`：命令参数错误
+
+建议同时观察：
+
+```bash
+docker compose logs -f worker
+```
+
 ## Docker Compose 交付说明
 
 本仓库提供单机完整 Docker Compose 交付。
