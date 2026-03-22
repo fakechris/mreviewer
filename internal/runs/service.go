@@ -58,7 +58,7 @@ func (s *Service) ProcessEventWithQuerier(ctx context.Context, q db.Querier, ev 
 	switch action {
 	case "open", "reopen":
 		return s.createPendingRun(ctx, q, ev, hookEventID)
-	case "update":
+	case "update", "ci_trigger", "manual_trigger":
 		return s.handleUpdate(ctx, q, ev, hookEventID)
 	case "close", "merge":
 		return s.cancelRuns(ctx, q, ev, action)

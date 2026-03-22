@@ -161,6 +161,49 @@ func TestOpenCreatesPendingRun(t *testing.T) {
 	}
 }
 
+func TestManualTriggerCreatesPendingRun(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	svc := NewService(testLogger(), sqlDB)
+
+	ev := hooks.NormalizedEvent{
+		GitLabInstanceURL: "https://gitlab.example.com",
+		ProjectID:         100,
+		ProjectPath:       "samplegroup/samplerepo",
+		MRIID:             42,
+		Action:            "manual_trigger",
+		HeadSHA:           "head-sha-manual-001",
+		HookSource:        "manual",
+		TriggerType:       "manual",
+		EventType:         "manual_trigger",
+		IdempotencyKey:    "manual-trigger-key",
+		Title:             "Manual trigger MR",
+		SourceBranch:      "feature-x",
+		TargetBranch:      "main",
+		Author:            "johndoe",
+		WebURL:            "https://gitlab.example.com/samplegroup/samplerepo/-/merge_requests/42",
+		State:             "opened",
+	}
+
+	if err := svc.ProcessEvent(context.Background(), ev, 0); err != nil {
+		t.Fatalf("ProcessEvent: %v", err)
+	}
+
+	run, err := db.New(sqlDB).GetReviewRunByIdempotencyKey(context.Background(), ev.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("GetReviewRunByIdempotencyKey: %v", err)
+	}
+
+	if run.Status != "pending" {
+		t.Errorf("expected status 'pending', got %q", run.Status)
+	}
+	if run.TriggerType != "manual" {
+		t.Errorf("expected trigger_type 'manual', got %q", run.TriggerType)
+	}
+	if run.HeadSha != "head-sha-manual-001" {
+		t.Errorf("expected head_sha 'head-sha-manual-001', got %q", run.HeadSha)
+	}
+}
+
 // TestUpdateCreatesNewHeadRun verifies VAL-INGRESS-004:
 // An MR update with a new commit (oldrev present) creates a new review run
 // for the new HEAD SHA.
