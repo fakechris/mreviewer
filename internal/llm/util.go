@@ -9,6 +9,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/mreviewer/mreviewer/internal/timeutil"
 )
 
 func truncateText(value string, limit int) string {
@@ -101,15 +103,5 @@ func isTimeoutError(err error) bool {
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-	t := time.NewTimer(delay)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
-	}
+	return timeutil.SleepContext(ctx, delay)
 }

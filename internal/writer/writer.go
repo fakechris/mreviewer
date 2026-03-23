@@ -9,14 +9,15 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/metrics"
 	"github.com/mreviewer/mreviewer/internal/reviewcomment"
 	"github.com/mreviewer/mreviewer/internal/reviewlang"
+	"github.com/mreviewer/mreviewer/internal/timeutil"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
+	"golang.org/x/sync/errgroup"
 )
 
 type DiscussionClient interface {
@@ -157,32 +158,23 @@ func (w *Writer) writeFindings(ctx context.Context, run db.ReviewRun, mr db.Merg
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
-	sem := make(chan struct{}, limit)
-	var wg sync.WaitGroup
-	var once sync.Once
-	var firstErr error
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(limit)
 
 	for _, finding := range findings {
-		if ctx.Err() != nil {
+		if groupCtx.Err() != nil {
 			break
 		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(finding db.ReviewFinding) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			if err := w.writeFinding(ctx, run, mr, version, finding, gitlabProjectID); err != nil {
-				once.Do(func() {
-					firstErr = err
-					cancel()
-				})
+		finding := finding
+		group.Go(func() error {
+			if err := w.writeFinding(groupCtx, run, mr, version, finding, gitlabProjectID); err != nil {
+				cancel()
+				return err
 			}
-		}(finding)
+			return nil
+		})
 	}
-
-	wg.Wait()
-	return firstErr
+	return group.Wait()
 }
 
 func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, version db.MrVersion, finding db.ReviewFinding, gitlabProjectID int64) error {
@@ -540,7 +532,7 @@ func (w *Writer) retryWrite(ctx context.Context, fn func() error) error {
 		if err == nil || !isRetryableWriteError(err) || attempt == maxWriteRetries-1 {
 			return err
 		}
-		if sleepErr := sleepContext(ctx, defaultRetryBackoff*time.Duration(1<<attempt)); sleepErr != nil {
+		if sleepErr := timeutil.SleepContext(ctx, defaultRetryBackoff*time.Duration(1<<attempt)); sleepErr != nil {
 			return sleepErr
 		}
 	}
@@ -736,20 +728,6 @@ func isPositionFailure(err error) bool {
 	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "400") || strings.Contains(message, "position") || strings.Contains(message, "line_code") || strings.Contains(message, "invalid line")
-}
-
-func sleepContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 func BuildPosition(version db.MrVersion, finding db.ReviewFinding) Position {

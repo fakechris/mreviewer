@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -557,6 +558,30 @@ func TestRunProcessesMultipleRunsConcurrently(t *testing.T) {
 	}
 }
 
+func TestRunWorkerGroupCancelsSiblingWorkersOnFirstError(t *testing.T) {
+	processor := newErrorAndBlockProcessor(errors.New("boom"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runWorkerGroup(ctx, cancel, 2, processor.ProcessRun)
+	}()
+
+	processor.waitForBlockedStart(t)
+
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("runWorkerGroup error = %v, want boom", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runWorkerGroup did not return first worker error")
+	}
+
+	processor.waitForCancellation(t)
+}
+
 func TestRetryRecoveryWithoutDuplicateWork(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	instanceID := insertTestInstance(t, sqlDB)
@@ -903,6 +928,55 @@ type blockingProcessor struct {
 	releaseCh chan struct{}
 	err       error
 	once      sync.Once
+}
+
+type errorAndBlockProcessor struct {
+	mu              sync.Mutex
+	calls           int
+	err             error
+	blockingStarted chan struct{}
+	cancelled       chan struct{}
+}
+
+func newErrorAndBlockProcessor(err error) *errorAndBlockProcessor {
+	return &errorAndBlockProcessor{
+		err:             err,
+		blockingStarted: make(chan struct{}),
+		cancelled:       make(chan struct{}),
+	}
+}
+
+func (p *errorAndBlockProcessor) ProcessRun(ctx context.Context) error {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+	if call == 1 {
+		<-p.blockingStarted
+		return p.err
+	}
+	close(p.blockingStarted)
+	<-ctx.Done()
+	close(p.cancelled)
+	return nil
+}
+
+func (p *errorAndBlockProcessor) waitForBlockedStart(t *testing.T) {
+	t.Helper()
+	select {
+	case <-p.blockingStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocking worker did not start")
+	}
+}
+
+func (p *errorAndBlockProcessor) waitForCancellation(t *testing.T) {
+	t.Helper()
+	select {
+	case <-p.cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocking worker did not observe cancellation")
+	}
 }
 
 type concurrentTrackingProcessor struct {

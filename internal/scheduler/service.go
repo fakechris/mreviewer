@@ -14,6 +14,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/metrics"
+	"github.com/mreviewer/mreviewer/internal/timeutil"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
 
@@ -235,16 +236,21 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.processor == nil {
 		return fmt.Errorf("scheduler: processor is required")
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	go s.startReaper(ctx)
+	return runWorkerGroup(ctx, cancel, s.workerConcurrency, s.runWorkerLoop)
+}
 
-	errCh := make(chan error, s.workerConcurrency)
+func runWorkerGroup(ctx context.Context, cancel context.CancelFunc, workerCount int, worker func(context.Context) error) error {
+	errCh := make(chan error, workerCount)
 	var wg sync.WaitGroup
-	for i := 0; i < s.workerConcurrency; i++ {
+	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := s.runWorkerLoop(ctx); err != nil {
+			if err := worker(ctx); err != nil {
 				select {
 				case errCh <- err:
 				default:
@@ -264,6 +270,10 @@ func (s *Service) Run(ctx context.Context) error {
 		<-done
 		return nil
 	case err := <-errCh:
+		if cancel != nil {
+			cancel()
+		}
+		<-done
 		return err
 	case <-done:
 		return nil
@@ -285,7 +295,7 @@ func (s *Service) runWorkerLoop(ctx context.Context) error {
 		if processed > 0 {
 			continue
 		}
-		if err := sleepContext(ctx, s.pollInterval); err != nil {
+		if err := timeutil.SleepContext(ctx, s.pollInterval); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
@@ -331,7 +341,7 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
 			_ = tx.Rollback()
 			if errors.Is(err, sql.ErrNoRows) {
 				if attempt < defaultClaimRetryCount-1 {
-					if err := sleepContext(ctx, defaultClaimRetryWait); err != nil {
+					if err := timeutil.SleepContext(ctx, defaultClaimRetryWait); err != nil {
 						return nil, err
 					}
 					continue
@@ -777,20 +787,4 @@ func (s *Service) reloadRunningRun(ctx context.Context, runID int64) (db.ReviewR
 	}
 
 	return run, nil
-}
-
-func sleepContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }

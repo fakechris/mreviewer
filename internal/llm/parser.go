@@ -453,6 +453,9 @@ func buildReviewRepairPayload(request ctxpkg.ReviewRequest, invalidRaw string, v
 			"Call submit_review exactly once.",
 			"Do not change the semantic meaning unless required to satisfy schema validation.",
 			"Return tool input that strictly satisfies the required schema.",
+			"Preserve every valid field from the original tool input.",
+			"Fill every missing required field called out by validation_error.",
+			"Do not emit markdown fences or free-form prose.",
 		},
 		"original_request": request,
 		"invalid_tool_input": func() any {

@@ -3338,6 +3338,33 @@ func TestParseSummaryResultFallback(t *testing.T) {
 	})
 }
 
+func TestBuildReviewRepairPayloadIncludesExplicitRepairGuidance(t *testing.T) {
+	raw := buildReviewRepairPayload(
+		ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"},
+		`{"bad":true}`,
+		errors.New("$.findings[0].body_markdown is required"),
+	)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	instructions, ok := payload["instructions"].([]any)
+	if !ok {
+		t.Fatalf("instructions = %#v", payload["instructions"])
+	}
+	text := fmt.Sprint(instructions...)
+	for _, want := range []string{
+		"Call submit_review exactly once.",
+		"Preserve every valid field from the original tool input.",
+		"Fill every missing required field called out by validation_error.",
+		"Do not emit markdown fences or free-form prose.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions missing %q in %v", want, instructions)
+		}
+	}
+}
+
 func TestRenderSummaryFromWalkthrough(t *testing.T) {
 	t.Run("full summary", func(t *testing.T) {
 		summary := SummaryResult{
