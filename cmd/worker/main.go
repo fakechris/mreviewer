@@ -12,6 +12,8 @@ import (
 
 	"github.com/mreviewer/mreviewer/internal/config"
 	"github.com/mreviewer/mreviewer/internal/database"
+	"github.com/mreviewer/mreviewer/internal/db"
+	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/llm"
 	"github.com/mreviewer/mreviewer/internal/logging"
@@ -35,12 +37,12 @@ func run() int {
 		return 1
 	}
 
-	db, err := database.Open(cfg.MySQLDSN)
+	sqlDB, err := database.Open(cfg.MySQLDSN)
 	if err != nil {
 		logger.Error("failed to open database", "error", err)
 		return 1
 	}
-	defer db.Close()
+	defer sqlDB.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -92,8 +94,9 @@ func run() int {
 	// The processor uses the registry for policy-driven provider selection.
 	// At runtime, ProcessRun calls registry.ResolveWithFallback(effectivePolicy.ProviderRoute)
 	// to pick the provider for each run, instead of always using a static default.
-	processor := llm.NewProcessor(logger, db, gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(db)).WithRegistry(providerRegistry)
-	runtimeDeps := newRuntimeDepsWithWriteback(logger, db, processor, gitlabClient)
+	processor := llm.NewProcessor(logger, sqlDB, gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(sqlDB)).WithRegistry(providerRegistry)
+	statusPublisher := gate.NewGitLabStatusPublisher(gitlabClient, db.New(sqlDB))
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(logger, sqlDB, processor, gitlabClient, statusPublisher, gate.NoopCIGatePublisher{})
 	worker := runtimeDeps.Scheduler
 	logger.Info("worker starting", "platform_default_route", defaultRoute, "fallback_route", configuredFallbackRoute, "registry_routes", providerRegistry.Routes())
 	if err := worker.Run(ctx); err != nil {

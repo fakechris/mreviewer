@@ -48,7 +48,12 @@ func newRuntimeDepsWithWritebackAndGatePublishers(logger *slog.Logger, sqlDB *sq
 	}
 	processor = wrapProcessorWithWriteback(sqlDB, processor, runtimeWriter)
 	gateSvc := gate.NewService(status, ci, gate.NewDBAuditLogger(db.New(sqlDB)))
-	worker := scheduler.NewService(logger, sqlDB, processor, scheduler.WithMetrics(registry), scheduler.WithTracer(tracer), scheduler.WithGateService(gateSvc))
+	worker := scheduler.NewService(logger, sqlDB, processor,
+		scheduler.WithMetrics(registry),
+		scheduler.WithTracer(tracer),
+		scheduler.WithStatusPublisher(status),
+		scheduler.WithGateService(gateSvc),
+	)
 	return runtimeDeps{GateService: gateSvc, Metrics: registry, Tracer: tracer, Scheduler: worker}
 }
 

@@ -676,6 +676,13 @@ func mergeRequestPath(projectID, mergeRequestIID int64, suffix string) string {
 	return base + suffix
 }
 
+func projectCommitStatusPath(projectID int64, sha string) string {
+	return fmt.Sprintf("/api/v4/projects/%s/statuses/%s",
+		url.PathEscape(strconv.FormatInt(projectID, 10)),
+		url.PathEscape(strings.TrimSpace(sha)),
+	)
+}
+
 func (mr MergeRequest) diffRefsReady() bool {
 	return mr.DiffRefs != nil && mr.DiffRefs.BaseSHA != "" && mr.DiffRefs.HeadSHA != "" && mr.DiffRefs.StartSHA != ""
 }

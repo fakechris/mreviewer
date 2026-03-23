@@ -442,6 +442,54 @@ func TestGatePublishesUsingStructuredDiscussionResolution(t *testing.T) {
 	}
 }
 
+func TestSchedulerPublishesRunningAndTerminalStatuses(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-status")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{status: "pending", idempotencyKey: "status-run", headSHA: "sha-status"})
+	if _, err := sqlDB.Exec("INSERT INTO project_policies (project_id, confidence_threshold, severity_threshold, include_paths, exclude_paths, gate_mode, extra) VALUES (?, ?, ?, ?, ?, ?, ?)", projectID, 0.8, "medium", []byte("[]"), []byte("[]"), "external_status", []byte("{}")); err != nil {
+		t.Fatalf("insert project policy: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, anchor_fingerprint, semantic_fingerprint, state)
+		VALUES (?, ?, 'bug', 'high', 0.95, 'Blocking issue', 'body', 'src/main.go', 'new_line', 'anchor-status', 'semantic-status', 'active')`, runID, mrID); err != nil {
+		t.Fatalf("insert finding: %v", err)
+	}
+
+	status := &fakeStatusPublisher{}
+	ci := &fakeCIPublisher{}
+	processor := FuncProcessor(func(context.Context, db.ReviewRun) (ProcessOutcome, error) {
+		findings, err := db.New(sqlDB).ListFindingsByRun(ctx, runID)
+		if err != nil {
+			return ProcessOutcome{}, err
+		}
+		return ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
+	})
+	svc := NewService(testLogger(), sqlDB, processor,
+		WithWorkerID("worker-status"),
+		WithStatusPublisher(status),
+		WithGateService(gate.NewService(status, ci, gate.NewDBAuditLogger(db.New(sqlDB)))),
+	)
+
+	processed, err := svc.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(status.results) != 2 {
+		t.Fatalf("status publish count = %d, want 2", len(status.results))
+	}
+	if status.results[0].RunID != runID || status.results[0].State != "running" {
+		t.Fatalf("first status result = %+v, want running for run %d", status.results[0], runID)
+	}
+	if status.results[1].RunID != runID || status.results[1].State != "failed" {
+		t.Fatalf("second status result = %+v, want failed for run %d", status.results[1], runID)
+	}
+}
+
 type fakeStatusPublisher struct{ results []gate.Result }
 
 func (f *fakeStatusPublisher) PublishStatus(_ context.Context, result gate.Result) error {
