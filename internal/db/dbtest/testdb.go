@@ -7,9 +7,11 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/pressly/goose/v3"
@@ -21,6 +23,7 @@ type sharedMySQLState struct {
 	container *mysqlcontainer.MySQLContainer
 	adminDB   *sql.DB
 	adminDSN  string
+	source    string
 }
 
 var (
@@ -30,10 +33,14 @@ var (
 	sharedDBCounter uint64
 )
 
-// New reuses a shared MySQL 8.4 container within the current package test
-// process, creates an isolated database for the current test, and registers
-// cleanup to drop that database when the test finishes. Migrations are NOT
-// automatically applied; call MigrateUp to apply them.
+const adminDSNEnvVar = "MREVIEWER_TEST_ADMIN_DSN"
+
+// New reuses a shared MySQL 8.4 container for the lifetime of the current
+// package test process, creates an isolated database for the current test, and
+// registers cleanup to drop that database when the test finishes. The shared
+// container itself is intentionally left running until the package test process
+// exits so later tests can reuse it; Ryuk cleans it up when the process ends.
+// Migrations are NOT automatically applied; call MigrateUp to apply them.
 func New(t *testing.T) *sql.DB {
 	t.Helper()
 	if testing.Short() {
@@ -85,45 +92,21 @@ func acquireSharedState(t *testing.T, ctx context.Context) *sharedMySQLState {
 	sharedMu.Lock()
 	defer sharedMu.Unlock()
 
+	source, adminDSN := sharedStateSource()
+	if sharedState != nil && sharedState.source != source {
+		if sharedRefCount != 0 {
+			t.Fatalf("dbtest: shared mysql source changed from %q to %q while %d references are active", sharedState.source, source, sharedRefCount)
+		}
+		closeSharedState(t, sharedState)
+		sharedState = nil
+	}
+
 	if sharedState == nil {
-		ctr, err := mysqlcontainer.Run(ctx,
-			"mysql:8.4",
-			mysqlcontainer.WithDatabase("mysql"),
-			mysqlcontainer.WithUsername("root"),
-			mysqlcontainer.WithPassword("test"),
-		)
+		state, err := newSharedState(ctx, source, adminDSN)
 		if err != nil {
-			t.Fatalf("dbtest: start mysql container: %v", err)
+			t.Fatalf("dbtest: acquire shared mysql state: %v", err)
 		}
-
-		connStr, err := ctr.ConnectionString(ctx, "parseTime=true", "loc=UTC", "charset=utf8mb4", "collation=utf8mb4_unicode_ci", "multiStatements=true")
-		if err != nil {
-			if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-				t.Logf("dbtest: terminate mysql after connection string failure: %v", termErr)
-			}
-			t.Fatalf("dbtest: connection string: %v", err)
-		}
-
-		adminDB, err := sql.Open("mysql", connStr)
-		if err != nil {
-			if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-				t.Logf("dbtest: terminate mysql after open failure: %v", termErr)
-			}
-			t.Fatalf("dbtest: open admin db: %v", err)
-		}
-		if err := adminDB.Ping(); err != nil {
-			adminDB.Close()
-			if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-				t.Logf("dbtest: terminate mysql after ping failure: %v", termErr)
-			}
-			t.Fatalf("dbtest: ping admin db: %v", err)
-		}
-
-		sharedState = &sharedMySQLState{
-			container: ctr,
-			adminDB:   adminDB,
-			adminDSN:  connStr,
-		}
+		sharedState = state
 	}
 
 	sharedRefCount++
@@ -143,22 +126,79 @@ func releaseSharedState(t *testing.T, ctx context.Context) {
 	if sharedRefCount != 0 {
 		return
 	}
+}
 
-	state := sharedState
-	sharedState = nil
+func sharedStateSource() (string, string) {
+	if dsn := strings.TrimSpace(os.Getenv(adminDSNEnvVar)); dsn != "" {
+		return "external:" + dsn, dsn
+	}
+	return "container:mysql:8.4", ""
+}
+
+func newSharedState(ctx context.Context, source string, adminDSN string) (*sharedMySQLState, error) {
+	if strings.HasPrefix(source, "external:") {
+		adminDB, err := openAdminDBWithRetry(ctx, adminDSN)
+		if err != nil {
+			return nil, fmt.Errorf("ping external admin db: %w", err)
+		}
+		return &sharedMySQLState{
+			adminDB:  adminDB,
+			adminDSN: adminDSN,
+			source:   source,
+		}, nil
+	}
+
+	ctr, err := mysqlcontainer.Run(ctx,
+		"mysql:8.4",
+		mysqlcontainer.WithDatabase("mysql"),
+		mysqlcontainer.WithUsername("root"),
+		mysqlcontainer.WithPassword("test"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("start mysql container: %w", err)
+	}
+
+	connStr, err := ctr.ConnectionString(ctx, "parseTime=true", "loc=UTC", "charset=utf8mb4", "collation=utf8mb4_unicode_ci", "multiStatements=true")
+	if err != nil {
+		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
+			return nil, fmt.Errorf("connection string: %w (terminate mysql: %v)", err, termErr)
+		}
+		return nil, fmt.Errorf("connection string: %w", err)
+	}
+
+	adminDB, err := openAdminDBWithRetry(ctx, connStr)
+	if err != nil {
+		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
+			return nil, fmt.Errorf("ping admin db: %w (terminate mysql: %v)", err, termErr)
+		}
+		return nil, fmt.Errorf("ping admin db: %w", err)
+	}
+
+	return &sharedMySQLState{
+		container: ctr,
+		adminDB:   adminDB,
+		adminDSN:  connStr,
+		source:    source,
+	}, nil
+}
+
+func closeSharedState(t *testing.T, state *sharedMySQLState) {
+	t.Helper()
 	if state == nil {
 		return
 	}
 	if err := state.adminDB.Close(); err != nil {
 		t.Logf("dbtest: close admin db: %v", err)
 	}
-	if err := testcontainers.TerminateContainer(state.container); err != nil {
-		t.Logf("dbtest: terminate shared mysql container: %v", err)
+	if state.container != nil {
+		if err := testcontainers.TerminateContainer(state.container); err != nil {
+			t.Logf("dbtest: terminate shared mysql container: %v", err)
+		}
 	}
 }
 
 func nextDatabaseName() string {
-	return fmt.Sprintf("mreviewer_test_%d", atomic.AddUint64(&sharedDBCounter, 1))
+	return fmt.Sprintf("mreviewer_test_%d_%d", os.Getpid(), atomic.AddUint64(&sharedDBCounter, 1))
 }
 
 func createDatabase(adminDB *sql.DB, dbName string) error {
@@ -189,6 +229,28 @@ func databaseConnectionString(adminDSN, dbName string) (string, error) {
 	cfg.Params["charset"] = "utf8mb4"
 	cfg.Params["collation"] = "utf8mb4_unicode_ci"
 	return cfg.FormatDSN(), nil
+}
+
+func openAdminDBWithRetry(ctx context.Context, dsn string) (*sql.DB, error) {
+	var lastErr error
+	for attempt := 0; attempt < 20; attempt++ {
+		adminDB, err := sql.Open("mysql", dsn)
+		if err != nil {
+			lastErr = err
+		} else if err := adminDB.PingContext(ctx); err == nil {
+			return adminDB, nil
+		} else {
+			lastErr = err
+			_ = adminDB.Close()
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return nil, lastErr
 }
 
 // MigrateUp runs all Goose migrations from the given directory against db.

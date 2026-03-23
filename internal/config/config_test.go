@@ -232,3 +232,114 @@ func TestConfigMiniMaxEnvFallback(t *testing.T) {
 		t.Errorf("AnthropicModel = %q, want MiniMax fallback model", cfg.AnthropicModel)
 	}
 }
+
+func TestConfigMiniMaxEnvOverridesYAMLDefaultsWhenAnthropicEnvUnset(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "config.yaml")
+	content := `anthropic_base_url: "https://yaml-anthropic"
+anthropic_api_key: ""
+anthropic_model: "MiniMax-M2.5"
+`
+	if err := os.WriteFile(yamlPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	for _, envVar := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL"} {
+		if err := os.Unsetenv(envVar); err != nil {
+			t.Fatalf("Unsetenv(%s): %v", envVar, err)
+		}
+	}
+	t.Setenv("MINIMAX_API_KEY", "minimax-secret")
+	t.Setenv("MINIMAX_BASE_URL", "https://api.minimaxi.com/anthropic")
+	t.Setenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
+
+	cfg, err := Load(yamlPath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.AnthropicBaseURL != "https://api.minimaxi.com/anthropic" {
+		t.Errorf("AnthropicBaseURL = %q, want MiniMax env override", cfg.AnthropicBaseURL)
+	}
+	if cfg.AnthropicAPIKey != "minimax-secret" {
+		t.Errorf("AnthropicAPIKey = %q, want minimax-secret", cfg.AnthropicAPIKey)
+	}
+	if cfg.AnthropicModel != "MiniMax-M2.7-highspeed" {
+		t.Errorf("AnthropicModel = %q, want MiniMax env override model", cfg.AnthropicModel)
+	}
+}
+
+func TestConfigParsesLLMRoutesFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "config.yaml")
+	content := `llm:
+  default_route: minimax
+  fallback_route: openai
+  routes:
+    minimax:
+      provider: anthropic_compatible
+      base_url: https://api.minimaxi.com/anthropic
+      api_key: minimax-key
+      model: MiniMax-M2.7
+      output_mode: tool_call
+      temperature: 0.2
+    openai:
+      provider: openai
+      base_url: https://api.openai.com/v1
+      api_key: openai-key
+      model: gpt-4.1-mini
+      output_mode: tool_call
+      temperature: 0.2
+`
+	if err := os.WriteFile(yamlPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing yaml: %v", err)
+	}
+
+	cfg, err := Load(yamlPath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.LLM.DefaultRoute != "minimax" {
+		t.Fatalf("LLM.DefaultRoute = %q, want minimax", cfg.LLM.DefaultRoute)
+	}
+	if cfg.LLM.FallbackRoute != "openai" {
+		t.Fatalf("LLM.FallbackRoute = %q, want openai", cfg.LLM.FallbackRoute)
+	}
+	if len(cfg.LLM.Routes) != 2 {
+		t.Fatalf("LLM.Routes = %d, want 2", len(cfg.LLM.Routes))
+	}
+	if cfg.LLM.Routes["minimax"].Provider != "anthropic_compatible" {
+		t.Fatalf("minimax provider = %q, want anthropic_compatible", cfg.LLM.Routes["minimax"].Provider)
+	}
+	if cfg.LLM.Routes["openai"].Provider != "openai" {
+		t.Fatalf("openai provider = %q, want openai", cfg.LLM.Routes["openai"].Provider)
+	}
+}
+
+func TestConfigEnvOverridesLLMRoutePointers(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "config.yaml")
+	content := `llm:
+  default_route: minimax
+  fallback_route: openai
+`
+	if err := os.WriteFile(yamlPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing yaml: %v", err)
+	}
+
+	t.Setenv("LLM_DEFAULT_ROUTE", "anthropic")
+	t.Setenv("LLM_FALLBACK_ROUTE", "minimax")
+
+	cfg, err := Load(yamlPath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.LLM.DefaultRoute != "anthropic" {
+		t.Fatalf("LLM.DefaultRoute = %q, want anthropic", cfg.LLM.DefaultRoute)
+	}
+	if cfg.LLM.FallbackRoute != "minimax" {
+		t.Fatalf("LLM.FallbackRoute = %q, want minimax", cfg.LLM.FallbackRoute)
+	}
+}

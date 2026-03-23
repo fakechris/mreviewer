@@ -190,6 +190,7 @@ type ReviewFinding struct {
 }
 
 type ProviderConfig struct {
+	Kind           string
 	BaseURL        string
 	APIKey         string
 	Model          string
@@ -579,9 +580,6 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist findings: %w", err))
 	}
 	endDedupe()
-	if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
-		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: update run status: %w", err))
-	}
 	if response.Result.Status == parserErrorCode {
 		if err := persistSummaryNoteFallback(ctx, p.queries, run, response.Result); err != nil {
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist parser-error summary note fallback: %w", err))
@@ -591,13 +589,29 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load persisted findings for outcome: %w", err))
 	}
+	finalStatus := canonicalRunStatus(response.Result.Status, len(findingsForOutcome))
+	response.Result.Status = finalStatus
+	if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: finalStatus, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
+		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: update run status: %w", err))
+	}
 	if p.auditLogger != nil {
-		_ = p.auditLogger.LogRunLifecycle(ctx, run, "run_completed", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "status": response.Result.Status})
+		_ = p.auditLogger.LogRunLifecycle(ctx, run, "run_completed", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "status": finalStatus})
 	}
 
 	logger := logging.FromContext(ctx, p.logger)
 	logger.InfoContext(ctx, "provider review completed", "run_id", run.ID, "project_id", project.GitlabProjectID, "merge_request_iid", mergeRequest.MrIid, "provider_model", response.Model, "provider_latency_ms", response.Latency.Milliseconds(), "provider_tokens_total", response.Tokens, "gitlab_instance_url", redactURL(instance.Url), "request", redactPayload(payload), "response", redactPayload(response.ResponsePayload))
-	return scheduler.ProcessOutcome{Status: response.Result.Status, ProviderLatencyMs: response.Latency.Milliseconds(), ProviderTokensTotal: response.Tokens, ReviewFindings: findingsForOutcome}, nil
+	return scheduler.ProcessOutcome{Status: finalStatus, ProviderLatencyMs: response.Latency.Milliseconds(), ProviderTokensTotal: response.Tokens, ReviewFindings: findingsForOutcome}, nil
+}
+
+func canonicalRunStatus(modelStatus string, findingCount int) string {
+	status := strings.ToLower(strings.TrimSpace(modelStatus))
+	if status == parserErrorCode {
+		return parserErrorCode
+	}
+	if findingCount > 0 {
+		return "requested_changes"
+	}
+	return "completed"
 }
 
 func (p *Processor) recordProviderMetrics(response ProviderResponse) {
@@ -641,7 +655,15 @@ func (p *MiniMaxProvider) RequestPayload(request ctxpkg.ReviewRequest) map[strin
 }
 
 func (p *MiniMaxProvider) RequestPayloadWithSystemPrompt(request ctxpkg.ReviewRequest, systemPrompt string) map[string]any {
-	return map[string]any{"model": p.model, "max_tokens": p.maxTokens, "temperature": p.temperature, "system": systemPrompt, "messages": []map[string]any{{"role": "user", "content": mustJSON(request)}}}
+	return map[string]any{
+		"model":       p.model,
+		"max_tokens":  p.maxTokens,
+		"temperature": p.temperature,
+		"system":      systemPrompt,
+		"messages":    []map[string]any{{"role": "user", "content": mustJSON(request)}},
+		"tools":       []map[string]any{reviewToolPayload()},
+		"tool_choice": map[string]any{"type": "tool", "name": reviewSubmitToolName},
+	}
 }
 
 func (p *MiniMaxProvider) Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
@@ -660,8 +682,7 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 		maxAttempts = 1
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		started := p.now()
-		message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{Model: anthropic.Model(p.model), MaxTokens: p.maxTokens, Temperature: anthropic.Float(p.temperature), System: []anthropic.TextBlockParam{{Text: systemPrompt}}, Messages: []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(mustJSON(request)))}})
+		raw, tokens, latency, err := p.callReviewTool(ctx, systemPrompt, mustJSON(request))
 		if err != nil {
 			lastErr = err
 			if !isTimeoutError(err) || attempt == maxAttempts-1 {
@@ -672,20 +693,103 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 			}
 			continue
 		}
-		text := collectMessageText(message)
-		result, stage, parseErr := ParseReviewResult(text)
+		stage := "direct"
+		if validationErr := validateReviewResultStrictJSON(raw); validationErr != nil {
+			repairedRaw, repairTokens, repairLatency, repairErr := p.callReviewTool(
+				ctx,
+				systemPrompt,
+				buildReviewRepairPayload(request, raw, validationErr),
+			)
+			latency += repairLatency
+			tokens += repairTokens
+			if repairErr != nil {
+				return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
+					cause:       repairErr,
+					rawResponse: raw,
+					latency:     latency,
+					tokens:      tokens,
+					model:       p.routeName,
+				})
+			}
+			if repairValidationErr := validateReviewResultStrictJSON(repairedRaw); repairValidationErr != nil {
+				return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
+					cause:       fmt.Errorf("llm: strict validation failed after repair: %w", repairValidationErr),
+					rawResponse: repairedRaw,
+					latency:     latency,
+					tokens:      tokens,
+					model:       p.routeName,
+				})
+			}
+			raw = repairedRaw
+			stage = "repair_retry"
+		}
+		result, parseStage, parseErr := ParseReviewResult(raw)
 		if parseErr != nil {
 			return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
 				cause:       parseErr,
-				rawResponse: text,
-				latency:     p.now().Sub(started),
-				tokens:      int64(message.Usage.OutputTokens),
+				rawResponse: raw,
+				latency:     latency,
+				tokens:      tokens,
 				model:       p.routeName,
 			})
 		}
-		return ProviderResponse{Result: result, RawText: text, Latency: p.now().Sub(started), Tokens: int64(message.Usage.OutputTokens), FallbackStage: stage, Model: p.routeName, ResponsePayload: map[string]any{"text": text, "fallback_stage": stage}}, nil
+		if stage == "direct" {
+			stage = parseStage
+		}
+		return ProviderResponse{Result: result, RawText: raw, Latency: latency, Tokens: tokens, FallbackStage: stage, Model: p.routeName, ResponsePayload: map[string]any{"text": raw, "fallback_stage": stage}}, nil
 	}
 	return ProviderResponse{}, lastErr
+}
+
+func (p *MiniMaxProvider) callReviewTool(ctx context.Context, systemPrompt string, userContent string) (string, int64, time.Duration, error) {
+	started := p.now()
+	message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:       anthropic.Model(p.model),
+		MaxTokens:   p.maxTokens,
+		Temperature: anthropic.Float(p.temperature),
+		System:      []anthropic.TextBlockParam{{Text: systemPrompt}},
+		Messages:    []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(userContent))},
+		Tools:       []anthropic.ToolUnionParam{reviewToolParam()},
+		ToolChoice:  anthropic.ToolChoiceParamOfTool(reviewSubmitToolName),
+	})
+	if err != nil {
+		return "", 0, p.now().Sub(started), err
+	}
+	text, err := collectToolUseInput(message, reviewSubmitToolName)
+	if err != nil {
+		return "", int64(message.Usage.OutputTokens), p.now().Sub(started), err
+	}
+	return text, int64(message.Usage.OutputTokens), p.now().Sub(started), nil
+}
+
+const reviewSubmitToolName = "submit_review"
+
+func reviewToolParam() anthropic.ToolUnionParam {
+	schema := reviewResultSchema()
+	properties, _ := schema["properties"]
+	required, _ := schema["required"].([]string)
+	var tool anthropic.ToolParam
+	tool.Name = reviewSubmitToolName
+	tool.Description = anthropic.String("Emit the final merge request review result as structured JSON.")
+	tool.Strict = anthropic.Bool(true)
+	tool.InputSchema = anthropic.ToolInputSchemaParam{
+		Properties: properties,
+		Required:   required,
+		ExtraFields: map[string]any{
+			"additionalProperties": false,
+		},
+	}
+	return anthropic.ToolUnionParam{OfTool: &tool}
+}
+
+func reviewToolPayload() map[string]any {
+	schema := reviewResultSchema()
+	return map[string]any{
+		"name":         reviewSubmitToolName,
+		"description":  "Emit the final merge request review result as structured JSON.",
+		"strict":       true,
+		"input_schema": schema,
+	}
 }
 
 func NewFallbackProvider(logger *slog.Logger, primary Provider, primaryRoute string, secondary Provider, secondaryRoute string) *FallbackProvider {
@@ -1243,10 +1347,18 @@ const (
 
 var validFindingTransitions = map[string]map[string]struct{}{
 	findingStateNew: {
-		findingStatePosted: {},
+		findingStatePosted:     {},
+		findingStateFixed:      {},
+		findingStateSuperseded: {},
+		findingStateStale:      {},
+		findingStateIgnored:    {},
 	},
 	findingStatePosted: {
-		findingStateActive: {},
+		findingStateActive:     {},
+		findingStateFixed:      {},
+		findingStateSuperseded: {},
+		findingStateStale:      {},
+		findingStateIgnored:    {},
 	},
 	findingStateActive: {
 		findingStateFixed:      {},
@@ -1942,6 +2054,144 @@ func collectMessageText(message *anthropic.Message) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func collectToolUseInput(message *anthropic.Message, toolName string) (string, error) {
+	if message == nil {
+		return "", fmt.Errorf("llm: missing tool_use block %q", toolName)
+	}
+	for _, block := range message.Content {
+		if tb, ok := block.AsAny().(anthropic.ToolUseBlock); ok {
+			if strings.TrimSpace(tb.Name) != strings.TrimSpace(toolName) {
+				continue
+			}
+			return strings.TrimSpace(string(tb.Input)), nil
+		}
+	}
+	return "", fmt.Errorf("llm: missing tool_use block %q", toolName)
+}
+
+func buildReviewRepairPayload(request ctxpkg.ReviewRequest, invalidRaw string, validationErr error) string {
+	payload := map[string]any{
+		"task": "repair_review_output",
+		"instructions": []string{
+			"Call submit_review exactly once.",
+			"Do not change the semantic meaning unless required to satisfy schema validation.",
+			"Return tool input that strictly satisfies the required schema.",
+		},
+		"original_request": request,
+		"invalid_tool_input": func() any {
+			var parsed any
+			if err := json.Unmarshal([]byte(invalidRaw), &parsed); err != nil {
+				return invalidRaw
+			}
+			return parsed
+		}(),
+		"validation_error": validationErr.Error(),
+	}
+	return mustJSON(payload)
+}
+
+func validateReviewResultStrictJSON(raw string) error {
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return fmt.Errorf("llm: strict validation decode failed: %w", err)
+	}
+	if decoder.More() {
+		return fmt.Errorf("llm: strict validation found trailing JSON content")
+	}
+	errs := validateValueAgainstSchema(value, reviewResultSchema(), "$")
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("llm: strict validation failed: %s", strings.Join(errs, "; "))
+}
+
+func validateValueAgainstSchema(value any, schema map[string]any, path string) []string {
+	typ, _ := schema["type"].(string)
+	switch typ {
+	case "object":
+		obj, ok := value.(map[string]any)
+		if !ok {
+			return []string{fmt.Sprintf("%s must be object", path)}
+		}
+		props, _ := schema["properties"].(map[string]any)
+		required := anyToStringSlice(schema["required"])
+		var errs []string
+		if additional, ok := schema["additionalProperties"].(bool); ok && !additional {
+			for key := range obj {
+				if _, allowed := props[key]; !allowed {
+					errs = append(errs, fmt.Sprintf("%s.%s is not allowed", path, key))
+				}
+			}
+		}
+		for _, key := range required {
+			if _, ok := obj[key]; !ok {
+				errs = append(errs, fmt.Sprintf("%s.%s is required", path, key))
+			}
+		}
+		for key, propValue := range obj {
+			propSchema, ok := props[key].(map[string]any)
+			if !ok {
+				continue
+			}
+			errs = append(errs, validateValueAgainstSchema(propValue, propSchema, path+"."+key)...)
+		}
+		return errs
+	case "array":
+		arr, ok := value.([]any)
+		if !ok {
+			return []string{fmt.Sprintf("%s must be array", path)}
+		}
+		itemSchema, _ := schema["items"].(map[string]any)
+		var errs []string
+		for i, item := range arr {
+			errs = append(errs, validateValueAgainstSchema(item, itemSchema, fmt.Sprintf("%s[%d]", path, i))...)
+		}
+		return errs
+	case "string":
+		if _, ok := value.(string); !ok {
+			return []string{fmt.Sprintf("%s must be string", path)}
+		}
+	case "number":
+		switch value.(type) {
+		case json.Number, float64, float32, int, int32, int64:
+			return nil
+		default:
+			return []string{fmt.Sprintf("%s must be number", path)}
+		}
+	case "integer":
+		switch value.(type) {
+		case json.Number, float64, float32, int, int32, int64:
+			return nil
+		default:
+			return []string{fmt.Sprintf("%s must be integer", path)}
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return []string{fmt.Sprintf("%s must be boolean", path)}
+		}
+	}
+	return nil
+}
+
+func anyToStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func truncateText(value string, limit int) string {

@@ -511,6 +511,64 @@ func TestWorkerRuntimeAllowsProcessorManagedParserErrorStatus(t *testing.T) {
 	}
 }
 
+func TestWorkerRuntimeAllowsProcessorManagedRequestedChangesStatus(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-processor-requested-changes")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-processor-requested-changes", "sha-processor-requested-changes")
+	if _, err := sqlDB.Exec(`INSERT INTO mr_versions (merge_request_id, gitlab_version_id, base_sha, start_sha, head_sha, patch_id_sha)
+		VALUES (?, ?, ?, ?, ?, ?)`, mrID, 1, "base-sha", "start-sha", "sha-processor-requested-changes", "patch-sha"); err != nil {
+		t.Fatalf("insert mr version: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, new_line, anchor_snippet, anchor_fingerprint, semantic_fingerprint, state)
+		VALUES (?, ?, 'bug', 'high', 0.95, 'Processor-managed requested changes', 'body', 'src/main.go', 'new_line', 42, 'snippet', 'anchor-processor-requested-changes', 'semantic-processor-requested-changes', 'active')`, runID, mrID); err != nil {
+		t.Fatalf("insert finding: %v", err)
+	}
+
+	client := &fakeDiscussionClient{}
+	queries := db.New(sqlDB)
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		findings, err := queries.ListFindingsByRun(ctx, runID)
+		if err != nil {
+			return scheduler.ProcessOutcome{}, err
+		}
+		if err := queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{ID: runID, Status: "requested_changes"}); err != nil {
+			return scheduler.ProcessOutcome{}, err
+		}
+		return scheduler.ProcessOutcome{Status: "requested_changes", ProviderLatencyMs: 37, ProviderTokensTotal: 640, ReviewFindings: findings}, nil
+	})
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, client, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
+
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(client.discussions) != 1 {
+		t.Fatalf("discussion requests = %d, want 1", len(client.discussions))
+	}
+	if len(client.notes) != 1 {
+		t.Fatalf("note requests = %d, want 1 summary note", len(client.notes))
+	}
+	run, err := queries.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "requested_changes" {
+		t.Fatalf("run status = %q, want requested_changes", run.Status)
+	}
+	if run.ProviderLatencyMs != 37 {
+		t.Fatalf("provider_latency_ms = %d, want 37", run.ProviderLatencyMs)
+	}
+	if run.ProviderTokensTotal != 640 {
+		t.Fatalf("provider_tokens_total = %d, want 640", run.ProviderTokensTotal)
+	}
+}
+
 func TestWorkerRuntimeAllowsWriterManagedFailedStatus(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := setupTestDB(t)
