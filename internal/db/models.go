@@ -168,6 +168,12 @@ type ReviewFinding struct {
 	AnchorKind          string         `json:"anchor_kind"`
 	OldLine             sql.NullInt32  `json:"old_line"`
 	NewLine             sql.NullInt32  `json:"new_line"`
+	RangeStartKind      sql.NullString `json:"range_start_kind"`
+	RangeStartOldLine   sql.NullInt32  `json:"range_start_old_line"`
+	RangeStartNewLine   sql.NullInt32  `json:"range_start_new_line"`
+	RangeEndKind        sql.NullString `json:"range_end_kind"`
+	RangeEndOldLine     sql.NullInt32  `json:"range_end_old_line"`
+	RangeEndNewLine     sql.NullInt32  `json:"range_end_new_line"`
 	AnchorSnippet       sql.NullString `json:"anchor_snippet"`
 	Evidence            sql.NullString `json:"evidence"`
 	SuggestedPatch      sql.NullString `json:"suggested_patch"`

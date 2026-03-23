@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mreviewer/mreviewer/internal/timeutil"
 )
 
 const (
@@ -168,7 +170,7 @@ func NewClient(baseURL, token string, opts ...Option) (*Client, error) {
 		baseURL:                strings.TrimRight(parsed.String(), "/"),
 		token:                  token,
 		httpClient:             &http.Client{Timeout: defaultHTTPTimeout},
-		sleep:                  sleepContext,
+		sleep:                  timeutil.SleepContext,
 		now:                    time.Now,
 		diffNotReadyMaxRetries: defaultDiffNotReadyRetries,
 		diffNotReadyDelay:      cappedExponentialDelay(defaultDiffNotReadyBaseDelay, defaultRateLimitMaxDelay),
@@ -187,7 +189,7 @@ func NewClient(baseURL, token string, opts ...Option) (*Client, error) {
 		client.httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	if client.sleep == nil {
-		client.sleep = sleepContext
+		client.sleep = timeutil.SleepContext
 	}
 	if client.now == nil {
 		client.now = time.Now
@@ -583,7 +585,7 @@ func NewInMemoryRateLimiter(defaultCfg RateLimitConfig, now func() time.Time, sl
 		now = time.Now
 	}
 	if sleep == nil {
-		sleep = sleepContext
+		sleep = timeutil.SleepContext
 	}
 	return &InMemoryRateLimiter{now: now, sleep: sleep, limits: make(map[string]RateLimitConfig), states: make(map[string]rateLimitState), defaultCfg: defaultCfg}
 }
@@ -751,20 +753,4 @@ func readBodyPreview(body io.Reader) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
-}
-
-func sleepContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }

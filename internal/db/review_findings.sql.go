@@ -11,7 +11,7 @@ import (
 )
 
 const getFindingByMRAndDiscussionID = `-- name: GetFindingByMRAndDiscussionID :one
-SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
 WHERE merge_request_id = ? AND gitlab_discussion_id = ?
 LIMIT 1
 `
@@ -37,6 +37,12 @@ func (q *Queries) GetFindingByMRAndDiscussionID(ctx context.Context, arg GetFind
 		&i.AnchorKind,
 		&i.OldLine,
 		&i.NewLine,
+		&i.RangeStartKind,
+		&i.RangeStartOldLine,
+		&i.RangeStartNewLine,
+		&i.RangeEndKind,
+		&i.RangeEndOldLine,
+		&i.RangeEndNewLine,
 		&i.AnchorSnippet,
 		&i.Evidence,
 		&i.SuggestedPatch,
@@ -55,7 +61,7 @@ func (q *Queries) GetFindingByMRAndDiscussionID(ctx context.Context, arg GetFind
 }
 
 const getReviewFinding = `-- name: GetReviewFinding :one
-SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings WHERE id = ? LIMIT 1
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetReviewFinding(ctx context.Context, id int64) (ReviewFinding, error) {
@@ -74,6 +80,12 @@ func (q *Queries) GetReviewFinding(ctx context.Context, id int64) (ReviewFinding
 		&i.AnchorKind,
 		&i.OldLine,
 		&i.NewLine,
+		&i.RangeStartKind,
+		&i.RangeStartOldLine,
+		&i.RangeStartNewLine,
+		&i.RangeEndKind,
+		&i.RangeEndOldLine,
+		&i.RangeEndNewLine,
 		&i.AnchorSnippet,
 		&i.Evidence,
 		&i.SuggestedPatch,
@@ -95,9 +107,11 @@ const insertReviewFinding = `-- name: InsertReviewFinding :execresult
 INSERT INTO review_findings (
     review_run_id, merge_request_id, category, severity, confidence,
     title, body_markdown, path, anchor_kind, old_line, new_line,
+    range_start_kind, range_start_old_line, range_start_new_line,
+    range_end_kind, range_end_old_line, range_end_new_line,
     anchor_snippet, evidence, suggested_patch, canonical_key,
     anchor_fingerprint, semantic_fingerprint, state
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertReviewFindingParams struct {
@@ -112,6 +126,12 @@ type InsertReviewFindingParams struct {
 	AnchorKind          string         `json:"anchor_kind"`
 	OldLine             sql.NullInt32  `json:"old_line"`
 	NewLine             sql.NullInt32  `json:"new_line"`
+	RangeStartKind      sql.NullString `json:"range_start_kind"`
+	RangeStartOldLine   sql.NullInt32  `json:"range_start_old_line"`
+	RangeStartNewLine   sql.NullInt32  `json:"range_start_new_line"`
+	RangeEndKind        sql.NullString `json:"range_end_kind"`
+	RangeEndOldLine     sql.NullInt32  `json:"range_end_old_line"`
+	RangeEndNewLine     sql.NullInt32  `json:"range_end_new_line"`
 	AnchorSnippet       sql.NullString `json:"anchor_snippet"`
 	Evidence            sql.NullString `json:"evidence"`
 	SuggestedPatch      sql.NullString `json:"suggested_patch"`
@@ -134,6 +154,12 @@ func (q *Queries) InsertReviewFinding(ctx context.Context, arg InsertReviewFindi
 		arg.AnchorKind,
 		arg.OldLine,
 		arg.NewLine,
+		arg.RangeStartKind,
+		arg.RangeStartOldLine,
+		arg.RangeStartNewLine,
+		arg.RangeEndKind,
+		arg.RangeEndOldLine,
+		arg.RangeEndNewLine,
 		arg.AnchorSnippet,
 		arg.Evidence,
 		arg.SuggestedPatch,
@@ -145,7 +171,7 @@ func (q *Queries) InsertReviewFinding(ctx context.Context, arg InsertReviewFindi
 }
 
 const listActiveFindingsByMR = `-- name: ListActiveFindingsByMR :many
-SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
 WHERE merge_request_id = ? AND state IN ('new', 'posted', 'active')
 ORDER BY created_at ASC
 `
@@ -172,6 +198,12 @@ func (q *Queries) ListActiveFindingsByMR(ctx context.Context, mergeRequestID int
 			&i.AnchorKind,
 			&i.OldLine,
 			&i.NewLine,
+			&i.RangeStartKind,
+			&i.RangeStartOldLine,
+			&i.RangeStartNewLine,
+			&i.RangeEndKind,
+			&i.RangeEndOldLine,
+			&i.RangeEndNewLine,
 			&i.AnchorSnippet,
 			&i.Evidence,
 			&i.SuggestedPatch,
@@ -200,7 +232,7 @@ func (q *Queries) ListActiveFindingsByMR(ctx context.Context, mergeRequestID int
 }
 
 const listFindingsByRun = `-- name: ListFindingsByRun :many
-SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
 WHERE review_run_id = ?
 ORDER BY created_at ASC
 `
@@ -227,6 +259,12 @@ func (q *Queries) ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]R
 			&i.AnchorKind,
 			&i.OldLine,
 			&i.NewLine,
+			&i.RangeStartKind,
+			&i.RangeStartOldLine,
+			&i.RangeStartNewLine,
+			&i.RangeEndKind,
+			&i.RangeEndOldLine,
+			&i.RangeEndNewLine,
 			&i.AnchorSnippet,
 			&i.Evidence,
 			&i.SuggestedPatch,
@@ -292,6 +330,12 @@ SET path = ?,
     anchor_kind = ?,
     old_line = ?,
     new_line = ?,
+    range_start_kind = ?,
+    range_start_old_line = ?,
+    range_start_new_line = ?,
+    range_end_kind = ?,
+    range_end_old_line = ?,
+    range_end_new_line = ?,
     anchor_snippet = ?,
     anchor_fingerprint = ?,
     semantic_fingerprint = ?,
@@ -305,6 +349,12 @@ type UpdateFindingRelocationParams struct {
 	AnchorKind          string         `json:"anchor_kind"`
 	OldLine             sql.NullInt32  `json:"old_line"`
 	NewLine             sql.NullInt32  `json:"new_line"`
+	RangeStartKind      sql.NullString `json:"range_start_kind"`
+	RangeStartOldLine   sql.NullInt32  `json:"range_start_old_line"`
+	RangeStartNewLine   sql.NullInt32  `json:"range_start_new_line"`
+	RangeEndKind        sql.NullString `json:"range_end_kind"`
+	RangeEndOldLine     sql.NullInt32  `json:"range_end_old_line"`
+	RangeEndNewLine     sql.NullInt32  `json:"range_end_new_line"`
 	AnchorSnippet       sql.NullString `json:"anchor_snippet"`
 	AnchorFingerprint   string         `json:"anchor_fingerprint"`
 	SemanticFingerprint string         `json:"semantic_fingerprint"`
@@ -318,6 +368,12 @@ func (q *Queries) UpdateFindingRelocation(ctx context.Context, arg UpdateFinding
 		arg.AnchorKind,
 		arg.OldLine,
 		arg.NewLine,
+		arg.RangeStartKind,
+		arg.RangeStartOldLine,
+		arg.RangeStartNewLine,
+		arg.RangeEndKind,
+		arg.RangeEndOldLine,
+		arg.RangeEndNewLine,
 		arg.AnchorSnippet,
 		arg.AnchorFingerprint,
 		arg.SemanticFingerprint,

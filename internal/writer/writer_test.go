@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -135,6 +136,33 @@ func TestRangeCommentPayloadContextRange(t *testing.T) {
 	}
 }
 
+func TestRangeCommentPayloadUsesStructuredRangeFields(t *testing.T) {
+	position := BuildPosition(db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}, db.ReviewFinding{
+		Path:              "pkg/file.go",
+		AnchorKind:        "range",
+		OldLine:           sql.NullInt32{Int32: 10, Valid: true},
+		NewLine:           sql.NullInt32{Int32: 14, Valid: true},
+		Evidence:          sql.NullString{String: "old->new", Valid: true},
+		RangeStartKind:    sql.NullString{String: "context", Valid: true},
+		RangeStartOldLine: sql.NullInt32{Int32: 10, Valid: true},
+		RangeStartNewLine: sql.NullInt32{Int32: 14, Valid: true},
+		RangeEndKind:      sql.NullString{String: "new", Valid: true},
+		RangeEndNewLine:   sql.NullInt32{Int32: 18, Valid: true},
+	})
+	if position.LineRange == nil {
+		t.Fatal("expected structured line_range to be populated")
+	}
+	if position.LineRange.Start.LineType != "context" {
+		t.Fatalf("start line type = %q, want context", position.LineRange.Start.LineType)
+	}
+	if position.LineRange.End.LineType != "new" {
+		t.Fatalf("end line type = %q, want new", position.LineRange.End.LineType)
+	}
+	if position.LineRange.End.NewLine == nil || *position.LineRange.End.NewLine != 18 {
+		t.Fatalf("end new line = %+v, want 18", position.LineRange.End.NewLine)
+	}
+}
+
 func TestSameLineSeparateDiscussions(t *testing.T) {
 	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}}
 	client := &fakeDiscussionClient{}
@@ -155,6 +183,31 @@ func TestSameLineSeparateDiscussions(t *testing.T) {
 	}
 	if len(store.insertedDiscussions) != 2 {
 		t.Fatalf("stored discussions = %d, want 2", len(store.insertedDiscussions))
+	}
+}
+
+func TestWriteProcessesFindingsConcurrently(t *testing.T) {
+	store := &fakeStore{mr: db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7}, version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"}}
+	client := newBlockingDiscussionClient()
+	w := New(client, store)
+	findings := []db.ReviewFinding{
+		{ID: 1, Path: "pkg/file-a.go", AnchorKind: "new_line", NewLine: sql.NullInt32{Int32: 11, Valid: true}, Title: "Issue one", Confidence: 0.8},
+		{ID: 2, Path: "pkg/file-b.go", AnchorKind: "new_line", NewLine: sql.NullInt32{Int32: 17, Valid: true}, Title: "Issue two", Confidence: 0.85},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "running"}, findings)
+	}()
+
+	client.waitForCalls(t, 2)
+	client.release()
+
+	if err := <-done; err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if client.maxInFlightCalls() < 2 {
+		t.Fatalf("max in-flight discussion calls = %d, want at least 2", client.maxInFlightCalls())
 	}
 }
 
@@ -628,8 +681,16 @@ func TestResumeAfterPartialBatch(t *testing.T) {
 	if len(client.requests) != 6 {
 		t.Fatalf("discussion requests = %d, want 6", len(client.requests))
 	}
-	if client.requests[5].ReviewFindingID != 2 {
-		t.Fatalf("resumed finding id = %d, want 2", client.requests[5].ReviewFindingID)
+	countByFinding := map[int64]int{}
+	for _, req := range client.requests {
+		countByFinding[req.ReviewFindingID]++
+	}
+	if len(countByFinding) != 2 {
+		t.Fatalf("findings touched = %d, want 2", len(countByFinding))
+	}
+	counts := []int{countByFinding[1], countByFinding[2]}
+	if !((counts[0] == 1 && counts[1] == 5) || (counts[0] == 5 && counts[1] == 1)) {
+		t.Fatalf("finding request counts = %#v, want one finding with 1 call and one with 5 calls", countByFinding)
 	}
 }
 
@@ -767,6 +828,7 @@ func TestWriterUsesPersistedDegradationSummary(t *testing.T) {
 }
 
 type fakeDiscussionClient struct {
+	mu               sync.Mutex
 	requests         []CreateDiscussionRequest
 	noteRequests     []CreateNoteRequest
 	resolveRequests  []ResolveDiscussionRequest
@@ -779,6 +841,8 @@ type fakeDiscussionClient struct {
 }
 
 func (f *fakeDiscussionClient) CreateDiscussion(_ context.Context, req CreateDiscussionRequest) (Discussion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.discussionCalls++
 	f.requests = append(f.requests, req)
 	if len(f.discussionErrors) > 0 {
@@ -792,6 +856,8 @@ func (f *fakeDiscussionClient) CreateDiscussion(_ context.Context, req CreateDis
 }
 
 func (f *fakeDiscussionClient) CreateNote(_ context.Context, req CreateNoteRequest) (Discussion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.noteCalls++
 	f.noteRequests = append(f.noteRequests, req)
 	if len(f.noteErrors) > 0 {
@@ -805,6 +871,8 @@ func (f *fakeDiscussionClient) CreateNote(_ context.Context, req CreateNoteReque
 }
 
 func (f *fakeDiscussionClient) ResolveDiscussion(_ context.Context, req ResolveDiscussionRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.resolveCalls++
 	f.resolveRequests = append(f.resolveRequests, req)
 	if len(f.resolveErrors) > 0 {
@@ -815,7 +883,67 @@ func (f *fakeDiscussionClient) ResolveDiscussion(_ context.Context, req ResolveD
 	return nil
 }
 
+type blockingDiscussionClient struct {
+	mu        sync.Mutex
+	started   chan struct{}
+	releaseCh chan struct{}
+	inFlight  int
+	maxFlight int
+}
+
+func newBlockingDiscussionClient() *blockingDiscussionClient {
+	return &blockingDiscussionClient{
+		started:   make(chan struct{}, 8),
+		releaseCh: make(chan struct{}),
+	}
+}
+
+func (b *blockingDiscussionClient) CreateDiscussion(_ context.Context, req CreateDiscussionRequest) (Discussion, error) {
+	b.mu.Lock()
+	b.inFlight++
+	if b.inFlight > b.maxFlight {
+		b.maxFlight = b.inFlight
+	}
+	b.mu.Unlock()
+	b.started <- struct{}{}
+	<-b.releaseCh
+	b.mu.Lock()
+	b.inFlight--
+	b.mu.Unlock()
+	return Discussion{ID: req.IdempotencyKey}, nil
+}
+
+func (b *blockingDiscussionClient) CreateNote(_ context.Context, req CreateNoteRequest) (Discussion, error) {
+	return Discussion{ID: req.IdempotencyKey}, nil
+}
+
+func (b *blockingDiscussionClient) ResolveDiscussion(_ context.Context, _ ResolveDiscussionRequest) error {
+	return nil
+}
+
+func (b *blockingDiscussionClient) waitForCalls(t *testing.T, want int) {
+	t.Helper()
+	for i := 0; i < want; i++ {
+		select {
+		case <-b.started:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for %d discussion calls", want)
+		}
+	}
+}
+
+func (b *blockingDiscussionClient) release() {
+	close(b.releaseCh)
+}
+
+func (b *blockingDiscussionClient) maxInFlightCalls() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.maxFlight
+}
+
 type fakeStore struct {
+	mu                        sync.Mutex
 	mr                        db.MergeRequest
 	project                   db.Project
 	version                   db.MrVersion
@@ -846,6 +974,8 @@ func (f *fakeStore) GetProject(context.Context, int64) (db.Project, error) {
 	return db.Project{ID: f.mr.ProjectID, GitlabProjectID: f.mr.ProjectID}, nil
 }
 func (f *fakeStore) GetReviewRun(_ context.Context, id int64) (db.ReviewRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if run, ok := f.runsByID[id]; ok {
 		return run, nil
 	}
@@ -855,12 +985,16 @@ func (f *fakeStore) GetProjectPolicy(context.Context, int64) (db.ProjectPolicy, 
 	return f.policy, nil
 }
 func (f *fakeStore) GetReviewFinding(_ context.Context, id int64) (db.ReviewFinding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if finding, ok := f.findingsByID[id]; ok {
 		return finding, nil
 	}
 	return db.ReviewFinding{}, errors.New("not found")
 }
 func (f *fakeStore) GetGitlabDiscussion(_ context.Context, id int64) (db.GitlabDiscussion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, discussion := range f.discussionByID {
 		if discussion.ID == id {
 			return discussion, nil
@@ -881,6 +1015,8 @@ func (f *fakeStore) ListFindingsByMergeRequest(_ context.Context, mergeRequestID
 	return f.findingsByMR[mergeRequestID], nil
 }
 func (f *fakeStore) GetCommentActionByIdempotencyKey(_ context.Context, key string) (db.CommentAction, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.actions == nil {
 		return db.CommentAction{}, errors.New("not found")
 	}
@@ -891,6 +1027,8 @@ func (f *fakeStore) GetCommentActionByIdempotencyKey(_ context.Context, key stri
 	return action, nil
 }
 func (f *fakeStore) InsertCommentAction(_ context.Context, arg db.InsertCommentActionParams) (sql.Result, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.actions == nil {
 		f.actions = map[string]db.CommentAction{}
 	}
@@ -899,6 +1037,8 @@ func (f *fakeStore) InsertCommentAction(_ context.Context, arg db.InsertCommentA
 	return fakeResult(f.nextActionID), nil
 }
 func (f *fakeStore) UpdateCommentActionStatus(_ context.Context, arg db.UpdateCommentActionStatusParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for key, action := range f.actions {
 		if action.ID == arg.ID {
 			action.Status = arg.Status
@@ -912,6 +1052,8 @@ func (f *fakeStore) UpdateCommentActionStatus(_ context.Context, arg db.UpdateCo
 	return nil
 }
 func (f *fakeStore) InsertGitlabDiscussion(_ context.Context, arg db.InsertGitlabDiscussionParams) (sql.Result, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.discussionByFinding == nil {
 		f.discussionByFinding = map[string]db.GitlabDiscussion{}
 	}
@@ -926,6 +1068,8 @@ func (f *fakeStore) InsertGitlabDiscussion(_ context.Context, arg db.InsertGitla
 }
 
 func (f *fakeStore) UpdateFindingDiscussionID(_ context.Context, arg db.UpdateFindingDiscussionIDParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.findingsByID == nil {
 		f.findingsByID = map[int64]db.ReviewFinding{}
 	}
@@ -937,6 +1081,8 @@ func (f *fakeStore) UpdateFindingDiscussionID(_ context.Context, arg db.UpdateFi
 }
 
 func (f *fakeStore) UpdateGitlabDiscussionSupersededBy(_ context.Context, arg db.UpdateGitlabDiscussionSupersededByParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for findingID, discussion := range f.discussionByID {
 		if discussion.ID == arg.ID {
 			discussion.SupersededByDiscussionID = arg.SupersededByDiscussionID
@@ -953,6 +1099,8 @@ func (f *fakeStore) UpdateGitlabDiscussionSupersededBy(_ context.Context, arg db
 }
 
 func (f *fakeStore) GetGitlabDiscussionByFinding(_ context.Context, reviewFindingID int64) (db.GitlabDiscussion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if discussion, ok := f.discussionByID[reviewFindingID]; ok {
 		return discussion, nil
 	}
@@ -960,6 +1108,8 @@ func (f *fakeStore) GetGitlabDiscussionByFinding(_ context.Context, reviewFindin
 }
 
 func (f *fakeStore) GetGitlabDiscussionByMergeRequestAndFinding(_ context.Context, arg db.GetGitlabDiscussionByMergeRequestAndFindingParams) (db.GitlabDiscussion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if discussion, ok := f.discussionByFinding[fmt.Sprintf("%d:%d", arg.MergeRequestID, arg.ReviewFindingID)]; ok {
 		return discussion, nil
 	}
@@ -967,6 +1117,8 @@ func (f *fakeStore) GetGitlabDiscussionByMergeRequestAndFinding(_ context.Contex
 }
 
 func (f *fakeStore) UpdateGitlabDiscussionResolved(_ context.Context, arg db.UpdateGitlabDiscussionResolvedParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.resolvedDiscussionUpdates == nil {
 		f.resolvedDiscussionUpdates = map[int64]bool{}
 	}
@@ -987,6 +1139,8 @@ func (f *fakeStore) UpdateGitlabDiscussionResolved(_ context.Context, arg db.Upd
 }
 
 func (f *fakeStore) MarkReviewRunFailedIfRunning(_ context.Context, arg db.MarkReviewRunFailedParams) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.runUpdates == nil {
 		f.runUpdates = map[int64]db.UpdateReviewRunStatusParams{}
 	}

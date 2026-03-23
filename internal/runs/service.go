@@ -139,7 +139,7 @@ func (s *Service) createPendingRun(ctx context.Context, q db.Querier, ev hooks.N
 	if err != nil {
 		// Handle race condition: another concurrent request may have
 		// inserted the same idempotency key.
-		if isDuplicateKeyError(err) {
+		if db.IsDuplicateKeyError(err) {
 			s.logger.InfoContext(ctx, "review run idempotency key collision, skipping",
 				"idempotency_key", ev.IdempotencyKey,
 				"mr_iid", ev.MRIID,
@@ -319,13 +319,4 @@ func (s *Service) upsertMergeRequest(ctx context.Context, q db.Querier, projectI
 		return 0, fmt.Errorf("get merge request: %w", err)
 	}
 	return mr.ID, nil
-}
-
-// isDuplicateKeyError checks if a MySQL error is a duplicate key violation.
-func isDuplicateKeyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "Duplicate entry") ||
-		strings.Contains(err.Error(), "Error 1062")
 }

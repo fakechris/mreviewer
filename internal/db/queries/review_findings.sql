@@ -2,9 +2,11 @@
 INSERT INTO review_findings (
     review_run_id, merge_request_id, category, severity, confidence,
     title, body_markdown, path, anchor_kind, old_line, new_line,
+    range_start_kind, range_start_old_line, range_start_new_line,
+    range_end_kind, range_end_old_line, range_end_new_line,
     anchor_snippet, evidence, suggested_patch, canonical_key,
     anchor_fingerprint, semantic_fingerprint, state
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetReviewFinding :one
 SELECT * FROM review_findings WHERE id = ? LIMIT 1;
@@ -25,6 +27,12 @@ SET path = ?,
     anchor_kind = ?,
     old_line = ?,
     new_line = ?,
+    range_start_kind = ?,
+    range_start_old_line = ?,
+    range_start_new_line = ?,
+    range_end_kind = ?,
+    range_end_old_line = ?,
+    range_end_new_line = ?,
     anchor_snippet = ?,
     anchor_fingerprint = ?,
     semantic_fingerprint = ?,
