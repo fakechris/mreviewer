@@ -3,7 +3,7 @@ set -euo pipefail
 
 output_file=".env"
 force="false"
-gitlab_base_url="${GITLAB_BASE_URL:-https://github.91jinrong.com}"
+gitlab_base_url="${GITLAB_BASE_URL:-https://gitlab.example.com}"
 gitlab_webhook_secret="${GITLAB_WEBHOOK_SECRET:-}"
 minimax_base_url="${MINIMAX_BASE_URL:-https://api.minimaxi.com/anthropic}"
 minimax_model="${MINIMAX_MODEL:-MiniMax-M2.7-highspeed}"
@@ -32,13 +32,10 @@ random_secret() {
     return
   fi
 
-  local saved_pipefail
-  saved_pipefail="$(set -o | awk '$1 == "pipefail" { print $2 }')"
-  set +o pipefail
-  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
-  if [[ "$saved_pipefail" == "on" ]]; then
-    set -o pipefail
-  fi
+  (
+    set +o pipefail
+    LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
+  )
 }
 
 while [[ $# -gt 0 ]]; do

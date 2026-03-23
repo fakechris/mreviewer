@@ -17,13 +17,13 @@ import (
 )
 
 const (
-	defaultPollInterval      = time.Second
-	defaultRetryBaseDelay    = time.Second
-	defaultRetryMaxDelay     = 30 * time.Second
-	defaultClaimRetryWait    = 10 * time.Millisecond
-	defaultFailureCode       = "run_failed"
-	defaultClaimTimeoutMin   = 10
-	defaultReaperInterval    = 60 * time.Second
+	defaultPollInterval    = time.Second
+	defaultRetryBaseDelay  = time.Second
+	defaultRetryMaxDelay   = 30 * time.Second
+	defaultClaimRetryWait  = 10 * time.Millisecond
+	defaultFailureCode     = "run_failed"
+	defaultClaimTimeoutMin = 10
+	defaultReaperInterval  = 60 * time.Second
 )
 
 var ErrNoClaimableRuns = errors.New("scheduler: no claimable runs")
@@ -386,6 +386,9 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 			if err := db.New(s.db).UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
 				return fmt.Errorf("scheduler: mark run %d parser_error: %w", run.ID, err)
 			}
+			if err := s.persistProviderMetricsIfNeeded(ctx, run.ID, currentRun, outcome); err != nil {
+				return err
+			}
 			s.logger.InfoContext(ctx, "completed review run with parser_error result",
 				"run_id", run.ID,
 				"worker_id", s.workerID,
@@ -406,7 +409,24 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 			return fmt.Errorf("scheduler: mark run %d completed: %w", run.ID, err)
 		}
 		if !updated {
-			return s.handleSkippedTerminalWrite(ctx, run, "completed")
+			currentRun, err := s.handleSkippedTerminalWrite(ctx, run, "completed")
+			if err != nil {
+				return err
+			}
+			if currentRun.Status != "cancelled" {
+				if err := s.persistProviderMetricsIfNeeded(ctx, run.ID, currentRun, outcome); err != nil {
+					return err
+				}
+				s.logger.InfoContext(ctx, "completed review run",
+					"run_id", run.ID,
+					"worker_id", s.workerID,
+					"merge_request_id", run.MergeRequestID,
+					"retry_count", run.RetryCount,
+					"status_managed_by_processor", true,
+				)
+				s.recordTerminalMetrics("completed", run, "")
+			}
+			return nil
 		}
 
 		s.logger.InfoContext(ctx, "completed review run",
@@ -436,7 +456,23 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 			return fmt.Errorf("scheduler: mark run %d retryable failure: %w", run.ID, err)
 		}
 		if !updated {
-			return s.handleSkippedTerminalWrite(ctx, run, "retryable failure")
+			currentRun, err := s.handleSkippedTerminalWrite(ctx, run, "retryable failure")
+			if err != nil {
+				return err
+			}
+			if currentRun.Status != "cancelled" {
+				s.logger.WarnContext(ctx, "review run already marked failed with retry scheduled",
+					"run_id", run.ID,
+					"worker_id", s.workerID,
+					"merge_request_id", run.MergeRequestID,
+					"error_code", code,
+					"retry_count", currentRun.RetryCount,
+					"next_retry_at", currentRun.NextRetryAt.Time.UTC().Format(time.RFC3339Nano),
+					"status_managed_by_processor", true,
+				)
+				s.recordTerminalMetrics("failed", run, code)
+			}
+			return nil
 		}
 
 		s.logger.WarnContext(ctx, "review run failed with retry scheduled",
@@ -461,7 +497,22 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		return fmt.Errorf("scheduler: mark run %d failed: %w", run.ID, err)
 	}
 	if !updated {
-		return s.handleSkippedTerminalWrite(ctx, run, "failed")
+		currentRun, err := s.handleSkippedTerminalWrite(ctx, run, "failed")
+		if err != nil {
+			return err
+		}
+		if currentRun.Status != "cancelled" {
+			s.logger.ErrorContext(ctx, "review run failed permanently",
+				"run_id", run.ID,
+				"worker_id", s.workerID,
+				"merge_request_id", run.MergeRequestID,
+				"error_code", code,
+				"retry_count", run.RetryCount,
+				"status_managed_by_processor", true,
+			)
+			s.recordTerminalMetrics("failed", run, code)
+		}
+		return nil
 	}
 
 	s.logger.ErrorContext(ctx, "review run failed permanently",
@@ -536,10 +587,10 @@ func (s *Service) startSpan(ctx context.Context, name string, attrs map[string]s
 	return s.tracer.Start(ctx, name, attrs)
 }
 
-func (s *Service) handleSkippedTerminalWrite(ctx context.Context, run db.ReviewRun, terminalState string) error {
+func (s *Service) handleSkippedTerminalWrite(ctx context.Context, run db.ReviewRun, terminalState string) (db.ReviewRun, error) {
 	currentRun, err := db.New(s.db).GetReviewRun(ctx, run.ID)
 	if err != nil {
-		return fmt.Errorf("scheduler: reload run %d after skipped %s write: %w", run.ID, terminalState, err)
+		return db.ReviewRun{}, fmt.Errorf("scheduler: reload run %d after skipped %s write: %w", run.ID, terminalState, err)
 	}
 
 	if currentRun.Status == "cancelled" {
@@ -549,10 +600,42 @@ func (s *Service) handleSkippedTerminalWrite(ctx context.Context, run db.ReviewR
 			"merge_request_id", currentRun.MergeRequestID,
 			"terminal_state", terminalState,
 		)
-		return nil
+		return currentRun, nil
 	}
 
-	return fmt.Errorf("scheduler: skipped %s write for run %d with unexpected status %q", terminalState, run.ID, currentRun.Status)
+	switch terminalState {
+	case "completed":
+		if currentRun.Status == "completed" {
+			return currentRun, nil
+		}
+	case "failed":
+		if currentRun.Status == "failed" {
+			return currentRun, nil
+		}
+	case "retryable failure":
+		if currentRun.Status == "failed" && currentRun.NextRetryAt.Valid {
+			return currentRun, nil
+		}
+	}
+
+	return db.ReviewRun{}, fmt.Errorf("scheduler: skipped %s write for run %d with unexpected status %q", terminalState, run.ID, currentRun.Status)
+}
+
+func (s *Service) persistProviderMetricsIfNeeded(ctx context.Context, runID int64, currentRun db.ReviewRun, outcome ProcessOutcome) error {
+	if outcome.ProviderLatencyMs == 0 && outcome.ProviderTokensTotal == 0 {
+		return nil
+	}
+	if currentRun.ProviderLatencyMs == outcome.ProviderLatencyMs && currentRun.ProviderTokensTotal == outcome.ProviderTokensTotal {
+		return nil
+	}
+	if err := db.New(s.db).UpdateReviewRunProviderMetrics(ctx, db.UpdateReviewRunProviderMetricsParams{
+		ProviderLatencyMs:   outcome.ProviderLatencyMs,
+		ProviderTokensTotal: outcome.ProviderTokensTotal,
+		ID:                  runID,
+	}); err != nil {
+		return fmt.Errorf("scheduler: persist provider metrics for run %d: %w", runID, err)
+	}
+	return nil
 }
 
 func (s *Service) retryDelay(retryCount int32) time.Duration {

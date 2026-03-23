@@ -57,14 +57,81 @@ func TestMiniMaxRequestShape(t *testing.T) {
 	if payload["max_tokens"] != float64(4096) {
 		t.Fatalf("max_tokens = %#v", payload["max_tokens"])
 	}
+	if payload["temperature"] != 0.2 {
+		t.Fatalf("temperature = %#v, want 0.2", payload["temperature"])
+	}
 	if _, ok := payload["system"]; !ok {
 		t.Fatal("missing system prompt")
 	}
-	if _, ok := payload["output_config"]; !ok {
-		t.Fatal("missing output_config")
+	if _, ok := payload["output_config"]; ok {
+		t.Fatal("output_config should not be sent to MiniMax Anthropic-compatible endpoint")
 	}
 	if got := transport.header.Get("X-Api-Key"); got != "secret-token" {
 		t.Fatalf("x-api-key = %q", got)
+	}
+}
+
+func TestMiniMaxSummaryRequestShape(t *testing.T) {
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL: "https://api.minimaxi.com/anthropic",
+		APIKey:  "secret-token",
+		Model:   "MiniMax-M2.5",
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	payload := provider.SummaryRequestPayloadWithSystemPrompt(
+		ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"},
+		"summary system prompt",
+	)
+
+	if payload["model"] != "MiniMax-M2.5" {
+		t.Fatalf("model = %#v", payload["model"])
+	}
+	if payload["temperature"] != 0.2 {
+		t.Fatalf("temperature = %#v, want 0.2", payload["temperature"])
+	}
+	if _, ok := payload["system"]; !ok {
+		t.Fatal("missing system prompt")
+	}
+	if _, ok := payload["output_config"]; ok {
+		t.Fatal("output_config should not be sent to MiniMax Anthropic-compatible endpoint")
+	}
+}
+
+func TestMiniMaxParserErrorIncludesRawSnippet(t *testing.T) {
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"text","text":"not-json-response"}],"usage":{"output_tokens":7}}`}
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL:    "https://api.minimaxi.com/anthropic",
+		APIKey:     "secret-token",
+		Model:      "MiniMax-M2.5",
+		HTTPClient: &http.Client{Transport: transport},
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	_, err = provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err == nil {
+		t.Fatal("expected parser error")
+	}
+	if !strings.Contains(err.Error(), "not-json-response") {
+		t.Fatalf("parser error missing raw snippet: %v", err)
+	}
+}
+
+func TestBuildSummarySystemPromptRequiresStrictJSONOutput(t *testing.T) {
+	prompt := buildSummarySystemPrompt(reviewlang.DefaultOutputLanguage)
+
+	for _, want := range []string{
+		"Return ONLY valid JSON.",
+		"Do not wrap the JSON in markdown fences.",
+		`Required top-level fields: schema_version, review_run_id, walkthrough, verdict.`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("summary prompt missing %q: %s", want, prompt)
+		}
 	}
 }
 
@@ -141,6 +208,86 @@ func TestParseReviewResultWithNewFields(t *testing.T) {
 	}
 	if len(normalized.BlindSpots) != 1 || normalized.BlindSpots[0] != "untested error path" {
 		t.Fatalf("normalized blind_spots = %#v", normalized.BlindSpots)
+	}
+}
+
+func TestParseReviewResultWithMiniMaxAliasFields(t *testing.T) {
+	raw := `{
+		"schema_version":"1.0",
+		"review_run_id":"rr-alias",
+		"summary":"发现问题",
+		"findings":[{
+			"type":"code_defect",
+			"title":"Loop upper bound is off by one",
+			"severity":"high",
+			"confidence":0.95,
+			"evidence":"line 23 uses <= and can index past the end of the slice",
+			"trigger_condition":"calculateTotal([{amount:100}]) triggers items[1] access",
+			"impact":"runtime panic",
+			"introduced_by_this_change":true,
+			"actionable_fix":"change <= to <",
+			"file_path":"src/lib/paymentCalculator.ts",
+			"line_start":23,
+			"line_end":23
+		}]
+	}`
+
+	result, stage, err := ParseReviewResult(raw)
+	if err != nil {
+		t.Fatalf("ParseReviewResult: %v", err)
+	}
+	if stage != "direct" {
+		t.Fatalf("stage = %q, want direct", stage)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(result.Findings))
+	}
+	finding := result.Findings[0]
+	if finding.Category != "code_defect" {
+		t.Fatalf("category = %q, want code_defect", finding.Category)
+	}
+	if finding.Path != "src/lib/paymentCalculator.ts" {
+		t.Fatalf("path = %q, want src/lib/paymentCalculator.ts", finding.Path)
+	}
+	if finding.NewLine == nil || *finding.NewLine != 23 {
+		t.Fatalf("new_line = %#v, want 23", finding.NewLine)
+	}
+	if len(finding.Evidence) != 1 || finding.Evidence[0] != "line 23 uses <= and can index past the end of the slice" {
+		t.Fatalf("evidence = %#v", finding.Evidence)
+	}
+	if finding.SuggestedPatch != "change <= to <" {
+		t.Fatalf("suggested_patch = %q, want alias-mapped actionable_fix", finding.SuggestedPatch)
+	}
+}
+
+func TestParseReviewResultDefaultsMissingCategory(t *testing.T) {
+	raw := `{
+		"schema_version":"1.0",
+		"review_run_id":"rr-missing-category",
+		"summary":"发现问题",
+		"findings":[{
+			"title":"Loop upper bound is off by one",
+			"description":"calculateTotal can access past the end of the slice",
+			"severity":"high",
+			"confidence":0.95,
+			"path":"src/lib/paymentCalculator.ts",
+			"line_start":23,
+			"evidence":"line 23 uses <= and can index past the end of the slice",
+			"trigger_condition":"calculateTotal([{amount:100}]) triggers items[1] access",
+			"impact":"runtime panic",
+			"introduced_by_this_change":true
+		}]
+	}`
+
+	result, _, err := ParseReviewResult(raw)
+	if err != nil {
+		t.Fatalf("ParseReviewResult: %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(result.Findings))
+	}
+	if result.Findings[0].Category != "code_defect" {
+		t.Fatalf("category = %q, want code_defect default", result.Findings[0].Category)
 	}
 }
 
@@ -415,11 +562,44 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	if len(audits) == 0 {
 		t.Fatal("expected provider audit log")
 	}
-	detail := string(audits[0].Detail)
-	for _, forbidden := range []string{"secret", "prompt body"} {
-		if stringsContains(detail, forbidden) {
-			t.Fatalf("audit detail leaked %q: %s", forbidden, detail)
+	var providerCallDetail map[string]any
+	foundProviderCall := false
+	for _, audit := range audits {
+		if audit.Action != "provider_called" {
+			continue
 		}
+		if err := json.Unmarshal(audit.Detail, &providerCallDetail); err != nil {
+			t.Fatalf("unmarshal provider_called detail: %v", err)
+		}
+		foundProviderCall = true
+		break
+	}
+	if !foundProviderCall {
+		t.Fatal("expected provider_called audit log")
+	}
+	request, ok := providerCallDetail["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider_called request = %#v, want object", providerCallDetail["request"])
+	}
+	if messages, ok := request["messages"].([]any); ok && len(messages) > 0 {
+		firstMessage, ok := messages[0].(map[string]any)
+		if !ok {
+			t.Fatalf("provider_called first message = %#v, want object", messages[0])
+		}
+		if firstMessage["content"] == "[OMITTED]" {
+			t.Fatalf("provider_called message content should be preserved: %#v", firstMessage)
+		}
+	} else {
+		if request["content"] != "prompt body" {
+			t.Fatalf("provider_called request content = %#v, want prompt body", request["content"])
+		}
+	}
+	response, ok := providerCallDetail["response"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider_called response = %#v, want object", providerCallDetail["response"])
+	}
+	if response["content"] != "prompt body" {
+		t.Fatalf("provider_called response content = %#v, want prompt body", response["content"])
 	}
 	if projectID == 0 {
 		t.Fatal("expected seeded project")
@@ -429,6 +609,80 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	}
 	if spans := tracer.Spans(); len(spans) == 0 {
 		t.Fatal("expected trace spans to be recorded")
+	}
+}
+
+func TestProviderFailureAuditStoresFullRequestAndRawResponse(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	payload := map[string]any{
+		"model": "MiniMax-M2.5",
+		"messages": []map[string]any{{
+			"role":    "user",
+			"content": "full request payload",
+		}},
+	}
+	rawResponse := "full raw response body"
+	logger := NewDBAuditLogger(sqlDB)
+
+	if err := logger.LogProviderFailure(ctx, run, payload, &providerParseError{cause: fmt.Errorf("llm: unable to parse provider response"), rawResponse: rawResponse, latency: 5 * time.Second, tokens: 321, model: "MiniMax-M2.5"}); err != nil {
+		t.Fatalf("LogProviderFailure: %v", err)
+	}
+
+	audits, err := q.ListAuditLogsByEntity(ctx, db.ListAuditLogsByEntityParams{EntityType: "review_run", EntityID: runID, Limit: 10, Offset: 0})
+	if err != nil {
+		t.Fatalf("ListAuditLogsByEntity: %v", err)
+	}
+	var detail map[string]any
+	found := false
+	for _, audit := range audits {
+		if audit.Action != "provider_failed" {
+			continue
+		}
+		if err := json.Unmarshal(audit.Detail, &detail); err != nil {
+			t.Fatalf("unmarshal provider_failed detail: %v", err)
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatal("expected provider_failed audit log")
+	}
+	request, ok := detail["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider_failed request = %#v, want object", detail["request"])
+	}
+	messages, ok := request["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		t.Fatalf("provider_failed messages = %#v, want non-empty array", request["messages"])
+	}
+	firstMessage, ok := messages[0].(map[string]any)
+	if !ok || firstMessage["content"] != "full request payload" {
+		t.Fatalf("provider_failed first message = %#v, want full request payload", messages[0])
+	}
+	response, ok := detail["response"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider_failed response = %#v, want object", detail["response"])
+	}
+	if response["text"] != rawResponse {
+		t.Fatalf("provider_failed response text = %#v, want %q", response["text"], rawResponse)
+	}
+	if detail["provider_latency_ms"] != float64(5000) {
+		t.Fatalf("provider_failed latency = %#v, want 5000", detail["provider_latency_ms"])
+	}
+	if detail["provider_tokens_total"] != float64(321) {
+		t.Fatalf("provider_failed tokens = %#v, want 321", detail["provider_tokens_total"])
+	}
+	if detail["provider_model"] != "MiniMax-M2.5" {
+		t.Fatalf("provider_failed model = %#v, want MiniMax-M2.5", detail["provider_model"])
 	}
 }
 
@@ -587,7 +841,13 @@ func TestParserErrorStructuredResult(t *testing.T) {
 		Username string "json:\"username\""
 	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
 	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
-	provider := &fakeProvider{err: scheduler.NewTerminalError("parser_error", errors.New("unparseable provider output"))}
+	provider := &fakeProvider{err: scheduler.NewTerminalError("parser_error", &providerParseError{
+		cause:       errors.New("unparseable provider output"),
+		rawResponse: "not-json-response",
+		latency:     7 * time.Second,
+		tokens:      456,
+		model:       "MiniMax-M2.5",
+	})}
 	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
@@ -602,6 +862,12 @@ func TestParserErrorStructuredResult(t *testing.T) {
 	}
 	if outcome.Status != "parser_error" {
 		t.Fatalf("outcome status = %q, want parser_error", outcome.Status)
+	}
+	if outcome.ProviderLatencyMs != 7000 {
+		t.Fatalf("outcome provider_latency_ms = %d, want 7000", outcome.ProviderLatencyMs)
+	}
+	if outcome.ProviderTokensTotal != 456 {
+		t.Fatalf("outcome provider_tokens_total = %d, want 456", outcome.ProviderTokensTotal)
 	}
 	updatedRun, err := q.GetReviewRun(ctx, runID)
 	if err != nil {

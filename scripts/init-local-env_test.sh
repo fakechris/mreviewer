@@ -14,7 +14,7 @@ output_file="$tmpdir/.env"
   bash scripts/init-local-env.sh --output "$output_file"
 )
 
-grep -q '^GITLAB_BASE_URL=https://github.91jinrong.com$' "$output_file"
+grep -q '^GITLAB_BASE_URL=https://gitlab.example.com$' "$output_file"
 grep -q '^GITLAB_TOKEN=gitlab-token-for-test$' "$output_file"
 grep -q '^MINIMAX_API_KEY=minimax-token-for-test$' "$output_file"
 grep -q '^MINIMAX_BASE_URL=https://api.minimaxi.com/anthropic$' "$output_file"

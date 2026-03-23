@@ -117,6 +117,10 @@ context_lines_after: 15
 
 当 `ANTHROPIC_*` 没有配置时，worker 会自动回退到 `MINIMAX_*`。
 
+MiniMax 当前的稳定性和已知问题，单独整理在：
+
+- [docs/minimax-known-issues.md](/Users/chris/workspace/mreviewer/docs/minimax-known-issues.md)
+
 ## 安装与初始化
 
 ### 1. 准备配置
@@ -134,7 +138,7 @@ scripts/init-local-env.sh
 如果你使用默认 Docker Compose，最短配置就是修改 `.env` 里的这些值：
 
 ```env
-GITLAB_BASE_URL=https://github.91jinrong.com
+GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=你的_gitlab_token
 GITLAB_WEBHOOK_SECRET=自己生成的一串随机串
 
@@ -155,7 +159,7 @@ scripts/init-local-env.sh --force
 
 - 生成默认 Compose 可用的 `.env`
 - 自动填入 `GITLAB_TOKEN` 和 `MINIMAX_API_KEY`
-- 默认把 `GITLAB_BASE_URL` 设为 `https://github.91jinrong.com`
+- 默认把 `GITLAB_BASE_URL` 设为 `https://gitlab.example.com`
 - 自动生成一个随机 `GITLAB_WEBHOOK_SECRET`
 - 如果 `.env` 已存在，会先备份成 `.env.bak.<timestamp>`
 
@@ -200,7 +204,7 @@ docker compose ps
 
 ```bash
 docker compose logs migrate
-docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "show tables;"
+docker exec -e MYSQL_PWD=mreviewer_password -it mreviewer-mysql mysql -umreviewer mreviewer -e "show tables;"
 ```
 
 如果 `migrate` 成功，你会看到 `gitlab_instances`、`projects`、`merge_requests`、`review_runs`、`review_findings` 等表。
@@ -266,6 +270,66 @@ go run ./cmd/manual-trigger --project-id 123 --mr-iid 45
 go run ./cmd/manual-trigger --project-id 123 --mr-iid 45 --wait --wait-timeout 10m
 go run ./cmd/manual-trigger --project-id 123 --mr-iid 45 --wait --wait-timeout 10m --poll-interval 2s --json
 ```
+
+## 一键验证真实 MR
+
+如果你已经有 `.env`，并且只想验证某一条真实 GitLab MR，不想手工查 `project_id`，推荐直接用：
+
+```bash
+bash scripts/review-mr.sh "https://gitlab.example.com/group/repo/-/merge_requests/123"
+```
+
+这条脚本会自动：
+
+- 启动 `mysql` / `redis` / `migrate` / `worker`
+- 从 MR 链接解析 `group/repo` 和 `mr_iid`
+- 调 GitLab API 查询 `project_id`
+- 在 compose 网络内执行 `cmd/manual-trigger --wait --json`
+
+它不是在宿主机直接调用数据库，而是在临时 Go 容器里跑 `manual-trigger`，因此可以稳定使用 compose 内的：
+
+- `mysql:3306`
+- `redis:6379`
+
+这能避免宿主机本地已经存在其他 MySQL 实例时，把 `127.0.0.1:3306` 误连到错误数据库。
+
+## 现场审计与原始数据
+
+为了方便排查模型兼容性、解析失败、写回异常等问题，`worker` 会把 provider 调用现场完整落到 `audit_logs.detail`：
+
+- `provider_called`
+  - 保存完整 provider request
+  - 保存完整 provider response
+- `provider_failed`
+  - 保存完整 provider request
+  - 如果是解析失败，也会保存完整原始 response 文本
+
+推荐直接用脚本查看某次 run 的完整现场：
+
+```bash
+bash scripts/show-run-audit.sh --latest
+bash scripts/show-run-audit.sh 9
+```
+
+这会输出：
+
+- `review_runs` 当前状态、错误码、`scope_json`
+- `audit_logs` 里该 run 的完整 `detail` JSON
+
+如果你只想临时查数据库，也可以直接执行：
+
+本地开发默认密码示例仅适用于仓库自带的 Docker Compose 环境：
+
+```bash
+docker exec -e MYSQL_PWD=mreviewer_password -i mreviewer-mysql mysql --default-character-set=utf8mb4 -umreviewer mreviewer -e \
+"SELECT id, action, JSON_PRETTY(detail) AS detail FROM audit_logs WHERE entity_type='review_run' AND entity_id=9 ORDER BY id;"
+```
+
+脚本退出后：
+
+- 如果返回 `{"ok":true,...}`，说明这条 MR review run 已完成
+- 如果模型产出 findings，会写回 GitLab discussion
+- 如果没有 findings，也会写一条中文 summary note
 
 命令会：
 
@@ -344,9 +408,9 @@ docker compose logs -f redis
 ### 查看数据库里的运行结果
 
 ```bash
-docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "show tables;"
-docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "select id,trigger_type,status,created_at from review_runs order by id desc limit 10;"
-docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "select id,severity,title,path from review_findings order by id desc limit 20;"
+docker exec -e MYSQL_PWD=mreviewer_password -it mreviewer-mysql mysql -umreviewer mreviewer -e "show tables;"
+docker exec -e MYSQL_PWD=mreviewer_password -it mreviewer-mysql mysql -umreviewer mreviewer -e "select id,trigger_type,status,created_at from review_runs order by id desc limit 10;"
+docker exec -e MYSQL_PWD=mreviewer_password -it mreviewer-mysql mysql -umreviewer mreviewer -e "select id,severity,title,path from review_findings order by id desc limit 20;"
 ```
 
 ### 重新构建
