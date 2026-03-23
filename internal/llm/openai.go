@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -151,6 +152,16 @@ func (p *OpenAIProvider) ReviewWithSystemPrompt(ctx context.Context, request ctx
 		raw, tokens, err := p.call(ctx, payload)
 		if err != nil {
 			lastErr = err
+			var structuredMiss *structuredOutputMissError
+			if errors.As(err, &structuredMiss) {
+				return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
+					cause:       structuredMiss.cause,
+					rawResponse: structuredMiss.rawResponse,
+					latency:     p.now().Sub(started),
+					tokens:      tokens,
+					model:       p.routeName,
+				})
+			}
 			if !isTimeoutError(err) || attempt == maxAttempts-1 {
 				return ProviderResponse{}, err
 			}
@@ -252,5 +263,8 @@ func (p *OpenAIProvider) call(ctx context.Context, payload map[string]any) (stri
 		}
 		return strings.TrimSpace(toolCall.Function.Arguments), parsed.Usage.CompletionTokens, nil
 	}
-	return "", parsed.Usage.CompletionTokens, fmt.Errorf("llm: missing tool_use block %q", reviewSubmitToolName)
+	return "", parsed.Usage.CompletionTokens, &structuredOutputMissError{
+		cause:       fmt.Errorf("llm: missing tool_use block %q", reviewSubmitToolName),
+		rawResponse: strings.TrimSpace(message.Content),
+	}
 }

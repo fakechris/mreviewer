@@ -10,4 +10,4 @@ output="$(
 
 grep -q '^ADMIN_DSN_ENV_VAR=MREVIEWER_TEST_ADMIN_DSN$' <<<"$output"
 grep -q '^CONTAINER_NAME=mreviewer-test-mysql-' <<<"$output"
-grep -q '^GO_TEST_ARGS=\./internal/llm -run TestMiniMaxRequestShape ' <<<"$output"
+grep -qE '^GO_TEST_ARGS=\./internal/llm -run TestMiniMaxRequestShape($| )' <<<"$output"

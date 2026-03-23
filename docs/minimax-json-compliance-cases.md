@@ -9,7 +9,7 @@
 - temperature 的理论讨论
 
 旧方案的历史案例已经迁到：
-- [docs/minimax-legacy-prompt-json-cases.md](/Users/chris/workspace/mreviewer/docs/minimax-legacy-prompt-json-cases.md)
+- [docs/minimax-legacy-prompt-json-cases.md](./minimax-legacy-prompt-json-cases.md)
 
 ## 当前方案
 

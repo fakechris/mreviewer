@@ -54,7 +54,13 @@ func BuildProviderRegistryFromRouteConfigs(logger *slog.Logger, defaultRoute str
 		registry.Register(route, provider)
 	}
 	if strings.TrimSpace(fallbackRoute) != "" {
-		registry.SetFallbackRoute(fallbackRoute)
+		trimmedFallback := strings.TrimSpace(fallbackRoute)
+		if trimmedFallback != defaultRoute {
+			if _, ok := routes[trimmedFallback]; !ok {
+				return nil, fmt.Errorf("llm: missing fallback route config %q", trimmedFallback)
+			}
+		}
+		registry.SetFallbackRoute(trimmedFallback)
 	}
 	return registry, nil
 }

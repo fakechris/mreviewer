@@ -246,8 +246,18 @@ func TestMiniMaxToolCallMissingToolUseFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing tool_use parser error")
 	}
+	if !isParserError(err) {
+		t.Fatalf("error = %v, want parser_error classification", err)
+	}
 	if !strings.Contains(err.Error(), "tool_use") {
 		t.Fatalf("error = %v, want tool_use mention", err)
+	}
+	var parseErr *providerParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("expected providerParseError, got %T", err)
+	}
+	if !strings.Contains(parseErr.rawResponse, `"findings":[]`) {
+		t.Fatalf("rawResponse = %q, want captured plain-text payload", parseErr.rawResponse)
 	}
 }
 
@@ -2600,6 +2610,114 @@ func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
 	}
 	if enterpriseCalls != 0 {
 		t.Fatalf("enterprise provider calls = %d, want 0", enterpriseCalls)
+	}
+}
+
+func TestProcessRunUsesActiveFindingsForRequestedChangesStatus(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, projectID, mrID, baseRunID := seedRun(t, ctx, q)
+
+	baseRun, err := q.GetReviewRun(ctx, baseRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun base: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+	baseFinding := sameRunFinding(12)
+	baseFinding.Path = "src/service/foo.go"
+	if err := activateSingleFinding(ctx, q, baseRun, mr, baseFinding); err != nil {
+		t.Fatalf("activateSingleFinding: %v", err)
+	}
+
+	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID:      projectID,
+		MergeRequestID: mrID,
+		TriggerType:    "webhook",
+		HeadSha:        "head-2",
+		Status:         "pending",
+		MaxRetries:     3,
+		IdempotencyKey: fmt.Sprintf("rr-active-%d", time.Now().UnixNano()),
+	})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	runID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-active-findings", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun new: %v", err)
+	}
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{
+			GitLabID:  11,
+			IID:       7,
+			ProjectID: 101,
+			Title:     "Title",
+			Author: struct {
+				Username string `json:"username"`
+			}{Username: "alice"},
+			DiffRefs:     &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head-2", StartSHA: "start"},
+			HeadSHA:      "head-2",
+			WebURL:       "https://gitlab.example.com/group/project/-/merge_requests/7",
+			State:        "opened",
+			SourceBranch: "feature",
+			TargetBranch: "main",
+		},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 56, BaseSHA: "base", StartSHA: "start", HeadSHA: "head-2", PatchIDSHA: "patch-2"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "src/service/foo.go", NewPath: "src/service/foo.go", Diff: "@@ -10,1 +10,1 @@\n-return *ptr\n+return *ptr\n"}},
+	}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	provider := &fakeProvider{response: ProviderResponse{
+		Result: ReviewResult{
+			SchemaVersion: "1.0",
+			ReviewRunID:   fmt.Sprintf("%d", runID),
+			Summary:       "summary",
+			Status:        "completed",
+			Findings:      []ReviewFinding{baseFinding},
+		},
+		Model:           "MiniMax-M2.7-highspeed",
+		Tokens:          88,
+		Latency:         12 * time.Millisecond,
+		ResponsePayload: map[string]any{},
+	}}
+
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "requested_changes" {
+		t.Fatalf("outcome status = %q, want requested_changes", outcome.Status)
+	}
+	if len(outcome.ReviewFindings) != 1 {
+		t.Fatalf("outcome review findings = %d, want 1 active finding", len(outcome.ReviewFindings))
+	}
+
+	updatedRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun updated: %v", err)
+	}
+	if updatedRun.Status != "requested_changes" {
+		t.Fatalf("run status = %q, want requested_changes", updatedRun.Status)
+	}
+
+	runRows, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun new run: %v", err)
+	}
+	if len(runRows) != 0 {
+		t.Fatalf("new run findings = %d, want 0 when carry-forward keeps prior row active", len(runRows))
 	}
 }
 

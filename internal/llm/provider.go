@@ -121,6 +121,11 @@ type providerParseError struct {
 	model       string
 }
 
+type structuredOutputMissError struct {
+	cause       error
+	rawResponse string
+}
+
 func (e *providerParseError) Error() string {
 	if e == nil {
 		return ""
@@ -132,6 +137,20 @@ func (e *providerParseError) Error() string {
 }
 
 func (e *providerParseError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func (e *structuredOutputMissError) Error() string {
+	if e == nil || e.cause == nil {
+		return ""
+	}
+	return e.cause.Error()
+}
+
+func (e *structuredOutputMissError) Unwrap() error {
 	if e == nil {
 		return nil
 	}
@@ -585,9 +604,9 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist parser-error summary note fallback: %w", err))
 		}
 	}
-	findingsForOutcome, err := p.queries.ListFindingsByRun(ctx, run.ID)
+	findingsForOutcome, err := p.queries.ListActiveFindingsByMR(ctx, mergeRequest.ID)
 	if err != nil {
-		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load persisted findings for outcome: %w", err))
+		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load active findings for outcome: %w", err))
 	}
 	finalStatus := canonicalRunStatus(response.Result.Status, len(findingsForOutcome))
 	response.Result.Status = finalStatus
@@ -685,6 +704,16 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 		raw, tokens, latency, err := p.callReviewTool(ctx, systemPrompt, mustJSON(request))
 		if err != nil {
 			lastErr = err
+			var structuredMiss *structuredOutputMissError
+			if errors.As(err, &structuredMiss) {
+				return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
+					cause:       structuredMiss.cause,
+					rawResponse: structuredMiss.rawResponse,
+					latency:     latency,
+					tokens:      tokens,
+					model:       p.routeName,
+				})
+			}
 			if !isTimeoutError(err) || attempt == maxAttempts-1 {
 				return ProviderResponse{}, err
 			}
@@ -757,7 +786,10 @@ func (p *MiniMaxProvider) callReviewTool(ctx context.Context, systemPrompt strin
 	}
 	text, err := collectToolUseInput(message, reviewSubmitToolName)
 	if err != nil {
-		return "", int64(message.Usage.OutputTokens), p.now().Sub(started), err
+		return "", int64(message.Usage.OutputTokens), p.now().Sub(started), &structuredOutputMissError{
+			cause:       err,
+			rawResponse: collectMessageText(message),
+		}
 	}
 	return text, int64(message.Usage.OutputTokens), p.now().Sub(started), nil
 }
@@ -2276,6 +2308,10 @@ func isTimeoutError(err error) bool {
 func isParserError(err error) bool {
 	if err == nil {
 		return false
+	}
+	var parseErr *providerParseError
+	if errors.As(err, &parseErr) {
+		return true
 	}
 	if strings.Contains(err.Error(), parserErrorCode) {
 		return true

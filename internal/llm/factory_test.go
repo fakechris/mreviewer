@@ -3,9 +3,11 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,6 +123,26 @@ func TestBuildProviderRegistryFromRouteConfigs(t *testing.T) {
 	}
 }
 
+func TestBuildProviderRegistryFromRouteConfigsRejectsUnknownFallback(t *testing.T) {
+	_, err := BuildProviderRegistryFromRouteConfigs(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"default",
+		"missing-route",
+		map[string]ProviderConfig{
+			"default": {
+				Kind:      "anthropic_compatible",
+				BaseURL:   "https://api.minimaxi.com/anthropic",
+				APIKey:    "secret",
+				Model:     "MiniMax-M2.7",
+				RouteName: "default",
+			},
+		},
+	)
+	if err == nil {
+		t.Fatal("expected missing fallback route error")
+	}
+}
+
 func TestOpenAIProviderUsesToolCallRequestShape(t *testing.T) {
 	transport := &captureTransport{responseBody: `{"choices":[{"message":{"tool_calls":[{"type":"function","function":{"name":"submit_review","arguments":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}}]}}],"usage":{"completion_tokens":21}}`}
 	provider, err := NewProviderFromConfig(ProviderConfig{
@@ -156,5 +178,36 @@ func TestOpenAIProviderUsesToolCallRequestShape(t *testing.T) {
 	}
 	if toolChoice["type"] != "function" {
 		t.Fatalf("tool_choice.type = %#v, want function", toolChoice["type"])
+	}
+}
+
+func TestOpenAIProviderMissingToolCallReturnsParserError(t *testing.T) {
+	transport := &captureTransport{responseBody: `{"choices":[{"message":{"content":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}}],"usage":{"completion_tokens":21}}`}
+	provider, err := NewProviderFromConfig(ProviderConfig{
+		Kind:       "openai",
+		BaseURL:    "https://api.openai.com/v1",
+		APIKey:     "secret-token",
+		Model:      "gpt-4.1-mini",
+		RouteName:  "openai",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewProviderFromConfig: %v", err)
+	}
+
+	_, err = provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err == nil {
+		t.Fatal("expected missing tool_call parser error")
+	}
+	if !isParserError(err) {
+		t.Fatalf("error = %v, want parser_error classification", err)
+	}
+	var parseErr *providerParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("expected providerParseError, got %T", err)
+	}
+	if !strings.Contains(parseErr.rawResponse, `"findings":[]`) {
+		t.Fatalf("rawResponse = %q, want captured assistant content", parseErr.rawResponse)
 	}
 }

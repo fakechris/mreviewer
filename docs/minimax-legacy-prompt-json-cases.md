@@ -4,7 +4,7 @@
 >
 > 这里记录的是“直接靠 prompt 约束 assistant 文本输出 JSON”时观察到的问题。
 > 当前主文档已经切换为新方案下的真实回归记录：
-> [docs/minimax-json-compliance-cases.md](/Users/chris/workspace/mreviewer/docs/minimax-json-compliance-cases.md)
+> [docs/minimax-json-compliance-cases.md](./minimax-json-compliance-cases.md)
 
 本文档只整理一个问题：
 
@@ -85,7 +85,7 @@ message, err := p.client.Messages.New(
 
 对应代码位置：
 
-- [internal/llm/provider.go](/Users/chris/workspace/mreviewer/internal/llm/provider.go#L653)
+- [internal/llm/provider.go](../internal/llm/provider.go#L653)
 
 ## 核心输入参数
 

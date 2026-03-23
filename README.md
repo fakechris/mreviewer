@@ -166,7 +166,7 @@ MiniMax M2.7 不再默认走“自由文本 JSON”。
 
 MiniMax 当前的稳定性和已知问题，单独整理在：
 
-- [docs/minimax-known-issues.md](/Users/chris/workspace/mreviewer/docs/minimax-known-issues.md)
+- [docs/minimax-known-issues.md](docs/minimax-known-issues.md)
 
 ## 安装与初始化
 
