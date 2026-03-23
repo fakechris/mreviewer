@@ -23,3 +23,75 @@ func TestValidateWorkerConfigAllowsConfiguredToken(t *testing.T) {
 		t.Fatalf("validateWorkerConfig: %v", err)
 	}
 }
+
+func TestProviderConfigsFromLegacyAnthropicSettings(t *testing.T) {
+	cfg := &config.Config{
+		AnthropicBaseURL: "https://api.minimaxi.com/anthropic",
+		AnthropicAPIKey:  "secret",
+		AnthropicModel:   "MiniMax-M2.7",
+	}
+
+	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("providerConfigsFromConfig: %v", err)
+	}
+	if defaultRoute != "default" {
+		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
+	}
+	if fallbackRoute != "secondary" {
+		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
+	}
+	if len(routes) != 2 {
+		t.Fatalf("routes = %d, want 2", len(routes))
+	}
+	if routes["default"].Kind != "anthropic_compatible" {
+		t.Fatalf("default kind = %q, want anthropic_compatible", routes["default"].Kind)
+	}
+}
+
+func TestProviderConfigsFromLLMRoutes(t *testing.T) {
+	cfg := &config.Config{
+		LLM: config.LLMConfig{
+			DefaultRoute:  "minimax",
+			FallbackRoute: "openai",
+			Routes: map[string]config.LLMRouteConfig{
+				"minimax": {
+					Provider:    "anthropic_compatible",
+					BaseURL:     "https://api.minimaxi.com/anthropic",
+					APIKey:      "minimax-secret",
+					Model:       "MiniMax-M2.7",
+					OutputMode:  "tool_call",
+					Temperature: 0.2,
+				},
+				"openai": {
+					Provider:    "openai",
+					BaseURL:     "https://api.openai.com/v1",
+					APIKey:      "openai-secret",
+					Model:       "gpt-4.1-mini",
+					OutputMode:  "tool_call",
+					Temperature: 0.2,
+				},
+			},
+		},
+	}
+
+	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("providerConfigsFromConfig: %v", err)
+	}
+	if defaultRoute != "minimax" {
+		t.Fatalf("defaultRoute = %q, want minimax", defaultRoute)
+	}
+	if fallbackRoute != "openai" {
+		t.Fatalf("fallbackRoute = %q, want openai", fallbackRoute)
+	}
+	if len(routes) != 2 {
+		t.Fatalf("routes = %d, want 2", len(routes))
+	}
+	if routes["openai"].Kind != "openai" {
+		t.Fatalf("openai kind = %q, want openai", routes["openai"].Kind)
+	}
+	if routes["minimax"].RouteName != "minimax" {
+		t.Fatalf("minimax route name = %q, want minimax", routes["minimax"].RouteName)
+	}
+}

@@ -39,9 +39,9 @@ scripts/init-local-env.sh
 - `GITLAB_BASE_URL`: 你的 GitLab 地址，例如 `https://gitlab.example.com`
 - `GITLAB_TOKEN`: GitLab API Token
 - `GITLAB_WEBHOOK_SECRET`: GitLab webhook secret
-- `ANTHROPIC_BASE_URL`: 模型供应商 Anthropic-compatible 地址
-- `ANTHROPIC_API_KEY`: 模型 API Key
-- `ANTHROPIC_MODEL`: 模型名
+- `ANTHROPIC_BASE_URL`: 默认 Anthropic-compatible 路由地址
+- `ANTHROPIC_API_KEY`: 默认 Anthropic-compatible 路由 API Key
+- `ANTHROPIC_MODEL`: 默认 Anthropic-compatible 路由模型名
 
 如果你使用默认 Docker Compose 部署：
 
@@ -80,7 +80,7 @@ output_language: en-US
 ```yaml
 confidence_threshold: 0.85
 severity_threshold: high
-provider_route: default
+provider_route: minimax
 output_language: zh-CN
 max_files: 50
 max_changed_lines: 1500
@@ -99,11 +99,13 @@ context_lines_after: 15
 
 ## 模型供应商配置
 
-当前实现使用 Anthropic-compatible 接口。
+当前实现已经支持 route-based provider factory：
 
-代码里生产 `worker` 目前实例化的是 `llm.NewMiniMaxProvider(...)`，也就是通过 Anthropic-compatible 协议接 MiniMax。
+- `anthropic_compatible`
+- `openai`
+- `anthropic`
 
-最少需要：
+默认本地开发仍然兼容旧方式：
 
 - `ANTHROPIC_BASE_URL`
 - `ANTHROPIC_API_KEY`
@@ -115,11 +117,56 @@ context_lines_after: 15
 - `MINIMAX_BASE_URL`
 - `MINIMAX_MODEL`
 
-当 `ANTHROPIC_*` 没有配置时，worker 会自动回退到 `MINIMAX_*`。
+当 `ANTHROPIC_*` 没有配置时，worker 会自动回退到 `MINIMAX_*`，并生成默认的 `anthropic_compatible` 路由。
+
+如果你要显式启用多 provider，请在 `config.yaml` 里配置 `llm.routes`。示例：
+
+```yaml
+llm:
+  default_route: minimax
+  fallback_route: openai
+  routes:
+    minimax:
+      provider: anthropic_compatible
+      base_url: https://api.minimaxi.com/anthropic
+      api_key: ${MINIMAX_API_KEY}
+      model: MiniMax-M2.7-highspeed
+      output_mode: tool_call
+      temperature: 0.2
+    openai:
+      provider: openai
+      base_url: https://api.openai.com/v1
+      api_key: ${OPENAI_API_KEY}
+      model: gpt-4.1-mini
+      output_mode: tool_call
+      temperature: 0.2
+    opus:
+      provider: anthropic
+      base_url: https://api.anthropic.com
+      api_key: ${ANTHROPIC_API_KEY}
+      model: claude-opus-4-1
+      output_mode: tool_call
+      temperature: 0.2
+```
+
+`provider_route` 仍然由项目策略或 `.gitlab/ai-review.yaml` 控制，worker 会按 route 动态选 provider。
+
+### MiniMax M2.7 输出模式
+
+MiniMax M2.7 不再默认走“自由文本 JSON”。
+
+当前 review 输出链路改成了：
+
+- 单一 `submit_review` 工具
+- 强制 `tool_choice`
+- 只解析 tool arguments
+- 本地严格校验结果
+
+也就是说，对 MiniMax 我们不再依赖 assistant 文本去碰运气输出 JSON。
 
 MiniMax 当前的稳定性和已知问题，单独整理在：
 
-- [docs/minimax-known-issues.md](/Users/chris/workspace/mreviewer/docs/minimax-known-issues.md)
+- [docs/minimax-known-issues.md](docs/minimax-known-issues.md)
 
 ## 安装与初始化
 
@@ -193,14 +240,37 @@ docker compose up -d --build
 
 所以默认部署下，你不需要手工执行任何建库建表 SQL。
 
-### 3. 健康检查
+### 3. 运行测试
+
+如果你只是跑单个 package，直接执行普通 `go test` 即可；`dbtest` 会在该 package 测试进程内共享一个 MySQL 容器。
+
+如果你要跑整仓测试，推荐使用共享 MySQL 入口脚本，而不是直接 `go test ./...`：
+
+```bash
+bash scripts/test-with-shared-mysql.sh
+```
+
+这条脚本会：
+
+- 启动一个共享 MySQL 8.4 容器
+- 导出 `MREVIEWER_TEST_ADMIN_DSN`
+- 让所有依赖 `dbtest` 的 package 复用同一台 MySQL
+- 测试结束后自动回收容器
+
+也可以把参数直接透传给 `go test`：
+
+```bash
+bash scripts/test-with-shared-mysql.sh ./internal/llm -run TestProcessRunUsesDynamicSystemPrompt
+```
+
+### 4. 健康检查
 
 ```bash
 curl -i http://127.0.0.1:3100/health
 docker compose ps
 ```
 
-### 4. 查看数据库是否初始化成功
+### 5. 查看数据库是否初始化成功
 
 ```bash
 docker compose logs migrate

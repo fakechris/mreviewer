@@ -51,13 +51,11 @@ func run() int {
 		return 1
 	}
 
-	// Platform default provider route name. This is used as both the
-	// rules.PlatformDefaults.ProviderRoute (the default when no project
-	// or group policy overrides it) and the registry's default route key.
-	// At runtime, rules.Load produces EffectivePolicy.ProviderRoute which
-	// the Processor uses to resolve the correct provider from the registry.
-	const platformDefaultRoute = "default"
-	const fallbackRoute = "secondary"
+	defaultRoute, configuredFallbackRoute, providerConfigs, err := providerConfigsFromConfig(cfg)
+	if err != nil {
+		logger.Error("failed to resolve llm route configuration", "error", err)
+		return 1
+	}
 
 	rulesLoader := rules.NewLoader(gitlabClient, rules.PlatformDefaults{
 		Instructions:        "Platform defaults: prioritize correctness, security, and least-privilege behavior.",
@@ -66,7 +64,7 @@ func run() int {
 		IncludePaths:        []string{"src/**"},
 		ExcludePaths:        []string{"vendor/**"},
 		GateMode:            "threads_resolved",
-		ProviderRoute:       platformDefaultRoute,
+		ProviderRoute:       defaultRoute,
 	})
 	gitLabLimiter := gitlab.NewInMemoryRateLimiter(gitlab.RateLimitConfig{Requests: 5, Window: time.Second}, time.Now, nil)
 	gitLabLimiter.SetLimit("global", gitlab.RateLimitConfig{Requests: 5, Window: time.Second})
@@ -76,39 +74,16 @@ func run() int {
 		return 1
 	}
 	llmLimiter := llm.NewInMemoryRateLimiter(llm.RateLimitConfig{Requests: 2, Window: time.Second}, time.Now, nil)
-	llmLimiter.SetLimit(platformDefaultRoute, llm.RateLimitConfig{Requests: 2, Window: time.Second})
-	llmLimiter.SetLimit(fallbackRoute, llm.RateLimitConfig{Requests: 2, Window: time.Second})
-	defaultProvider, err := llm.NewMiniMaxProvider(llm.ProviderConfig{
-		BaseURL:     cfg.AnthropicBaseURL,
-		APIKey:      cfg.AnthropicAPIKey,
-		Model:       cfg.AnthropicModel,
-		RouteName:   platformDefaultRoute,
-		MaxTokens:   4096,
-		RateLimiter: llmLimiter,
-	})
+	for route, providerCfg := range providerConfigs {
+		llmLimiter.SetLimit(route, llm.RateLimitConfig{Requests: 2, Window: time.Second})
+		providerCfg.RateLimiter = llmLimiter
+		providerConfigs[route] = providerCfg
+	}
+	providerRegistry, err := llm.BuildProviderRegistryFromRouteConfigs(logger, defaultRoute, configuredFallbackRoute, providerConfigs)
 	if err != nil {
-		logger.Error("failed to configure default llm provider", "error", err)
+		logger.Error("failed to configure llm provider registry", "error", err)
 		return 1
 	}
-	secondaryProvider, err := llm.NewMiniMaxProvider(llm.ProviderConfig{
-		BaseURL:   cfg.AnthropicBaseURL,
-		APIKey:    cfg.AnthropicAPIKey,
-		Model:     cfg.AnthropicModel,
-		RouteName: fallbackRoute,
-		MaxTokens: 4096,
-	})
-	if err != nil {
-		logger.Error("failed to configure secondary llm provider", "error", err)
-		return 1
-	}
-	// Build provider registry: maps route names to provider instances.
-	// The Processor resolves EffectivePolicy.ProviderRoute at runtime
-	// (from rules.Load) to select the correct provider for each review
-	// run. When a project/group policy sets a custom ProviderRoute, the
-	// registry resolves it; unknown routes fall back to platformDefaultRoute.
-	providerRegistry := llm.NewProviderRegistry(logger, platformDefaultRoute, defaultProvider)
-	providerRegistry.Register(fallbackRoute, secondaryProvider)
-	providerRegistry.SetFallbackRoute(fallbackRoute)
 	if cfg.RedisAddr == "" {
 		logger.Warn("redis unavailable; optional coordination disabled", "mode", "degraded_fallback")
 	} else {
@@ -120,7 +95,7 @@ func run() int {
 	processor := llm.NewProcessor(logger, db, gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(db)).WithRegistry(providerRegistry)
 	runtimeDeps := newRuntimeDepsWithWriteback(logger, db, processor, gitlabClient)
 	worker := runtimeDeps.Scheduler
-	logger.Info("worker starting", "platform_default_route", platformDefaultRoute, "fallback_route", fallbackRoute, "registry_routes", providerRegistry.Routes())
+	logger.Info("worker starting", "platform_default_route", defaultRoute, "fallback_route", configuredFallbackRoute, "registry_routes", providerRegistry.Routes())
 	if err := worker.Run(ctx); err != nil {
 		logger.Error("worker stopped with error", "error", err)
 		return 1
@@ -138,4 +113,50 @@ func validateWorkerConfig(cfg *config.Config) error {
 		return fmt.Errorf("worker: GITLAB_TOKEN is required")
 	}
 	return nil
+}
+
+func providerConfigsFromConfig(cfg *config.Config) (string, string, map[string]llm.ProviderConfig, error) {
+	if cfg == nil {
+		return "", "", nil, fmt.Errorf("worker: configuration is required")
+	}
+	routes := make(map[string]llm.ProviderConfig)
+	if len(cfg.LLM.Routes) > 0 {
+		defaultRoute := strings.TrimSpace(cfg.LLM.DefaultRoute)
+		if defaultRoute == "" {
+			return "", "", nil, fmt.Errorf("worker: llm.default_route is required when llm.routes is configured")
+		}
+		for routeName, route := range cfg.LLM.Routes {
+			trimmed := strings.TrimSpace(routeName)
+			if trimmed == "" {
+				return "", "", nil, fmt.Errorf("worker: llm route name cannot be empty")
+			}
+			routes[trimmed] = llm.ProviderConfig{
+				Kind:        strings.TrimSpace(route.Provider),
+				BaseURL:     strings.TrimSpace(route.BaseURL),
+				APIKey:      strings.TrimSpace(route.APIKey),
+				Model:       strings.TrimSpace(route.Model),
+				RouteName:   trimmed,
+				MaxTokens:   4096,
+				Temperature: route.Temperature,
+			}
+		}
+		return defaultRoute, strings.TrimSpace(cfg.LLM.FallbackRoute), routes, nil
+	}
+
+	const legacyDefaultRoute = "default"
+	const legacyFallbackRoute = "secondary"
+	legacy := llm.ProviderConfig{
+		Kind:      llm.ProviderKindAnthropicCompatible,
+		BaseURL:   strings.TrimSpace(cfg.AnthropicBaseURL),
+		APIKey:    strings.TrimSpace(cfg.AnthropicAPIKey),
+		Model:     strings.TrimSpace(cfg.AnthropicModel),
+		MaxTokens: 4096,
+	}
+	defaultProvider := legacy
+	defaultProvider.RouteName = legacyDefaultRoute
+	secondaryProvider := legacy
+	secondaryProvider.RouteName = legacyFallbackRoute
+	routes[legacyDefaultRoute] = defaultProvider
+	routes[legacyFallbackRoute] = secondaryProvider
+	return legacyDefaultRoute, legacyFallbackRoute, routes, nil
 }

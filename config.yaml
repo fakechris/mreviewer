@@ -13,4 +13,34 @@ gitlab_webhook_secret: ""
 
 anthropic_base_url: "https://api.minimaxi.com/anthropic"
 anthropic_api_key: ""
-anthropic_model: "MiniMax-M2.5"
+anthropic_model: "MiniMax-M2.7-highspeed"
+
+# 多 provider 路由工厂配置示例。
+# 注意：默认本地开发仍然优先走上面的 ANTHROPIC_* / MINIMAX_* 兼容配置。
+# 如果启用 llm.routes，请把对应 route 的 api_key/base_url/model 也在这里配完整。
+#
+# llm:
+#   default_route: minimax
+#   fallback_route: openai
+#   routes:
+#     minimax:
+#       provider: anthropic_compatible
+#       base_url: https://api.minimaxi.com/anthropic
+#       api_key: your-minimax-key
+#       model: MiniMax-M2.7-highspeed
+#       output_mode: tool_call
+#       temperature: 0.2
+#     openai:
+#       provider: openai
+#       base_url: https://api.openai.com/v1
+#       api_key: your-openai-key
+#       model: gpt-4.1-mini
+#       output_mode: tool_call
+#       temperature: 0.2
+#     opus:
+#       provider: anthropic
+#       base_url: https://api.anthropic.com
+#       api_key: your-anthropic-key
+#       model: claude-opus-4-1
+#       output_mode: tool_call
+#       temperature: 0.2

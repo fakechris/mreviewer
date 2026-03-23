@@ -275,6 +275,52 @@ func TestWaitForTerminalRunReturnsCompletedRun(t *testing.T) {
 	}
 }
 
+func TestWaitForTerminalRunReturnsRequestedChangesRun(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+	_, projectID, mrID := seedRunEntities(t, sqlDB, 101, 8, "head-sha-requested-changes")
+
+	runResult, err := queries.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID:      projectID,
+		MergeRequestID: mrID,
+		TriggerType:    "manual",
+		HeadSha:        "head-sha-requested-changes",
+		Status:         "pending",
+		MaxRetries:     3,
+		IdempotencyKey: "wait-run-requested-changes",
+	})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	runID, _ := runResult.LastInsertId()
+
+	svc := NewService(testLogger(), sqlDB, nil, "https://gitlab.example.com", WithPollInterval(5*time.Millisecond))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(20 * time.Millisecond)
+		if updateErr := queries.UpdateReviewRunStatus(context.Background(), db.UpdateReviewRunStatusParams{
+			ID:        runID,
+			Status:    "requested_changes",
+			ErrorCode: "",
+		}); updateErr != nil {
+			t.Errorf("UpdateReviewRunStatus: %v", updateErr)
+		}
+	}()
+
+	run, err := svc.WaitForTerminalRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("WaitForTerminalRun: %v", err)
+	}
+	<-done
+
+	if run.Status != "requested_changes" {
+		t.Fatalf("run status = %q, want requested_changes", run.Status)
+	}
+}
+
 func TestWaitForTerminalRunHonorsContextDeadline(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	ctx := context.Background()

@@ -20,7 +20,8 @@ const (
 	defaultPollInterval    = time.Second
 	defaultRetryBaseDelay  = time.Second
 	defaultRetryMaxDelay   = 30 * time.Second
-	defaultClaimRetryWait  = 10 * time.Millisecond
+	defaultClaimRetryWait  = 25 * time.Millisecond
+	defaultClaimRetryCount = 8
 	defaultFailureCode     = "run_failed"
 	defaultClaimTimeoutMin = 10
 	defaultReaperInterval  = 60 * time.Second
@@ -266,7 +267,7 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
 		return nil, fmt.Errorf("scheduler: database is required")
 	}
 
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < defaultClaimRetryCount; attempt++ {
 		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 		if err != nil {
 			return nil, fmt.Errorf("scheduler: begin claim tx: %w", err)
@@ -277,7 +278,7 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
 		if err != nil {
 			_ = tx.Rollback()
 			if errors.Is(err, sql.ErrNoRows) {
-				if attempt == 0 {
+				if attempt < defaultClaimRetryCount-1 {
 					if err := sleepContext(ctx, defaultClaimRetryWait); err != nil {
 						return nil, err
 					}
@@ -605,7 +606,7 @@ func (s *Service) handleSkippedTerminalWrite(ctx context.Context, run db.ReviewR
 
 	switch terminalState {
 	case "completed":
-		if currentRun.Status == "completed" {
+		if currentRun.Status == "completed" || currentRun.Status == "requested_changes" {
 			return currentRun, nil
 		}
 	case "failed":

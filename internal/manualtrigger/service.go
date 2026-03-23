@@ -198,7 +198,7 @@ func (s *Service) WaitForTerminalRun(ctx context.Context, runID int64) (db.Revie
 
 func isTerminalStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "completed", "failed", "cancelled", "parser_error":
+	case "completed", "requested_changes", "failed", "cancelled", "parser_error":
 		return true
 	default:
 		return false

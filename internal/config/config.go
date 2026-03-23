@@ -30,6 +30,23 @@ type Config struct {
 	AnthropicBaseURL string `yaml:"anthropic_base_url"`
 	AnthropicAPIKey  string `yaml:"anthropic_api_key"`
 	AnthropicModel   string `yaml:"anthropic_model"`
+
+	LLM LLMConfig `yaml:"llm"`
+}
+
+type LLMConfig struct {
+	DefaultRoute  string                    `yaml:"default_route"`
+	FallbackRoute string                    `yaml:"fallback_route"`
+	Routes        map[string]LLMRouteConfig `yaml:"routes"`
+}
+
+type LLMRouteConfig struct {
+	Provider    string  `yaml:"provider"`
+	BaseURL     string  `yaml:"base_url"`
+	APIKey      string  `yaml:"api_key"`
+	Model       string  `yaml:"model"`
+	OutputMode  string  `yaml:"output_mode"`
+	Temperature float64 `yaml:"temperature"`
 }
 
 // envMapping maps Config field setters to their environment variable names.
@@ -48,6 +65,8 @@ var envMapping = []struct {
 	{"ANTHROPIC_BASE_URL", func(c *Config, v string) { c.AnthropicBaseURL = v }},
 	{"ANTHROPIC_API_KEY", func(c *Config, v string) { c.AnthropicAPIKey = v }},
 	{"ANTHROPIC_MODEL", func(c *Config, v string) { c.AnthropicModel = v }},
+	{"LLM_DEFAULT_ROUTE", func(c *Config, v string) { c.LLM.DefaultRoute = v }},
+	{"LLM_FALLBACK_ROUTE", func(c *Config, v string) { c.LLM.FallbackRoute = v }},
 }
 
 // Load reads configuration first from the YAML file at yamlPath (if it exists
@@ -112,17 +131,17 @@ func applyMiniMaxFallback(cfg *Config) {
 	if minimaxKey == "" {
 		return
 	}
-	if strings.TrimSpace(cfg.AnthropicAPIKey) == "" {
+	if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) == "" {
 		cfg.AnthropicAPIKey = minimaxKey
 	}
-	if strings.TrimSpace(cfg.AnthropicBaseURL) == "" {
+	if strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")) == "" {
 		if baseURL := strings.TrimSpace(os.Getenv("MINIMAX_BASE_URL")); baseURL != "" {
 			cfg.AnthropicBaseURL = baseURL
 		} else {
 			cfg.AnthropicBaseURL = defaultMiniMaxBaseURL
 		}
 	}
-	if strings.TrimSpace(cfg.AnthropicModel) == "" {
+	if strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")) == "" {
 		if model := strings.TrimSpace(os.Getenv("MINIMAX_MODEL")); model != "" {
 			cfg.AnthropicModel = model
 		} else {

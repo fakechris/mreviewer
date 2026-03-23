@@ -31,7 +31,7 @@ import (
 )
 
 func TestMiniMaxRequestShape(t *testing.T) {
-	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"text","text":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}],"usage":{"output_tokens":42}}`}
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[]}}],"usage":{"output_tokens":42}}`}
 	provider, err := NewMiniMaxProvider(ProviderConfig{BaseURL: "https://api.minimaxi.com/anthropic", APIKey: "secret-token", Model: "MiniMax-M2.5", HTTPClient: &http.Client{Transport: transport}, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
 		t.Fatalf("NewMiniMaxProvider: %v", err)
@@ -65,6 +65,12 @@ func TestMiniMaxRequestShape(t *testing.T) {
 	}
 	if _, ok := payload["output_config"]; ok {
 		t.Fatal("output_config should not be sent to MiniMax Anthropic-compatible endpoint")
+	}
+	if _, ok := payload["tools"]; !ok {
+		t.Fatal("missing review tool declaration")
+	}
+	if _, ok := payload["tool_choice"]; !ok {
+		t.Fatal("missing forced tool choice")
 	}
 	if got := transport.header.Get("X-Api-Key"); got != "secret-token" {
 		t.Fatalf("x-api-key = %q", got)
@@ -101,7 +107,7 @@ func TestMiniMaxSummaryRequestShape(t *testing.T) {
 }
 
 func TestMiniMaxParserErrorIncludesRawSnippet(t *testing.T) {
-	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"text","text":"not-json-response"}],"usage":{"output_tokens":7}}`}
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":"not-json-response"}],"usage":{"output_tokens":7}}`}
 	provider, err := NewMiniMaxProvider(ProviderConfig{
 		BaseURL:    "https://api.minimaxi.com/anthropic",
 		APIKey:     "secret-token",
@@ -118,6 +124,199 @@ func TestMiniMaxParserErrorIncludesRawSnippet(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not-json-response") {
 		t.Fatalf("parser error missing raw snippet: %v", err)
+	}
+}
+
+func TestCanonicalRunStatus(t *testing.T) {
+	tests := []struct {
+		name         string
+		modelStatus  string
+		findingCount int
+		want         string
+	}{
+		{name: "parser error preserved", modelStatus: parserErrorCode, findingCount: 0, want: parserErrorCode},
+		{name: "empty status with no findings becomes completed", modelStatus: "", findingCount: 0, want: "completed"},
+		{name: "requested changes with findings stays requested changes", modelStatus: "requested_changes", findingCount: 1, want: "requested_changes"},
+		{name: "model failure with findings becomes requested changes", modelStatus: "failure", findingCount: 2, want: "requested_changes"},
+		{name: "model failure without findings becomes completed", modelStatus: "failure", findingCount: 0, want: "completed"},
+		{name: "completed with findings becomes requested changes", modelStatus: "completed", findingCount: 1, want: "requested_changes"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := canonicalRunStatus(tt.modelStatus, tt.findingCount); got != tt.want {
+				t.Fatalf("canonicalRunStatus(%q, %d) = %q, want %q", tt.modelStatus, tt.findingCount, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMiniMaxToolCallRequestShape(t *testing.T) {
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[]}}],"usage":{"output_tokens":42}}`}
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL:    "https://api.minimaxi.com/anthropic",
+		APIKey:     "secret-token",
+		Model:      "MiniMax-M2.7",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	_, err = provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(transport.body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	tools, ok := payload["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %#v, want one submit_review tool", payload["tools"])
+	}
+	tool, ok := tools[0].(map[string]any)
+	if !ok {
+		t.Fatalf("tool payload = %#v", tools[0])
+	}
+	if tool["name"] != "submit_review" {
+		t.Fatalf("tool name = %#v, want submit_review", tool["name"])
+	}
+	inputSchema, ok := tool["input_schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("input_schema = %#v", tool["input_schema"])
+	}
+	if inputSchema["type"] != "object" {
+		t.Fatalf("input_schema.type = %#v, want object", inputSchema["type"])
+	}
+	toolChoice, ok := payload["tool_choice"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_choice = %#v", payload["tool_choice"])
+	}
+	if toolChoice["type"] != "tool" {
+		t.Fatalf("tool_choice.type = %#v, want tool", toolChoice["type"])
+	}
+	if toolChoice["name"] != "submit_review" {
+		t.Fatalf("tool_choice.name = %#v, want submit_review", toolChoice["name"])
+	}
+}
+
+func TestMiniMaxToolCallResponseParsesToolInput(t *testing.T) {
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":42}}`}
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL:    "https://api.minimaxi.com/anthropic",
+		APIKey:     "secret-token",
+		Model:      "MiniMax-M2.7",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if response.Result.Summary != "ok" {
+		t.Fatalf("summary = %q, want ok", response.Result.Summary)
+	}
+	if len(response.Result.Findings) != 1 || response.Result.Findings[0].Title != "Issue" {
+		t.Fatalf("findings = %#v", response.Result.Findings)
+	}
+}
+
+func TestMiniMaxToolCallMissingToolUseFails(t *testing.T) {
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"text","text":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}],"usage":{"output_tokens":42}}`}
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL:    "https://api.minimaxi.com/anthropic",
+		APIKey:     "secret-token",
+		Model:      "MiniMax-M2.7",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	_, err = provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err == nil {
+		t.Fatal("expected missing tool_use parser error")
+	}
+	if !isParserError(err) {
+		t.Fatalf("error = %v, want parser_error classification", err)
+	}
+	if !strings.Contains(err.Error(), "tool_use") {
+		t.Fatalf("error = %v, want tool_use mention", err)
+	}
+	var parseErr *providerParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("expected providerParseError, got %T", err)
+	}
+	if !strings.Contains(parseErr.rawResponse, `"findings":[]`) {
+		t.Fatalf("rawResponse = %q, want captured plain-text payload", parseErr.rawResponse)
+	}
+}
+
+func TestMiniMaxToolCallRepairsInvalidToolInput(t *testing.T) {
+	transport := &captureTransport{responseBodies: []string{
+		`{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":42}}`,
+		`{"id":"msg_2","content":[{"type":"tool_use","id":"toolu_2","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":21}}`,
+	}}
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL:    "https://api.minimaxi.com/anthropic",
+		APIKey:     "secret-token",
+		Model:      "MiniMax-M2.7",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if transport.calls != 2 {
+		t.Fatalf("calls = %d, want 2", transport.calls)
+	}
+	if response.FallbackStage != "repair_retry" {
+		t.Fatalf("fallback stage = %q, want repair_retry", response.FallbackStage)
+	}
+	if len(response.Result.Findings) != 1 || response.Result.Findings[0].Category != "bug" {
+		t.Fatalf("findings = %#v", response.Result.Findings)
+	}
+}
+
+func TestMiniMaxToolCallFailsAfterInvalidRepairRetry(t *testing.T) {
+	transport := &captureTransport{responseBodies: []string{
+		`{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":42}}`,
+		`{"id":"msg_2","content":[{"type":"tool_use","id":"toolu_2","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":21}}`,
+	}}
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL:    "https://api.minimaxi.com/anthropic",
+		APIKey:     "secret-token",
+		Model:      "MiniMax-M2.7",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	_, err = provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err == nil {
+		t.Fatal("expected parser error after invalid repair retry")
+	}
+	if transport.calls != 2 {
+		t.Fatalf("calls = %d, want 2", transport.calls)
+	}
+	if !strings.Contains(err.Error(), "strict validation") {
+		t.Fatalf("error = %v, want strict validation mention", err)
 	}
 }
 
@@ -468,7 +667,7 @@ func TestLLMRateLimiting(t *testing.T) {
 		current = current.Add(delay)
 		return nil
 	})
-	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"text","text":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}],"usage":{"output_tokens":1}}`}
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[]}}],"usage":{"output_tokens":1}}`}
 	provider, err := NewMiniMaxProvider(ProviderConfig{BaseURL: "https://api.minimaxi.com/anthropic", APIKey: "secret-token", Model: "MiniMax-M2.5", RouteName: "project-route", RateLimiter: limiter, HTTPClient: &http.Client{Transport: transport}, Now: func() time.Time { return current }})
 	if err != nil {
 		t.Fatalf("NewMiniMaxProvider: %v", err)
@@ -532,8 +731,8 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessRun: %v", err)
 	}
-	if outcome.Status != "completed" {
-		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	if outcome.Status != "requested_changes" {
+		t.Fatalf("outcome status = %q, want requested_changes", outcome.Status)
 	}
 	if outcome.ProviderLatencyMs != 25 {
 		t.Fatalf("outcome provider latency = %d, want 25", outcome.ProviderLatencyMs)
@@ -552,8 +751,8 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReviewRun: %v", err)
 	}
-	if updatedRun.Status != "completed" {
-		t.Fatalf("status = %q, want completed", updatedRun.Status)
+	if updatedRun.Status != "requested_changes" {
+		t.Fatalf("status = %q, want requested_changes", updatedRun.Status)
 	}
 	audits, err := q.ListAuditLogsByEntity(ctx, db.ListAuditLogsByEntityParams{EntityType: "review_run", EntityID: runID, Limit: 10, Offset: 0})
 	if err != nil {
@@ -804,6 +1003,62 @@ func TestReviewedCleanPathBecomesFixed(t *testing.T) {
 
 	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}, map[string]struct{}{"src/service/foo.go": {}}, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
+	}
+
+	findings, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun: %v", err)
+	}
+	if findings[0].State != findingStateFixed {
+		t.Fatalf("state = %q, want fixed", findings[0].State)
+	}
+}
+
+func TestReviewedCleanPathBecomesFixedFromNewFinding(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, projectID, mrID, runID := seedRun(t, ctx, q)
+	baseRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+	if err := persistFindings(ctx, q, baseRun, mr, ReviewResult{
+		SchemaVersion: "1.0",
+		ReviewRunID:   fmt.Sprintf("%d", runID),
+		Summary:       "summary",
+		Status:        "completed",
+		Findings:      []ReviewFinding{sameRunFinding(12)},
+	}, nil, nil); err != nil {
+		t.Fatalf("persistFindings base: %v", err)
+	}
+
+	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook:reviewed-clean-new"})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	newRunID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+	newRun, err := q.GetReviewRun(ctx, newRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun new: %v", err)
+	}
+
+	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{
+		SchemaVersion: "1.0",
+		ReviewRunID:   fmt.Sprintf("%d", newRunID),
+		Summary:       "summary",
+		Status:        "completed",
+		Findings:      nil,
+	}, map[string]struct{}{"src/service/foo.go": {}}, nil); err != nil {
+		t.Fatalf("persistFindings clean: %v", err)
 	}
 
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -1563,7 +1818,13 @@ func TestValidTransitions(t *testing.T) {
 		wantOK  bool
 	}{
 		{name: "new to posted", current: findingStateNew, next: findingStatePosted, wantOK: true},
+		{name: "new to fixed", current: findingStateNew, next: findingStateFixed, wantOK: true},
+		{name: "new to stale", current: findingStateNew, next: findingStateStale, wantOK: true},
+		{name: "new to ignored", current: findingStateNew, next: findingStateIgnored, wantOK: true},
 		{name: "posted to active", current: findingStatePosted, next: findingStateActive, wantOK: true},
+		{name: "posted to fixed", current: findingStatePosted, next: findingStateFixed, wantOK: true},
+		{name: "posted to stale", current: findingStatePosted, next: findingStateStale, wantOK: true},
+		{name: "posted to ignored", current: findingStatePosted, next: findingStateIgnored, wantOK: true},
 		{name: "active to fixed", current: findingStateActive, next: findingStateFixed, wantOK: true},
 		{name: "active to superseded", current: findingStateActive, next: findingStateSuperseded, wantOK: true},
 		{name: "active to stale", current: findingStateActive, next: findingStateStale, wantOK: true},
@@ -2081,11 +2342,12 @@ func sameRunFinding(line int32) ReviewFinding {
 }
 
 type captureTransport struct {
-	body         bytes.Buffer
-	header       http.Header
-	responseBody string
-	errSequence  []error
-	calls        int
+	body           bytes.Buffer
+	header         http.Header
+	responseBody   string
+	responseBodies []string
+	errSequence    []error
+	calls          int
 }
 
 func (t *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -2097,9 +2359,14 @@ func (t *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		t.errSequence = t.errSequence[1:]
 		return nil, err
 	}
+	responseBody := t.responseBody
+	if len(t.responseBodies) > 0 {
+		responseBody = t.responseBodies[0]
+		t.responseBodies = t.responseBodies[1:]
+	}
 	header := make(http.Header)
 	header.Set("Content-Type", "application/json")
-	return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(bytes.NewBufferString(t.responseBody))}, nil
+	return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(bytes.NewBufferString(responseBody))}, nil
 }
 
 type timeoutError struct{}
@@ -2346,6 +2613,114 @@ func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
 	}
 }
 
+func TestProcessRunUsesActiveFindingsForRequestedChangesStatus(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	q := db.New(sqlDB)
+	_, projectID, mrID, baseRunID := seedRun(t, ctx, q)
+
+	baseRun, err := q.GetReviewRun(ctx, baseRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun base: %v", err)
+	}
+	mr, err := q.GetMergeRequest(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetMergeRequest: %v", err)
+	}
+	baseFinding := sameRunFinding(12)
+	baseFinding.Path = "src/service/foo.go"
+	if err := activateSingleFinding(ctx, q, baseRun, mr, baseFinding); err != nil {
+		t.Fatalf("activateSingleFinding: %v", err)
+	}
+
+	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID:      projectID,
+		MergeRequestID: mrID,
+		TriggerType:    "webhook",
+		HeadSha:        "head-2",
+		Status:         "pending",
+		MaxRetries:     3,
+		IdempotencyKey: fmt.Sprintf("rr-active-%d", time.Now().UnixNano()),
+	})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	runID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-active-findings", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun new: %v", err)
+	}
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{
+			GitLabID:  11,
+			IID:       7,
+			ProjectID: 101,
+			Title:     "Title",
+			Author: struct {
+				Username string `json:"username"`
+			}{Username: "alice"},
+			DiffRefs:     &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head-2", StartSHA: "start"},
+			HeadSHA:      "head-2",
+			WebURL:       "https://gitlab.example.com/group/project/-/merge_requests/7",
+			State:        "opened",
+			SourceBranch: "feature",
+			TargetBranch: "main",
+		},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 56, BaseSHA: "base", StartSHA: "start", HeadSHA: "head-2", PatchIDSHA: "patch-2"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "src/service/foo.go", NewPath: "src/service/foo.go", Diff: "@@ -10,1 +10,1 @@\n-return *ptr\n+return *ptr\n"}},
+	}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform"}}}
+	provider := &fakeProvider{response: ProviderResponse{
+		Result: ReviewResult{
+			SchemaVersion: "1.0",
+			ReviewRunID:   fmt.Sprintf("%d", runID),
+			Summary:       "summary",
+			Status:        "completed",
+			Findings:      []ReviewFinding{baseFinding},
+		},
+		Model:           "MiniMax-M2.7-highspeed",
+		Tokens:          88,
+		Latency:         12 * time.Millisecond,
+		ResponsePayload: map[string]any{},
+	}}
+
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "requested_changes" {
+		t.Fatalf("outcome status = %q, want requested_changes", outcome.Status)
+	}
+	if len(outcome.ReviewFindings) != 1 {
+		t.Fatalf("outcome review findings = %d, want 1 active finding", len(outcome.ReviewFindings))
+	}
+
+	updatedRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun updated: %v", err)
+	}
+	if updatedRun.Status != "requested_changes" {
+		t.Fatalf("run status = %q, want requested_changes", updatedRun.Status)
+	}
+
+	runRows, err := q.ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun new run: %v", err)
+	}
+	if len(runRows) != 0 {
+		t.Fatalf("new run findings = %d, want 0 when carry-forward keeps prior row active", len(runRows))
+	}
+}
+
 // TestProviderRouteEndToEnd verifies that the full processor flow
 // resolves the provider through the registry based on the effective
 // policy's ProviderRoute, including proper audit logging.
@@ -2420,8 +2795,8 @@ func TestProviderRouteEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessRun: %v", err)
 	}
-	if outcome.Status != "completed" {
-		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	if outcome.Status != "requested_changes" {
+		t.Fatalf("outcome status = %q, want requested_changes", outcome.Status)
 	}
 	if projectRouteCalls != 1 {
 		t.Fatalf("project route calls = %d, want 1", projectRouteCalls)
@@ -3035,8 +3410,8 @@ func TestProcessRunWithSummaryProviderFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessRun should succeed even when summary fails: %v", err)
 	}
-	if outcome.Status != "completed" {
-		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	if outcome.Status != "requested_changes" {
+		t.Fatalf("outcome status = %q, want requested_changes", outcome.Status)
 	}
 	if !summaryProv.called {
 		t.Fatal("expected summary provider to be called")

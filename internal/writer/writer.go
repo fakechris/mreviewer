@@ -610,7 +610,7 @@ func renderTargetLine(finding db.ReviewFinding) string {
 
 func isTerminalRun(status string) bool {
 	status = strings.ToLower(strings.TrimSpace(status))
-	return status == "completed" || status == runStatusParserError
+	return status == "completed" || status == "requested_changes" || status == runStatusParserError
 }
 
 func renderSummaryBody(run db.ReviewRun, findings []db.ReviewFinding, language string) string {
