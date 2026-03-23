@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/logging"
+	"github.com/mreviewer/mreviewer/internal/notecommand"
 )
 
 // maxPayloadBytes limits the size of accepted webhook bodies (1 MB).
@@ -43,8 +44,8 @@ type RunProcessor interface {
 // must support execution inside a caller-managed transaction so hook-event
 // persistence and command side effects remain atomic across retries.
 type CommandProcessor interface {
-	Execute(ctx context.Context, noteEvent NormalizedNoteEvent, cmd interface{}) error
-	ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent NormalizedNoteEvent, cmd interface{}) error
+	Execute(ctx context.Context, noteEvent NormalizedNoteEvent, cmd *notecommand.ParsedCommand) error
+	ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent NormalizedNoteEvent, cmd *notecommand.ParsedCommand) error
 }
 
 // NewHandler creates a webhook handler. The secret is the expected value of
@@ -218,7 +219,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return h.runProcessor.ProcessEventWithQuerier(ctx, q, normalized, hookEventID)
 	})
 	if err != nil {
-		if isDuplicateKeyError(err) {
+		if db.IsDuplicateKeyError(err) {
 			l.InfoContext(ctx, "duplicate delivery key on insert, acknowledging",
 				"delivery_key", deliveryKey,
 			)
@@ -389,7 +390,7 @@ func (h *Handler) handleNoteEvent(
 		if h.commandProcessor == nil {
 			// Still insert the hook event for audit outside the command path.
 			if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
-				if !isDuplicateKeyError(insertErr) {
+				if !db.IsDuplicateKeyError(insertErr) {
 					l.WarnContext(ctx, "failed to insert hook_event for note",
 						"delivery_key", deliveryKey,
 						"error", insertErr,
@@ -415,7 +416,7 @@ func (h *Handler) handleNoteEvent(
 		})
 
 		if err != nil {
-			if isDuplicateKeyError(err) {
+			if db.IsDuplicateKeyError(err) {
 				l.InfoContext(ctx, "duplicate delivery key on note command insert, acknowledging",
 					"delivery_key", deliveryKey,
 				)
@@ -444,7 +445,7 @@ func (h *Handler) handleNoteEvent(
 
 	// Non-command note: insert hook_event for audit.
 	if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
-		if !isDuplicateKeyError(insertErr) {
+		if !db.IsDuplicateKeyError(insertErr) {
 			l.WarnContext(ctx, "failed to insert hook_event for note",
 				"delivery_key", deliveryKey,
 				"error", insertErr,
@@ -462,46 +463,14 @@ func (h *Handler) handleNoteEvent(
 
 // isCommandNote returns true if the note body starts with /ai-review.
 func isCommandNote(noteBody string) bool {
-	return strings.HasPrefix(strings.TrimSpace(noteBody), "/ai-review")
+	return notecommand.IsCommand(noteBody)
 }
 
 // parseNoteCommand is a thin wrapper that extracts the command kind and args
 // from a note body. Returns nil if the body is not a command.
-func parseNoteCommand(noteBody string) interface{} {
-	trimmed := strings.TrimSpace(noteBody)
-	if !strings.HasPrefix(trimmed, "/ai-review") {
-		return nil
-	}
-
-	// Extract the command portion after "/ai-review".
-	rest := strings.TrimSpace(trimmed[len("/ai-review"):])
-
-	parts := strings.SplitN(rest, " ", 2)
-	if len(parts) == 0 || parts[0] == "" {
-		return &noteCommand{kind: "unknown"}
-	}
-
-	keyword := strings.ToLower(parts[0])
-	args := ""
-	if len(parts) > 1 {
-		args = strings.TrimSpace(parts[1])
-	}
-
-	return &noteCommand{kind: keyword, args: args}
+func parseNoteCommand(noteBody string) *notecommand.ParsedCommand {
+	return notecommand.Parse(noteBody)
 }
-
-// noteCommand is an opaque command value passed through the CommandProcessor
-// interface to avoid a direct dependency on the commands package from hooks.
-type noteCommand struct {
-	kind string
-	args string
-}
-
-// Kind returns the command keyword.
-func (c *noteCommand) Kind() string { return c.kind }
-
-// Args returns the command arguments.
-func (c *noteCommand) Args() string { return c.args }
 
 // parsedEvent holds the extracted fields from a webhook payload.
 type parsedEvent struct {
@@ -569,15 +538,6 @@ func detectHookSource(r *http.Request) string {
 }
 
 // isDuplicateKeyError checks if a MySQL error is a duplicate key violation.
-func isDuplicateKeyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	// MySQL error 1062 is "Duplicate entry"
-	return strings.Contains(err.Error(), "Duplicate entry") ||
-		strings.Contains(err.Error(), "Error 1062")
-}
-
 // toNullInt64 converts a non-zero int64 to sql.NullInt64.
 func toNullInt64(v int64) sql.NullInt64 {
 	if v == 0 {

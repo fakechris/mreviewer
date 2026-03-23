@@ -16,6 +16,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/hooks"
+	"github.com/mreviewer/mreviewer/internal/notecommand"
 	"github.com/mreviewer/mreviewer/internal/runs"
 )
 
@@ -639,7 +640,7 @@ type failOnceCommandProcessor struct {
 	calls     int
 }
 
-func (f *failOnceCommandProcessor) Execute(ctx context.Context, noteEvent hooks.NormalizedNoteEvent, cmd interface{}) error {
+func (f *failOnceCommandProcessor) Execute(ctx context.Context, noteEvent hooks.NormalizedNoteEvent, cmd *notecommand.ParsedCommand) error {
 	f.calls++
 	if f.calls <= f.failCount {
 		return fmt.Errorf("simulated command failure (call %d)", f.calls)
@@ -647,7 +648,7 @@ func (f *failOnceCommandProcessor) Execute(ctx context.Context, noteEvent hooks.
 	return f.real.Execute(ctx, noteEvent, cmd)
 }
 
-func (f *failOnceCommandProcessor) ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent, cmd interface{}) error {
+func (f *failOnceCommandProcessor) ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent, cmd *notecommand.ParsedCommand) error {
 	f.calls++
 	if f.calls <= f.failCount {
 		return fmt.Errorf("simulated command failure (call %d)", f.calls)
@@ -658,11 +659,11 @@ func (f *failOnceCommandProcessor) ExecuteWithQuerier(ctx context.Context, q *db
 // alwaysFailCommandProcessor always returns an error.
 type alwaysFailCommandProcessor struct{}
 
-func (a *alwaysFailCommandProcessor) Execute(_ context.Context, _ hooks.NormalizedNoteEvent, _ interface{}) error {
+func (a *alwaysFailCommandProcessor) Execute(_ context.Context, _ hooks.NormalizedNoteEvent, _ *notecommand.ParsedCommand) error {
 	return fmt.Errorf("simulated permanent command failure")
 }
 
-func (a *alwaysFailCommandProcessor) ExecuteWithQuerier(_ context.Context, _ *db.Queries, _ hooks.NormalizedNoteEvent, _ interface{}) error {
+func (a *alwaysFailCommandProcessor) ExecuteWithQuerier(_ context.Context, _ *db.Queries, _ hooks.NormalizedNoteEvent, _ *notecommand.ParsedCommand) error {
 	return fmt.Errorf("simulated permanent command failure")
 }
 

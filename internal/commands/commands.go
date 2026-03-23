@@ -15,82 +15,23 @@ import (
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/hooks"
+	"github.com/mreviewer/mreviewer/internal/notecommand"
 )
 
-// commandPrefix is the slash-command prefix we recognize.
-const commandPrefix = "/ai-review"
-
-// CommandKind identifies the type of /ai-review command.
-type CommandKind string
+type CommandKind = notecommand.CommandKind
+type ParsedCommand = notecommand.ParsedCommand
 
 const (
-	CommandRerun   CommandKind = "rerun"
-	CommandIgnore  CommandKind = "ignore"
-	CommandResolve CommandKind = "resolve"
-	CommandFocus   CommandKind = "focus"
-	CommandUnknown CommandKind = "unknown"
+	CommandRerun   = notecommand.CommandRerun
+	CommandIgnore  = notecommand.CommandIgnore
+	CommandResolve = notecommand.CommandResolve
+	CommandFocus   = notecommand.CommandFocus
+	CommandUnknown = notecommand.CommandUnknown
 )
 
-// ParsedCommand represents a parsed /ai-review command from a note body.
-type ParsedCommand struct {
-	// Kind is the command type (rerun, ignore, resolve, focus, unknown).
-	Kind CommandKind
+func Parse(noteBody string) *ParsedCommand { return notecommand.Parse(noteBody) }
 
-	// Args contains any arguments after the command keyword.
-	// For focus: the path pattern. For others: typically empty.
-	Args string
-}
-
-// Parse extracts a /ai-review command from a note body. Returns nil if
-// the note does not contain a /ai-review command.
-func Parse(noteBody string) *ParsedCommand {
-	// Trim whitespace and look for the command prefix.
-	trimmed := strings.TrimSpace(noteBody)
-	if !strings.HasPrefix(trimmed, commandPrefix) {
-		return nil
-	}
-
-	// After the prefix, the next character must be whitespace or end of string
-	// to avoid matching "/ai-review-something" as a command.
-	afterPrefix := trimmed[len(commandPrefix):]
-	if len(afterPrefix) > 0 && afterPrefix[0] != ' ' && afterPrefix[0] != '\t' && afterPrefix[0] != '\n' {
-		return nil
-	}
-
-	// Extract the remainder after the prefix.
-	rest := strings.TrimSpace(afterPrefix)
-
-	// Split into command and args.
-	parts := strings.SplitN(rest, " ", 2)
-	if len(parts) == 0 || parts[0] == "" {
-		// Bare "/ai-review" with no subcommand — treat as unknown.
-		return &ParsedCommand{Kind: CommandUnknown}
-	}
-
-	keyword := strings.ToLower(parts[0])
-	args := ""
-	if len(parts) > 1 {
-		args = strings.TrimSpace(parts[1])
-	}
-
-	switch keyword {
-	case "rerun":
-		return &ParsedCommand{Kind: CommandRerun, Args: args}
-	case "ignore":
-		return &ParsedCommand{Kind: CommandIgnore, Args: args}
-	case "resolve":
-		return &ParsedCommand{Kind: CommandResolve, Args: args}
-	case "focus":
-		return &ParsedCommand{Kind: CommandFocus, Args: args}
-	default:
-		return &ParsedCommand{Kind: CommandUnknown, Args: rest}
-	}
-}
-
-// IsCommand returns true if the note body starts with /ai-review.
-func IsCommand(noteBody string) bool {
-	return strings.HasPrefix(strings.TrimSpace(noteBody), commandPrefix)
-}
+func IsCommand(noteBody string) bool { return notecommand.IsCommand(noteBody) }
 
 // defaultMaxRetries is the retry count for command-triggered runs.
 const defaultMaxRetries = 3
@@ -115,7 +56,7 @@ func NewProcessor(logger *slog.Logger, database *sql.DB) *Processor {
 // The cmd parameter can be a *ParsedCommand or an opaque value implementing
 // Kind() string and Args() string methods (used when called from the hooks
 // package to avoid circular imports).
-func (p *Processor) Execute(ctx context.Context, noteEvent hooks.NormalizedNoteEvent, cmd interface{}) error {
+func (p *Processor) Execute(ctx context.Context, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
 	return db.RunTx(ctx, p.db, func(ctx context.Context, q *db.Queries) error {
 		return p.ExecuteWithQuerier(ctx, q, noteEvent, cmd)
 	})
@@ -126,25 +67,20 @@ func (p *Processor) Execute(ctx context.Context, noteEvent hooks.NormalizedNoteE
 // the webhook handler) to include hook-event persistence and command execution
 // in a single atomic transaction, preventing partial failures where the
 // hook_event is committed but the command effect is lost.
-func (p *Processor) ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent, cmd interface{}) error {
+func (p *Processor) ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
 	if cmd == nil {
 		return nil
 	}
 
-	parsed := toParsedCommand(cmd)
-	if parsed == nil {
-		return nil
-	}
-
-	switch parsed.Kind {
+	switch cmd.Kind {
 	case CommandRerun:
-		return p.executeRerunWith(ctx, q, noteEvent, parsed)
+		return p.executeRerunWith(ctx, q, noteEvent, cmd)
 	case CommandIgnore:
 		return p.executeIgnoreWith(ctx, q, noteEvent)
 	case CommandResolve:
 		return p.executeResolveWith(ctx, q, noteEvent)
 	case CommandFocus:
-		return p.executeFocusWith(ctx, q, noteEvent, parsed)
+		return p.executeFocusWith(ctx, q, noteEvent, cmd)
 	case CommandUnknown:
 		p.logger.InfoContext(ctx, "ignoring unknown /ai-review command",
 			"note_body", noteEvent.NoteBody,
@@ -156,38 +92,6 @@ func (p *Processor) ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteE
 	default:
 		return nil
 	}
-}
-
-// commandInterface is implemented by opaque command values from the hooks
-// package to avoid circular dependency.
-type commandInterface interface {
-	Kind() string
-	Args() string
-}
-
-// toParsedCommand converts either a *ParsedCommand or a commandInterface
-// into a *ParsedCommand.
-func toParsedCommand(cmd interface{}) *ParsedCommand {
-	if pc, ok := cmd.(*ParsedCommand); ok {
-		return pc
-	}
-	if ci, ok := cmd.(commandInterface); ok {
-		var kind CommandKind
-		switch ci.Kind() {
-		case "rerun":
-			kind = CommandRerun
-		case "ignore":
-			kind = CommandIgnore
-		case "resolve":
-			kind = CommandResolve
-		case "focus":
-			kind = CommandFocus
-		default:
-			kind = CommandUnknown
-		}
-		return &ParsedCommand{Kind: kind, Args: ci.Args()}
-	}
-	return nil
 }
 
 // executeRerunWith creates a new review run for the current HEAD SHA using the
@@ -229,7 +133,7 @@ func (p *Processor) executeRerunWith(ctx context.Context, q *db.Queries, noteEve
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
-		if isDuplicateKeyError(err) {
+		if db.IsDuplicateKeyError(err) {
 			p.logger.InfoContext(ctx, "rerun command: run already exists for this command",
 				"idempotency_key", idempotencyKey,
 				"mr_iid", noteEvent.MRIID,
@@ -423,7 +327,7 @@ func (p *Processor) executeFocusWith(ctx context.Context, q *db.Queries, noteEve
 		ScopeJson:      json.RawMessage(scopeJSON),
 	})
 	if err != nil {
-		if isDuplicateKeyError(err) {
+		if db.IsDuplicateKeyError(err) {
 			p.logger.InfoContext(ctx, "focus command: run already exists for this scope",
 				"idempotency_key", idempotencyKey,
 				"mr_iid", noteEvent.MRIID,
@@ -487,13 +391,4 @@ func computeCommandIdempotencyKey(instanceURL string, projectID, mrIID int64, he
 	)
 	hash := sha256.Sum256([]byte(input))
 	return fmt.Sprintf("cmd-%x", hash[:16])
-}
-
-// isDuplicateKeyError checks if a MySQL error is a duplicate key violation.
-func isDuplicateKeyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "Duplicate entry") ||
-		strings.Contains(err.Error(), "Error 1062")
 }

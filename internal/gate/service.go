@@ -56,13 +56,17 @@ func NewService(status StatusPublisher, ci CIGatePublisher, audit AuditLogger) *
 }
 
 func ComputeResult(run db.ReviewRun, policy *db.ProjectPolicy, findings []db.ReviewFinding, traceID string) Result {
+	return ComputeResultWithDiscussionState(run, policy, findings, nil, traceID)
+}
+
+func ComputeResultWithDiscussionState(run db.ReviewRun, policy *db.ProjectPolicy, findings []db.ReviewFinding, discussionStateByFinding map[int64]bool, traceID string) Result {
 	mode := "threads_resolved"
 	if policy != nil && strings.TrimSpace(policy.GateMode) != "" {
 		mode = strings.TrimSpace(policy.GateMode)
 	}
 	qualifyingIDs := make([]int64, 0)
 	for _, finding := range findings {
-		if qualifies(policy, mode, finding) {
+		if qualifies(policy, mode, finding, discussionStateByFinding) {
 			qualifyingIDs = append(qualifyingIDs, finding.ID)
 		}
 	}
@@ -96,7 +100,7 @@ func (s *Service) Publish(ctx context.Context, result Result) error {
 	return nil
 }
 
-func qualifies(policy *db.ProjectPolicy, mode string, finding db.ReviewFinding) bool {
+func qualifies(policy *db.ProjectPolicy, mode string, finding db.ReviewFinding, discussionStateByFinding map[int64]bool) bool {
 	state := strings.ToLower(strings.TrimSpace(finding.State))
 	if state == "ignored" || state == "fixed" || state == "stale" || state == "superseded" || state == "filtered" {
 		return false
@@ -111,20 +115,25 @@ func qualifies(policy *db.ProjectPolicy, mode string, finding db.ReviewFinding) 
 	if policy != nil && policy.ConfidenceThreshold > 0 && finding.Confidence < policy.ConfidenceThreshold {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(mode), "threads_resolved") && !blocksThreadsResolved(finding) {
+	if strings.EqualFold(strings.TrimSpace(mode), "threads_resolved") && !blocksThreadsResolved(finding, discussionStateByFinding) {
 		return false
 	}
 	return true
 }
 
-func blocksThreadsResolved(finding db.ReviewFinding) bool {
+func blocksThreadsResolved(finding db.ReviewFinding, discussionStateByFinding map[int64]bool) bool {
 	if strings.TrimSpace(finding.GitlabDiscussionID) == "" {
 		return false
 	}
-	return !discussionResolved(finding)
+	return !discussionResolved(finding, discussionStateByFinding)
 }
 
-func discussionResolved(finding db.ReviewFinding) bool {
+func discussionResolved(finding db.ReviewFinding, discussionStateByFinding map[int64]bool) bool {
+	if discussionStateByFinding != nil {
+		if resolved, ok := discussionStateByFinding[finding.ID]; ok {
+			return resolved
+		}
+	}
 	if text, ok := nullableStringValue(finding.Evidence); ok {
 		if resolved, found := parseResolvedFlag(text); found {
 			return resolved

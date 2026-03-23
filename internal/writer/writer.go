@@ -9,10 +9,12 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/metrics"
+	"github.com/mreviewer/mreviewer/internal/reviewcomment"
 	"github.com/mreviewer/mreviewer/internal/reviewlang"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
@@ -46,15 +48,16 @@ type Store interface {
 }
 
 type Writer struct {
-	client  DiscussionClient
-	store   Store
-	now     func() time.Time
-	metrics *metrics.Registry
-	tracer  *tracing.Recorder
+	client           DiscussionClient
+	store            Store
+	now              func() time.Time
+	metrics          *metrics.Registry
+	tracer           *tracing.Recorder
+	writeConcurrency int
 }
 
 func New(client DiscussionClient, store Store) *Writer {
-	return &Writer{client: client, store: store, now: time.Now}
+	return &Writer{client: client, store: store, now: time.Now, writeConcurrency: defaultWriteConcurrency}
 }
 
 func (w *Writer) WithMetrics(registry *metrics.Registry) *Writer {
@@ -67,57 +70,13 @@ func (w *Writer) WithTracer(recorder *tracing.Recorder) *Writer {
 	return w
 }
 
-type CreateDiscussionRequest struct {
-	ProjectID       int64    `json:"project_id"`
-	MergeRequestIID int64    `json:"merge_request_iid"`
-	Body            string   `json:"body"`
-	Position        Position `json:"position"`
-	ReviewFindingID int64    `json:"review_finding_id"`
-	IdempotencyKey  string   `json:"idempotency_key"`
-}
-
-type CreateNoteRequest struct {
-	ProjectID       int64  `json:"project_id"`
-	MergeRequestIID int64  `json:"merge_request_iid"`
-	Body            string `json:"body"`
-	ReviewFindingID int64  `json:"review_finding_id"`
-	IdempotencyKey  string `json:"idempotency_key"`
-}
-
-type ResolveDiscussionRequest struct {
-	ProjectID       int64  `json:"project_id"`
-	MergeRequestIID int64  `json:"merge_request_iid"`
-	DiscussionID    string `json:"discussion_id"`
-	Resolved        bool   `json:"resolved"`
-}
-
-type Position struct {
-	PositionType string     `json:"position_type"`
-	BaseSHA      string     `json:"base_sha"`
-	StartSHA     string     `json:"start_sha"`
-	HeadSHA      string     `json:"head_sha"`
-	OldPath      string     `json:"old_path"`
-	NewPath      string     `json:"new_path"`
-	OldLine      *int32     `json:"old_line,omitempty"`
-	NewLine      *int32     `json:"new_line,omitempty"`
-	LineRange    *LineRange `json:"line_range,omitempty"`
-}
-
-type LineRange struct {
-	Start RangeLine `json:"start"`
-	End   RangeLine `json:"end"`
-}
-
-type RangeLine struct {
-	LineCode string `json:"line_code"`
-	LineType string `json:"type,omitempty"`
-	OldLine  *int32 `json:"old_line,omitempty"`
-	NewLine  *int32 `json:"new_line,omitempty"`
-}
-
-type Discussion struct {
-	ID string `json:"id"`
-}
+type CreateDiscussionRequest = reviewcomment.CreateDiscussionRequest
+type CreateNoteRequest = reviewcomment.CreateNoteRequest
+type ResolveDiscussionRequest = reviewcomment.ResolveDiscussionRequest
+type Position = reviewcomment.Position
+type LineRange = reviewcomment.LineRange
+type RangeLine = reviewcomment.RangeLine
+type Discussion = reviewcomment.Discussion
 
 const (
 	maxWriteRetries                = 3
@@ -138,6 +97,7 @@ const (
 	writerErrorDiscussionResolve   = "gitlab_resolve_discussion_failed"
 	writerErrorUnavailable         = "gitlab_unavailable"
 	runStatusParserError           = "parser_error"
+	defaultWriteConcurrency        = 4
 )
 
 func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.ReviewFinding) error {
@@ -169,10 +129,8 @@ func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.Revi
 	if err != nil {
 		return fmt.Errorf("writer: load latest MR version: %w", err)
 	}
-	for _, finding := range findings {
-		if err := w.writeFinding(ctx, run, mr, version, finding, gitlabProjectID); err != nil {
-			return err
-		}
+	if err := w.writeFindings(ctx, run, mr, version, findings, gitlabProjectID); err != nil {
+		return err
 	}
 	if !isTerminalRun(run.Status) {
 		return nil
@@ -181,6 +139,50 @@ func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.Revi
 		return err
 	}
 	return w.writeSummaryNote(ctx, run, mr, findings, gitlabProjectID)
+}
+
+func (w *Writer) writeFindings(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, version db.MrVersion, findings []db.ReviewFinding, gitlabProjectID int64) error {
+	if len(findings) == 0 {
+		return nil
+	}
+	limit := w.writeConcurrency
+	if limit <= 1 || len(findings) == 1 {
+		for _, finding := range findings {
+			if err := w.writeFinding(ctx, run, mr, version, finding, gitlabProjectID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	var once sync.Once
+	var firstErr error
+
+	for _, finding := range findings {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(finding db.ReviewFinding) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := w.writeFinding(ctx, run, mr, version, finding, gitlabProjectID); err != nil {
+				once.Do(func() {
+					firstErr = err
+					cancel()
+				})
+			}
+		}(finding)
+	}
+
+	wg.Wait()
+	return firstErr
 }
 
 func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, version db.MrVersion, finding db.ReviewFinding, gitlabProjectID int64) error {
@@ -419,7 +421,7 @@ func (w *Writer) ensureAction(ctx context.Context, runID int64, findingID sql.Nu
 	}
 	result, err := w.store.InsertCommentAction(ctx, db.InsertCommentActionParams{ReviewRunID: runID, ReviewFindingID: findingID, ActionType: actionType, IdempotencyKey: idempotencyKey, Status: commentActionStatusPending})
 	if err != nil {
-		if strings.Contains(err.Error(), "Duplicate entry") {
+		if db.IsDuplicateKeyError(err) {
 			action, lookupErr := w.store.GetCommentActionByIdempotencyKey(ctx, idempotencyKey)
 			return action.ID, action, lookupErr
 		}
@@ -859,7 +861,10 @@ func canonicalAnchorKind(kind string) string {
 }
 
 func buildLineRange(oldPath, newPath string, finding db.ReviewFinding) *LineRange {
-	rangeAnchor, ok := parseRangeAnchor(finding)
+	rangeAnchor, ok := structuredRangeAnchor(finding)
+	if !ok {
+		rangeAnchor, ok = parseRangeAnchor(finding)
+	}
 	if !ok {
 		return nil
 	}
@@ -880,6 +885,23 @@ type rangeAnchorLine struct {
 	Kind    string
 	OldLine sql.NullInt32
 	NewLine sql.NullInt32
+}
+
+func structuredRangeAnchor(finding db.ReviewFinding) (rangeAnchor, bool) {
+	startKind := canonicalRangeLineType(finding.RangeStartKind.String)
+	endKind := canonicalRangeLineType(finding.RangeEndKind.String)
+	if startKind == "" || endKind == "" {
+		return rangeAnchor{}, false
+	}
+	start, ok := rangeAnchorLineForKind(startKind, finding.RangeStartOldLine, finding.RangeStartNewLine)
+	if !ok {
+		return rangeAnchor{}, false
+	}
+	end, ok := rangeAnchorLineForKind(endKind, finding.RangeEndOldLine, finding.RangeEndNewLine)
+	if !ok {
+		return rangeAnchor{}, false
+	}
+	return rangeAnchor{Start: start, End: end}, true
 }
 
 func parseRangeAnchor(finding db.ReviewFinding) (rangeAnchor, bool) {

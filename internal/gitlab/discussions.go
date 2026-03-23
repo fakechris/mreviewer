@@ -11,37 +11,37 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mreviewer/mreviewer/internal/writer"
+	"github.com/mreviewer/mreviewer/internal/reviewcomment"
 )
 
 type discussionResponse struct {
 	ID any `json:"id"`
 }
 
-func (c *Client) CreateDiscussion(ctx context.Context, req writer.CreateDiscussionRequest) (writer.Discussion, error) {
+func (c *Client) CreateDiscussion(ctx context.Context, req reviewcomment.CreateDiscussionRequest) (reviewcomment.Discussion, error) {
 	var response discussionResponse
 	_, err := c.doJSONWithBody(ctx, http.MethodPost, mergeRequestPath(req.ProjectID, req.MergeRequestIID, "/discussions"), nil, map[string]any{
 		"body":     req.Body,
 		"position": req.Position,
 	}, &response)
 	if err != nil {
-		return writer.Discussion{}, err
+		return reviewcomment.Discussion{}, err
 	}
-	return writer.Discussion{ID: stringifyDiscussionID(response.ID)}, nil
+	return reviewcomment.Discussion{ID: stringifyDiscussionID(response.ID)}, nil
 }
 
-func (c *Client) CreateNote(ctx context.Context, req writer.CreateNoteRequest) (writer.Discussion, error) {
+func (c *Client) CreateNote(ctx context.Context, req reviewcomment.CreateNoteRequest) (reviewcomment.Discussion, error) {
 	var response discussionResponse
 	_, err := c.doJSONWithBody(ctx, http.MethodPost, mergeRequestPath(req.ProjectID, req.MergeRequestIID, "/notes"), nil, map[string]any{
 		"body": req.Body,
 	}, &response)
 	if err != nil {
-		return writer.Discussion{}, err
+		return reviewcomment.Discussion{}, err
 	}
-	return writer.Discussion{ID: stringifyDiscussionID(response.ID)}, nil
+	return reviewcomment.Discussion{ID: stringifyDiscussionID(response.ID)}, nil
 }
 
-func (c *Client) ResolveDiscussion(ctx context.Context, req writer.ResolveDiscussionRequest) error {
+func (c *Client) ResolveDiscussion(ctx context.Context, req reviewcomment.ResolveDiscussionRequest) error {
 	_, err := c.doJSONWithBody(ctx, http.MethodPut, mergeRequestPath(req.ProjectID, req.MergeRequestIID, "/discussions/"+url.PathEscape(strings.TrimSpace(req.DiscussionID))), nil, map[string]any{
 		"resolved": req.Resolved,
 	}, nil)

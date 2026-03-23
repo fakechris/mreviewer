@@ -391,6 +391,56 @@ func TestGatePublishesFromRuntimePath(t *testing.T) {
 	}
 }
 
+func TestGatePublishesUsingStructuredDiscussionResolution(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-gate-threads")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{status: "pending", idempotencyKey: "runtime-gate-threads", headSHA: "sha-gate-threads"})
+	if _, err := sqlDB.Exec("INSERT INTO project_policies (project_id, confidence_threshold, severity_threshold, include_paths, exclude_paths, gate_mode, extra) VALUES (?, ?, ?, ?, ?, ?, ?)", projectID, 0.8, "medium", []byte("[]"), []byte("[]"), "threads_resolved", []byte("{}")); err != nil {
+		t.Fatalf("insert project policy: %v", err)
+	}
+	result, err := sqlDB.Exec(`INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, anchor_fingerprint, semantic_fingerprint, state, gitlab_discussion_id)
+		VALUES (?, ?, 'bug', 'high', 0.95, 'Blocking issue', 'body', 'src/main.go', 'new_line', 'anchor-threads', 'semantic-threads', 'active', 'disc-threads')`, runID, mrID)
+	if err != nil {
+		t.Fatalf("insert finding: %v", err)
+	}
+	findingID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("finding LastInsertId: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO gitlab_discussions (review_finding_id, merge_request_id, gitlab_discussion_id, discussion_type, resolved)
+		VALUES (?, ?, 'disc-threads', 'diff', TRUE)`, findingID, mrID); err != nil {
+		t.Fatalf("insert gitlab discussion: %v", err)
+	}
+
+	status := &fakeStatusPublisher{}
+	ci := &fakeCIPublisher{}
+	processor := FuncProcessor(func(context.Context, db.ReviewRun) (ProcessOutcome, error) {
+		findings, err := db.New(sqlDB).ListFindingsByRun(ctx, runID)
+		if err != nil {
+			return ProcessOutcome{}, err
+		}
+		return ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
+	})
+	svc := NewService(testLogger(), sqlDB, processor, WithWorkerID("worker-gate-threads"), WithGateService(gate.NewService(status, ci, gate.NewDBAuditLogger(db.New(sqlDB)))))
+
+	processed, err := svc.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(status.results) != 1 {
+		t.Fatalf("status publish count = %d, want 1", len(status.results))
+	}
+	if status.results[0].State != "passed" {
+		t.Fatalf("status result = %+v, want passed", status.results[0])
+	}
+}
+
 type fakeStatusPublisher struct{ results []gate.Result }
 
 func (f *fakeStatusPublisher) PublishStatus(_ context.Context, result gate.Result) error {
@@ -460,6 +510,50 @@ func TestConcurrentMRIsolation(t *testing.T) {
 	}
 	if !seenMRIDs[mrID1] || !seenMRIDs[mrID2] {
 		t.Fatalf("claimed merge_request ids = %#v, want both %d and %d", seenMRIDs, mrID1, mrID2)
+	}
+}
+
+func TestRunProcessesMultipleRunsConcurrently(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID1 := insertTestMR(t, sqlDB, projectID, 1, "sha-a")
+	mrID2 := insertTestMR(t, sqlDB, projectID, 2, "sha-b")
+	insertTestRun(t, sqlDB, projectID, mrID1, runOptions{status: "pending", idempotencyKey: "run-concurrent-a", headSHA: "sha-a"})
+	insertTestRun(t, sqlDB, projectID, mrID2, runOptions{status: "pending", idempotencyKey: "run-concurrent-b", headSHA: "sha-b"})
+
+	processor := newConcurrentTrackingProcessor()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	svc := NewService(
+		testLogger(),
+		sqlDB,
+		processor,
+		WithWorkerID("worker-a"),
+		WithPollInterval(10*time.Millisecond),
+		WithWorkerConcurrency(2),
+	)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- svc.Run(ctx)
+	}()
+
+	processor.waitForStarts(t, 2)
+	if processor.maxConcurrent() < 2 {
+		t.Fatalf("max processor concurrency = %d, want at least 2", processor.maxConcurrent())
+	}
+	processor.release()
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduler Run did not exit")
 	}
 }
 
@@ -809,6 +903,57 @@ type blockingProcessor struct {
 	releaseCh chan struct{}
 	err       error
 	once      sync.Once
+}
+
+type concurrentTrackingProcessor struct {
+	mu        sync.Mutex
+	started   chan struct{}
+	releaseCh chan struct{}
+	inFlight  int
+	maxFlight int
+}
+
+func newConcurrentTrackingProcessor() *concurrentTrackingProcessor {
+	return &concurrentTrackingProcessor{
+		started:   make(chan struct{}, 8),
+		releaseCh: make(chan struct{}),
+	}
+}
+
+func (p *concurrentTrackingProcessor) ProcessRun(context.Context, db.ReviewRun) (ProcessOutcome, error) {
+	p.mu.Lock()
+	p.inFlight++
+	if p.inFlight > p.maxFlight {
+		p.maxFlight = p.inFlight
+	}
+	p.mu.Unlock()
+	p.started <- struct{}{}
+	<-p.releaseCh
+	p.mu.Lock()
+	p.inFlight--
+	p.mu.Unlock()
+	return ProcessOutcome{}, nil
+}
+
+func (p *concurrentTrackingProcessor) waitForStarts(t *testing.T, want int) {
+	t.Helper()
+	for i := 0; i < want; i++ {
+		select {
+		case <-p.started:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("processor did not start %d runs", want)
+		}
+	}
+}
+
+func (p *concurrentTrackingProcessor) maxConcurrent() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.maxFlight
+}
+
+func (p *concurrentTrackingProcessor) release() {
+	close(p.releaseCh)
 }
 
 func newBlockingProcessor(err error) *blockingProcessor {

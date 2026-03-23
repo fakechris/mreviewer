@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
@@ -17,14 +18,15 @@ import (
 )
 
 const (
-	defaultPollInterval    = time.Second
-	defaultRetryBaseDelay  = time.Second
-	defaultRetryMaxDelay   = 30 * time.Second
-	defaultClaimRetryWait  = 25 * time.Millisecond
-	defaultClaimRetryCount = 8
-	defaultFailureCode     = "run_failed"
-	defaultClaimTimeoutMin = 10
-	defaultReaperInterval  = 60 * time.Second
+	defaultPollInterval      = time.Second
+	defaultRetryBaseDelay    = time.Second
+	defaultRetryMaxDelay     = 30 * time.Second
+	defaultWorkerConcurrency = 4
+	defaultClaimRetryWait    = 25 * time.Millisecond
+	defaultClaimRetryCount   = 8
+	defaultFailureCode       = "run_failed"
+	defaultClaimTimeoutMin   = 10
+	defaultReaperInterval    = 60 * time.Second
 )
 
 var ErrNoClaimableRuns = errors.New("scheduler: no claimable runs")
@@ -98,6 +100,7 @@ type Service struct {
 	now                 func() time.Time
 	metrics             *metrics.Registry
 	tracer              *tracing.Recorder
+	workerConcurrency   int
 }
 
 func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts ...Option) *Service {
@@ -116,6 +119,7 @@ func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts
 		claimTimeoutMinutes: defaultClaimTimeoutMin,
 		reaperInterval:      defaultReaperInterval,
 		now:                 time.Now,
+		workerConcurrency:   defaultWorkerConcurrency,
 	}
 
 	for _, opt := range opts {
@@ -138,6 +142,9 @@ func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts
 	}
 	if svc.reaperInterval <= 0 {
 		svc.reaperInterval = defaultReaperInterval
+	}
+	if svc.workerConcurrency <= 0 {
+		svc.workerConcurrency = 1
 	}
 
 	return svc
@@ -203,6 +210,14 @@ func WithReaperInterval(interval time.Duration) Option {
 	}
 }
 
+func WithWorkerConcurrency(concurrency int) Option {
+	return func(s *Service) {
+		if concurrency > 0 {
+			s.workerConcurrency = concurrency
+		}
+	}
+}
+
 func NewNoopProcessor(logger *slog.Logger) Processor {
 	return FuncProcessor(func(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error) {
 		if logger != nil {
@@ -223,21 +238,58 @@ func (s *Service) Run(ctx context.Context) error {
 
 	go s.startReaper(ctx)
 
-	if _, err := s.RunOnce(ctx); err != nil {
-		return err
+	errCh := make(chan error, s.workerConcurrency)
+	var wg sync.WaitGroup
+	for i := 0; i < s.workerConcurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.runWorkerLoop(ctx); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+			}
+		}()
 	}
 
-	ticker := time.NewTicker(s.pollInterval)
-	defer ticker.Stop()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
 
+	select {
+	case <-ctx.Done():
+		<-done
+		return nil
+	case err := <-errCh:
+		return err
+	case <-done:
+		return nil
+	}
+}
+
+func (s *Service) runWorkerLoop(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
-			if _, err := s.RunOnce(ctx); err != nil {
-				return err
+		default:
+		}
+
+		processed, err := s.RunOnce(ctx)
+		if err != nil {
+			return err
+		}
+		if processed > 0 {
+			continue
+		}
+		if err := sleepContext(ctx, s.pollInterval); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
 			}
+			return err
 		}
 	}
 }
@@ -550,7 +602,24 @@ func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outco
 			return fmt.Errorf("scheduler: load findings for gate publication on run %d: %w", run.ID, err)
 		}
 	}
-	result := gate.ComputeResult(run, policyPtr, findings, tracing.CurrentTraceID(ctx))
+	discussionStateByFinding := make(map[int64]bool, len(findings))
+	for _, finding := range findings {
+		if strings.TrimSpace(finding.GitlabDiscussionID) == "" {
+			continue
+		}
+		discussion, lookupErr := queries.GetGitlabDiscussionByMergeRequestAndFinding(ctx, db.GetGitlabDiscussionByMergeRequestAndFindingParams{
+			MergeRequestID:  run.MergeRequestID,
+			ReviewFindingID: finding.ID,
+		})
+		if lookupErr != nil {
+			if errors.Is(lookupErr, sql.ErrNoRows) {
+				continue
+			}
+			return fmt.Errorf("scheduler: load discussion state for finding %d on run %d: %w", finding.ID, run.ID, lookupErr)
+		}
+		discussionStateByFinding[finding.ID] = discussion.Resolved
+	}
+	result := gate.ComputeResultWithDiscussionState(run, policyPtr, findings, discussionStateByFinding, tracing.CurrentTraceID(ctx))
 	if err := s.gateService.Publish(ctx, result); err != nil {
 		return fmt.Errorf("scheduler: publish gate result for run %d: %w", run.ID, err)
 	}
