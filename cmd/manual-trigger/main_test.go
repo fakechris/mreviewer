@@ -18,12 +18,14 @@ import (
 type fakeManualTriggerService struct {
 	triggerResult manualtrigger.TriggerResult
 	triggerErr    error
+	triggerInput  manualtrigger.TriggerInput
 	waitResult    db.ReviewRun
 	waitErr       error
 	waitRunID     int64
 }
 
-func (f *fakeManualTriggerService) Trigger(context.Context, manualtrigger.TriggerInput) (manualtrigger.TriggerResult, error) {
+func (f *fakeManualTriggerService) Trigger(_ context.Context, input manualtrigger.TriggerInput) (manualtrigger.TriggerResult, error) {
+	f.triggerInput = input
 	return f.triggerResult, f.triggerErr
 }
 
@@ -77,6 +79,44 @@ func TestRunWithDepsJSONOutputWithoutWait(t *testing.T) {
 	}
 	if payload.Terminal != nil {
 		t.Fatalf("payload.Terminal = %#v, want nil", payload.Terminal)
+	}
+}
+
+func TestRunWithDepsPassesLLMRouteToService(t *testing.T) {
+	svc := &fakeManualTriggerService{
+		triggerResult: manualtrigger.TriggerResult{
+			RunID:          104,
+			ProjectID:      123,
+			MRIID:          48,
+			HeadSHA:        "head-sha-route",
+			IdempotencyKey: "idem-route",
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{"--project-id", "123", "--mr-iid", "48", "--llm-route", "openai-gpt-5-4"}, runtimeDeps{
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{
+				LLM: config.LLMConfig{
+					Routes: map[string]config.LLMRouteConfig{
+						"openai-gpt-5-4": {},
+					},
+				},
+			}, nil
+		},
+		openDB:     func(string) (*sql.DB, error) { return nil, nil },
+		newService: func(*config.Config, *sql.DB, time.Duration) manualTriggerService { return svc },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if svc.triggerInput.ProviderRoute != "openai-gpt-5-4" {
+		t.Fatalf("triggerInput.ProviderRoute = %q, want openai-gpt-5-4", svc.triggerInput.ProviderRoute)
 	}
 }
 

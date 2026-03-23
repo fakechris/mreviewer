@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/config"
@@ -33,13 +34,14 @@ type runtimeDeps struct {
 }
 
 type cliOptions struct {
-	projectID    int64
-	mrIID        int64
-	configPath   string
-	wait         bool
-	waitTimeout  time.Duration
-	pollInterval time.Duration
-	jsonOutput   bool
+	projectID     int64
+	mrIID         int64
+	configPath    string
+	providerRoute string
+	wait          bool
+	waitTimeout   time.Duration
+	pollInterval  time.Duration
+	jsonOutput    bool
 }
 
 type jsonResponse struct {
@@ -139,6 +141,9 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 	if err != nil {
 		return fail("config", err, nil)
 	}
+	if err := validateProviderRouteOverride(cfg, opts.providerRoute); err != nil {
+		return fail("config", err, nil)
+	}
 
 	sqlDB, err := deps.openDB(cfg.MySQLDSN)
 	if err != nil {
@@ -150,8 +155,9 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 
 	svc := deps.newService(cfg, sqlDB, opts.pollInterval)
 	result, err := svc.Trigger(context.Background(), manualtrigger.TriggerInput{
-		ProjectID: opts.projectID,
-		MRIID:     opts.mrIID,
+		ProjectID:     opts.projectID,
+		MRIID:         opts.mrIID,
+		ProviderRoute: strings.TrimSpace(opts.providerRoute),
 	})
 	if err != nil {
 		return fail("create", err, nil)
@@ -244,6 +250,8 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	fs.Int64Var(&opts.projectID, "project-id", 0, "GitLab project ID")
 	fs.Int64Var(&opts.mrIID, "mr-iid", 0, "GitLab merge request IID")
 	fs.StringVar(&opts.configPath, "config", "config.yaml", "Path to config file")
+	fs.StringVar(&opts.providerRoute, "llm-route", "", "Use the named llm.routes entry for this manual review run only")
+	fs.StringVar(&opts.providerRoute, "provider-route", "", "Alias of --llm-route")
 	fs.BoolVar(&opts.wait, "wait", false, "Wait for the review run to reach a terminal state")
 	fs.DurationVar(&opts.waitTimeout, "wait-timeout", 15*time.Minute, "Maximum time to wait when --wait is enabled")
 	fs.DurationVar(&opts.pollInterval, "poll-interval", time.Second, "Polling interval used with --wait")
@@ -298,6 +306,44 @@ func writeJSONResponse(w io.Writer, payload jsonResponse) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	return enc.Encode(payload)
+}
+
+func validateProviderRouteOverride(cfg *config.Config, route string) error {
+	route = strings.TrimSpace(route)
+	if route == "" {
+		return nil
+	}
+	available := availableProviderRoutes(cfg)
+	if len(available) == 0 {
+		return fmt.Errorf("manual-trigger: --llm-route requires configured llm routes")
+	}
+	for _, candidate := range available {
+		if candidate == route {
+			return nil
+		}
+	}
+	return fmt.Errorf("manual-trigger: unknown --llm-route %q (available: %s)", route, strings.Join(available, ", "))
+}
+
+func availableProviderRoutes(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	if len(cfg.LLM.Routes) > 0 {
+		routes := make([]string, 0, len(cfg.LLM.Routes))
+		for route := range cfg.LLM.Routes {
+			trimmed := strings.TrimSpace(route)
+			if trimmed == "" {
+				continue
+			}
+			routes = append(routes, trimmed)
+		}
+		return routes
+	}
+	if strings.TrimSpace(cfg.AnthropicBaseURL) == "" && strings.TrimSpace(cfg.AnthropicModel) == "" && strings.TrimSpace(cfg.AnthropicAPIKey) == "" {
+		return nil
+	}
+	return []string{"default", "secondary"}
 }
 
 func newDefaultService(cfg *config.Config, sqlDB *sql.DB, pollInterval time.Duration) manualTriggerService {

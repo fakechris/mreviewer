@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	ProviderKindMiniMax             = "minimax"
 	ProviderKindAnthropicCompatible = "anthropic_compatible"
 	ProviderKindAnthropic           = "anthropic"
 	ProviderKindOpenAI              = "openai"
@@ -15,11 +16,13 @@ const (
 func NewProviderFromConfig(cfg ProviderConfig) (Provider, error) {
 	kind := strings.ToLower(strings.TrimSpace(cfg.Kind))
 	if kind == "" {
-		kind = ProviderKindAnthropicCompatible
+		kind = ProviderKindMiniMax
 	}
 	switch kind {
-	case ProviderKindAnthropicCompatible, ProviderKindAnthropic:
+	case ProviderKindMiniMax, ProviderKindAnthropicCompatible:
 		return NewMiniMaxProvider(cfg)
+	case ProviderKindAnthropic:
+		return NewAnthropicProvider(cfg)
 	case ProviderKindOpenAI:
 		return NewOpenAIProvider(cfg)
 	default:

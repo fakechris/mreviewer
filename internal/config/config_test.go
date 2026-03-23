@@ -277,7 +277,7 @@ func TestConfigParsesLLMRoutesFromYAML(t *testing.T) {
   fallback_route: openai
   routes:
     minimax:
-      provider: anthropic_compatible
+      provider: minimax
       base_url: https://api.minimaxi.com/anthropic
       api_key: minimax-key
       model: MiniMax-M2.7
@@ -287,8 +287,10 @@ func TestConfigParsesLLMRoutesFromYAML(t *testing.T) {
       provider: openai
       base_url: https://api.openai.com/v1
       api_key: openai-key
-      model: gpt-4.1-mini
-      output_mode: tool_call
+      model: gpt-5.4
+      output_mode: json_schema
+      max_completion_tokens: 12000
+      reasoning_effort: medium
       temperature: 0.2
 `
 	if err := os.WriteFile(yamlPath, []byte(content), 0644); err != nil {
@@ -309,11 +311,20 @@ func TestConfigParsesLLMRoutesFromYAML(t *testing.T) {
 	if len(cfg.LLM.Routes) != 2 {
 		t.Fatalf("LLM.Routes = %d, want 2", len(cfg.LLM.Routes))
 	}
-	if cfg.LLM.Routes["minimax"].Provider != "anthropic_compatible" {
-		t.Fatalf("minimax provider = %q, want anthropic_compatible", cfg.LLM.Routes["minimax"].Provider)
+	if cfg.LLM.Routes["minimax"].Provider != "minimax" {
+		t.Fatalf("minimax provider = %q, want minimax", cfg.LLM.Routes["minimax"].Provider)
 	}
 	if cfg.LLM.Routes["openai"].Provider != "openai" {
 		t.Fatalf("openai provider = %q, want openai", cfg.LLM.Routes["openai"].Provider)
+	}
+	if cfg.LLM.Routes["openai"].OutputMode != "json_schema" {
+		t.Fatalf("openai output_mode = %q, want json_schema", cfg.LLM.Routes["openai"].OutputMode)
+	}
+	if cfg.LLM.Routes["openai"].MaxCompletionTokens != 12000 {
+		t.Fatalf("openai max_completion_tokens = %d, want 12000", cfg.LLM.Routes["openai"].MaxCompletionTokens)
+	}
+	if cfg.LLM.Routes["openai"].ReasoningEffort != "medium" {
+		t.Fatalf("openai reasoning_effort = %q, want medium", cfg.LLM.Routes["openai"].ReasoningEffort)
 	}
 }
 

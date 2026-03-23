@@ -131,13 +131,16 @@ func providerConfigsFromConfig(cfg *config.Config) (string, string, map[string]l
 				return "", "", nil, fmt.Errorf("worker: llm route name cannot be empty")
 			}
 			routes[trimmed] = llm.ProviderConfig{
-				Kind:        strings.TrimSpace(route.Provider),
-				BaseURL:     strings.TrimSpace(route.BaseURL),
-				APIKey:      strings.TrimSpace(route.APIKey),
-				Model:       strings.TrimSpace(route.Model),
-				RouteName:   trimmed,
-				MaxTokens:   4096,
-				Temperature: route.Temperature,
+				Kind:                strings.TrimSpace(route.Provider),
+				BaseURL:             strings.TrimSpace(route.BaseURL),
+				APIKey:              strings.TrimSpace(route.APIKey),
+				Model:               strings.TrimSpace(route.Model),
+				RouteName:           trimmed,
+				OutputMode:          strings.TrimSpace(route.OutputMode),
+				MaxTokens:           route.MaxTokens,
+				MaxCompletionTokens: route.MaxCompletionTokens,
+				ReasoningEffort:     strings.TrimSpace(route.ReasoningEffort),
+				Temperature:         route.Temperature,
 			}
 		}
 		return defaultRoute, strings.TrimSpace(cfg.LLM.FallbackRoute), routes, nil
@@ -146,11 +149,12 @@ func providerConfigsFromConfig(cfg *config.Config) (string, string, map[string]l
 	const legacyDefaultRoute = "default"
 	const legacyFallbackRoute = "secondary"
 	legacy := llm.ProviderConfig{
-		Kind:      llm.ProviderKindAnthropicCompatible,
-		BaseURL:   strings.TrimSpace(cfg.AnthropicBaseURL),
-		APIKey:    strings.TrimSpace(cfg.AnthropicAPIKey),
-		Model:     strings.TrimSpace(cfg.AnthropicModel),
-		MaxTokens: 4096,
+		Kind:       llm.ProviderKindMiniMax,
+		BaseURL:    strings.TrimSpace(cfg.AnthropicBaseURL),
+		APIKey:     strings.TrimSpace(cfg.AnthropicAPIKey),
+		Model:      strings.TrimSpace(cfg.AnthropicModel),
+		MaxTokens:  4096,
+		OutputMode: "tool_call",
 	}
 	defaultProvider := legacy
 	defaultProvider.RouteName = legacyDefaultRoute

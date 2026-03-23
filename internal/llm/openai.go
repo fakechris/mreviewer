@@ -15,25 +15,33 @@ import (
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 )
 
+const (
+	openAIOutputModeToolCall   = "tool_call"
+	openAIOutputModeJSONSchema = "json_schema"
+)
+
 type OpenAIProvider struct {
-	baseURL        string
-	apiKey         string
-	model          string
-	maxTokens      int64
-	temperature    float64
-	systemPrompt   string
-	routeName      string
-	rateLimiter    RateLimiter
-	now            func() time.Time
-	sleep          func(context.Context, time.Duration) error
-	timeoutRetries int
-	httpClient     *http.Client
+	baseURL         string
+	apiKey          string
+	model           string
+	maxTokens       int64
+	maxCompletion   int64
+	temperature     float64
+	systemPrompt    string
+	routeName       string
+	outputMode      string
+	reasoningEffort string
+	rateLimiter     RateLimiter
+	now             func() time.Time
+	sleep           func(context.Context, time.Duration) error
+	timeoutRetries  int
+	httpClient      *http.Client
 }
 
 type openAIChatCompletionResponse struct {
 	Choices []struct {
 		Message struct {
-			Content   string `json:"content"`
+			Content   json.RawMessage `json:"content"`
 			ToolCalls []struct {
 				Type     string `json:"type"`
 				Function struct {
@@ -76,23 +84,35 @@ func NewOpenAIProvider(cfg ProviderConfig) (*OpenAIProvider, error) {
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: 60 * time.Second}
 	}
+	outputMode := strings.ToLower(strings.TrimSpace(cfg.OutputMode))
+	if outputMode == "" {
+		outputMode = openAIOutputModeToolCall
+	}
+	switch outputMode {
+	case openAIOutputModeToolCall, openAIOutputModeJSONSchema:
+	default:
+		return nil, fmt.Errorf("llm: unsupported openai output mode %q", cfg.OutputMode)
+	}
 	routeName := strings.TrimSpace(cfg.RouteName)
 	if routeName == "" {
 		routeName = strings.TrimSpace(cfg.Model)
 	}
 	return &OpenAIProvider{
-		baseURL:        strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:         cfg.APIKey,
-		model:          cfg.Model,
-		maxTokens:      cfg.MaxTokens,
-		temperature:    cfg.Temperature,
-		systemPrompt:   cfg.SystemPrompt,
-		routeName:      routeName,
-		rateLimiter:    cfg.RateLimiter,
-		now:            cfg.Now,
-		sleep:          cfg.Sleep,
-		timeoutRetries: cfg.TimeoutRetries,
-		httpClient:     cfg.HTTPClient,
+		baseURL:         strings.TrimRight(cfg.BaseURL, "/"),
+		apiKey:          cfg.APIKey,
+		model:           cfg.Model,
+		maxTokens:       cfg.MaxTokens,
+		maxCompletion:   cfg.MaxCompletionTokens,
+		temperature:     cfg.Temperature,
+		systemPrompt:    cfg.SystemPrompt,
+		routeName:       routeName,
+		outputMode:      outputMode,
+		reasoningEffort: strings.TrimSpace(cfg.ReasoningEffort),
+		rateLimiter:     cfg.RateLimiter,
+		now:             cfg.Now,
+		sleep:           cfg.Sleep,
+		timeoutRetries:  cfg.TimeoutRetries,
+		httpClient:      cfg.HTTPClient,
 	}, nil
 }
 
@@ -105,15 +125,35 @@ func (p *OpenAIProvider) RequestPayloadWithSystemPrompt(request ctxpkg.ReviewReq
 }
 
 func (p *OpenAIProvider) requestPayloadWithUserContent(systemPrompt string, userContent string) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"model":       p.model,
-		"max_tokens":  p.maxTokens,
 		"temperature": p.temperature,
 		"messages": []map[string]any{
-			{"role": "system", "content": systemPrompt},
+			{"role": "developer", "content": systemPrompt},
 			{"role": "user", "content": userContent},
 		},
-		"tools": []map[string]any{{
+	}
+	if p.maxCompletion > 0 {
+		payload["max_completion_tokens"] = p.maxCompletion
+	} else {
+		payload["max_tokens"] = p.maxTokens
+	}
+	if p.reasoningEffort != "" {
+		payload["reasoning_effort"] = p.reasoningEffort
+	}
+	switch p.outputMode {
+	case openAIOutputModeJSONSchema:
+		payload["response_format"] = map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   reviewSubmitToolName,
+				"strict": true,
+				"schema": reviewResultSchema(),
+			},
+		}
+	default:
+		payload["parallel_tool_calls"] = false
+		payload["tools"] = []map[string]any{{
 			"type": "function",
 			"function": map[string]any{
 				"name":        reviewSubmitToolName,
@@ -121,14 +161,15 @@ func (p *OpenAIProvider) requestPayloadWithUserContent(systemPrompt string, user
 				"strict":      true,
 				"parameters":  reviewResultSchema(),
 			},
-		}},
-		"tool_choice": map[string]any{
+		}}
+		payload["tool_choice"] = map[string]any{
 			"type": "function",
 			"function": map[string]any{
 				"name": reviewSubmitToolName,
 			},
-		},
+		}
 	}
+	return payload
 }
 
 func (p *OpenAIProvider) Review(ctx context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
@@ -251,9 +292,22 @@ func (p *OpenAIProvider) call(ctx context.Context, payload map[string]any) (stri
 		return "", 0, fmt.Errorf("openai: parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", parsed.Usage.CompletionTokens, fmt.Errorf("llm: missing tool_use block %q", reviewSubmitToolName)
+		return "", parsed.Usage.CompletionTokens, &structuredOutputMissError{
+			cause:       fmt.Errorf("llm: missing structured response"),
+			rawResponse: truncateText(string(body), 400),
+		}
 	}
 	message := parsed.Choices[0].Message
+	if p.outputMode == openAIOutputModeJSONSchema {
+		content := strings.TrimSpace(openAIMessageText(message.Content))
+		if content == "" {
+			return "", parsed.Usage.CompletionTokens, &structuredOutputMissError{
+				cause:       fmt.Errorf("llm: missing structured JSON content"),
+				rawResponse: content,
+			}
+		}
+		return content, parsed.Usage.CompletionTokens, nil
+	}
 	for _, toolCall := range message.ToolCalls {
 		if toolCall.Type != "function" {
 			continue
@@ -265,6 +319,35 @@ func (p *OpenAIProvider) call(ctx context.Context, payload map[string]any) (stri
 	}
 	return "", parsed.Usage.CompletionTokens, &structuredOutputMissError{
 		cause:       fmt.Errorf("llm: missing tool_use block %q", reviewSubmitToolName),
-		rawResponse: strings.TrimSpace(message.Content),
+		rawResponse: strings.TrimSpace(openAIMessageText(message.Content)),
 	}
+}
+
+func openAIMessageText(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return ""
+	}
+	var asString string
+	if err := json.Unmarshal(trimmed, &asString); err == nil {
+		return asString
+	}
+	var parts []struct {
+		Type    string `json:"type"`
+		Text    string `json:"text"`
+		Refusal string `json:"refusal"`
+	}
+	if err := json.Unmarshal(trimmed, &parts); err != nil {
+		return string(trimmed)
+	}
+	var builder strings.Builder
+	for _, part := range parts {
+		switch {
+		case strings.TrimSpace(part.Text) != "":
+			builder.WriteString(part.Text)
+		case strings.TrimSpace(part.Refusal) != "":
+			builder.WriteString(part.Refusal)
+		}
+	}
+	return builder.String()
 }

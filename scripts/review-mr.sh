@@ -3,10 +3,11 @@ set -euo pipefail
 
 env_file=".env"
 dry_run="false"
+llm_route=""
 
 usage() {
   cat <<'EOF'
-Usage: scripts/review-mr.sh [--env-file PATH] [--dry-run] <gitlab-mr-url>
+Usage: scripts/review-mr.sh [--env-file PATH] [--dry-run] [--llm-route ROUTE] <gitlab-mr-url>
 
 Starts the local Docker Compose stack if needed, resolves the GitLab project id,
 and triggers a manual review run for the given merge request.
@@ -22,6 +23,10 @@ while [[ $# -gt 0 ]]; do
     --dry-run)
       dry_run="true"
       shift
+      ;;
+    --llm-route)
+      llm_route="${2:?missing value for --llm-route}"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -118,6 +123,7 @@ GITLAB_BASE_URL=$gitlab_base_url
 PROJECT_LOOKUP_PATH=$project_lookup_path
 COMPOSE_UP=$compose_up_cmd
 TRIGGER_MODE=docker-run-manual-trigger
+LLM_ROUTE=$llm_route
 EOF
   exit 0
 fi
@@ -141,6 +147,17 @@ PY
 
 compose_network="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}_default"
 
+manual_trigger_args=(
+  --project-id "$project_id"
+  --mr-iid "$mr_iid"
+  --wait
+  --json
+)
+
+if [[ -n "$llm_route" ]]; then
+  manual_trigger_args+=(--llm-route "$llm_route")
+fi
+
 docker run --rm \
   --network "$compose_network" \
   -v "$PWD":/src \
@@ -151,4 +168,4 @@ docker run --rm \
   -e MYSQL_DSN="mreviewer:mreviewer_password@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci" \
   -e REDIS_ADDR="redis:6379" \
   golang:1.25 \
-  go run ./cmd/manual-trigger --project-id "$project_id" --mr-iid "$mr_iid" --wait --json
+  go run ./cmd/manual-trigger "${manual_trigger_args[@]}"

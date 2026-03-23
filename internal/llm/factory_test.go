@@ -17,7 +17,7 @@ import (
 func TestNewProviderFromConfigSupportsKnownKinds(t *testing.T) {
 	t.Run("anthropic-compatible", func(t *testing.T) {
 		provider, err := NewProviderFromConfig(ProviderConfig{
-			Kind:      "anthropic_compatible",
+			Kind:      "minimax",
 			BaseURL:   "https://api.minimaxi.com/anthropic",
 			APIKey:    "secret",
 			Model:     "MiniMax-M2.7",
@@ -84,7 +84,7 @@ func TestBuildProviderRegistryFromRouteConfigs(t *testing.T) {
 		"openai",
 		map[string]ProviderConfig{
 			"default": {
-				Kind:      "anthropic_compatible",
+				Kind:      "minimax",
 				BaseURL:   "https://api.minimaxi.com/anthropic",
 				APIKey:    "secret",
 				Model:     "MiniMax-M2.7",
@@ -130,7 +130,7 @@ func TestBuildProviderRegistryFromRouteConfigsRejectsUnknownFallback(t *testing.
 		"missing-route",
 		map[string]ProviderConfig{
 			"default": {
-				Kind:      "anthropic_compatible",
+				Kind:      "minimax",
 				BaseURL:   "https://api.minimaxi.com/anthropic",
 				APIKey:    "secret",
 				Model:     "MiniMax-M2.7",
@@ -178,6 +178,53 @@ func TestOpenAIProviderUsesToolCallRequestShape(t *testing.T) {
 	}
 	if toolChoice["type"] != "function" {
 		t.Fatalf("tool_choice.type = %#v, want function", toolChoice["type"])
+	}
+}
+
+func TestOpenAIProviderUsesJSONSchemaRequestShape(t *testing.T) {
+	transport := &captureTransport{responseBody: `{"choices":[{"message":{"content":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}}],"usage":{"completion_tokens":21}}`}
+	provider, err := NewProviderFromConfig(ProviderConfig{
+		Kind:                "openai",
+		BaseURL:             "https://api.openai.com/v1",
+		APIKey:              "secret-token",
+		Model:               "gpt-5.4",
+		RouteName:           "openai-gpt-5-4",
+		OutputMode:          "json_schema",
+		MaxCompletionTokens: 12000,
+		ReasoningEffort:     "medium",
+		HTTPClient:          &http.Client{Transport: transport},
+		Now:                 func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewProviderFromConfig: %v", err)
+	}
+
+	if _, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"}); err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(transport.body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["model"] != "gpt-5.4" {
+		t.Fatalf("model = %#v", payload["model"])
+	}
+	if payload["max_completion_tokens"] != float64(12000) {
+		t.Fatalf("max_completion_tokens = %#v, want 12000", payload["max_completion_tokens"])
+	}
+	if payload["reasoning_effort"] != "medium" {
+		t.Fatalf("reasoning_effort = %#v, want medium", payload["reasoning_effort"])
+	}
+	if _, ok := payload["tools"]; ok {
+		t.Fatal("tools should not be sent in json_schema mode")
+	}
+	responseFormat, ok := payload["response_format"].(map[string]any)
+	if !ok {
+		t.Fatalf("response_format = %#v, want object", payload["response_format"])
+	}
+	if responseFormat["type"] != "json_schema" {
+		t.Fatalf("response_format.type = %#v, want json_schema", responseFormat["type"])
 	}
 }
 

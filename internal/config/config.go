@@ -41,12 +41,15 @@ type LLMConfig struct {
 }
 
 type LLMRouteConfig struct {
-	Provider    string  `yaml:"provider"`
-	BaseURL     string  `yaml:"base_url"`
-	APIKey      string  `yaml:"api_key"`
-	Model       string  `yaml:"model"`
-	OutputMode  string  `yaml:"output_mode"`
-	Temperature float64 `yaml:"temperature"`
+	Provider            string  `yaml:"provider"`
+	BaseURL             string  `yaml:"base_url"`
+	APIKey              string  `yaml:"api_key"`
+	Model               string  `yaml:"model"`
+	OutputMode          string  `yaml:"output_mode"`
+	Temperature         float64 `yaml:"temperature"`
+	MaxTokens           int64   `yaml:"max_tokens"`
+	MaxCompletionTokens int64   `yaml:"max_completion_tokens"`
+	ReasoningEffort     string  `yaml:"reasoning_effort"`
 }
 
 // envMapping maps Config field setters to their environment variable names.

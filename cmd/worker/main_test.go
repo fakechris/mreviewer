@@ -44,8 +44,8 @@ func TestProviderConfigsFromLegacyAnthropicSettings(t *testing.T) {
 	if len(routes) != 2 {
 		t.Fatalf("routes = %d, want 2", len(routes))
 	}
-	if routes["default"].Kind != "anthropic_compatible" {
-		t.Fatalf("default kind = %q, want anthropic_compatible", routes["default"].Kind)
+	if routes["default"].Kind != "minimax" {
+		t.Fatalf("default kind = %q, want minimax", routes["default"].Kind)
 	}
 }
 
@@ -56,20 +56,23 @@ func TestProviderConfigsFromLLMRoutes(t *testing.T) {
 			FallbackRoute: "openai",
 			Routes: map[string]config.LLMRouteConfig{
 				"minimax": {
-					Provider:    "anthropic_compatible",
+					Provider:    "minimax",
 					BaseURL:     "https://api.minimaxi.com/anthropic",
 					APIKey:      "minimax-secret",
 					Model:       "MiniMax-M2.7",
 					OutputMode:  "tool_call",
+					MaxTokens:   4096,
 					Temperature: 0.2,
 				},
 				"openai": {
-					Provider:    "openai",
-					BaseURL:     "https://api.openai.com/v1",
-					APIKey:      "openai-secret",
-					Model:       "gpt-4.1-mini",
-					OutputMode:  "tool_call",
-					Temperature: 0.2,
+					Provider:            "openai",
+					BaseURL:             "https://api.openai.com/v1",
+					APIKey:              "openai-secret",
+					Model:               "gpt-5.4",
+					OutputMode:          "json_schema",
+					MaxCompletionTokens: 12000,
+					ReasoningEffort:     "medium",
+					Temperature:         0.2,
 				},
 			},
 		},
@@ -93,5 +96,14 @@ func TestProviderConfigsFromLLMRoutes(t *testing.T) {
 	}
 	if routes["minimax"].RouteName != "minimax" {
 		t.Fatalf("minimax route name = %q, want minimax", routes["minimax"].RouteName)
+	}
+	if routes["openai"].OutputMode != "json_schema" {
+		t.Fatalf("openai output_mode = %q, want json_schema", routes["openai"].OutputMode)
+	}
+	if routes["openai"].MaxCompletionTokens != 12000 {
+		t.Fatalf("openai max_completion_tokens = %d, want 12000", routes["openai"].MaxCompletionTokens)
+	}
+	if routes["openai"].ReasoningEffort != "medium" {
+		t.Fatalf("openai reasoning_effort = %q, want medium", routes["openai"].ReasoningEffort)
 	}
 }

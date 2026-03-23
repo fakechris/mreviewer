@@ -3,6 +3,7 @@ package manualtrigger
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -192,6 +193,59 @@ func TestTriggerCreatesPendingManualRun(t *testing.T) {
 	}
 	if mr.WebUrl != server.URL+"/group/subgroup/repo/-/merge_requests/7" {
 		t.Fatalf("mr web_url = %q, want %q", mr.WebUrl, server.URL+"/group/subgroup/repo/-/merge_requests/7")
+	}
+}
+
+func TestTriggerStoresProviderRouteOverrideInScopeJSON(t *testing.T) {
+	sqlDB := setupTestDB(t)
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{
+			"id": 9003,
+			"iid": 7,
+			"project_id": 123,
+			"title": "Manual trigger route override",
+			"description": "test mr",
+			"state": "opened",
+			"draft": false,
+			"source_branch": "feature/manual",
+			"target_branch": "main",
+			"sha": "head-sha-route",
+			"web_url": %q,
+			"author": {"username": "alice"}
+		}`, server.URL+"/group/subgroup/repo/-/merge_requests/7")
+	}))
+	defer server.Close()
+
+	client, err := gitlab.NewClient(server.URL, "test-token", gitlab.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	svc := NewService(testLogger(), sqlDB, client, server.URL)
+	result, err := svc.Trigger(context.Background(), TriggerInput{
+		ProjectID:     123,
+		MRIID:         7,
+		ProviderRoute: "claude-opus-5-6",
+	})
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+
+	run, err := db.New(sqlDB).GetReviewRun(context.Background(), result.RunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	var scope struct {
+		ProviderRoute string `json:"provider_route"`
+	}
+	if err := json.Unmarshal(run.ScopeJson, &scope); err != nil {
+		t.Fatalf("unmarshal scope_json: %v", err)
+	}
+	if scope.ProviderRoute != "claude-opus-5-6" {
+		t.Fatalf("scope provider_route = %q, want claude-opus-5-6", scope.ProviderRoute)
 	}
 }
 
