@@ -1,5 +1,8 @@
 # MiniMax JSON Compliance Cases
 
+> English version of this document:
+> [docs/minimax-json-compliance-cases.en.md](./minimax-json-compliance-cases.en.md)
+
 本文档只记录当前新方案下，MiniMax 在“强制 tool call + 严格 schema 校验 + repair retry”这条链路里，仍然表现出的模型能力边界。
 
 这里不讨论：
