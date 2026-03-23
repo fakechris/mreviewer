@@ -42,9 +42,9 @@ func redactValue(v any) any {
 	case map[string]any:
 		out := make(map[string]any, len(value))
 		for k, item := range value {
-			lower := strings.ToLower(k)
+			lower := normalizeRedactionKey(k)
 			switch {
-			case strings.Contains(lower, "api_key"), strings.Contains(lower, "authorization"), strings.Contains(lower, "token"), strings.Contains(lower, "cookie"):
+			case strings.Contains(lower, "apikey"), strings.Contains(lower, "authorization"), strings.Contains(lower, "token"), strings.Contains(lower, "cookie"):
 				out[k] = "[REDACTED]"
 			case lower == "content":
 				out[k] = "[OMITTED]"
@@ -70,7 +70,17 @@ func redactValue(v any) any {
 }
 
 func redactError(err error) map[string]any {
+	if err == nil {
+		return nil
+	}
 	return map[string]any{"message": err.Error(), "timeout": isTimeoutError(err)}
+}
+
+func normalizeRedactionKey(key string) string {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	lower = strings.ReplaceAll(lower, "_", "")
+	lower = strings.ReplaceAll(lower, "-", "")
+	return lower
 }
 
 func redactURL(raw string) string { return strings.TrimRight(raw, "/") }

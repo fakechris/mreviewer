@@ -19,7 +19,7 @@ func persistSummaryNoteFallback(ctx context.Context, queries *db.Queries, run db
 		return nil
 	}
 	_, err := queries.InsertCommentAction(ctx, db.InsertCommentActionParams{ReviewRunID: run.ID, ReviewFindingID: sql.NullInt64{}, ActionType: "summary_note", IdempotencyKey: fmt.Sprintf("run:%d:parser_error_summary_note", run.ID), Status: "pending"})
-	if err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
+	if err != nil && !db.IsDuplicateKeyError(err) {
 		return err
 	}
 	return nil
@@ -163,7 +163,7 @@ func (p *MiniMaxProvider) SummarizeWithSystemPrompt(ctx context.Context, request
 		Result:  result,
 		RawText: text,
 		Latency: p.now().Sub(started),
-		Tokens:  int64(message.Usage.OutputTokens),
+		Tokens:  int64(message.Usage.InputTokens + message.Usage.OutputTokens),
 		Model:   p.routeName,
 	}, nil
 }

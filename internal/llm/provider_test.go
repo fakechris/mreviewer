@@ -31,7 +31,7 @@ import (
 )
 
 func TestMiniMaxRequestShape(t *testing.T) {
-	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[]}}],"usage":{"output_tokens":42}}`}
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[]}}],"usage":{"input_tokens":8,"output_tokens":42}}`}
 	provider, err := NewMiniMaxProvider(ProviderConfig{BaseURL: "https://api.minimaxi.com/anthropic", APIKey: "secret-token", Model: "MiniMax-M2.5", HTTPClient: &http.Client{Transport: transport}, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
 		t.Fatalf("NewMiniMaxProvider: %v", err)
@@ -44,8 +44,8 @@ func TestMiniMaxRequestShape(t *testing.T) {
 	if response.Latency != 0 {
 		t.Fatalf("latency = %v, want 0 with fixed clock", response.Latency)
 	}
-	if response.Tokens != 42 {
-		t.Fatalf("tokens = %d, want 42", response.Tokens)
+	if response.Tokens != 50 {
+		t.Fatalf("tokens = %d, want 50", response.Tokens)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(transport.body.Bytes(), &payload); err != nil {
@@ -60,8 +60,16 @@ func TestMiniMaxRequestShape(t *testing.T) {
 	if payload["temperature"] != 0.2 {
 		t.Fatalf("temperature = %#v, want 0.2", payload["temperature"])
 	}
-	if _, ok := payload["system"]; !ok {
-		t.Fatal("missing system prompt")
+	systemBlocks, ok := payload["system"].([]any)
+	if !ok || len(systemBlocks) != 1 {
+		t.Fatalf("system = %#v, want one text block", payload["system"])
+	}
+	systemBlock, ok := systemBlocks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("system block = %#v", systemBlocks[0])
+	}
+	if systemBlock["type"] != "text" {
+		t.Fatalf("system block type = %#v, want text", systemBlock["type"])
 	}
 	if _, ok := payload["output_config"]; ok {
 		t.Fatal("output_config should not be sent to MiniMax Anthropic-compatible endpoint")
@@ -103,6 +111,43 @@ func TestMiniMaxSummaryRequestShape(t *testing.T) {
 	}
 	if _, ok := payload["output_config"]; ok {
 		t.Fatal("output_config should not be sent to MiniMax Anthropic-compatible endpoint")
+	}
+}
+
+func TestMiniMaxSummaryCallUsesTypedSystemBlockAndCountsTotalTokens(t *testing.T) {
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"text","text":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"walkthrough\":\"ok\",\"verdict\":\"approve\"}"}],"usage":{"input_tokens":6,"output_tokens":19}}`}
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL:    "https://api.minimaxi.com/anthropic",
+		APIKey:     "secret-token",
+		Model:      "MiniMax-M2.7",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	response, err := provider.Summarize(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	if response.Tokens != 25 {
+		t.Fatalf("tokens = %d, want 25", response.Tokens)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(transport.body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	systemBlocks, ok := payload["system"].([]any)
+	if !ok || len(systemBlocks) != 1 {
+		t.Fatalf("system = %#v, want one text block", payload["system"])
+	}
+	systemBlock, ok := systemBlocks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("system block = %#v", systemBlocks[0])
+	}
+	if systemBlock["type"] != "text" {
+		t.Fatalf("system block type = %#v, want text", systemBlock["type"])
 	}
 }
 
@@ -459,6 +504,50 @@ func TestParseReviewResultWithMiniMaxAliasFields(t *testing.T) {
 	}
 }
 
+func TestParseReviewResultRejectsFractionalAliasLines(t *testing.T) {
+	raw := `{
+		"schema_version":"1.0",
+		"review_run_id":"rr-fractional-line",
+		"summary":"发现问题",
+		"findings":[{
+			"type":"code_defect",
+			"title":"Fractional line",
+			"severity":"high",
+			"confidence":0.95,
+			"body":"body",
+			"file_path":"src/lib/paymentCalculator.ts",
+			"line_start":23.5
+		}]
+	}`
+
+	_, _, err := ParseReviewResult(raw)
+	if err == nil {
+		t.Fatal("expected parse error for fractional line number")
+	}
+}
+
+func TestParseReviewResultRejectsOutOfRangeAliasLines(t *testing.T) {
+	raw := `{
+		"schema_version":"1.0",
+		"review_run_id":"rr-big-line",
+		"summary":"发现问题",
+		"findings":[{
+			"type":"code_defect",
+			"title":"Huge line",
+			"severity":"high",
+			"confidence":0.95,
+			"body":"body",
+			"file_path":"src/lib/paymentCalculator.ts",
+			"line_start":9999999999
+		}]
+	}`
+
+	_, _, err := ParseReviewResult(raw)
+	if err == nil {
+		t.Fatal("expected parse error for out-of-range line number")
+	}
+}
+
 func TestParseReviewResultDefaultsMissingCategory(t *testing.T) {
 	raw := `{
 		"schema_version":"1.0",
@@ -685,14 +774,14 @@ func TestLLMRateLimiting(t *testing.T) {
 }
 
 func TestRedactedLogging(t *testing.T) {
-	payload := map[string]any{"api_key": "secret", "Authorization": "Bearer abc", "messages": []any{map[string]any{"content": "very long prompt body"}}, "diff": stringsRepeat("x", 300)}
+	payload := map[string]any{"api_key": "secret", "apiKey": "secret-two", "x-api-key": "secret-three", "Authorization": "Bearer abc", "messages": []any{map[string]any{"content": "very long prompt body"}}, "diff": stringsRepeat("x", 300)}
 	redacted := redactPayload(payload)
 	data, err := json.Marshal(redacted)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
 	text := string(data)
-	for _, forbidden := range []string{"secret", "Bearer abc", "very long prompt body"} {
+	for _, forbidden := range []string{"secret", "secret-two", "secret-three", "Bearer abc", "very long prompt body"} {
 		if bytes.Contains(data, []byte(forbidden)) {
 			t.Fatalf("redacted payload leaked %q: %s", forbidden, text)
 		}
@@ -702,6 +791,12 @@ func TestRedactedLogging(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte("[OMITTED]")) {
 		t.Fatalf("expected omission marker: %s", text)
+	}
+}
+
+func TestRedactErrorNilSafe(t *testing.T) {
+	if got := redactError(nil); got != nil {
+		t.Fatalf("redactError(nil) = %#v, want nil", got)
 	}
 }
 
@@ -3232,6 +3327,13 @@ func TestParseSummaryResultFallback(t *testing.T) {
 		_, err := ParseSummaryResult(raw)
 		if err == nil {
 			t.Fatal("expected error when walkthrough is missing")
+		}
+	})
+	t.Run("missing verdict", func(t *testing.T) {
+		raw := `{"schema_version":"1.0","review_run_id":"rr-5","walkthrough":"Fixed tests."}`
+		_, err := ParseSummaryResult(raw)
+		if err == nil {
+			t.Fatal("expected error when verdict is missing")
 		}
 	})
 }

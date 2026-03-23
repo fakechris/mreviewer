@@ -974,6 +974,8 @@ func (f *fakeStore) GetProject(context.Context, int64) (db.Project, error) {
 	return db.Project{ID: f.mr.ProjectID, GitlabProjectID: f.mr.ProjectID}, nil
 }
 func (f *fakeStore) GetReviewRun(_ context.Context, id int64) (db.ReviewRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if run, ok := f.runsByID[id]; ok {
 		return run, nil
 	}
@@ -983,12 +985,16 @@ func (f *fakeStore) GetProjectPolicy(context.Context, int64) (db.ProjectPolicy, 
 	return f.policy, nil
 }
 func (f *fakeStore) GetReviewFinding(_ context.Context, id int64) (db.ReviewFinding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if finding, ok := f.findingsByID[id]; ok {
 		return finding, nil
 	}
 	return db.ReviewFinding{}, errors.New("not found")
 }
 func (f *fakeStore) GetGitlabDiscussion(_ context.Context, id int64) (db.GitlabDiscussion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, discussion := range f.discussionByID {
 		if discussion.ID == id {
 			return discussion, nil

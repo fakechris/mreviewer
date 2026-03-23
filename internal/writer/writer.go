@@ -167,8 +167,8 @@ func (w *Writer) writeFindings(ctx context.Context, run db.ReviewRun, mr db.Merg
 		if ctx.Err() != nil {
 			break
 		}
-		sem <- struct{}{}
 		wg.Add(1)
+		sem <- struct{}{}
 		go func(finding db.ReviewFinding) {
 			defer wg.Done()
 			defer func() { <-sem }()
@@ -475,7 +475,7 @@ func (w *Writer) persistDiscussion(ctx context.Context, mr db.MergeRequest, find
 	if _, err := w.restoreDiscussion(ctx, finding.ID, mr.ID); err == nil {
 		return nil
 	}
-	if _, err := w.store.InsertGitlabDiscussion(ctx, db.InsertGitlabDiscussionParams{ReviewFindingID: finding.ID, MergeRequestID: mr.ID, GitlabDiscussionID: discussion.ID, DiscussionType: discussionType, Resolved: false}); err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
+	if _, err := w.store.InsertGitlabDiscussion(ctx, db.InsertGitlabDiscussionParams{ReviewFindingID: finding.ID, MergeRequestID: mr.ID, GitlabDiscussionID: discussion.ID, DiscussionType: discussionType, Resolved: false}); err != nil && !db.IsDuplicateKeyError(err) {
 		return fmt.Errorf("writer: insert gitlab discussion: %w", err)
 	}
 	if err := w.persistFindingDiscussionLink(ctx, finding.ID, discussion.ID); err != nil {

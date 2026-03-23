@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 	"strings"
 	"time"
 
@@ -252,18 +254,37 @@ func int32Alias(payload map[string]any, keys ...string) *int32 {
 		if !ok {
 			continue
 		}
-		switch typed := value.(type) {
-		case float64:
-			parsed := int32(typed)
+		if parsed, ok := coerceInt32(value); ok {
 			return &parsed
-		case json.Number:
-			if parsed, err := typed.Int64(); err == nil {
-				value := int32(parsed)
-				return &value
-			}
 		}
 	}
 	return nil
+}
+
+func coerceInt32(value any) (int32, bool) {
+	switch typed := value.(type) {
+	case float64:
+		if math.Trunc(typed) != typed || typed < math.MinInt32 || typed > math.MaxInt32 {
+			return 0, false
+		}
+		return int32(typed), true
+	case json.Number:
+		raw := strings.TrimSpace(typed.String())
+		if raw == "" || strings.ContainsAny(raw, ".eE") {
+			return 0, false
+		}
+		parsed, ok := new(big.Int).SetString(raw, 10)
+		if !ok || !parsed.IsInt64() {
+			return 0, false
+		}
+		value := parsed.Int64()
+		if value < math.MinInt32 || value > math.MaxInt32 {
+			return 0, false
+		}
+		return int32(value), true
+	default:
+		return 0, false
+	}
 }
 
 func boolAlias(payload map[string]any, keys ...string) bool {
@@ -344,7 +365,7 @@ func ParseSummaryResult(raw string) (SummaryResult, error) {
 		}
 		var result SummaryResult
 		if err := json.Unmarshal([]byte(text), &result); err == nil {
-			if strings.TrimSpace(result.SchemaVersion) != "" && strings.TrimSpace(result.ReviewRunID) != "" && strings.TrimSpace(result.Walkthrough) != "" {
+			if strings.TrimSpace(result.SchemaVersion) != "" && strings.TrimSpace(result.ReviewRunID) != "" && strings.TrimSpace(result.Walkthrough) != "" && strings.TrimSpace(result.Verdict) != "" {
 				return result, nil
 			}
 		}

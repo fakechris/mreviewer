@@ -110,6 +110,24 @@ func TestThreadsResolvedModeUsesStructuredDiscussionState(t *testing.T) {
 	}
 }
 
+func TestThreadsResolvedModeTreatsStructuredDiscussionStateAsAuthoritative(t *testing.T) {
+	policy := &db.ProjectPolicy{ConfidenceThreshold: 0.8, SeverityThreshold: "medium", GateMode: "threads_resolved"}
+	run := db.ReviewRun{ID: 55, ProjectID: 12, MergeRequestID: 34, HeadSha: "abc"}
+	findings := []db.ReviewFinding{
+		{ID: 1, Severity: "high", Confidence: 0.91, State: "active", GitlabDiscussionID: "disc-open", Evidence: sql.NullString{String: `{"resolved":true}`, Valid: true}},
+	}
+	result := ComputeResultWithDiscussionState(run, policy, findings, map[int64]bool{}, "trace-threads-authoritative")
+	if result.State != "failed" {
+		t.Fatalf("state = %q, want failed", result.State)
+	}
+	if result.BlockingFindings != 1 {
+		t.Fatalf("blocking findings = %d, want 1", result.BlockingFindings)
+	}
+	if len(result.QualifyingFindingIDs) != 1 || result.QualifyingFindingIDs[0] != 1 {
+		t.Fatalf("qualifying ids = %v, want [1]", result.QualifyingFindingIDs)
+	}
+}
+
 func TestParserErrorDoesNotBlockThreadsResolved(t *testing.T) {
 	policy := &db.ProjectPolicy{ConfidenceThreshold: 0.8, SeverityThreshold: "medium", GateMode: "threads_resolved"}
 	run := db.ReviewRun{ID: 55, ProjectID: 12, MergeRequestID: 34, HeadSha: "abc"}

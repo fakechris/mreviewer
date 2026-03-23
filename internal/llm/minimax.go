@@ -182,14 +182,15 @@ func (p *MiniMaxProvider) callReviewTool(ctx context.Context, systemPrompt strin
 	if err != nil {
 		return "", 0, p.now().Sub(started), err
 	}
+	totalTokens := int64(message.Usage.InputTokens + message.Usage.OutputTokens)
 	text, err := collectToolUseInput(message, reviewSubmitToolName)
 	if err != nil {
-		return "", int64(message.Usage.OutputTokens), p.now().Sub(started), &structuredOutputMissError{
+		return "", totalTokens, p.now().Sub(started), &structuredOutputMissError{
 			cause:       err,
 			rawResponse: collectMessageText(message),
 		}
 	}
-	return text, int64(message.Usage.OutputTokens), p.now().Sub(started), nil
+	return text, totalTokens, p.now().Sub(started), nil
 }
 
 const reviewSubmitToolName = "submit_review"

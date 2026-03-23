@@ -133,6 +133,7 @@ func discussionResolved(finding db.ReviewFinding, discussionStateByFinding map[i
 		if resolved, ok := discussionStateByFinding[finding.ID]; ok {
 			return resolved
 		}
+		return false
 	}
 	if text, ok := nullableStringValue(finding.Evidence); ok {
 		if resolved, found := parseResolvedFlag(text); found {
