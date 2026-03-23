@@ -138,7 +138,7 @@ scripts/init-local-env.sh
 如果你使用默认 Docker Compose，最短配置就是修改 `.env` 里的这些值：
 
 ```env
-GITLAB_BASE_URL=https://github.91jinrong.com
+GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=你的_gitlab_token
 GITLAB_WEBHOOK_SECRET=自己生成的一串随机串
 
@@ -159,7 +159,7 @@ scripts/init-local-env.sh --force
 
 - 生成默认 Compose 可用的 `.env`
 - 自动填入 `GITLAB_TOKEN` 和 `MINIMAX_API_KEY`
-- 默认把 `GITLAB_BASE_URL` 设为 `https://github.91jinrong.com`
+- 默认把 `GITLAB_BASE_URL` 设为 `https://gitlab.example.com`
 - 自动生成一个随机 `GITLAB_WEBHOOK_SECRET`
 - 如果 `.env` 已存在，会先备份成 `.env.bak.<timestamp>`
 
@@ -204,7 +204,7 @@ docker compose ps
 
 ```bash
 docker compose logs migrate
-docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "show tables;"
+docker exec -e MYSQL_PWD=mreviewer_password -it mreviewer-mysql mysql -umreviewer mreviewer -e "show tables;"
 ```
 
 如果 `migrate` 成功，你会看到 `gitlab_instances`、`projects`、`merge_requests`、`review_runs`、`review_findings` 等表。
@@ -276,7 +276,7 @@ go run ./cmd/manual-trigger --project-id 123 --mr-iid 45 --wait --wait-timeout 1
 如果你已经有 `.env`，并且只想验证某一条真实 GitLab MR，不想手工查 `project_id`，推荐直接用：
 
 ```bash
-bash scripts/review-mr.sh "https://github.91jinrong.com/group/repo/-/merge_requests/123"
+bash scripts/review-mr.sh "https://gitlab.example.com/group/repo/-/merge_requests/123"
 ```
 
 这条脚本会自动：
@@ -318,8 +318,10 @@ bash scripts/show-run-audit.sh 9
 
 如果你只想临时查数据库，也可以直接执行：
 
+本地开发默认密码示例仅适用于仓库自带的 Docker Compose 环境：
+
 ```bash
-docker exec -i mreviewer-mysql mysql --default-character-set=utf8mb4 -umreviewer -pmreviewer_password mreviewer -e \
+docker exec -e MYSQL_PWD=mreviewer_password -i mreviewer-mysql mysql --default-character-set=utf8mb4 -umreviewer mreviewer -e \
 "SELECT id, action, JSON_PRETTY(detail) AS detail FROM audit_logs WHERE entity_type='review_run' AND entity_id=9 ORDER BY id;"
 ```
 
@@ -406,9 +408,9 @@ docker compose logs -f redis
 ### 查看数据库里的运行结果
 
 ```bash
-docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "show tables;"
-docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "select id,trigger_type,status,created_at from review_runs order by id desc limit 10;"
-docker exec -it mreviewer-mysql mysql -umreviewer -pmreviewer_password mreviewer -e "select id,severity,title,path from review_findings order by id desc limit 20;"
+docker exec -e MYSQL_PWD=mreviewer_password -it mreviewer-mysql mysql -umreviewer mreviewer -e "show tables;"
+docker exec -e MYSQL_PWD=mreviewer_password -it mreviewer-mysql mysql -umreviewer mreviewer -e "select id,trigger_type,status,created_at from review_runs order by id desc limit 10;"
+docker exec -e MYSQL_PWD=mreviewer_password -it mreviewer-mysql mysql -umreviewer mreviewer -e "select id,severity,title,path from review_findings order by id desc limit 20;"
 ```
 
 ### 重新构建
