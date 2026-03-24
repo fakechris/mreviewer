@@ -80,6 +80,10 @@ type NormalizedEvent struct {
 
 	// State is the MR state (e.g. "opened", "closed", "merged").
 	State string `json:"state"`
+
+	// ScopeJSON carries optional run-scoped overrides for the review run created
+	// from this event. It is primarily used by manual/command-triggered reruns.
+	ScopeJSON json.RawMessage `json:"scope_json,omitempty"`
 }
 
 // webhookPayload is the union struct for extracting fields from project, group,

@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/config"
@@ -33,13 +35,19 @@ type runtimeDeps struct {
 }
 
 type cliOptions struct {
-	projectID    int64
-	mrIID        int64
-	configPath   string
-	wait         bool
-	waitTimeout  time.Duration
-	pollInterval time.Duration
-	jsonOutput   bool
+	projectID     int64
+	mrIID         int64
+	configPath    string
+	providerRoute string
+	wait          bool
+	waitTimeout   time.Duration
+	pollInterval  time.Duration
+	jsonOutput    bool
+}
+
+type routeFlag struct {
+	value string
+	set   bool
 }
 
 type jsonResponse struct {
@@ -139,6 +147,9 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 	if err != nil {
 		return fail("config", err, nil)
 	}
+	if err := validateProviderRouteOverride(cfg, opts.providerRoute); err != nil {
+		return fail("config", err, nil)
+	}
 
 	sqlDB, err := deps.openDB(cfg.MySQLDSN)
 	if err != nil {
@@ -150,8 +161,9 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 
 	svc := deps.newService(cfg, sqlDB, opts.pollInterval)
 	result, err := svc.Trigger(context.Background(), manualtrigger.TriggerInput{
-		ProjectID: opts.projectID,
-		MRIID:     opts.mrIID,
+		ProjectID:     opts.projectID,
+		MRIID:         opts.mrIID,
+		ProviderRoute: strings.TrimSpace(opts.providerRoute),
 	})
 	if err != nil {
 		return fail("create", err, nil)
@@ -238,12 +250,16 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 		waitTimeout:  15 * time.Minute,
 		pollInterval: time.Second,
 	}
+	var llmRoute routeFlag
+	var providerRoute routeFlag
 
 	fs := flag.NewFlagSet("manual-trigger", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Int64Var(&opts.projectID, "project-id", 0, "GitLab project ID")
 	fs.Int64Var(&opts.mrIID, "mr-iid", 0, "GitLab merge request IID")
 	fs.StringVar(&opts.configPath, "config", "config.yaml", "Path to config file")
+	fs.Var(&llmRoute, "llm-route", "Use the named llm.routes entry for this manual review run only")
+	fs.Var(&providerRoute, "provider-route", "Alias of --llm-route")
 	fs.BoolVar(&opts.wait, "wait", false, "Wait for the review run to reach a terminal state")
 	fs.DurationVar(&opts.waitTimeout, "wait-timeout", 15*time.Minute, "Maximum time to wait when --wait is enabled")
 	fs.DurationVar(&opts.pollInterval, "poll-interval", time.Second, "Polling interval used with --wait")
@@ -251,6 +267,29 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, err
+	}
+	llmRouteValue := strings.TrimSpace(llmRoute.value)
+	providerRouteValue := strings.TrimSpace(providerRoute.value)
+	if llmRoute.set && llmRouteValue == "" {
+		_, _ = fmt.Fprintln(stderr, "--llm-route must not be empty")
+		fs.Usage()
+		return cliOptions{}, fmt.Errorf("empty provider route flag")
+	}
+	if providerRoute.set && providerRouteValue == "" {
+		_, _ = fmt.Fprintln(stderr, "--provider-route must not be empty")
+		fs.Usage()
+		return cliOptions{}, fmt.Errorf("empty provider route flag")
+	}
+	if llmRoute.set && providerRoute.set && llmRouteValue != providerRouteValue {
+		_, _ = fmt.Fprintln(stderr, "--llm-route and --provider-route must match when both are provided")
+		fs.Usage()
+		return cliOptions{}, fmt.Errorf("conflicting provider route flags")
+	}
+	switch {
+	case llmRoute.set:
+		opts.providerRoute = llmRouteValue
+	case providerRoute.set:
+		opts.providerRoute = providerRouteValue
 	}
 	if len(fs.Args()) > 0 {
 		_, _ = fmt.Fprintf(stderr, "manual-trigger does not accept positional arguments: %v\n", fs.Args())
@@ -276,6 +315,19 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	return opts, nil
 }
 
+func (f *routeFlag) String() string {
+	if f == nil {
+		return ""
+	}
+	return f.value
+}
+
+func (f *routeFlag) Set(value string) error {
+	f.value = value
+	f.set = true
+	return nil
+}
+
 func runSucceeded(status string) bool {
 	return status == "completed" || status == "parser_error"
 }
@@ -298,6 +350,42 @@ func writeJSONResponse(w io.Writer, payload jsonResponse) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	return enc.Encode(payload)
+}
+
+func validateProviderRouteOverride(cfg *config.Config, route string) error {
+	route = strings.TrimSpace(route)
+	if route == "" {
+		return nil
+	}
+	available := availableProviderRoutes(cfg)
+	if len(available) == 0 {
+		return fmt.Errorf("manual-trigger: --llm-route requires configured llm routes")
+	}
+	for _, candidate := range available {
+		if candidate == route {
+			return nil
+		}
+	}
+	return fmt.Errorf("manual-trigger: unknown --llm-route %q (available: %s)", route, strings.Join(available, ", "))
+}
+
+func availableProviderRoutes(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	if len(cfg.LLM.Routes) > 0 {
+		routes := make([]string, 0, len(cfg.LLM.Routes))
+		for route := range cfg.LLM.Routes {
+			trimmed := strings.TrimSpace(route)
+			if trimmed == "" {
+				continue
+			}
+			routes = append(routes, trimmed)
+		}
+		sort.Strings(routes)
+		return routes
+	}
+	return []string{"default", "secondary"}
 }
 
 func newDefaultService(cfg *config.Config, sqlDB *sql.DB, pollInterval time.Duration) manualTriggerService {

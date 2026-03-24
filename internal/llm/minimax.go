@@ -14,6 +14,16 @@ import (
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 )
 
+type anthropicToolProfile struct {
+	kind       string
+	outputMode string
+}
+
+var (
+	miniMaxProfile   = anthropicToolProfile{kind: ProviderKindMiniMax, outputMode: openAIOutputModeToolCall}
+	anthropicProfile = anthropicToolProfile{kind: ProviderKindAnthropic, outputMode: openAIOutputModeToolCall}
+)
+
 type MiniMaxProvider struct {
 	client         anthropic.Client
 	model          string
@@ -21,6 +31,7 @@ type MiniMaxProvider struct {
 	temperature    float64
 	systemPrompt   string
 	routeName      string
+	profile        anthropicToolProfile
 	rateLimiter    RateLimiter
 	now            func() time.Time
 	sleep          func(context.Context, time.Duration) error
@@ -28,6 +39,14 @@ type MiniMaxProvider struct {
 }
 
 func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
+	return newAnthropicToolProvider(cfg, miniMaxProfile)
+}
+
+func NewAnthropicProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
+	return newAnthropicToolProvider(cfg, anthropicProfile)
+}
+
+func newAnthropicToolProvider(cfg ProviderConfig, profile anthropicToolProfile) (*MiniMaxProvider, error) {
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return nil, fmt.Errorf("llm: base URL is required")
 	}
@@ -52,6 +71,13 @@ func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
 	if cfg.Sleep == nil {
 		cfg.Sleep = sleepContext
 	}
+	outputMode := strings.ToLower(strings.TrimSpace(cfg.OutputMode))
+	if outputMode == "" {
+		outputMode = profile.outputMode
+	}
+	if outputMode != openAIOutputModeToolCall {
+		return nil, fmt.Errorf("llm: provider %q only supports output_mode %q", profile.kind, openAIOutputModeToolCall)
+	}
 	options := []option.RequestOption{
 		option.WithBaseURL(cfg.BaseURL),
 		option.WithAPIKey(cfg.APIKey),
@@ -64,7 +90,19 @@ func NewMiniMaxProvider(cfg ProviderConfig) (*MiniMaxProvider, error) {
 	if routeName == "" {
 		routeName = strings.TrimSpace(cfg.Model)
 	}
-	return &MiniMaxProvider{client: client, model: cfg.Model, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature, systemPrompt: cfg.SystemPrompt, routeName: routeName, rateLimiter: cfg.RateLimiter, now: cfg.Now, sleep: cfg.Sleep, timeoutRetries: cfg.TimeoutRetries}, nil
+	return &MiniMaxProvider{
+		client:         client,
+		model:          cfg.Model,
+		maxTokens:      cfg.MaxTokens,
+		temperature:    cfg.Temperature,
+		systemPrompt:   cfg.SystemPrompt,
+		routeName:      routeName,
+		profile:        profile,
+		rateLimiter:    cfg.RateLimiter,
+		now:            cfg.Now,
+		sleep:          cfg.Sleep,
+		timeoutRetries: cfg.TimeoutRetries,
+	}, nil
 }
 
 func (p *MiniMaxProvider) RequestPayload(request ctxpkg.ReviewRequest) map[string]any {

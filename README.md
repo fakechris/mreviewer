@@ -80,7 +80,7 @@ output_language: en-US
 ```yaml
 confidence_threshold: 0.85
 severity_threshold: high
-provider_route: minimax
+provider_route: minimax-review
 output_language: zh-CN
 max_files: 50
 max_changed_lines: 1500
@@ -101,7 +101,8 @@ context_lines_after: 15
 
 当前实现已经支持 route-based provider factory：
 
-- `anthropic_compatible`
+- `minimax`
+- `anthropic_compatible`（兼容旧配置的 legacy alias）
 - `openai`
 - `anthropic`
 
@@ -117,39 +118,63 @@ context_lines_after: 15
 - `MINIMAX_BASE_URL`
 - `MINIMAX_MODEL`
 
-当 `ANTHROPIC_*` 没有配置时，worker 会自动回退到 `MINIMAX_*`，并生成默认的 `anthropic_compatible` 路由。
+当 `ANTHROPIC_*` 没有配置时，worker 会自动回退到 `MINIMAX_*`，并生成默认的 `minimax` 路由。
 
 如果你要显式启用多 provider，请在 `config.yaml` 里配置 `llm.routes`。示例：
 
 ```yaml
 llm:
-  default_route: minimax
-  fallback_route: openai
+  default_route: minimax-review
+  fallback_route: claude-sonnet-4-6
   routes:
-    minimax:
-      provider: anthropic_compatible
+    minimax-review:
+      provider: minimax
       base_url: https://api.minimaxi.com/anthropic
       api_key: ${MINIMAX_API_KEY}
       model: MiniMax-M2.7-highspeed
       output_mode: tool_call
+      max_tokens: 4096
       temperature: 0.2
-    openai:
+    openai-gpt-5-4:
       provider: openai
       base_url: https://api.openai.com/v1
       api_key: ${OPENAI_API_KEY}
-      model: gpt-4.1-mini
-      output_mode: tool_call
+      model: gpt-5.4
+      output_mode: json_schema
+      max_completion_tokens: 12000
+      reasoning_effort: medium
       temperature: 0.2
-    opus:
+    claude-opus-4-6:
       provider: anthropic
       base_url: https://api.anthropic.com
       api_key: ${ANTHROPIC_API_KEY}
-      model: claude-opus-4-1
+      model: claude-opus-4-6
       output_mode: tool_call
+      max_tokens: 12000
+      temperature: 0.1
+    claude-sonnet-4-6:
+      provider: anthropic
+      base_url: https://api.anthropic.com
+      api_key: ${ANTHROPIC_API_KEY}
+      model: claude-sonnet-4-6
+      output_mode: tool_call
+      max_tokens: 12000
       temperature: 0.2
 ```
 
 `provider_route` 仍然由项目策略或 `.gitlab/ai-review.yaml` 控制，worker 会按 route 动态选 provider。
+
+如果你是手动触发单次 review，也可以直接在 CLI 指定这次 run 使用哪条 route：
+
+```bash
+go run ./cmd/manual-trigger \
+  --project-id 123 \
+  --mr-iid 456 \
+  --llm-route openai-gpt-5-4 \
+  --wait --json
+```
+
+这个 override 只作用于当前 review run，不会改项目默认策略。
 
 ### MiniMax M2.7 输出模式
 

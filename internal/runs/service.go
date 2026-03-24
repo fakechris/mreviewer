@@ -135,6 +135,7 @@ func (s *Service) createPendingRun(ctx context.Context, q db.Querier, ev hooks.N
 		Status:         "pending",
 		MaxRetries:     defaultMaxRetries,
 		IdempotencyKey: ev.IdempotencyKey,
+		ScopeJson:      ev.ScopeJSON,
 	})
 	if err != nil {
 		// Handle race condition: another concurrent request may have

@@ -18,12 +18,14 @@ import (
 type fakeManualTriggerService struct {
 	triggerResult manualtrigger.TriggerResult
 	triggerErr    error
+	triggerInput  manualtrigger.TriggerInput
 	waitResult    db.ReviewRun
 	waitErr       error
 	waitRunID     int64
 }
 
-func (f *fakeManualTriggerService) Trigger(context.Context, manualtrigger.TriggerInput) (manualtrigger.TriggerResult, error) {
+func (f *fakeManualTriggerService) Trigger(_ context.Context, input manualtrigger.TriggerInput) (manualtrigger.TriggerResult, error) {
+	f.triggerInput = input
 	return f.triggerResult, f.triggerErr
 }
 
@@ -77,6 +79,140 @@ func TestRunWithDepsJSONOutputWithoutWait(t *testing.T) {
 	}
 	if payload.Terminal != nil {
 		t.Fatalf("payload.Terminal = %#v, want nil", payload.Terminal)
+	}
+}
+
+func TestRunWithDepsPassesLLMRouteToService(t *testing.T) {
+	svc := &fakeManualTriggerService{
+		triggerResult: manualtrigger.TriggerResult{
+			RunID:          104,
+			ProjectID:      123,
+			MRIID:          48,
+			HeadSHA:        "head-sha-route",
+			IdempotencyKey: "idem-route",
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{"--project-id", "123", "--mr-iid", "48", "--llm-route", "openai-gpt-5-4"}, runtimeDeps{
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{
+				LLM: config.LLMConfig{
+					Routes: map[string]config.LLMRouteConfig{
+						"openai-gpt-5-4": {},
+					},
+				},
+			}, nil
+		},
+		openDB:     func(string) (*sql.DB, error) { return nil, nil },
+		newService: func(*config.Config, *sql.DB, time.Duration) manualTriggerService { return svc },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if svc.triggerInput.ProviderRoute != "openai-gpt-5-4" {
+		t.Fatalf("triggerInput.ProviderRoute = %q, want openai-gpt-5-4", svc.triggerInput.ProviderRoute)
+	}
+}
+
+func TestRunWithDepsRejectsConflictingProviderRouteAliases(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{
+		"--project-id", "123",
+		"--mr-iid", "48",
+		"--llm-route", "openai-gpt-5-4",
+		"--provider-route", "claude-opus-4-6",
+	}, runtimeDeps{
+		loadConfig: func(string) (*config.Config, error) { return &config.Config{}, nil },
+		openDB:     func(string) (*sql.DB, error) { return nil, nil },
+		newService: func(*config.Config, *sql.DB, time.Duration) manualTriggerService { return &fakeManualTriggerService{} },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	})
+
+	if exitCode != 2 {
+		t.Fatalf("exitCode = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "--llm-route and --provider-route must match") {
+		t.Fatalf("stderr = %q, want conflicting alias validation", stderr.String())
+	}
+}
+
+func TestRunWithDepsRejectsEmptyProviderRouteOverride(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{
+		"--project-id", "123",
+		"--mr-iid", "48",
+		"--llm-route=",
+	}, runtimeDeps{
+		loadConfig: func(string) (*config.Config, error) { return &config.Config{}, nil },
+		openDB:     func(string) (*sql.DB, error) { return nil, nil },
+		newService: func(*config.Config, *sql.DB, time.Duration) manualTriggerService { return &fakeManualTriggerService{} },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	})
+
+	if exitCode != 2 {
+		t.Fatalf("exitCode = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "--llm-route must not be empty") {
+		t.Fatalf("stderr = %q, want empty override validation", stderr.String())
+	}
+}
+
+func TestRunWithDepsAllowsLegacyDefaultRouteOverride(t *testing.T) {
+	svc := &fakeManualTriggerService{
+		triggerResult: manualtrigger.TriggerResult{
+			RunID:          105,
+			ProjectID:      123,
+			MRIID:          49,
+			HeadSHA:        "head-sha-default",
+			IdempotencyKey: "idem-default",
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{"--project-id", "123", "--mr-iid", "49", "--llm-route", "default"}, runtimeDeps{
+		loadConfig: func(string) (*config.Config, error) { return &config.Config{}, nil },
+		openDB:     func(string) (*sql.DB, error) { return nil, nil },
+		newService: func(*config.Config, *sql.DB, time.Duration) manualTriggerService { return svc },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if svc.triggerInput.ProviderRoute != "default" {
+		t.Fatalf("triggerInput.ProviderRoute = %q, want default", svc.triggerInput.ProviderRoute)
+	}
+}
+
+func TestValidateProviderRouteOverrideReturnsSortedRoutes(t *testing.T) {
+	err := validateProviderRouteOverride(&config.Config{
+		LLM: config.LLMConfig{
+			Routes: map[string]config.LLMRouteConfig{
+				"zulu":  {},
+				"alpha": {},
+			},
+		},
+	}, "missing")
+	if err == nil {
+		t.Fatal("expected unknown provider route error")
+	}
+	if !strings.Contains(err.Error(), "available: alpha, zulu") {
+		t.Fatalf("error = %q, want sorted available routes", err.Error())
 	}
 }
 

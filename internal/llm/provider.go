@@ -118,17 +118,20 @@ type ReviewFinding struct {
 }
 
 type ProviderConfig struct {
-	Kind           string
-	BaseURL        string
-	APIKey         string
-	Model          string
-	MaxTokens      int64
-	SystemPrompt   string
-	RouteName      string
-	TimeoutRetries int
-	Temperature    float64
-	HTTPClient     *http.Client
-	RateLimiter    RateLimiter
-	Now            func() time.Time
-	Sleep          func(context.Context, time.Duration) error
+	Kind                string
+	BaseURL             string
+	APIKey              string
+	Model               string
+	MaxTokens           int64
+	MaxCompletionTokens int64
+	SystemPrompt        string
+	RouteName           string
+	OutputMode          string
+	ReasoningEffort     string
+	TimeoutRetries      int
+	Temperature         float64
+	HTTPClient          *http.Client
+	RateLimiter         RateLimiter
+	Now                 func() time.Time
+	Sleep               func(context.Context, time.Duration) error
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -32,8 +33,9 @@ type Service struct {
 }
 
 type TriggerInput struct {
-	ProjectID int64
-	MRIID     int64
+	ProjectID     int64
+	MRIID         int64
+	ProviderRoute string
 }
 
 type TriggerResult struct {
@@ -149,6 +151,9 @@ func (s *Service) Trigger(ctx context.Context, input TriggerInput) (TriggerResul
 		WebURL:            mr.WebURL,
 		State:             mr.State,
 	}
+	if scopeJSON := buildManualRunScope(input.ProviderRoute); len(scopeJSON) > 0 {
+		ev.ScopeJSON = scopeJSON
+	}
 
 	if err := runsvc.NewService(s.logger, s.db).ProcessEvent(ctx, ev, 0); err != nil {
 		return TriggerResult{}, fmt.Errorf("manual trigger: create review run: %w", err)
@@ -238,4 +243,19 @@ func computeManualIdempotencyKey(baseURL string, projectID, mrIID int64, headSHA
 	)
 	sum := sha256.Sum256([]byte(payload))
 	return fmt.Sprintf("%x", sum[:16])
+}
+
+func buildManualRunScope(providerRoute string) json.RawMessage {
+	providerRoute = strings.TrimSpace(providerRoute)
+	if providerRoute == "" {
+		return nil
+	}
+	scopeJSON, err := json.Marshal(map[string]any{
+		"provider_route": providerRoute,
+	})
+	if err != nil {
+		slog.Warn("manual trigger: build scope_json failed", "provider_route", providerRoute, "error", err)
+		return nil
+	}
+	return scopeJSON
 }

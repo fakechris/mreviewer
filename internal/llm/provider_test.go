@@ -30,6 +30,8 @@ import (
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
 
+const providerTestMigrationsDir = "../../migrations"
+
 func TestMiniMaxRequestShape(t *testing.T) {
 	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[]}}],"usage":{"input_tokens":8,"output_tokens":42}}`}
 	provider, err := NewMiniMaxProvider(ProviderConfig{BaseURL: "https://api.minimaxi.com/anthropic", APIKey: "secret-token", Model: "MiniMax-M2.5", HTTPClient: &http.Client{Transport: transport}, Now: func() time.Time { return time.Unix(100, 0) }})
@@ -685,7 +687,7 @@ func TestProviderRouteSelection(t *testing.T) {
 func TestProcessRunUsesDynamicSystemPrompt(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
@@ -803,7 +805,7 @@ func TestRedactErrorNilSafe(t *testing.T) {
 func TestWorkerExecutesRealProcessor(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	instanceID, projectID, mrID, runID := seedRun(t, ctx, q)
 	_ = instanceID
@@ -909,7 +911,7 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 func TestProviderFailureAuditStoresFullRequestAndRawResponse(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 	run, err := q.GetReviewRun(ctx, runID)
@@ -983,7 +985,7 @@ func TestProviderFailureAuditStoresFullRequestAndRawResponse(t *testing.T) {
 func TestWorkerThreadsPerPathReviewIntoReviewRequest(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
@@ -1029,7 +1031,7 @@ func TestWorkerThreadsPerPathReviewIntoReviewRequest(t *testing.T) {
 func TestDegradationSummaryNote(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title", Author: struct {
@@ -1068,7 +1070,7 @@ func TestDegradationSummaryNote(t *testing.T) {
 func TestReviewedCleanPathBecomesFixed(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	baseRun, err := q.GetReviewRun(ctx, runID)
@@ -1112,7 +1114,7 @@ func TestReviewedCleanPathBecomesFixed(t *testing.T) {
 func TestReviewedCleanPathBecomesFixedFromNewFinding(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	baseRun, err := q.GetReviewRun(ctx, runID)
@@ -1184,7 +1186,7 @@ func TestReviewedScopeFromAssemblyIncludesReviewedCleanPaths(t *testing.T) {
 func TestParserErrorStructuredResult(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title", Author: struct {
@@ -1261,7 +1263,7 @@ func TestParserErrorStructuredResult(t *testing.T) {
 func TestSuccessfulRunPersistsProviderMetrics(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
@@ -1300,7 +1302,7 @@ func TestSuccessfulRunPersistsProviderMetrics(t *testing.T) {
 func TestNormalizeFinding(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 
@@ -1516,7 +1518,7 @@ func TestNormalizeFindingCanonicalizesLegacyAnchorLabels(t *testing.T) {
 func TestPersistFindingsCanonicalizesLegacyAnchorLabels(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 
@@ -1665,7 +1667,7 @@ func TestCanonicalKeyFallback(t *testing.T) {
 func TestSameHeadDedupe(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, err := q.GetReviewRun(ctx, runID)
@@ -1713,7 +1715,7 @@ func TestSameHeadDedupe(t *testing.T) {
 func TestNewHeadLastSeenUpdate(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	baseRun, err := q.GetReviewRun(ctx, runID)
@@ -1759,7 +1761,7 @@ func TestNewHeadLastSeenUpdate(t *testing.T) {
 func TestSemanticRelocation(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	baseRun, _ := q.GetReviewRun(ctx, runID)
@@ -1837,7 +1839,7 @@ func TestSemanticRelocation(t *testing.T) {
 func TestRelocationSupersedes(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	baseRun, _ := q.GetReviewRun(ctx, runID)
@@ -1885,7 +1887,7 @@ func TestRelocationSupersedes(t *testing.T) {
 func TestSameRunDuplicateCollapse(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
@@ -1949,7 +1951,7 @@ func TestValidTransitions(t *testing.T) {
 func TestMissingFindingFixed(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
@@ -1984,7 +1986,7 @@ func TestMissingFindingFixed(t *testing.T) {
 func TestMissingFindingStale(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
@@ -2019,7 +2021,7 @@ func TestMissingFindingStale(t *testing.T) {
 func TestMissingFindingNoReviewedScopeNoTransition(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
@@ -2049,7 +2051,7 @@ func TestMissingFindingNoReviewedScopeNoTransition(t *testing.T) {
 func TestDeletedFileFixed(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
@@ -2093,7 +2095,7 @@ func TestDeletedFileFixed(t *testing.T) {
 func TestReviewedCleanPathBecomesFixedAfterCarryForwardRerun(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	baseRun, err := q.GetReviewRun(ctx, runID)
@@ -2169,7 +2171,7 @@ func TestReviewedCleanPathBecomesFixedAfterCarryForwardRerun(t *testing.T) {
 func TestDeletedFileFixedAfterCarryForwardRerun(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	baseRun, err := q.GetReviewRun(ctx, runID)
@@ -2275,7 +2277,7 @@ func TestDeletedAnchorCanonicalizationTriggersDeletedLifecycle(t *testing.T) {
 func TestMixedScopeMissingFindingStaysStale(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
@@ -2351,7 +2353,7 @@ secondActiveReady:
 func TestConfidenceThresholdFilter(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
@@ -2377,7 +2379,7 @@ func TestConfidenceThresholdFilter(t *testing.T) {
 func TestSeverityThresholdFilter(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
@@ -2596,7 +2598,7 @@ func TestIsTimeoutError(t *testing.T) {
 func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
@@ -2708,10 +2710,80 @@ func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
 	}
 }
 
+func TestRunScopeProviderRouteOverridesPolicyRoute(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
+	q := db.New(sqlDB)
+	_, _, _, runID := seedRun(t, ctx, q)
+
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{
+		MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title",
+			Author: struct {
+				Username string "json:\"username\""
+			}{Username: "alice"},
+			DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}},
+		Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"},
+		Diffs:   []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}},
+	}}
+
+	defaultCalls := 0
+	overrideCalls := 0
+	defaultProv := routeTrackingProvider{
+		routeName: "default",
+		callCount: &defaultCalls,
+		response: ProviderResponse{
+			Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "default", Status: "completed"},
+			Model:  "default",
+		},
+	}
+	overrideProv := routeTrackingProvider{
+		routeName: "openai-gpt-5-4",
+		callCount: &overrideCalls,
+		response: ProviderResponse{
+			Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "override", Status: "completed"},
+			Model:  "openai-gpt-5-4",
+		},
+	}
+
+	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
+	registry.Register("openai-gpt-5-4", overrideProv)
+
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{
+		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "default"},
+		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
+	}}
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET scope_json = ? WHERE id = ?", []byte(`{"provider_route":"openai-gpt-5-4"}`), runID); err != nil {
+		t.Fatalf("seed scope_json: %v", err)
+	}
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-route-override", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB)).WithRegistry(registry)
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "completed" {
+		t.Fatalf("outcome status = %q, want completed", outcome.Status)
+	}
+	if overrideCalls != 1 {
+		t.Fatalf("override provider calls = %d, want 1", overrideCalls)
+	}
+	if defaultCalls != 0 {
+		t.Fatalf("default provider calls = %d, want 0", defaultCalls)
+	}
+}
+
 func TestProcessRunUsesActiveFindingsForRequestedChangesStatus(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, projectID, mrID, baseRunID := seedRun(t, ctx, q)
 
@@ -2822,7 +2894,7 @@ func TestProcessRunUsesActiveFindingsForRequestedChangesStatus(t *testing.T) {
 func TestProviderRouteEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, mrID, runID := seedRun(t, ctx, q)
 
@@ -2951,7 +3023,7 @@ func TestProviderRouteEndToEnd(t *testing.T) {
 func TestProviderFallbackStillWorksWithPolicyRoute(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
@@ -3128,7 +3200,7 @@ func (p routeTrackingProvider) RequestPayload(_ ctxpkg.ReviewRequest) map[string
 func TestDegradationSummaryPersistedForWriter(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
@@ -3196,7 +3268,7 @@ func TestDegradationSummaryPersistedForWriter(t *testing.T) {
 func TestDegradationSummaryNoteIncludesSkippedFiles(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
@@ -3433,7 +3505,7 @@ func TestRenderSummaryFromWalkthrough(t *testing.T) {
 func TestProcessRunWithSummaryProvider(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
@@ -3504,7 +3576,7 @@ func TestProcessRunWithSummaryProvider(t *testing.T) {
 func TestProcessRunWithSummaryProviderFailure(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
@@ -3550,7 +3622,7 @@ func TestProcessRunWithSummaryProviderFailure(t *testing.T) {
 func TestProcessRunWithoutSummaryProvider(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
@@ -3593,7 +3665,7 @@ func TestProcessRunWithoutSummaryProvider(t *testing.T) {
 func TestProcessRunContinuesWhenOutputLanguagePersistenceFails(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
 	q := db.New(sqlDB)
 	_, _, _, runID := seedRun(t, ctx, q)
 
