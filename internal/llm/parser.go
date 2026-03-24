@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"sort"
 	"strings"
 	"time"
 
@@ -377,6 +378,134 @@ func reviewResultSchema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{"schema_version": map[string]any{"type": "string"}, "review_run_id": map[string]any{"type": "string"}, "status": map[string]any{"type": "string"}, "summary": map[string]any{"type": "string"}, "summary_note": map[string]any{"type": "object", "properties": map[string]any{"body_markdown": map[string]any{"type": "string"}}, "required": []string{"body_markdown"}, "additionalProperties": false}, "blind_spots": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "findings": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"category": map[string]any{"type": "string"}, "severity": map[string]any{"type": "string"}, "confidence": map[string]any{"type": "number"}, "title": map[string]any{"type": "string"}, "body_markdown": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"}, "anchor_kind": map[string]any{"type": "string"}, "old_line": map[string]any{"type": "integer"}, "new_line": map[string]any{"type": "integer"}, "range_start_kind": map[string]any{"type": "string"}, "range_start_old_line": map[string]any{"type": "integer"}, "range_start_new_line": map[string]any{"type": "integer"}, "range_end_kind": map[string]any{"type": "string"}, "range_end_old_line": map[string]any{"type": "integer"}, "range_end_new_line": map[string]any{"type": "integer"}, "anchor_snippet": map[string]any{"type": "string"}, "evidence": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "suggested_patch": map[string]any{"type": "string"}, "canonical_key": map[string]any{"type": "string"}, "symbol": map[string]any{"type": "string"}, "trigger_condition": map[string]any{"type": "string"}, "impact": map[string]any{"type": "string"}, "introduced_by_this_change": map[string]any{"type": "boolean"}, "blind_spots": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "no_finding_reason": map[string]any{"type": "string"}}, "required": []string{"category", "severity", "confidence", "title", "body_markdown", "path", "anchor_kind"}, "additionalProperties": false}}}, "required": []string{"schema_version", "review_run_id", "summary", "findings"}, "additionalProperties": false}
 }
 
+func reviewResultSchemaOpenAIStrict() map[string]any {
+	schema, _ := transformJSONSchemaValue(reviewResultSchema(), false, true).(map[string]any)
+	return schema
+}
+
+func reviewResultValidationSchema() map[string]any {
+	schema, _ := transformJSONSchemaValue(reviewResultSchema(), false, false).(map[string]any)
+	return schema
+}
+
+func transformJSONSchemaValue(value any, nullable bool, requireAll bool) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return transformJSONSchemaObject(typed, nullable, requireAll)
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, transformJSONSchemaValue(item, false, requireAll))
+		}
+		return out
+	case []string:
+		out := make([]string, 0, len(typed))
+		out = append(out, typed...)
+		return out
+	default:
+		return typed
+	}
+}
+
+func transformJSONSchemaObject(schema map[string]any, nullable bool, requireAll bool) map[string]any {
+	out := make(map[string]any, len(schema))
+	for key, value := range schema {
+		out[key] = transformJSONSchemaValue(value, false, requireAll)
+	}
+
+	switch schemaType := schemaTypeName(out); schemaType {
+	case "object":
+		props, _ := out["properties"].(map[string]any)
+		requiredSet := make(map[string]struct{}, len(anyToStringSlice(out["required"])))
+		for _, key := range anyToStringSlice(out["required"]) {
+			requiredSet[key] = struct{}{}
+		}
+		keys := make([]string, 0, len(props))
+		for key, rawProp := range props {
+			propSchema, ok := rawProp.(map[string]any)
+			if !ok {
+				continue
+			}
+			_, required := requiredSet[key]
+			props[key] = transformJSONSchemaObject(propSchema, !required, requireAll)
+			keys = append(keys, key)
+		}
+		out["properties"] = props
+		if requireAll {
+			sort.Strings(keys)
+			out["required"] = keys
+		}
+	case "array":
+		itemSchema, ok := out["items"].(map[string]any)
+		if ok {
+			out["items"] = transformJSONSchemaObject(itemSchema, false, requireAll)
+		}
+	}
+
+	if nullable {
+		out["type"] = appendSchemaType(out["type"], "null")
+	}
+	return out
+}
+
+func schemaTypeName(schema map[string]any) string {
+	switch typed := schema["type"].(type) {
+	case string:
+		return typed
+	case []any:
+		for _, item := range typed {
+			if text, ok := item.(string); ok && text != "null" {
+				return text
+			}
+		}
+	case []string:
+		for _, item := range typed {
+			if item != "null" {
+				return item
+			}
+		}
+	}
+	return ""
+}
+
+func appendSchemaType(value any, schemaType string) []any {
+	switch typed := value.(type) {
+	case string:
+		if typed == schemaType {
+			return []any{typed}
+		}
+		return []any{typed, schemaType}
+	case []any:
+		out := make([]any, 0, len(typed)+1)
+		seen := false
+		for _, item := range typed {
+			out = append(out, item)
+			if text, ok := item.(string); ok && text == schemaType {
+				seen = true
+			}
+		}
+		if !seen {
+			out = append(out, schemaType)
+		}
+		return out
+	case []string:
+		out := make([]any, 0, len(typed)+1)
+		seen := false
+		for _, item := range typed {
+			out = append(out, item)
+			if item == schemaType {
+				seen = true
+			}
+		}
+		if !seen {
+			out = append(out, schemaType)
+		}
+		return out
+	default:
+		return []any{schemaType}
+	}
+}
+
 func extractMarkedJSON(raw string) (string, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -480,7 +609,7 @@ func validateReviewResultStrictJSON(raw string) error {
 	if decoder.More() {
 		return fmt.Errorf("llm: strict validation found trailing JSON content")
 	}
-	errs := validateValueAgainstSchema(value, reviewResultSchema(), "$")
+	errs := validateValueAgainstSchema(value, reviewResultValidationSchema(), "$")
 	if len(errs) == 0 {
 		return nil
 	}

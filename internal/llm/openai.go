@@ -148,7 +148,7 @@ func (p *OpenAIProvider) requestPayloadWithUserContent(systemPrompt string, user
 			"json_schema": map[string]any{
 				"name":   reviewSubmitToolName,
 				"strict": true,
-				"schema": reviewResultSchema(),
+				"schema": reviewResultSchemaOpenAIStrict(),
 			},
 		}
 	default:
@@ -303,7 +303,7 @@ func (p *OpenAIProvider) call(ctx context.Context, payload map[string]any) (stri
 		if content == "" {
 			return "", parsed.Usage.CompletionTokens, &structuredOutputMissError{
 				cause:       fmt.Errorf("llm: missing structured JSON content"),
-				rawResponse: content,
+				rawResponse: truncateText(string(body), 400),
 			}
 		}
 		return content, parsed.Usage.CompletionTokens, nil

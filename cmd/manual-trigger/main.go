@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,11 @@ type cliOptions struct {
 	waitTimeout   time.Duration
 	pollInterval  time.Duration
 	jsonOutput    bool
+}
+
+type routeFlag struct {
+	value string
+	set   bool
 }
 
 type jsonResponse struct {
@@ -244,29 +250,46 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 		waitTimeout:  15 * time.Minute,
 		pollInterval: time.Second,
 	}
+	var llmRoute routeFlag
+	var providerRoute routeFlag
 
 	fs := flag.NewFlagSet("manual-trigger", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Int64Var(&opts.projectID, "project-id", 0, "GitLab project ID")
 	fs.Int64Var(&opts.mrIID, "mr-iid", 0, "GitLab merge request IID")
 	fs.StringVar(&opts.configPath, "config", "config.yaml", "Path to config file")
-	fs.StringVar(&opts.providerRoute, "llm-route", "", "Use the named llm.routes entry for this manual review run only")
-	fs.StringVar(&opts.providerRoute, "provider-route", "", "Alias of --llm-route")
+	fs.Var(&llmRoute, "llm-route", "Use the named llm.routes entry for this manual review run only")
+	fs.Var(&providerRoute, "provider-route", "Alias of --llm-route")
 	fs.BoolVar(&opts.wait, "wait", false, "Wait for the review run to reach a terminal state")
 	fs.DurationVar(&opts.waitTimeout, "wait-timeout", 15*time.Minute, "Maximum time to wait when --wait is enabled")
 	fs.DurationVar(&opts.pollInterval, "poll-interval", time.Second, "Polling interval used with --wait")
 	fs.BoolVar(&opts.jsonOutput, "json", false, "Emit structured JSON output")
 
-	llmRouteArg, llmRouteSet := rawFlagValue(args, "--llm-route")
-	providerRouteArg, providerRouteSet := rawFlagValue(args, "--provider-route")
-
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, err
 	}
-	if llmRouteSet && providerRouteSet && llmRouteArg != providerRouteArg {
+	llmRouteValue := strings.TrimSpace(llmRoute.value)
+	providerRouteValue := strings.TrimSpace(providerRoute.value)
+	if llmRoute.set && llmRouteValue == "" {
+		_, _ = fmt.Fprintln(stderr, "--llm-route must not be empty")
+		fs.Usage()
+		return cliOptions{}, fmt.Errorf("empty provider route flag")
+	}
+	if providerRoute.set && providerRouteValue == "" {
+		_, _ = fmt.Fprintln(stderr, "--provider-route must not be empty")
+		fs.Usage()
+		return cliOptions{}, fmt.Errorf("empty provider route flag")
+	}
+	if llmRoute.set && providerRoute.set && llmRouteValue != providerRouteValue {
 		_, _ = fmt.Fprintln(stderr, "--llm-route and --provider-route must match when both are provided")
 		fs.Usage()
 		return cliOptions{}, fmt.Errorf("conflicting provider route flags")
+	}
+	switch {
+	case llmRoute.set:
+		opts.providerRoute = llmRouteValue
+	case providerRoute.set:
+		opts.providerRoute = providerRouteValue
 	}
 	if len(fs.Args()) > 0 {
 		_, _ = fmt.Fprintf(stderr, "manual-trigger does not accept positional arguments: %v\n", fs.Args())
@@ -292,21 +315,17 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	return opts, nil
 }
 
-func rawFlagValue(args []string, name string) (string, bool) {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == name {
-			if i+1 >= len(args) {
-				return "", true
-			}
-			return args[i+1], true
-		}
-		prefix := name + "="
-		if strings.HasPrefix(arg, prefix) {
-			return strings.TrimPrefix(arg, prefix), true
-		}
+func (f *routeFlag) String() string {
+	if f == nil {
+		return ""
 	}
-	return "", false
+	return f.value
+}
+
+func (f *routeFlag) Set(value string) error {
+	f.value = value
+	f.set = true
+	return nil
 }
 
 func runSucceeded(status string) bool {
@@ -363,10 +382,8 @@ func availableProviderRoutes(cfg *config.Config) []string {
 			}
 			routes = append(routes, trimmed)
 		}
+		sort.Strings(routes)
 		return routes
-	}
-	if strings.TrimSpace(cfg.AnthropicBaseURL) == "" && strings.TrimSpace(cfg.AnthropicModel) == "" && strings.TrimSpace(cfg.AnthropicAPIKey) == "" {
-		return nil
 	}
 	return []string{"default", "secondary"}
 }

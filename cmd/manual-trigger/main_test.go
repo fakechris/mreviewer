@@ -145,6 +145,77 @@ func TestRunWithDepsRejectsConflictingProviderRouteAliases(t *testing.T) {
 	}
 }
 
+func TestRunWithDepsRejectsEmptyProviderRouteOverride(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{
+		"--project-id", "123",
+		"--mr-iid", "48",
+		"--llm-route=",
+	}, runtimeDeps{
+		loadConfig: func(string) (*config.Config, error) { return &config.Config{}, nil },
+		openDB:     func(string) (*sql.DB, error) { return nil, nil },
+		newService: func(*config.Config, *sql.DB, time.Duration) manualTriggerService { return &fakeManualTriggerService{} },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	})
+
+	if exitCode != 2 {
+		t.Fatalf("exitCode = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "--llm-route must not be empty") {
+		t.Fatalf("stderr = %q, want empty override validation", stderr.String())
+	}
+}
+
+func TestRunWithDepsAllowsLegacyDefaultRouteOverride(t *testing.T) {
+	svc := &fakeManualTriggerService{
+		triggerResult: manualtrigger.TriggerResult{
+			RunID:          105,
+			ProjectID:      123,
+			MRIID:          49,
+			HeadSHA:        "head-sha-default",
+			IdempotencyKey: "idem-default",
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{"--project-id", "123", "--mr-iid", "49", "--llm-route", "default"}, runtimeDeps{
+		loadConfig: func(string) (*config.Config, error) { return &config.Config{}, nil },
+		openDB:     func(string) (*sql.DB, error) { return nil, nil },
+		newService: func(*config.Config, *sql.DB, time.Duration) manualTriggerService { return svc },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if svc.triggerInput.ProviderRoute != "default" {
+		t.Fatalf("triggerInput.ProviderRoute = %q, want default", svc.triggerInput.ProviderRoute)
+	}
+}
+
+func TestValidateProviderRouteOverrideReturnsSortedRoutes(t *testing.T) {
+	err := validateProviderRouteOverride(&config.Config{
+		LLM: config.LLMConfig{
+			Routes: map[string]config.LLMRouteConfig{
+				"zulu":  {},
+				"alpha": {},
+			},
+		},
+	}, "missing")
+	if err == nil {
+		t.Fatal("expected unknown provider route error")
+	}
+	if !strings.Contains(err.Error(), "available: alpha, zulu") {
+		t.Fatalf("error = %q, want sorted available routes", err.Error())
+	}
+}
+
 func TestRunWithDepsJSONOutputWithWait(t *testing.T) {
 	svc := &fakeManualTriggerService{
 		triggerResult: manualtrigger.TriggerResult{
