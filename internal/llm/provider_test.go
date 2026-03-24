@@ -251,6 +251,136 @@ func TestMiniMaxToolCallRequestShape(t *testing.T) {
 	}
 }
 
+func TestAnthropicToolCallRequestShapeUsesCompactFindingSchema(t *testing.T) {
+	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[]}}],"usage":{"output_tokens":42}}`}
+	provider, err := NewAnthropicProvider(ProviderConfig{
+		BaseURL:    "https://api.anthropic.com",
+		APIKey:     "secret-token",
+		Model:      "claude-opus-4-6",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewAnthropicProvider: %v", err)
+	}
+
+	_, err = provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(transport.body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	tools, ok := payload["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %#v, want one submit_review tool", payload["tools"])
+	}
+	tool, ok := tools[0].(map[string]any)
+	if !ok {
+		t.Fatalf("tool payload = %#v", tools[0])
+	}
+	if tool["strict"] != true {
+		t.Fatalf("tool.strict = %#v, want true", tool["strict"])
+	}
+	inputSchema, ok := tool["input_schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("input_schema = %#v", tool["input_schema"])
+	}
+	props, ok := inputSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("input_schema.properties = %#v", inputSchema["properties"])
+	}
+	if _, ok := props["summary_note"]; !ok {
+		t.Fatal("summary_note should remain available for anthropic schema")
+	}
+	if _, ok := props["blind_spots"]; !ok {
+		t.Fatal("blind_spots should remain available for anthropic schema")
+	}
+	findings, ok := props["findings"].(map[string]any)
+	if !ok {
+		t.Fatalf("findings schema = %#v", props["findings"])
+	}
+	items, ok := findings["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("findings.items = %#v", findings["items"])
+	}
+	if items["additionalProperties"] != false {
+		t.Fatalf("findings.items.additionalProperties = %#v, want false", items["additionalProperties"])
+	}
+	itemProps, ok := items["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("findings.items.properties = %#v", items["properties"])
+	}
+	required, ok := items["required"].([]any)
+	if !ok {
+		t.Fatalf("findings.items.required = %#v, want array", items["required"])
+	}
+	requiredSet := make(map[string]struct{}, len(required))
+	for _, value := range required {
+		key, ok := value.(string)
+		if !ok {
+			t.Fatalf("findings.items.required contains non-string: %#v", value)
+		}
+		requiredSet[key] = struct{}{}
+	}
+	for _, key := range []string{"category", "severity", "confidence", "title", "body_markdown", "path", "anchor_kind"} {
+		if _, ok := itemProps[key]; !ok {
+			t.Fatalf("compact anthropic finding schema missing %q", key)
+		}
+		if _, ok := requiredSet[key]; !ok {
+			t.Fatalf("compact anthropic finding schema should require %q", key)
+		}
+	}
+	for _, key := range []string{"evidence", "blind_spots", "range_start_kind", "range_end_kind", "suggested_patch", "canonical_key"} {
+		if _, ok := itemProps[key]; ok {
+			t.Fatalf("compact anthropic finding schema should omit %q", key)
+		}
+	}
+}
+
+func TestReviewResultSchemaForProfile(t *testing.T) {
+	full := reviewResultSchemaForProfile(anthropicToolProfile{kind: ProviderKindMiniMax})
+	compact := reviewResultSchemaForProfile(anthropicToolProfile{kind: ProviderKindAnthropic})
+
+	fullFindings, ok := full["properties"].(map[string]any)["findings"].(map[string]any)
+	if !ok {
+		t.Fatalf("full findings schema = %#v", full["properties"])
+	}
+	fullItems, ok := fullFindings["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("full findings.items = %#v", fullFindings["items"])
+	}
+	fullItemProps, ok := fullItems["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("full findings.items.properties = %#v", fullItems["properties"])
+	}
+	if _, ok := fullItemProps["evidence"]; !ok {
+		t.Fatal("full schema should retain evidence")
+	}
+
+	compactFindings, ok := compact["properties"].(map[string]any)["findings"].(map[string]any)
+	if !ok {
+		t.Fatalf("compact findings schema = %#v", compact["properties"])
+	}
+	compactItems, ok := compactFindings["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("compact findings.items = %#v", compactFindings["items"])
+	}
+	compactItemProps, ok := compactItems["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("compact findings.items.properties = %#v", compactItems["properties"])
+	}
+	if _, ok := compactItemProps["evidence"]; ok {
+		t.Fatal("compact schema should omit evidence")
+	}
+	if _, ok := compact["properties"].(map[string]any)["summary_note"]; !ok {
+		t.Fatal("compact schema should retain summary_note")
+	}
+}
+
 func TestMiniMaxToolCallResponseParsesToolInput(t *testing.T) {
 	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":42}}`}
 	provider, err := NewMiniMaxProvider(ProviderConfig{

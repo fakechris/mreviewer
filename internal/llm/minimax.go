@@ -116,7 +116,7 @@ func (p *MiniMaxProvider) RequestPayloadWithSystemPrompt(request ctxpkg.ReviewRe
 		"temperature": p.temperature,
 		"system":      systemPrompt,
 		"messages":    []map[string]any{{"role": "user", "content": mustJSON(request)}},
-		"tools":       []map[string]any{reviewToolPayload()},
+		"tools":       []map[string]any{reviewToolPayloadForProfile(p.profile)},
 		"tool_choice": map[string]any{"type": "tool", "name": reviewSubmitToolName},
 	}
 }
@@ -214,7 +214,7 @@ func (p *MiniMaxProvider) callReviewTool(ctx context.Context, systemPrompt strin
 		Temperature: anthropic.Float(p.temperature),
 		System:      []anthropic.TextBlockParam{{Text: systemPrompt}},
 		Messages:    []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(userContent))},
-		Tools:       []anthropic.ToolUnionParam{reviewToolParam()},
+		Tools:       []anthropic.ToolUnionParam{reviewToolParamForProfile(p.profile)},
 		ToolChoice:  anthropic.ToolChoiceParamOfTool(reviewSubmitToolName),
 	})
 	if err != nil {
@@ -234,7 +234,21 @@ func (p *MiniMaxProvider) callReviewTool(ctx context.Context, systemPrompt strin
 const reviewSubmitToolName = "submit_review"
 
 func reviewToolParam() anthropic.ToolUnionParam {
-	schema := reviewResultSchema()
+	return reviewToolParamWithSchema(reviewResultSchema())
+}
+
+func reviewResultSchemaForProfile(profile anthropicToolProfile) map[string]any {
+	if profile.kind == ProviderKindAnthropic {
+		return reviewResultSchemaAnthropicCompact()
+	}
+	return reviewResultSchema()
+}
+
+func reviewToolParamForProfile(profile anthropicToolProfile) anthropic.ToolUnionParam {
+	return reviewToolParamWithSchema(reviewResultSchemaForProfile(profile))
+}
+
+func reviewToolParamWithSchema(schema map[string]any) anthropic.ToolUnionParam {
 	properties, _ := schema["properties"]
 	required, _ := schema["required"].([]string)
 	var tool anthropic.ToolParam
@@ -252,7 +266,14 @@ func reviewToolParam() anthropic.ToolUnionParam {
 }
 
 func reviewToolPayload() map[string]any {
-	schema := reviewResultSchema()
+	return reviewToolPayloadWithSchema(reviewResultSchema())
+}
+
+func reviewToolPayloadForProfile(profile anthropicToolProfile) map[string]any {
+	return reviewToolPayloadWithSchema(reviewResultSchemaForProfile(profile))
+}
+
+func reviewToolPayloadWithSchema(schema map[string]any) map[string]any {
 	return map[string]any{
 		"name":         reviewSubmitToolName,
 		"description":  "Emit the final merge request review result as structured JSON.",
