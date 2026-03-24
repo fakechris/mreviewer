@@ -332,6 +332,52 @@ func TestValidateReviewResultStrictJSONAllowsNullOptionalFields(t *testing.T) {
 	}
 }
 
+func TestValidateReviewResultStrictJSONRejectsWrongOptionalFieldType(t *testing.T) {
+	raw := `{
+		"schema_version":"1.0",
+		"review_run_id":"123",
+		"summary":"ok",
+		"status":"completed",
+		"summary_note":null,
+		"blind_spots":null,
+		"findings":[{
+			"category":"bug-risk",
+			"severity":"medium",
+			"confidence":0.7,
+			"title":"Issue",
+			"body_markdown":"Body",
+			"path":"main.go",
+			"anchor_kind":"line",
+			"old_line":"not-a-number",
+			"new_line":1,
+			"range_start_kind":null,
+			"range_start_old_line":null,
+			"range_start_new_line":null,
+			"range_end_kind":null,
+			"range_end_old_line":null,
+			"range_end_new_line":null,
+			"anchor_snippet":null,
+			"evidence":null,
+			"suggested_patch":null,
+			"canonical_key":null,
+			"symbol":null,
+			"trigger_condition":null,
+			"impact":null,
+			"introduced_by_this_change":false,
+			"blind_spots":null,
+			"no_finding_reason":null
+		}]
+	}`
+
+	err := validateReviewResultStrictJSON(raw)
+	if err == nil {
+		t.Fatal("expected strict validation error")
+	}
+	if !strings.Contains(err.Error(), "$.findings[0].old_line must be integer") {
+		t.Fatalf("error = %v, want old_line integer validation failure", err)
+	}
+}
+
 func TestOpenAIProviderMissingToolCallReturnsParserError(t *testing.T) {
 	transport := &captureTransport{responseBody: `{"choices":[{"message":{"content":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}}],"usage":{"completion_tokens":21}}`}
 	provider, err := NewProviderFromConfig(ProviderConfig{

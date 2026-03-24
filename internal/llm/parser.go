@@ -618,6 +618,18 @@ func validateReviewResultStrictJSON(raw string) error {
 
 func validateValueAgainstSchema(value any, schema map[string]any, path string) []string {
 	typ, _ := schema["type"].(string)
+	if typ == "" {
+		typ = schemaTypeName(schema)
+	}
+	if value == nil {
+		if schemaAllowsNull(schema) {
+			return nil
+		}
+		if typ == "" {
+			return nil
+		}
+		return []string{fmt.Sprintf("%s must be %s", path, typ)}
+	}
 	switch typ {
 	case "object":
 		obj, ok := value.(map[string]any)
@@ -682,6 +694,24 @@ func validateValueAgainstSchema(value any, schema map[string]any, path string) [
 		}
 	}
 	return nil
+}
+
+func schemaAllowsNull(schema map[string]any) bool {
+	switch typed := schema["type"].(type) {
+	case []any:
+		for _, item := range typed {
+			if text, ok := item.(string); ok && text == "null" {
+				return true
+			}
+		}
+	case []string:
+		for _, item := range typed {
+			if item == "null" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func anyToStringSlice(value any) []string {
