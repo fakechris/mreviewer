@@ -149,6 +149,12 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load rules: %w", err))
 	}
 	if overrideRoute := providerRouteFromRunScope(run.ScopeJson); overrideRoute != "" {
+		if p.registry == nil {
+			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: provider route override %q requires provider registry", overrideRoute))
+		}
+		if _, resolvedRoute := p.registry.Resolve(overrideRoute); resolvedRoute != overrideRoute {
+			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: unknown provider route override %q", overrideRoute))
+		}
 		ruleResult.EffectivePolicy.ProviderRoute = overrideRoute
 	}
 	outputLanguage := reviewlang.Normalize(ruleResult.EffectivePolicy.OutputLanguage)

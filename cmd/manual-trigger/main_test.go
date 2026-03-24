@@ -120,6 +120,31 @@ func TestRunWithDepsPassesLLMRouteToService(t *testing.T) {
 	}
 }
 
+func TestRunWithDepsRejectsConflictingProviderRouteAliases(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{
+		"--project-id", "123",
+		"--mr-iid", "48",
+		"--llm-route", "openai-gpt-5-4",
+		"--provider-route", "claude-opus-4-6",
+	}, runtimeDeps{
+		loadConfig: func(string) (*config.Config, error) { return &config.Config{}, nil },
+		openDB:     func(string) (*sql.DB, error) { return nil, nil },
+		newService: func(*config.Config, *sql.DB, time.Duration) manualTriggerService { return &fakeManualTriggerService{} },
+		stdout:     &stdout,
+		stderr:     &stderr,
+	})
+
+	if exitCode != 2 {
+		t.Fatalf("exitCode = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "--llm-route and --provider-route must match") {
+		t.Fatalf("stderr = %q, want conflicting alias validation", stderr.String())
+	}
+}
+
 func TestRunWithDepsJSONOutputWithWait(t *testing.T) {
 	svc := &fakeManualTriggerService{
 		triggerResult: manualtrigger.TriggerResult{

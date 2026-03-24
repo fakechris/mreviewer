@@ -15,7 +15,7 @@ import (
 )
 
 func TestNewProviderFromConfigSupportsKnownKinds(t *testing.T) {
-	t.Run("anthropic-compatible", func(t *testing.T) {
+	t.Run("minimax", func(t *testing.T) {
 		provider, err := NewProviderFromConfig(ProviderConfig{
 			Kind:      "minimax",
 			BaseURL:   "https://api.minimaxi.com/anthropic",

@@ -107,3 +107,26 @@ func TestProviderConfigsFromLLMRoutes(t *testing.T) {
 		t.Fatalf("openai reasoning_effort = %q, want medium", routes["openai"].ReasoningEffort)
 	}
 }
+
+func TestProviderConfigsFromLLMRoutesRequiresProviderKind(t *testing.T) {
+	cfg := &config.Config{
+		LLM: config.LLMConfig{
+			DefaultRoute: "openai",
+			Routes: map[string]config.LLMRouteConfig{
+				"openai": {
+					BaseURL: "https://api.openai.com/v1",
+					APIKey:  "openai-secret",
+					Model:   "gpt-5.4",
+				},
+			},
+		},
+	}
+
+	_, _, _, err := providerConfigsFromConfig(cfg)
+	if err == nil {
+		t.Fatal("expected missing provider kind error")
+	}
+	if !strings.Contains(err.Error(), "llm.routes.openai.provider is required") {
+		t.Fatalf("error = %q, want provider required message", err.Error())
+	}
+}

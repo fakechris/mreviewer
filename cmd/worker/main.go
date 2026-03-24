@@ -130,8 +130,12 @@ func providerConfigsFromConfig(cfg *config.Config) (string, string, map[string]l
 			if trimmed == "" {
 				return "", "", nil, fmt.Errorf("worker: llm route name cannot be empty")
 			}
+			providerKind := strings.TrimSpace(route.Provider)
+			if providerKind == "" {
+				return "", "", nil, fmt.Errorf("worker: llm.routes.%s.provider is required", trimmed)
+			}
 			routes[trimmed] = llm.ProviderConfig{
-				Kind:                strings.TrimSpace(route.Provider),
+				Kind:                providerKind,
 				BaseURL:             strings.TrimSpace(route.BaseURL),
 				APIKey:              strings.TrimSpace(route.APIKey),
 				Model:               strings.TrimSpace(route.Model),

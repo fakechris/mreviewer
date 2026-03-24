@@ -257,8 +257,16 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	fs.DurationVar(&opts.pollInterval, "poll-interval", time.Second, "Polling interval used with --wait")
 	fs.BoolVar(&opts.jsonOutput, "json", false, "Emit structured JSON output")
 
+	llmRouteArg, llmRouteSet := rawFlagValue(args, "--llm-route")
+	providerRouteArg, providerRouteSet := rawFlagValue(args, "--provider-route")
+
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, err
+	}
+	if llmRouteSet && providerRouteSet && llmRouteArg != providerRouteArg {
+		_, _ = fmt.Fprintln(stderr, "--llm-route and --provider-route must match when both are provided")
+		fs.Usage()
+		return cliOptions{}, fmt.Errorf("conflicting provider route flags")
 	}
 	if len(fs.Args()) > 0 {
 		_, _ = fmt.Fprintf(stderr, "manual-trigger does not accept positional arguments: %v\n", fs.Args())
@@ -282,6 +290,23 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	}
 
 	return opts, nil
+}
+
+func rawFlagValue(args []string, name string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == name {
+			if i+1 >= len(args) {
+				return "", true
+			}
+			return args[i+1], true
+		}
+		prefix := name + "="
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix), true
+		}
+	}
+	return "", false
 }
 
 func runSucceeded(status string) bool {

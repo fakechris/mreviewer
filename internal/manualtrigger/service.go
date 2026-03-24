@@ -254,6 +254,7 @@ func buildManualRunScope(providerRoute string) json.RawMessage {
 		"provider_route": providerRoute,
 	})
 	if err != nil {
+		slog.Warn("manual trigger: build scope_json failed", "provider_route", providerRoute, "error", err)
 		return nil
 	}
 	return scopeJSON
