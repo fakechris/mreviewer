@@ -375,7 +375,85 @@ func ParseSummaryResult(raw string) (SummaryResult, error) {
 }
 
 func reviewResultSchema() map[string]any {
-	return map[string]any{"type": "object", "properties": map[string]any{"schema_version": map[string]any{"type": "string"}, "review_run_id": map[string]any{"type": "string"}, "status": map[string]any{"type": "string"}, "summary": map[string]any{"type": "string"}, "summary_note": map[string]any{"type": "object", "properties": map[string]any{"body_markdown": map[string]any{"type": "string"}}, "required": []string{"body_markdown"}, "additionalProperties": false}, "blind_spots": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "findings": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"category": map[string]any{"type": "string"}, "severity": map[string]any{"type": "string"}, "confidence": map[string]any{"type": "number"}, "title": map[string]any{"type": "string"}, "body_markdown": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"}, "anchor_kind": map[string]any{"type": "string"}, "old_line": map[string]any{"type": "integer"}, "new_line": map[string]any{"type": "integer"}, "range_start_kind": map[string]any{"type": "string"}, "range_start_old_line": map[string]any{"type": "integer"}, "range_start_new_line": map[string]any{"type": "integer"}, "range_end_kind": map[string]any{"type": "string"}, "range_end_old_line": map[string]any{"type": "integer"}, "range_end_new_line": map[string]any{"type": "integer"}, "anchor_snippet": map[string]any{"type": "string"}, "evidence": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "suggested_patch": map[string]any{"type": "string"}, "canonical_key": map[string]any{"type": "string"}, "symbol": map[string]any{"type": "string"}, "trigger_condition": map[string]any{"type": "string"}, "impact": map[string]any{"type": "string"}, "introduced_by_this_change": map[string]any{"type": "boolean"}, "blind_spots": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "no_finding_reason": map[string]any{"type": "string"}}, "required": []string{"category", "severity", "confidence", "title", "body_markdown", "path", "anchor_kind"}, "additionalProperties": false}}}, "required": []string{"schema_version", "review_run_id", "summary", "findings"}, "additionalProperties": false}
+	return reviewResultSchemaWithFindingItem(reviewFindingSchema())
+}
+
+func reviewResultSchemaAnthropicCompact() map[string]any {
+	return reviewResultSchemaWithFindingItem(reviewFindingSchemaAnthropicCompact())
+}
+
+func reviewResultSchemaWithFindingItem(findingItem map[string]any) map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"schema_version": map[string]any{"type": "string"},
+			"review_run_id":  map[string]any{"type": "string"},
+			"status":         map[string]any{"type": "string"},
+			"summary":        map[string]any{"type": "string"},
+			"summary_note": map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{"body_markdown": map[string]any{"type": "string"}},
+				"required":             []string{"body_markdown"},
+				"additionalProperties": false,
+			},
+			"blind_spots": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"findings":    map[string]any{"type": "array", "items": findingItem},
+		},
+		"required":             []string{"schema_version", "review_run_id", "summary", "findings"},
+		"additionalProperties": false,
+	}
+}
+
+func reviewFindingSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"category":                 map[string]any{"type": "string"},
+			"severity":                 map[string]any{"type": "string"},
+			"confidence":               map[string]any{"type": "number"},
+			"title":                    map[string]any{"type": "string"},
+			"body_markdown":            map[string]any{"type": "string"},
+			"path":                     map[string]any{"type": "string"},
+			"anchor_kind":              map[string]any{"type": "string"},
+			"old_line":                 map[string]any{"type": "integer"},
+			"new_line":                 map[string]any{"type": "integer"},
+			"range_start_kind":         map[string]any{"type": "string"},
+			"range_start_old_line":     map[string]any{"type": "integer"},
+			"range_start_new_line":     map[string]any{"type": "integer"},
+			"range_end_kind":           map[string]any{"type": "string"},
+			"range_end_old_line":       map[string]any{"type": "integer"},
+			"range_end_new_line":       map[string]any{"type": "integer"},
+			"anchor_snippet":           map[string]any{"type": "string"},
+			"evidence":                 map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"suggested_patch":          map[string]any{"type": "string"},
+			"canonical_key":            map[string]any{"type": "string"},
+			"symbol":                   map[string]any{"type": "string"},
+			"trigger_condition":        map[string]any{"type": "string"},
+			"impact":                   map[string]any{"type": "string"},
+			"introduced_by_this_change": map[string]any{"type": "boolean"},
+			"blind_spots":              map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"no_finding_reason":        map[string]any{"type": "string"},
+		},
+		"required":             []string{"category", "severity", "confidence", "title", "body_markdown", "path", "anchor_kind"},
+		"additionalProperties": false,
+	}
+}
+
+func reviewFindingSchemaAnthropicCompact() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"category":      map[string]any{"type": "string"},
+			"severity":      map[string]any{"type": "string"},
+			"confidence":    map[string]any{"type": "number"},
+			"title":         map[string]any{"type": "string"},
+			"body_markdown": map[string]any{"type": "string"},
+			"path":          map[string]any{"type": "string"},
+			"anchor_kind":   map[string]any{"type": "string"},
+		},
+		"required":             []string{"category", "severity", "confidence", "title", "body_markdown", "path", "anchor_kind"},
+		"additionalProperties": false,
+	}
 }
 
 func reviewResultSchemaOpenAIStrict() map[string]any {
