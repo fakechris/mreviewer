@@ -469,7 +469,7 @@ func TestSchedulerPublishesRunningAndTerminalStatuses(t *testing.T) {
 	svc := NewService(testLogger(), sqlDB, processor,
 		WithWorkerID("worker-status"),
 		WithStatusPublisher(status),
-		WithGateService(gate.NewService(status, ci, gate.NewDBAuditLogger(db.New(sqlDB)))),
+		WithGateService(gate.NewService(gate.NoopStatusPublisher{}, ci, gate.NewDBAuditLogger(db.New(sqlDB)))),
 	)
 
 	processed, err := svc.RunOnce(ctx)
@@ -490,10 +490,71 @@ func TestSchedulerPublishesRunningAndTerminalStatuses(t *testing.T) {
 	}
 }
 
-type fakeStatusPublisher struct{ results []gate.Result }
+func TestSchedulerDoesNotFailRunWhenGateStatusPublishFails(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-status-fail")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{status: "pending", idempotencyKey: "status-fail-run", headSHA: "sha-status-fail"})
+	if _, err := sqlDB.Exec("INSERT INTO project_policies (project_id, confidence_threshold, severity_threshold, include_paths, exclude_paths, gate_mode, extra) VALUES (?, ?, ?, ?, ?, ?, ?)", projectID, 0.8, "medium", []byte("[]"), []byte("[]"), "external_status", []byte("{}")); err != nil {
+		t.Fatalf("insert project policy: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, anchor_fingerprint, semantic_fingerprint, state)
+		VALUES (?, ?, 'bug', 'high', 0.95, 'Blocking issue', 'body', 'src/main.go', 'new_line', 'anchor-status-fail', 'semantic-status-fail', 'active')`, runID, mrID); err != nil {
+		t.Fatalf("insert finding: %v", err)
+	}
+
+	status := &fakeStatusPublisher{failState: "failed", err: errors.New("gitlab unavailable")}
+	ci := &fakeCIPublisher{}
+	processor := FuncProcessor(func(context.Context, db.ReviewRun) (ProcessOutcome, error) {
+		findings, err := db.New(sqlDB).ListFindingsByRun(ctx, runID)
+		if err != nil {
+			return ProcessOutcome{}, err
+		}
+		return ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
+	})
+	svc := NewService(testLogger(), sqlDB, processor,
+		WithWorkerID("worker-status-fail"),
+		WithStatusPublisher(status),
+		WithGateService(gate.NewService(gate.NoopStatusPublisher{}, ci, gate.NewDBAuditLogger(db.New(sqlDB)))),
+	)
+
+	processed, err := svc.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	run, loadErr := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if loadErr != nil {
+		t.Fatalf("GetReviewRun: %v", loadErr)
+	}
+	if run.Status != "completed" {
+		t.Fatalf("run status = %q, want completed", run.Status)
+	}
+	if len(status.results) != 2 {
+		t.Fatalf("status publish count = %d, want 2", len(status.results))
+	}
+	if status.results[0].State != "running" || status.results[1].State != "failed" {
+		t.Fatalf("status states = %#v, want [running failed]", status.callStates)
+	}
+}
+
+type fakeStatusPublisher struct {
+	results    []gate.Result
+	failState  string
+	err        error
+	callStates []string
+}
 
 func (f *fakeStatusPublisher) PublishStatus(_ context.Context, result gate.Result) error {
 	f.results = append(f.results, result)
+	f.callStates = append(f.callStates, result.State)
+	if f.err != nil && result.State == f.failState {
+		return f.err
+	}
 	return nil
 }
 

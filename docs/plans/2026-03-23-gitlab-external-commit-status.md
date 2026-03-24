@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go, sqlc-generated DB accessors, existing GitLab HTTP client, scheduler/gate runtime wiring, Go tests with `httptest` and shared MySQL test DB.
 
-### Task 1: Lock the public API with tests
+## Task 1: Lock the public API with tests
 
 **Files:**
 - Modify: `internal/gitlab/client_test.go`
@@ -26,7 +26,7 @@ Run: `go test ./internal/gitlab ./internal/scheduler ./cmd/worker`
 
 Expected: FAIL because commit status support and in-progress publishing are not implemented yet.
 
-### Task 2: Implement GitLab commit status API support
+## Task 2: Implement GitLab commit status API support
 
 **Files:**
 - Modify: `internal/gitlab/discussions.go` or `internal/gitlab/client.go`
@@ -42,7 +42,7 @@ Run: `go test ./internal/gitlab`
 
 Expected: PASS.
 
-### Task 3: Add a DB-backed GitLab status publisher
+## Task 3: Add a DB-backed GitLab status publisher
 
 **Files:**
 - Create: `internal/gate/gitlab_status_publisher.go`
@@ -60,7 +60,7 @@ Run: `go test ./internal/gate`
 
 Expected: PASS.
 
-### Task 4: Wire running + terminal status publication into the scheduler/runtime
+## Task 4: Wire running + terminal status publication into the scheduler/runtime
 
 **Files:**
 - Modify: `internal/scheduler/service.go`
@@ -80,7 +80,7 @@ Run: `go test ./internal/scheduler ./cmd/worker`
 
 Expected: PASS.
 
-### Task 5: Verify the shipped behavior
+## Task 5: Verify the shipped behavior
 
 **Files:**
 - Modify: `README.md` if feature description needs an update

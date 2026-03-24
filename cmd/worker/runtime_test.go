@@ -218,7 +218,12 @@ func TestGatePublishesFromRuntimePath(t *testing.T) {
 		return scheduler.ProcessOutcome{Status: "completed", ReviewFindings: findings}, nil
 	})
 	runtimeDeps := newRuntimeDepsWithGatePublishers(testLogger(), sqlDB, processor, status, ci)
-	runtimeDeps.Scheduler = scheduler.NewService(testLogger(), sqlDB, processor, scheduler.WithWorkerID("worker-gate"), scheduler.WithTracer(tracer), scheduler.WithGateService(runtimeDeps.GateService))
+	runtimeDeps.Scheduler = scheduler.NewService(testLogger(), sqlDB, processor,
+		scheduler.WithWorkerID("worker-gate"),
+		scheduler.WithTracer(tracer),
+		scheduler.WithStatusPublisher(status),
+		scheduler.WithGateService(runtimeDeps.GateService),
+	)
 
 	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
 	if err != nil {
@@ -227,16 +232,19 @@ func TestGatePublishesFromRuntimePath(t *testing.T) {
 	if processed != 1 {
 		t.Fatalf("processed = %d, want 1", processed)
 	}
-	if len(status.results) != 1 {
-		t.Fatalf("status publish count = %d, want 1", len(status.results))
+	if len(status.results) != 2 {
+		t.Fatalf("status publish count = %d, want 2", len(status.results))
 	}
 	if len(ci.results) != 1 {
 		t.Fatalf("ci publish count = %d, want 1", len(ci.results))
 	}
-	if status.results[0].RunID != runID || status.results[0].State != "failed" {
-		t.Fatalf("status result = %+v, want failed result for run %d", status.results[0], runID)
+	if status.results[0].RunID != runID || status.results[0].State != "running" {
+		t.Fatalf("first status result = %+v, want running result for run %d", status.results[0], runID)
 	}
-	if status.results[0].TraceID == "" {
+	if status.results[1].RunID != runID || status.results[1].State != "failed" {
+		t.Fatalf("second status result = %+v, want failed result for run %d", status.results[1], runID)
+	}
+	if status.results[1].TraceID == "" {
 		t.Fatal("expected trace id on gate result")
 	}
 	audits, err := db.New(sqlDB).ListAuditLogsByEntity(ctx, db.ListAuditLogsByEntityParams{EntityType: "review_run", EntityID: runID, Limit: 20, Offset: 0})

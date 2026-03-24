@@ -5,14 +5,15 @@ import (
 	"testing"
 
 	"github.com/mreviewer/mreviewer/internal/db"
+	"github.com/mreviewer/mreviewer/internal/gitlab"
 )
 
 type fakeCommitStatusClient struct {
-	requests []CommitStatusRequest
+	requests []gitlab.CommitStatusRequest
 	err      error
 }
 
-func (f *fakeCommitStatusClient) SetCommitStatus(_ context.Context, req CommitStatusRequest) error {
+func (f *fakeCommitStatusClient) SetCommitStatus(_ context.Context, req gitlab.CommitStatusRequest) error {
 	f.requests = append(f.requests, req)
 	return f.err
 }

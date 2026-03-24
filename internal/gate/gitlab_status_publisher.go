@@ -11,8 +11,6 @@ import (
 
 const statusContextName = "mreviewer/ai-review"
 
-type CommitStatusRequest = gitlab.CommitStatusRequest
-
 type CommitStatusClient interface {
 	SetCommitStatus(ctx context.Context, req gitlab.CommitStatusRequest) error
 }
