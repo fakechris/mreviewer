@@ -307,19 +307,77 @@ func TestAnthropicToolCallRequestShapeUsesCompactFindingSchema(t *testing.T) {
 	if !ok {
 		t.Fatalf("findings.items = %#v", findings["items"])
 	}
+	if items["additionalProperties"] != false {
+		t.Fatalf("findings.items.additionalProperties = %#v, want false", items["additionalProperties"])
+	}
 	itemProps, ok := items["properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("findings.items.properties = %#v", items["properties"])
 	}
+	required, ok := items["required"].([]any)
+	if !ok {
+		t.Fatalf("findings.items.required = %#v, want array", items["required"])
+	}
+	requiredSet := make(map[string]struct{}, len(required))
+	for _, value := range required {
+		key, ok := value.(string)
+		if !ok {
+			t.Fatalf("findings.items.required contains non-string: %#v", value)
+		}
+		requiredSet[key] = struct{}{}
+	}
 	for _, key := range []string{"category", "severity", "confidence", "title", "body_markdown", "path", "anchor_kind"} {
 		if _, ok := itemProps[key]; !ok {
 			t.Fatalf("compact anthropic finding schema missing %q", key)
+		}
+		if _, ok := requiredSet[key]; !ok {
+			t.Fatalf("compact anthropic finding schema should require %q", key)
 		}
 	}
 	for _, key := range []string{"evidence", "blind_spots", "range_start_kind", "range_end_kind", "suggested_patch", "canonical_key"} {
 		if _, ok := itemProps[key]; ok {
 			t.Fatalf("compact anthropic finding schema should omit %q", key)
 		}
+	}
+}
+
+func TestReviewResultSchemaForProfile(t *testing.T) {
+	full := reviewResultSchemaForProfile(anthropicToolProfile{kind: ProviderKindMiniMax})
+	compact := reviewResultSchemaForProfile(anthropicToolProfile{kind: ProviderKindAnthropic})
+
+	fullFindings, ok := full["properties"].(map[string]any)["findings"].(map[string]any)
+	if !ok {
+		t.Fatalf("full findings schema = %#v", full["properties"])
+	}
+	fullItems, ok := fullFindings["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("full findings.items = %#v", fullFindings["items"])
+	}
+	fullItemProps, ok := fullItems["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("full findings.items.properties = %#v", fullItems["properties"])
+	}
+	if _, ok := fullItemProps["evidence"]; !ok {
+		t.Fatal("full schema should retain evidence")
+	}
+
+	compactFindings, ok := compact["properties"].(map[string]any)["findings"].(map[string]any)
+	if !ok {
+		t.Fatalf("compact findings schema = %#v", compact["properties"])
+	}
+	compactItems, ok := compactFindings["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("compact findings.items = %#v", compactFindings["items"])
+	}
+	compactItemProps, ok := compactItems["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("compact findings.items.properties = %#v", compactItems["properties"])
+	}
+	if _, ok := compactItemProps["evidence"]; ok {
+		t.Fatal("compact schema should omit evidence")
+	}
+	if _, ok := compact["properties"].(map[string]any)["summary_note"]; !ok {
+		t.Fatal("compact schema should retain summary_note")
 	}
 }
 

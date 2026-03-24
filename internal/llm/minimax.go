@@ -237,12 +237,15 @@ func reviewToolParam() anthropic.ToolUnionParam {
 	return reviewToolParamWithSchema(reviewResultSchema())
 }
 
-func reviewToolParamForProfile(profile anthropicToolProfile) anthropic.ToolUnionParam {
-	schema := reviewResultSchema()
+func reviewResultSchemaForProfile(profile anthropicToolProfile) map[string]any {
 	if profile.kind == ProviderKindAnthropic {
-		schema = reviewResultSchemaAnthropicCompact()
+		return reviewResultSchemaAnthropicCompact()
 	}
-	return reviewToolParamWithSchema(schema)
+	return reviewResultSchema()
+}
+
+func reviewToolParamForProfile(profile anthropicToolProfile) anthropic.ToolUnionParam {
+	return reviewToolParamWithSchema(reviewResultSchemaForProfile(profile))
 }
 
 func reviewToolParamWithSchema(schema map[string]any) anthropic.ToolUnionParam {
@@ -267,11 +270,7 @@ func reviewToolPayload() map[string]any {
 }
 
 func reviewToolPayloadForProfile(profile anthropicToolProfile) map[string]any {
-	schema := reviewResultSchema()
-	if profile.kind == ProviderKindAnthropic {
-		schema = reviewResultSchemaAnthropicCompact()
-	}
-	return reviewToolPayloadWithSchema(schema)
+	return reviewToolPayloadWithSchema(reviewResultSchemaForProfile(profile))
 }
 
 func reviewToolPayloadWithSchema(schema map[string]any) map[string]any {
