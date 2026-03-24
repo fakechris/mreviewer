@@ -622,6 +622,9 @@ func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outco
 		return nil, nil
 	}
 	status := strings.ToLower(strings.TrimSpace(outcome.Status))
+	if status == "" {
+		status = "completed"
+	}
 	if status != "completed" && status != "requested_changes" {
 		return nil, nil
 	}

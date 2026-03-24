@@ -542,6 +542,49 @@ func TestSchedulerDoesNotFailRunWhenGateStatusPublishFails(t *testing.T) {
 	}
 }
 
+func TestSchedulerPublishesTerminalStatusWhenOutcomeStatusIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-empty-status")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, runOptions{status: "pending", idempotencyKey: "empty-status-run", headSHA: "sha-empty-status"})
+
+	status := &fakeStatusPublisher{}
+	processor := FuncProcessor(func(context.Context, db.ReviewRun) (ProcessOutcome, error) {
+		return ProcessOutcome{}, nil
+	})
+	svc := NewService(testLogger(), sqlDB, processor,
+		WithWorkerID("worker-empty-status"),
+		WithStatusPublisher(status),
+		WithGateService(gate.NewService(gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{}, nil)),
+	)
+
+	processed, err := svc.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(status.results) != 2 {
+		t.Fatalf("status publish count = %d, want 2", len(status.results))
+	}
+	if status.results[0].RunID != runID || status.results[0].State != "running" {
+		t.Fatalf("first status result = %+v, want running for run %d", status.results[0], runID)
+	}
+	if status.results[1].RunID != runID || status.results[1].State != "passed" {
+		t.Fatalf("second status result = %+v, want passed for run %d", status.results[1], runID)
+	}
+	run, loadErr := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if loadErr != nil {
+		t.Fatalf("GetReviewRun: %v", loadErr)
+	}
+	if run.Status != "completed" {
+		t.Fatalf("run status = %q, want completed", run.Status)
+	}
+}
+
 type fakeStatusPublisher struct {
 	results    []gate.Result
 	failState  string
