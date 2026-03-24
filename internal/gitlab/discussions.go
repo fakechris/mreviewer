@@ -18,6 +18,16 @@ type discussionResponse struct {
 	ID any `json:"id"`
 }
 
+type CommitStatusRequest struct {
+	ProjectID   int64
+	SHA         string
+	State       string
+	Name        string
+	Description string
+	Ref         string
+	TargetURL   string
+}
+
 func (c *Client) CreateDiscussion(ctx context.Context, req reviewcomment.CreateDiscussionRequest) (reviewcomment.Discussion, error) {
 	var response discussionResponse
 	_, err := c.doJSONWithBody(ctx, http.MethodPost, mergeRequestPath(req.ProjectID, req.MergeRequestIID, "/discussions"), nil, map[string]any{
@@ -45,6 +55,22 @@ func (c *Client) ResolveDiscussion(ctx context.Context, req reviewcomment.Resolv
 	_, err := c.doJSONWithBody(ctx, http.MethodPut, mergeRequestPath(req.ProjectID, req.MergeRequestIID, "/discussions/"+url.PathEscape(strings.TrimSpace(req.DiscussionID))), nil, map[string]any{
 		"resolved": req.Resolved,
 	}, nil)
+	return err
+}
+
+func (c *Client) SetCommitStatus(ctx context.Context, req CommitStatusRequest) error {
+	payload := map[string]any{
+		"state":       strings.TrimSpace(req.State),
+		"name":        strings.TrimSpace(req.Name),
+		"description": strings.TrimSpace(req.Description),
+	}
+	if ref := strings.TrimSpace(req.Ref); ref != "" {
+		payload["ref"] = ref
+	}
+	if targetURL := strings.TrimSpace(req.TargetURL); targetURL != "" {
+		payload["target_url"] = targetURL
+	}
+	_, err := c.doJSONWithBody(ctx, http.MethodPost, projectCommitStatusPath(req.ProjectID, req.SHA), nil, payload, nil)
 	return err
 }
 

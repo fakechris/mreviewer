@@ -672,6 +672,52 @@ func TestResolveDiscussion(t *testing.T) {
 	}
 }
 
+func TestSetCommitStatus(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v4/projects/123/statuses/head-sha" {
+			t.Fatalf("request path = %q, want commit status endpoint", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		writeJSON(t, w, http.StatusCreated, map[string]any{"status": "running"})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	err := client.SetCommitStatus(context.Background(), CommitStatusRequest{
+		ProjectID:   123,
+		SHA:         "head-sha",
+		State:       "running",
+		Name:        "mreviewer/ai-review",
+		Description: "AI review is running",
+		Ref:         "feature/status",
+		TargetURL:   "https://gitlab.example.com/group/project/-/merge_requests/7",
+	})
+	if err != nil {
+		t.Fatalf("SetCommitStatus: %v", err)
+	}
+	if requestBody["state"] != "running" {
+		t.Fatalf("state = %#v, want running", requestBody["state"])
+	}
+	if requestBody["name"] != "mreviewer/ai-review" {
+		t.Fatalf("name = %#v, want mreviewer/ai-review", requestBody["name"])
+	}
+	if requestBody["description"] != "AI review is running" {
+		t.Fatalf("description = %#v, want AI review is running", requestBody["description"])
+	}
+	if requestBody["ref"] != "feature/status" {
+		t.Fatalf("ref = %#v, want feature/status", requestBody["ref"])
+	}
+	if requestBody["target_url"] != "https://gitlab.example.com/group/project/-/merge_requests/7" {
+		t.Fatalf("target_url = %#v, want merge request URL", requestBody["target_url"])
+	}
+}
+
 func newTestClient(t *testing.T, server *httptest.Server, opts ...Option) *Client {
 	t.Helper()
 	allOpts := append([]Option{WithHTTPClient(server.Client())}, opts...)

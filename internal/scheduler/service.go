@@ -92,6 +92,7 @@ type Service struct {
 	db                  *sql.DB
 	processor           Processor
 	gateService         *gate.Service
+	statusPublisher     gate.StatusPublisher
 	workerID            string
 	pollInterval        time.Duration
 	retryBaseDelay      time.Duration
@@ -193,6 +194,10 @@ func WithTracer(recorder *tracing.Recorder) Option {
 
 func WithGateService(gateSvc *gate.Service) Option {
 	return func(s *Service) { s.gateService = gateSvc }
+}
+
+func WithStatusPublisher(publisher gate.StatusPublisher) Option {
+	return func(s *Service) { s.statusPublisher = publisher }
 }
 
 func WithClaimTimeout(minutes int) Option {
@@ -428,6 +433,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		}
 		return err
 	}
+	s.publishInProgressStatus(ctx, run)
 
 	outcome, err := s.processor.ProcessRun(ctx, run)
 	if err == nil {
@@ -458,10 +464,23 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 				"merge_request_id", run.MergeRequestID,
 				"retry_count", run.RetryCount,
 			)
+			s.publishDirectStatus(ctx, gate.Result{
+				RunID:          run.ID,
+				MergeRequestID: run.MergeRequestID,
+				ProjectID:      run.ProjectID,
+				HeadSHA:        run.HeadSha,
+				State:          "failed",
+				Source:         "review_run",
+				TraceID:        tracing.CurrentTraceID(ctx),
+			})
 			return nil
 		}
-		if err := s.publishGateResult(ctx, run, outcome); err != nil {
+		gateResult, err := s.publishGateResult(ctx, run, outcome)
+		if err != nil {
 			return err
+		}
+		if gateResult != nil {
+			s.publishDirectStatus(ctx, *gateResult)
 		}
 		updated, err := db.New(s.db).UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
 			ProviderLatencyMs:   outcome.ProviderLatencyMs,
@@ -586,21 +605,34 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		"retry_count", run.RetryCount,
 	)
 	s.recordTerminalMetrics("failed", run, code)
+	s.publishDirectStatus(ctx, gate.Result{
+		RunID:          run.ID,
+		MergeRequestID: run.MergeRequestID,
+		ProjectID:      run.ProjectID,
+		HeadSHA:        run.HeadSha,
+		State:          "failed",
+		Source:         "review_run",
+		TraceID:        tracing.CurrentTraceID(ctx),
+	})
 	return nil
 }
 
-func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outcome ProcessOutcome) error {
+func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outcome ProcessOutcome) (*gate.Result, error) {
 	if s.gateService == nil {
-		return nil
+		return nil, nil
 	}
-	if !strings.EqualFold(strings.TrimSpace(outcome.Status), "completed") {
-		return nil
+	status := strings.ToLower(strings.TrimSpace(outcome.Status))
+	if status == "" {
+		status = "completed"
+	}
+	if status != "completed" && status != "requested_changes" {
+		return nil, nil
 	}
 	queries := db.New(s.db)
 	var policyPtr *db.ProjectPolicy
 	policy, err := queries.GetProjectPolicy(ctx, run.ProjectID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("scheduler: load gate policy for run %d: %w", run.ID, err)
+		return nil, fmt.Errorf("scheduler: load gate policy for run %d: %w", run.ID, err)
 	}
 	if err == nil {
 		policyPtr = &policy
@@ -609,7 +641,7 @@ func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outco
 	if findings == nil {
 		findings, err = queries.ListFindingsByRun(ctx, run.ID)
 		if err != nil {
-			return fmt.Errorf("scheduler: load findings for gate publication on run %d: %w", run.ID, err)
+			return nil, fmt.Errorf("scheduler: load findings for gate publication on run %d: %w", run.ID, err)
 		}
 	}
 	discussionStateByFinding := make(map[int64]bool, len(findings))
@@ -625,15 +657,42 @@ func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outco
 			if errors.Is(lookupErr, sql.ErrNoRows) {
 				continue
 			}
-			return fmt.Errorf("scheduler: load discussion state for finding %d on run %d: %w", finding.ID, run.ID, lookupErr)
+			return nil, fmt.Errorf("scheduler: load discussion state for finding %d on run %d: %w", finding.ID, run.ID, lookupErr)
 		}
 		discussionStateByFinding[finding.ID] = discussion.Resolved
 	}
 	result := gate.ComputeResultWithDiscussionState(run, policyPtr, findings, discussionStateByFinding, tracing.CurrentTraceID(ctx))
 	if err := s.gateService.Publish(ctx, result); err != nil {
-		return fmt.Errorf("scheduler: publish gate result for run %d: %w", run.ID, err)
+		return nil, fmt.Errorf("scheduler: publish gate result for run %d: %w", run.ID, err)
 	}
-	return nil
+	return &result, nil
+}
+
+func (s *Service) publishInProgressStatus(ctx context.Context, run db.ReviewRun) {
+	s.publishDirectStatus(ctx, gate.Result{
+		RunID:          run.ID,
+		MergeRequestID: run.MergeRequestID,
+		ProjectID:      run.ProjectID,
+		HeadSHA:        run.HeadSha,
+		State:          "running",
+		Source:         "review_run",
+		TraceID:        tracing.CurrentTraceID(ctx),
+	})
+}
+
+func (s *Service) publishDirectStatus(ctx context.Context, result gate.Result) {
+	if s == nil || s.statusPublisher == nil {
+		return
+	}
+	if err := s.statusPublisher.PublishStatus(ctx, result); err != nil {
+		s.logger.WarnContext(ctx, "failed to publish review status",
+			"run_id", result.RunID,
+			"merge_request_id", result.MergeRequestID,
+			"project_id", result.ProjectID,
+			"state", result.State,
+			"error", err,
+		)
+	}
 }
 
 func (s *Service) incrementRunStart(run db.ReviewRun) {
