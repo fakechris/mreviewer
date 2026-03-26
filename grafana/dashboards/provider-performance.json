@@ -1,0 +1,124 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Provider Latency (p50 / p90 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT\n  DATE_FORMAT(created_at, '%Y-%m-%dT%H:00:00') AS time,\n  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY provider_latency_ms)) AS p50,\n  ROUND(PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY provider_latency_ms)) AS p90,\n  ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY provider_latency_ms)) AS p99\nFROM review_runs\nWHERE status = 'completed'\n  AND provider_latency_ms > 0\n  AND created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY 1\nORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    },
+    {
+      "title": "Avg Latency (24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(AVG(provider_latency_ms)) AS avg_ms\nFROM review_runs\nWHERE status = 'completed'\n  AND provider_latency_ms > 0\n  AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10000 }, { "color": "red", "value": 30000 }] } } }
+    },
+    {
+      "title": "Avg Tokens/Review (24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(AVG(provider_tokens_total)) AS avg_tokens\nFROM review_runs\nWHERE status = 'completed'\n  AND provider_tokens_total > 0\n  AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "title": "Token Consumption Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT\n  DATE_FORMAT(created_at, '%Y-%m-%dT%H:00:00') AS time,\n  SUM(provider_tokens_total) AS total_tokens,\n  AVG(provider_tokens_total) AS avg_tokens\nFROM review_runs\nWHERE status = 'completed'\n  AND created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY 1\nORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "title": "Latency vs Tokens (scatter)",
+      "type": "xychart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT provider_latency_ms AS latency, provider_tokens_total AS tokens\nFROM review_runs\nWHERE status = 'completed'\n  AND provider_latency_ms > 0\n  AND provider_tokens_total > 0\n  AND created_at BETWEEN $__timeFrom() AND $__timeTo()\nLIMIT 1000",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Latency Distribution (histogram)",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT provider_latency_ms AS latency\nFROM review_runs\nWHERE status = 'completed'\n  AND provider_latency_ms > 0\n  AND created_at BETWEEN $__timeFrom() AND $__timeTo()",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "options": { "bucketSize": 1000 }
+    },
+    {
+      "title": "Provider Calls (audit log)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 16 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT\n  created_at AS time,\n  entity_id AS run_id,\n  action,\n  JSON_EXTRACT(detail, '$.provider_model') AS model,\n  JSON_EXTRACT(detail, '$.provider_latency_ms') AS latency_ms,\n  JSON_EXTRACT(detail, '$.provider_tokens_total') AS tokens\nFROM audit_logs\nWHERE action IN ('provider_called', 'provider_failed')\n  AND created_at BETWEEN $__timeFrom() AND $__timeTo()\nORDER BY created_at DESC\nLIMIT 50",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["mreviewer", "performance"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_MYSQL",
+        "type": "datasource",
+        "query": "mysql",
+        "current": { "text": "MySQL", "value": "MySQL" }
+      }
+    ]
+  },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "MReviewer - Provider Performance",
+  "uid": "mreviewer-provider-perf"
+}
