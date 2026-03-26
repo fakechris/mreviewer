@@ -3864,6 +3864,109 @@ func (f *fakeSummaryProvider) Summarize(_ context.Context, _ ctxpkg.ReviewReques
 	return f.response, f.err
 }
 
+func TestOpenAIProviderDefaultPayloadUsesDeveloperRole(t *testing.T) {
+	p, err := NewOpenAIProvider(ProviderConfig{
+		BaseURL: "https://api.openai.com/v1",
+		APIKey:  "test",
+		Model:   "gpt-4o",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := p.requestPayloadWithUserContent("system prompt", "user content")
+	msgs := payload["messages"].([]map[string]any)
+	if msgs[0]["role"] != "developer" {
+		t.Fatalf("default role = %q, want developer", msgs[0]["role"])
+	}
+	if _, ok := payload["parallel_tool_calls"]; !ok {
+		t.Fatal("default should include parallel_tool_calls")
+	}
+	tools := payload["tools"].([]map[string]any)
+	fn := tools[0]["function"].(map[string]any)
+	if fn["strict"] != true {
+		t.Fatal("default should include strict in tool function")
+	}
+}
+
+func TestOpenAIProviderDeepSeekCompatMode(t *testing.T) {
+	p, err := NewOpenAIProvider(ProviderConfig{
+		BaseURL:         "https://api.deepseek.com/v1",
+		APIKey:          "test",
+		Model:           "deepseek-chat",
+		ReasoningEffort: "high",
+		CompatMode:      DeepSeekCompatMode(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := p.requestPayloadWithUserContent("system prompt", "user content")
+
+	msgs := payload["messages"].([]map[string]any)
+	if msgs[0]["role"] != "system" {
+		t.Fatalf("compat role = %q, want system", msgs[0]["role"])
+	}
+	if _, ok := payload["parallel_tool_calls"]; ok {
+		t.Fatal("compat mode should drop parallel_tool_calls")
+	}
+	tools := payload["tools"].([]map[string]any)
+	fn := tools[0]["function"].(map[string]any)
+	if _, ok := fn["strict"]; ok {
+		t.Fatal("compat mode should drop strict from tool function")
+	}
+	if _, ok := payload["reasoning_effort"]; ok {
+		t.Fatal("compat mode should drop reasoning_effort")
+	}
+	if _, ok := payload["max_tokens"]; !ok {
+		t.Fatal("compat mode should use max_tokens")
+	}
+	if _, ok := payload["max_completion_tokens"]; ok {
+		t.Fatal("compat mode should not use max_completion_tokens")
+	}
+}
+
+func TestOpenAIProviderDeepSeekCompatJSONSchemaMode(t *testing.T) {
+	p, err := NewOpenAIProvider(ProviderConfig{
+		BaseURL:    "https://api.deepseek.com/v1",
+		APIKey:     "test",
+		Model:      "deepseek-chat",
+		OutputMode: "json_schema",
+		CompatMode: DeepSeekCompatMode(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := p.requestPayloadWithUserContent("system prompt", "user content")
+	rf := payload["response_format"].(map[string]any)
+	js := rf["json_schema"].(map[string]any)
+	if _, ok := js["strict"]; ok {
+		t.Fatal("compat json_schema should drop strict")
+	}
+}
+
+func TestOpenAIProviderCompatModePreservesMaxCompletionTokensValue(t *testing.T) {
+	p, err := NewOpenAIProvider(ProviderConfig{
+		BaseURL:             "https://api.deepseek.com/v1",
+		APIKey:              "test",
+		Model:               "deepseek-chat",
+		MaxCompletionTokens: 12000,
+		CompatMode:          DeepSeekCompatMode(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := p.requestPayloadWithUserContent("system prompt", "user content")
+	maxTokens, ok := payload["max_tokens"]
+	if !ok {
+		t.Fatal("compat mode should emit max_tokens")
+	}
+	if maxTokens != int64(12000) {
+		t.Fatalf("max_tokens = %v, want 12000 (from MaxCompletionTokens)", maxTokens)
+	}
+	if _, ok := payload["max_completion_tokens"]; ok {
+		t.Fatal("compat mode should not emit max_completion_tokens")
+	}
+}
+
 func TestRecordProviderMetricsWithSubProviders(t *testing.T) {
 	reg := metrics.NewRegistry()
 	p := &Processor{metrics: reg}

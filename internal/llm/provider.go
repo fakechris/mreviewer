@@ -133,6 +133,23 @@ type ReviewFinding struct {
 	NoFindingReason        string   `json:"no_finding_reason,omitempty"`
 }
 
+// OpenAICompatMode controls which vendor-specific fields are emitted in
+// OpenAI-format requests. Domestic models (DeepSeek, etc.) may not support
+// all OpenAI extensions, so this allows conditional field emission.
+type OpenAICompatMode struct {
+	// UseSystemRole sends "system" instead of "developer" message role.
+	// DeepSeek and most OpenAI-compatible APIs require "system".
+	UseSystemRole bool
+	// DropParallelToolCalls omits the parallel_tool_calls field.
+	DropParallelToolCalls bool
+	// DropStrictSchema omits "strict":true from tool definitions and json_schema.
+	DropStrictSchema bool
+	// DropReasoningEffort omits the reasoning_effort field.
+	DropReasoningEffort bool
+	// UseMaxTokens forces max_tokens instead of max_completion_tokens.
+	UseMaxTokens bool
+}
+
 type ProviderConfig struct {
 	Kind                string
 	BaseURL             string
@@ -150,4 +167,5 @@ type ProviderConfig struct {
 	RateLimiter         RateLimiter
 	Now                 func() time.Time
 	Sleep               func(context.Context, time.Duration) error
+	CompatMode          *OpenAICompatMode
 }
