@@ -3880,6 +3880,13 @@ func TestRecordProviderMetricsWithSubProviders(t *testing.T) {
 	if len(hist) != 1 || hist[0] != 80 {
 		t.Fatalf("sub_provider_latency_ms(openai) = %v, want [80]", hist)
 	}
+	hist = reg.HistogramValues("sub_provider_latency_ms", map[string]string{"route": "anthropic", "model": "claude-sonnet", "status": "success"})
+	if len(hist) != 1 || hist[0] != 90 {
+		t.Fatalf("sub_provider_latency_ms(anthropic) = %v, want [90]", hist)
+	}
+	if hist := reg.HistogramValues("provider_latency_ms", nil); len(hist) != 1 || hist[0] != 100 {
+		t.Fatalf("provider_latency_ms = %v, want [100]", hist)
+	}
 }
 
 func TestRecordProviderMetricsWithoutSubProviders(t *testing.T) {
@@ -3893,6 +3900,9 @@ func TestRecordProviderMetricsWithoutSubProviders(t *testing.T) {
 
 	if v := reg.CounterValue("provider_tokens_total", nil); v != 100 {
 		t.Fatalf("provider_tokens_total = %d, want 100", v)
+	}
+	if hist := reg.HistogramValues("provider_latency_ms", nil); len(hist) != 1 || hist[0] != 50 {
+		t.Fatalf("provider_latency_ms = %v, want [50]", hist)
 	}
 	// No sub_provider metrics should exist
 	if v := reg.HistogramValues("sub_provider_latency_ms", nil); v != nil {

@@ -263,7 +263,11 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		if len(response.SubProviderResults) > 0 {
 			subs := make([]map[string]any, 0, len(response.SubProviderResults))
 			for _, sub := range response.SubProviderResults {
-				subs = append(subs, map[string]any{"route": sub.RouteName, "model": sub.Model, "latency_ms": sub.Latency.Milliseconds(), "tokens": sub.Tokens, "status": sub.Status})
+				entry := map[string]any{"route": sub.RouteName, "model": sub.Model, "latency_ms": sub.Latency.Milliseconds(), "tokens": sub.Tokens, "status": sub.Status}
+				if sub.Error != "" {
+					entry["error"] = sub.Error
+				}
+				subs = append(subs, entry)
 			}
 			lifecycleDetail["sub_providers"] = subs
 		}
