@@ -7,7 +7,6 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 )
 
-
 // ProcessorStore abstracts all database operations used by Processor and its
 // supporting functions (persistFindings, persistSummaryNoteFallback, etc.).
 // This interface enables testing with fakes and future alternative backends
