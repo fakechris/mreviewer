@@ -13,12 +13,12 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 )
 
-func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, result ReviewResult, reviewedPaths, deletedPaths map[string]struct{}) error {
-	existing, err := queries.ListActiveFindingsByMR(ctx, mr.ID)
+func persistFindings(ctx context.Context, store ProcessorStore, run db.ReviewRun, mr db.MergeRequest, result ReviewResult, reviewedPaths, deletedPaths map[string]struct{}) error {
+	existing, err := store.ListActiveFindingsByMR(ctx, mr.ID)
 	if err != nil {
 		return err
 	}
-	policy, err := queries.GetProjectPolicy(ctx, run.ProjectID)
+	policy, err := store.GetProjectPolicy(ctx, run.ProjectID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -45,7 +45,7 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 
 	for _, finding := range persisted {
 		if finding.state == findingStateFiltered {
-			if _, err := insertFinding(ctx, queries, run, mr, finding); err != nil {
+			if _, err := insertFinding(ctx, store, run, mr, finding); err != nil {
 				return err
 			}
 			continue
@@ -54,7 +54,7 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 			continue
 		}
 
-		matched, err := matchExistingFinding(ctx, queries, run, existing, finding)
+		matched, err := matchExistingFinding(ctx, store, run, existing, finding)
 		if err != nil {
 			return err
 		}
@@ -66,13 +66,13 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 			continue
 		}
 
-		insertedID, err := insertFinding(ctx, queries, run, mr, finding)
+		insertedID, err := insertFinding(ctx, store, run, mr, finding)
 		if err != nil {
 			return err
 		}
 
 		if matched.supersedeID != 0 {
-			if err := queries.UpdateFindingState(ctx, db.UpdateFindingStateParams{
+			if err := store.UpdateFindingState(ctx, db.UpdateFindingStateParams{
 				State:            findingStateSuperseded,
 				MatchedFindingID: sql.NullInt64{Int64: insertedID, Valid: true},
 				ID:               matched.supersedeID,
@@ -94,7 +94,7 @@ func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun,
 		if !ok {
 			continue
 		}
-		if err := queries.UpdateFindingState(ctx, db.UpdateFindingStateParams{State: nextState, ID: current.ID}); err != nil {
+		if err := store.UpdateFindingState(ctx, db.UpdateFindingStateParams{State: nextState, ID: current.ID}); err != nil {
 			return err
 		}
 	}
@@ -246,7 +246,7 @@ func nextFindingState(current, next string) (string, bool, error) {
 	return next, true, nil
 }
 
-func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding) (findingMatchDecision, error) {
+func matchExistingFinding(ctx context.Context, store ProcessorStore, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding) (findingMatchDecision, error) {
 	for _, current := range existing {
 		if current.AnchorKind == "new_line" && finding.state == findingStateDeleted && normalizePath(current.Path) == finding.normalized.Path {
 			continue
@@ -266,7 +266,7 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
 		}
 
 		if current.ReviewRunID != run.ID {
-			if err := queries.UpdateFindingLastSeen(ctx, db.UpdateFindingLastSeenParams{
+			if err := store.UpdateFindingLastSeen(ctx, db.UpdateFindingLastSeenParams{
 				LastSeenRunID: sql.NullInt64{Int64: run.ID, Valid: true},
 				ID:            current.ID,
 			}); err != nil {
@@ -293,7 +293,7 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
 			continue
 		}
 		if relocationMatches(current, finding.normalized) {
-			if err := queries.UpdateFindingRelocation(ctx, db.UpdateFindingRelocationParams{
+			if err := store.UpdateFindingRelocation(ctx, db.UpdateFindingRelocationParams{
 				Path:                finding.normalized.Path,
 				AnchorKind:          finding.normalized.AnchorKind,
 				OldLine:             finding.normalized.OldLine,
@@ -320,7 +320,7 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
 	return findingMatchDecision{}, nil
 }
 
-func insertFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, finding persistedFinding) (int64, error) {
+func insertFinding(ctx context.Context, store ProcessorStore, run db.ReviewRun, mr db.MergeRequest, finding persistedFinding) (int64, error) {
 	var oldLine, newLine sql.NullInt32
 	if finding.normalized.OldLine.Valid {
 		oldLine = finding.normalized.OldLine
@@ -328,7 +328,7 @@ func insertFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, m
 	if finding.normalized.NewLine.Valid {
 		newLine = finding.normalized.NewLine
 	}
-	result, err := queries.InsertReviewFinding(ctx, db.InsertReviewFindingParams{
+	result, err := store.InsertReviewFinding(ctx, db.InsertReviewFindingParams{
 		ReviewRunID:         run.ID,
 		MergeRequestID:      mr.ID,
 		Category:            finding.normalized.Category,

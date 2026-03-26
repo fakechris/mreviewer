@@ -14,11 +14,11 @@ import (
 	"github.com/mreviewer/mreviewer/internal/reviewlang"
 )
 
-func persistSummaryNoteFallback(ctx context.Context, queries *db.Queries, run db.ReviewRun, result ReviewResult) error {
+func persistSummaryNoteFallback(ctx context.Context, store ProcessorStore, run db.ReviewRun, result ReviewResult) error {
 	if result.SummaryNote == nil || strings.TrimSpace(result.SummaryNote.BodyMarkdown) == "" {
 		return nil
 	}
-	_, err := queries.InsertCommentAction(ctx, db.InsertCommentActionParams{ReviewRunID: run.ID, ReviewFindingID: sql.NullInt64{}, ActionType: "summary_note", IdempotencyKey: fmt.Sprintf("run:%d:parser_error_summary_note", run.ID), Status: "pending"})
+	_, err := store.InsertCommentAction(ctx, db.InsertCommentActionParams{ReviewRunID: run.ID, ReviewFindingID: sql.NullInt64{}, ActionType: "summary_note", IdempotencyKey: fmt.Sprintf("run:%d:parser_error_summary_note", run.ID), Status: "pending"})
 	if err != nil && !db.IsDuplicateKeyError(err) {
 		return err
 	}
