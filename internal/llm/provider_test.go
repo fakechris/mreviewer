@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mreviewer/mreviewer/internal/metrics"
+
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
@@ -334,7 +336,12 @@ func TestAnthropicToolCallRequestShapeUsesCompactFindingSchema(t *testing.T) {
 			t.Fatalf("compact anthropic finding schema should require %q", key)
 		}
 	}
-	for _, key := range []string{"evidence", "blind_spots", "range_start_kind", "range_end_kind", "suggested_patch", "canonical_key"} {
+	for _, key := range []string{"canonical_key", "symbol", "old_line", "new_line", "introduced_by_this_change"} {
+		if _, ok := itemProps[key]; !ok {
+			t.Fatalf("compact anthropic finding schema missing consensus field %q", key)
+		}
+	}
+	for _, key := range []string{"evidence", "blind_spots", "range_start_kind", "range_end_kind", "suggested_patch"} {
 		if _, ok := itemProps[key]; ok {
 			t.Fatalf("compact anthropic finding schema should omit %q", key)
 		}
@@ -375,6 +382,11 @@ func TestReviewResultSchemaForProfile(t *testing.T) {
 	}
 	if _, ok := compactItemProps["evidence"]; ok {
 		t.Fatal("compact schema should omit evidence")
+	}
+	for _, key := range []string{"canonical_key", "symbol", "old_line", "new_line", "introduced_by_this_change"} {
+		if _, ok := compactItemProps[key]; !ok {
+			t.Fatalf("compact schema should retain consensus field %q", key)
+		}
 	}
 	if _, ok := compact["properties"].(map[string]any)["summary_note"]; !ok {
 		t.Fatal("compact schema should retain summary_note")
@@ -3952,6 +3964,62 @@ func TestOpenAIProviderCompatModePreservesMaxCompletionTokensValue(t *testing.T)
 	}
 	if _, ok := payload["max_completion_tokens"]; ok {
 		t.Fatal("compat mode should not emit max_completion_tokens")
+	}
+}
+
+func TestRecordProviderMetricsWithSubProviders(t *testing.T) {
+	reg := metrics.NewRegistry()
+	p := &Processor{metrics: reg}
+	response := ProviderResponse{
+		Latency: 100 * time.Millisecond,
+		Tokens:  500,
+		SubProviderResults: []SubProviderResult{
+			{RouteName: "openai", Model: "gpt-4o", Latency: 80 * time.Millisecond, Tokens: 300, Status: "success"},
+			{RouteName: "anthropic", Model: "claude-sonnet", Latency: 90 * time.Millisecond, Tokens: 200, Status: "success"},
+		},
+	}
+	p.recordProviderMetrics(response)
+
+	if v := reg.CounterValue("provider_tokens_total", nil); v != 500 {
+		t.Fatalf("provider_tokens_total = %d, want 500", v)
+	}
+	if v := reg.CounterValue("sub_provider_tokens_total", map[string]string{"route": "openai", "model": "gpt-4o", "status": "success"}); v != 300 {
+		t.Fatalf("sub_provider_tokens_total(openai) = %d, want 300", v)
+	}
+	if v := reg.CounterValue("sub_provider_tokens_total", map[string]string{"route": "anthropic", "model": "claude-sonnet", "status": "success"}); v != 200 {
+		t.Fatalf("sub_provider_tokens_total(anthropic) = %d, want 200", v)
+	}
+	hist := reg.HistogramValues("sub_provider_latency_ms", map[string]string{"route": "openai", "model": "gpt-4o", "status": "success"})
+	if len(hist) != 1 || hist[0] != 80 {
+		t.Fatalf("sub_provider_latency_ms(openai) = %v, want [80]", hist)
+	}
+	hist = reg.HistogramValues("sub_provider_latency_ms", map[string]string{"route": "anthropic", "model": "claude-sonnet", "status": "success"})
+	if len(hist) != 1 || hist[0] != 90 {
+		t.Fatalf("sub_provider_latency_ms(anthropic) = %v, want [90]", hist)
+	}
+	if hist := reg.HistogramValues("provider_latency_ms", nil); len(hist) != 1 || hist[0] != 100 {
+		t.Fatalf("provider_latency_ms = %v, want [100]", hist)
+	}
+}
+
+func TestRecordProviderMetricsWithoutSubProviders(t *testing.T) {
+	reg := metrics.NewRegistry()
+	p := &Processor{metrics: reg}
+	response := ProviderResponse{
+		Latency: 50 * time.Millisecond,
+		Tokens:  100,
+	}
+	p.recordProviderMetrics(response)
+
+	if v := reg.CounterValue("provider_tokens_total", nil); v != 100 {
+		t.Fatalf("provider_tokens_total = %d, want 100", v)
+	}
+	if hist := reg.HistogramValues("provider_latency_ms", nil); len(hist) != 1 || hist[0] != 50 {
+		t.Fatalf("provider_latency_ms = %v, want [50]", hist)
+	}
+	// No sub_provider metrics should exist
+	if v := reg.HistogramValues("sub_provider_latency_ms", nil); v != nil {
+		t.Fatalf("unexpected sub_provider histogram = %v", v)
 	}
 }
 

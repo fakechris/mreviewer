@@ -259,7 +259,19 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	}
 	if p.auditLogger != nil {
 		_ = p.auditLogger.LogProviderCall(ctx, run, payload, response)
-		_ = p.auditLogger.LogRunLifecycle(ctx, run, "provider_response_received", map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "provider_latency_ms": response.Latency.Milliseconds(), "provider_tokens_total": response.Tokens, "provider_model": response.Model})
+		lifecycleDetail := map[string]any{"trace_id": tracing.CurrentTraceID(ctx), "provider_latency_ms": response.Latency.Milliseconds(), "provider_tokens_total": response.Tokens, "provider_model": response.Model}
+		if len(response.SubProviderResults) > 0 {
+			subs := make([]map[string]any, 0, len(response.SubProviderResults))
+			for _, sub := range response.SubProviderResults {
+				entry := map[string]any{"route": sub.RouteName, "model": sub.Model, "latency_ms": sub.Latency.Milliseconds(), "tokens": sub.Tokens, "status": sub.Status}
+				if sub.Error != "" {
+					entry["error"] = sub.Error
+				}
+				subs = append(subs, entry)
+			}
+			lifecycleDetail["sub_providers"] = subs
+		}
+		_ = p.auditLogger.LogRunLifecycle(ctx, run, "provider_response_received", lifecycleDetail)
 	}
 	p.recordProviderMetrics(response)
 	_, endParserValidate := p.startSpan(ctx, "parser.validate", nil)
@@ -329,6 +341,11 @@ func (p *Processor) recordProviderMetrics(response ProviderResponse) {
 	}
 	p.metrics.ObserveHistogram("provider_latency_ms", nil, response.Latency.Milliseconds())
 	p.metrics.AddCounter("provider_tokens_total", nil, response.Tokens)
+	for _, sub := range response.SubProviderResults {
+		labels := map[string]string{"route": sub.RouteName, "model": sub.Model, "status": sub.Status}
+		p.metrics.ObserveHistogram("sub_provider_latency_ms", labels, sub.Latency.Milliseconds())
+		p.metrics.AddCounter("sub_provider_tokens_total", labels, sub.Tokens)
+	}
 }
 
 func (p *Processor) startSpan(ctx context.Context, name string, attrs map[string]string) (context.Context, func()) {
