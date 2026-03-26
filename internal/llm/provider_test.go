@@ -334,7 +334,12 @@ func TestAnthropicToolCallRequestShapeUsesCompactFindingSchema(t *testing.T) {
 			t.Fatalf("compact anthropic finding schema should require %q", key)
 		}
 	}
-	for _, key := range []string{"evidence", "blind_spots", "range_start_kind", "range_end_kind", "suggested_patch", "canonical_key"} {
+	for _, key := range []string{"canonical_key", "symbol", "old_line", "new_line", "introduced_by_this_change"} {
+		if _, ok := itemProps[key]; !ok {
+			t.Fatalf("compact anthropic finding schema missing consensus field %q", key)
+		}
+	}
+	for _, key := range []string{"evidence", "blind_spots", "range_start_kind", "range_end_kind", "suggested_patch"} {
 		if _, ok := itemProps[key]; ok {
 			t.Fatalf("compact anthropic finding schema should omit %q", key)
 		}
@@ -375,6 +380,11 @@ func TestReviewResultSchemaForProfile(t *testing.T) {
 	}
 	if _, ok := compactItemProps["evidence"]; ok {
 		t.Fatal("compact schema should omit evidence")
+	}
+	for _, key := range []string{"canonical_key", "symbol", "old_line", "new_line", "introduced_by_this_change"} {
+		if _, ok := compactItemProps[key]; !ok {
+			t.Fatalf("compact schema should retain consensus field %q", key)
+		}
 	}
 	if _, ok := compact["properties"].(map[string]any)["summary_note"]; !ok {
 		t.Fatal("compact schema should retain summary_note")
