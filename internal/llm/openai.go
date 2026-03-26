@@ -83,7 +83,7 @@ func NewOpenAIProvider(cfg ProviderConfig) (*OpenAIProvider, error) {
 		cfg.Sleep = sleepContext
 	}
 	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{Timeout: 60 * time.Second}
+		cfg.HTTPClient = &http.Client{Timeout: 180 * time.Second}
 	}
 	outputMode := strings.ToLower(strings.TrimSpace(cfg.OutputMode))
 	if outputMode == "" {
@@ -384,4 +384,21 @@ func DeepSeekCompatMode() *OpenAICompatMode {
 		DropReasoningEffort:   true,
 		UseMaxTokens:          true,
 	}
+}
+
+func ArkOpenAICompatMode() *OpenAICompatMode {
+	return &OpenAICompatMode{
+		UseSystemRole:         true,
+		DropParallelToolCalls: true,
+		DropStrictSchema:      false,
+		DropReasoningEffort:   true,
+		UseMaxTokens:          true,
+	}
+}
+
+func NewArkOpenAIProvider(cfg ProviderConfig) (*OpenAIProvider, error) {
+	if cfg.CompatMode == nil {
+		cfg.CompatMode = ArkOpenAICompatMode()
+	}
+	return NewOpenAIProvider(cfg)
 }
