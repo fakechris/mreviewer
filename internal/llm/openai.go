@@ -36,6 +36,7 @@ type OpenAIProvider struct {
 	sleep           func(context.Context, time.Duration) error
 	timeoutRetries  int
 	httpClient      *http.Client
+	compat          *OpenAICompatMode
 }
 
 type openAIChatCompletionResponse struct {
@@ -113,6 +114,7 @@ func NewOpenAIProvider(cfg ProviderConfig) (*OpenAIProvider, error) {
 		sleep:           cfg.Sleep,
 		timeoutRetries:  cfg.TimeoutRetries,
 		httpClient:      cfg.HTTPClient,
+		compat:          cfg.CompatMode,
 	}, nil
 }
 
@@ -125,42 +127,57 @@ func (p *OpenAIProvider) RequestPayloadWithSystemPrompt(request ctxpkg.ReviewReq
 }
 
 func (p *OpenAIProvider) requestPayloadWithUserContent(systemPrompt string, userContent string) map[string]any {
+	systemRole := "developer"
+	if p.compat != nil && p.compat.UseSystemRole {
+		systemRole = "system"
+	}
 	payload := map[string]any{
 		"model":       p.model,
 		"temperature": p.temperature,
 		"messages": []map[string]any{
-			{"role": "developer", "content": systemPrompt},
+			{"role": systemRole, "content": systemPrompt},
 			{"role": "user", "content": userContent},
 		},
 	}
-	if p.maxCompletion > 0 {
+	if p.compat != nil && p.compat.UseMaxTokens {
+		payload["max_tokens"] = p.maxTokens
+	} else if p.maxCompletion > 0 {
 		payload["max_completion_tokens"] = p.maxCompletion
 	} else {
 		payload["max_tokens"] = p.maxTokens
 	}
-	if p.reasoningEffort != "" {
+	if p.reasoningEffort != "" && (p.compat == nil || !p.compat.DropReasoningEffort) {
 		payload["reasoning_effort"] = p.reasoningEffort
 	}
+	strict := p.compat == nil || !p.compat.DropStrictSchema
 	switch p.outputMode {
 	case openAIOutputModeJSONSchema:
+		jsonSchema := map[string]any{
+			"name":   reviewSubmitToolName,
+			"schema": reviewResultSchemaOpenAIStrict(),
+		}
+		if strict {
+			jsonSchema["strict"] = true
+		}
 		payload["response_format"] = map[string]any{
-			"type": "json_schema",
-			"json_schema": map[string]any{
-				"name":   reviewSubmitToolName,
-				"strict": true,
-				"schema": reviewResultSchemaOpenAIStrict(),
-			},
+			"type":        "json_schema",
+			"json_schema": jsonSchema,
 		}
 	default:
-		payload["parallel_tool_calls"] = false
+		if p.compat == nil || !p.compat.DropParallelToolCalls {
+			payload["parallel_tool_calls"] = false
+		}
+		fnDef := map[string]any{
+			"name":        reviewSubmitToolName,
+			"description": "Emit the final merge request review result as structured JSON.",
+			"parameters":  reviewResultSchema(),
+		}
+		if strict {
+			fnDef["strict"] = true
+		}
 		payload["tools"] = []map[string]any{{
-			"type": "function",
-			"function": map[string]any{
-				"name":        reviewSubmitToolName,
-				"description": "Emit the final merge request review result as structured JSON.",
-				"strict":      true,
-				"parameters":  reviewResultSchema(),
-			},
+			"type":     "function",
+			"function": fnDef,
 		}}
 		payload["tool_choice"] = map[string]any{
 			"type": "function",
@@ -350,4 +367,17 @@ func openAIMessageText(raw json.RawMessage) string {
 		}
 	}
 	return builder.String()
+}
+
+// DeepSeekCompatMode returns an OpenAICompatMode suitable for DeepSeek models.
+// DeepSeek uses "system" role (not "developer"), does not support strict schema
+// validation, parallel_tool_calls, or reasoning_effort.
+func DeepSeekCompatMode() *OpenAICompatMode {
+	return &OpenAICompatMode{
+		UseSystemRole:         true,
+		DropParallelToolCalls: true,
+		DropStrictSchema:      true,
+		DropReasoningEffort:   true,
+		UseMaxTokens:          true,
+	}
 }
