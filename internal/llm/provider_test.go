@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mreviewer/mreviewer/internal/metrics"
+
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
@@ -3860,6 +3862,62 @@ type fakeSummaryProvider struct {
 func (f *fakeSummaryProvider) Summarize(_ context.Context, _ ctxpkg.ReviewRequest) (SummaryResponse, error) {
 	f.called = true
 	return f.response, f.err
+}
+
+func TestRecordProviderMetricsWithSubProviders(t *testing.T) {
+	reg := metrics.NewRegistry()
+	p := &Processor{metrics: reg}
+	response := ProviderResponse{
+		Latency: 100 * time.Millisecond,
+		Tokens:  500,
+		SubProviderResults: []SubProviderResult{
+			{RouteName: "openai", Model: "gpt-4o", Latency: 80 * time.Millisecond, Tokens: 300, Status: "success"},
+			{RouteName: "anthropic", Model: "claude-sonnet", Latency: 90 * time.Millisecond, Tokens: 200, Status: "success"},
+		},
+	}
+	p.recordProviderMetrics(response)
+
+	if v := reg.CounterValue("provider_tokens_total", nil); v != 500 {
+		t.Fatalf("provider_tokens_total = %d, want 500", v)
+	}
+	if v := reg.CounterValue("sub_provider_tokens_total", map[string]string{"route": "openai", "model": "gpt-4o", "status": "success"}); v != 300 {
+		t.Fatalf("sub_provider_tokens_total(openai) = %d, want 300", v)
+	}
+	if v := reg.CounterValue("sub_provider_tokens_total", map[string]string{"route": "anthropic", "model": "claude-sonnet", "status": "success"}); v != 200 {
+		t.Fatalf("sub_provider_tokens_total(anthropic) = %d, want 200", v)
+	}
+	hist := reg.HistogramValues("sub_provider_latency_ms", map[string]string{"route": "openai", "model": "gpt-4o", "status": "success"})
+	if len(hist) != 1 || hist[0] != 80 {
+		t.Fatalf("sub_provider_latency_ms(openai) = %v, want [80]", hist)
+	}
+	hist = reg.HistogramValues("sub_provider_latency_ms", map[string]string{"route": "anthropic", "model": "claude-sonnet", "status": "success"})
+	if len(hist) != 1 || hist[0] != 90 {
+		t.Fatalf("sub_provider_latency_ms(anthropic) = %v, want [90]", hist)
+	}
+	if hist := reg.HistogramValues("provider_latency_ms", nil); len(hist) != 1 || hist[0] != 100 {
+		t.Fatalf("provider_latency_ms = %v, want [100]", hist)
+	}
+}
+
+func TestRecordProviderMetricsWithoutSubProviders(t *testing.T) {
+	reg := metrics.NewRegistry()
+	p := &Processor{metrics: reg}
+	response := ProviderResponse{
+		Latency: 50 * time.Millisecond,
+		Tokens:  100,
+	}
+	p.recordProviderMetrics(response)
+
+	if v := reg.CounterValue("provider_tokens_total", nil); v != 100 {
+		t.Fatalf("provider_tokens_total = %d, want 100", v)
+	}
+	if hist := reg.HistogramValues("provider_latency_ms", nil); len(hist) != 1 || hist[0] != 50 {
+		t.Fatalf("provider_latency_ms = %v, want [50]", hist)
+	}
+	// No sub_provider metrics should exist
+	if v := reg.HistogramValues("sub_provider_latency_ms", nil); v != nil {
+		t.Fatalf("unexpected sub_provider histogram = %v", v)
+	}
 }
 
 var _ = option.WithAPIKey

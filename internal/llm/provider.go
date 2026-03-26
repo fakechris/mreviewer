@@ -58,6 +58,22 @@ type ProviderResponse struct {
 	FallbackStage   string
 	Model           string
 	ResponsePayload map[string]any
+
+	// SubProviderResults holds per-provider metrics when a composite
+	// provider (e.g. ConsensusReviewService) fans out to multiple
+	// sub-providers. For single-provider responses this is nil.
+	SubProviderResults []SubProviderResult
+}
+
+// SubProviderResult captures per-provider observability data for
+// composite providers that call multiple LLMs in parallel.
+type SubProviderResult struct {
+	RouteName string
+	Model     string
+	Latency   time.Duration
+	Tokens    int64
+	Status    string // "success", "error", "timeout"
+	Error     string // empty on success
 }
 
 type ReviewResult struct {
