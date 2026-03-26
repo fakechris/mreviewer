@@ -3931,5 +3931,29 @@ func TestOpenAIProviderDeepSeekCompatJSONSchemaMode(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderCompatModePreservesMaxCompletionTokensValue(t *testing.T) {
+	p, err := NewOpenAIProvider(ProviderConfig{
+		BaseURL:             "https://api.deepseek.com/v1",
+		APIKey:              "test",
+		Model:               "deepseek-chat",
+		MaxCompletionTokens: 12000,
+		CompatMode:          DeepSeekCompatMode(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := p.requestPayloadWithUserContent("system prompt", "user content")
+	maxTokens, ok := payload["max_tokens"]
+	if !ok {
+		t.Fatal("compat mode should emit max_tokens")
+	}
+	if maxTokens != int64(12000) {
+		t.Fatalf("max_tokens = %v, want 12000 (from MaxCompletionTokens)", maxTokens)
+	}
+	if _, ok := payload["max_completion_tokens"]; ok {
+		t.Fatal("compat mode should not emit max_completion_tokens")
+	}
+}
+
 var _ = option.WithAPIKey
 var _ ssestream.Event

@@ -140,7 +140,11 @@ func (p *OpenAIProvider) requestPayloadWithUserContent(systemPrompt string, user
 		},
 	}
 	if p.compat != nil && p.compat.UseMaxTokens {
-		payload["max_tokens"] = p.maxTokens
+		if p.maxCompletion > 0 {
+			payload["max_tokens"] = p.maxCompletion
+		} else {
+			payload["max_tokens"] = p.maxTokens
+		}
 	} else if p.maxCompletion > 0 {
 		payload["max_completion_tokens"] = p.maxCompletion
 	} else {
