@@ -381,7 +381,7 @@ func TestReviewResultSchemaForProfile(t *testing.T) {
 	if _, ok := compactItemProps["evidence"]; ok {
 		t.Fatal("compact schema should omit evidence")
 	}
-	for _, key := range []string{"canonical_key", "symbol", "old_line", "new_line"} {
+	for _, key := range []string{"canonical_key", "symbol", "old_line", "new_line", "introduced_by_this_change"} {
 		if _, ok := compactItemProps[key]; !ok {
 			t.Fatalf("compact schema should retain consensus field %q", key)
 		}
