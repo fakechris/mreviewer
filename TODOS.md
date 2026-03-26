@@ -64,7 +64,7 @@
 
 **Effort:** XL
 **Priority:** P2
-**Depends on:** CLI mode (P1)
+**Depends on:** CLI architecture decision (P0 investigation)
 
 ### Multi-model semantic dedup (LLM-based)
 
@@ -91,3 +91,5 @@
 **Depends on:** None
 
 ## Completed
+
+*No items completed yet.*
