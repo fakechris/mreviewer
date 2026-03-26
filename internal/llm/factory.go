@@ -11,6 +11,8 @@ const (
 	ProviderKindAnthropicCompatible = "anthropic_compatible"
 	ProviderKindAnthropic           = "anthropic"
 	ProviderKindOpenAI              = "openai"
+	ProviderKindArkAnthropic        = "ark_anthropic"
+	ProviderKindArkOpenAI           = "ark_openai"
 )
 
 func NewProviderFromConfig(cfg ProviderConfig) (Provider, error) {
@@ -25,6 +27,10 @@ func NewProviderFromConfig(cfg ProviderConfig) (Provider, error) {
 		return NewAnthropicProvider(cfg)
 	case ProviderKindOpenAI:
 		return NewOpenAIProvider(cfg)
+	case ProviderKindArkAnthropic:
+		return NewArkAnthropicProvider(cfg)
+	case ProviderKindArkOpenAI:
+		return NewArkOpenAIProvider(cfg)
 	default:
 		return nil, fmt.Errorf("llm: unknown provider kind %q", cfg.Kind)
 	}
