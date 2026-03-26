@@ -1,0 +1,156 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Review Throughput (hourly)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT\n  DATE_FORMAT(created_at, '%Y-%m-%dT%H:00:00') AS time,\n  COUNT(*) AS total,\n  SUM(status = 'completed') AS completed,\n  SUM(status = 'failed') AS failed\nFROM review_runs\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY 1\nORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "failed" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "completed" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] }
+        ]
+      }
+    },
+    {
+      "title": "Success Rate (24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(SUM(status = 'completed') / COUNT(*) * 100, 1) AS success_rate\nFROM review_runs\nWHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 80 }, { "color": "green", "value": 95 }] } }
+      }
+    },
+    {
+      "title": "Total Reviews (24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS total FROM review_runs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "title": "Avg Processing Time (24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(AVG(TIMESTAMPDIFF(SECOND, started_at, completed_at)), 1) AS avg_seconds\nFROM review_runs\nWHERE status = 'completed'\n  AND started_at IS NOT NULL\n  AND completed_at IS NOT NULL\n  AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "Status Distribution",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 4 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT status, COUNT(*) AS count\nFROM review_runs\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY status\nORDER BY count DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Error Code Breakdown",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 4 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT error_code, COUNT(*) AS count\nFROM review_runs\nWHERE status = 'failed'\n  AND error_code != ''\n  AND created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY error_code\nORDER BY count DESC\nLIMIT 10",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Retry Distribution",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT retry_count, COUNT(*) AS count\nFROM review_runs\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY retry_count\nORDER BY retry_count",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Write Actions Success Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT\n  DATE_FORMAT(created_at, '%Y-%m-%dT%H:00:00') AS time,\n  SUM(status = 'succeeded') AS succeeded,\n  SUM(status = 'failed') AS failed\nFROM comment_actions\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY 1\nORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Reviews by Trigger Type",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT trigger_type, COUNT(*) AS count\nFROM review_runs\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY trigger_type",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["mreviewer", "operations"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_MYSQL",
+        "type": "datasource",
+        "query": "mysql",
+        "current": { "text": "MySQL", "value": "MySQL" }
+      }
+    ]
+  },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "MReviewer - Review Operations",
+  "uid": "mreviewer-review-ops"
+}
