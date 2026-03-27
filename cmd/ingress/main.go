@@ -42,23 +42,24 @@ func run() int {
 		"port", cfg.Port,
 	)
 
-	// Open MySQL connection.
-	db, err := database.Open(cfg.MySQLDSN)
+	// Open database connection (MySQL or SQLite based on DSN).
+	db, dialect, err := database.OpenWithDialect(cfg.DSN())
 	if err != nil {
 		logger.Error("failed to open database", "error", err)
 		return 1
 	}
 	defer db.Close()
 
-	logger.Info("database connection pool initialized")
+	logger.Info("database connection pool initialized", "dialect", dialect)
 
 	// Build HTTP routes.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", apphttp.NewHealthHandler(logger, db))
 
 	// Webhook ingress handler.
+	newStore := database.StoreFactory(dialect)
 	runProcessor := runs.NewService(logger, db)
-	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runProcessor)
+	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runProcessor, hooks.WithHandlerStoreFactory(newStore))
 	commandProcessor := commands.NewProcessor(logger, db)
 	webhookHandler.SetCommandProcessor(commandProcessor)
 	mux.Handle("POST /webhook", webhookHandler)
