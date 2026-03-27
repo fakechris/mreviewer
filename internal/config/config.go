@@ -20,8 +20,9 @@ type Config struct {
 	AppEnv string `yaml:"app_env"`
 	Port   string `yaml:"port"`
 
-	MySQLDSN  string `yaml:"mysql_dsn"`
-	RedisAddr string `yaml:"redis_addr"`
+	MySQLDSN    string `yaml:"mysql_dsn"`
+	DatabaseDSN string `yaml:"database_dsn"`
+	RedisAddr   string `yaml:"redis_addr"`
 
 	GitLabBaseURL       string `yaml:"gitlab_base_url"`
 	GitLabToken         string `yaml:"gitlab_token"`
@@ -61,6 +62,7 @@ var envMapping = []struct {
 	{"APP_ENV", func(c *Config, v string) { c.AppEnv = v }},
 	{"PORT", func(c *Config, v string) { c.Port = v }},
 	{"MYSQL_DSN", func(c *Config, v string) { c.MySQLDSN = v }},
+	{"DATABASE_DSN", func(c *Config, v string) { c.DatabaseDSN = v }},
 	{"REDIS_ADDR", func(c *Config, v string) { c.RedisAddr = v }},
 	{"GITLAB_BASE_URL", func(c *Config, v string) { c.GitLabBaseURL = v }},
 	{"GITLAB_TOKEN", func(c *Config, v string) { c.GitLabToken = v }},
@@ -124,6 +126,15 @@ func applyEnv(cfg *Config) {
 		}
 	}
 	applyMiniMaxFallback(cfg)
+}
+
+// DSN returns the database connection string. It prefers DatabaseDSN if set,
+// falling back to MySQLDSN for backward compatibility.
+func (c *Config) DSN() string {
+	if c.DatabaseDSN != "" {
+		return c.DatabaseDSN
+	}
+	return c.MySQLDSN
 }
 
 func applyMiniMaxFallback(cfg *Config) {
