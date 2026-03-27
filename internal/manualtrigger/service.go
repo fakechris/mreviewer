@@ -24,12 +24,13 @@ type MergeRequestReader interface {
 type Option func(*Service)
 
 type Service struct {
-	logger  *slog.Logger
-	db      *sql.DB
-	gitlab  MergeRequestReader
-	baseURL string
-	now     func() time.Time
-	poll    time.Duration
+	logger   *slog.Logger
+	db       *sql.DB
+	gitlab   MergeRequestReader
+	baseURL  string
+	now      func() time.Time
+	poll     time.Duration
+	newStore func(db.DBTX) db.Store
 }
 
 type TriggerInput struct {
@@ -52,12 +53,13 @@ func NewService(logger *slog.Logger, sqlDB *sql.DB, client MergeRequestReader, b
 	}
 
 	svc := &Service{
-		logger:  logger,
-		db:      sqlDB,
-		gitlab:  client,
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		now:     time.Now,
-		poll:    time.Second,
+		logger:   logger,
+		db:       sqlDB,
+		gitlab:   client,
+		baseURL:  strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		now:      time.Now,
+		poll:     time.Second,
+		newStore: defaultManualNewStore,
 	}
 
 	for _, opt := range opts {
@@ -87,6 +89,14 @@ func WithPollInterval(interval time.Duration) Option {
 		s.poll = interval
 	}
 }
+
+func WithStoreFactory(fn func(db.DBTX) db.Store) Option {
+	return func(s *Service) {
+		s.newStore = fn
+	}
+}
+
+func defaultManualNewStore(conn db.DBTX) db.Store { return db.New(conn) }
 
 func (s *Service) Trigger(ctx context.Context, input TriggerInput) (TriggerResult, error) {
 	if s.db == nil {
@@ -159,7 +169,7 @@ func (s *Service) Trigger(ctx context.Context, input TriggerInput) (TriggerResul
 		return TriggerResult{}, fmt.Errorf("manual trigger: create review run: %w", err)
 	}
 
-	run, err := db.New(s.db).GetReviewRunByIdempotencyKey(ctx, ev.IdempotencyKey)
+	run, err := s.newStore(s.db).GetReviewRunByIdempotencyKey(ctx, ev.IdempotencyKey)
 	if err != nil {
 		return TriggerResult{}, fmt.Errorf("manual trigger: load created review run: %w", err)
 	}
@@ -185,7 +195,7 @@ func (s *Service) WaitForTerminalRun(ctx context.Context, runID int64) (db.Revie
 	defer ticker.Stop()
 
 	for {
-		run, err := db.New(s.db).GetReviewRun(ctx, runID)
+		run, err := s.newStore(s.db).GetReviewRun(ctx, runID)
 		if err != nil {
 			return db.ReviewRun{}, fmt.Errorf("manual trigger: load review run %d: %w", runID, err)
 		}

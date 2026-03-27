@@ -31,6 +31,7 @@ type Handler struct {
 	secret           string
 	runProcessor     RunProcessor
 	commandProcessor CommandProcessor
+	newStore         func(db.DBTX) db.Store
 }
 
 // RunProcessor creates or cancels review runs for normalized MR events.
@@ -51,14 +52,30 @@ type CommandProcessor interface {
 // NewHandler creates a webhook handler. The secret is the expected value of
 // the X-Gitlab-Token header. An empty secret causes all requests to be
 // rejected with 401.
-func NewHandler(logger *slog.Logger, database *sql.DB, secret string, runProcessor RunProcessor) *Handler {
-	return &Handler{
+// HandlerOption configures optional Handler behaviour.
+type HandlerOption func(*Handler)
+
+// WithHandlerStoreFactory overrides the default db.Store constructor used for
+// non-transactional queries. The default is db.New (MySQL).
+func WithHandlerStoreFactory(fn func(db.DBTX) db.Store) HandlerOption {
+	return func(h *Handler) { h.newStore = fn }
+}
+
+func NewHandler(logger *slog.Logger, database *sql.DB, secret string, runProcessor RunProcessor, opts ...HandlerOption) *Handler {
+	h := &Handler{
 		logger:       logger,
 		db:           database,
 		secret:       secret,
 		runProcessor: runProcessor,
+		newStore:     defaultHandlerNewStore,
 	}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
 }
+
+func defaultHandlerNewStore(conn db.DBTX) db.Store { return db.New(conn) }
 
 // SetCommandProcessor sets an optional command processor for /ai-review
 // note commands. This is separated from the constructor to avoid a circular
@@ -128,7 +145,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// --- 3. Check for duplicate delivery ---
 	if deliveryKey != "" {
-		existing, lookupErr := db.New(h.db).GetHookEventByDeliveryKey(ctx, deliveryKey)
+		existing, lookupErr := h.newStore(h.db).GetHookEventByDeliveryKey(ctx, deliveryKey)
 		if lookupErr == nil && existing.ID > 0 {
 			l.InfoContext(ctx, "duplicate delivery key, acknowledging",
 				"delivery_key", deliveryKey,
@@ -172,7 +189,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"delivery_key", deliveryKey,
 			"event_type", parsed.EventType,
 		)
-		if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+		if _, insertErr := h.insertHookEvent(ctx, h.newStore(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
 			l.WarnContext(ctx, "failed to insert hook_event for non-MR event",
 				"delivery_key", deliveryKey,
 				"error", insertErr,
@@ -323,7 +340,7 @@ func (h *Handler) writeAuditLog(
 	ctx context.Context,
 	deliveryKey, hookSource, outcome, rejectionReason, eventType string,
 ) {
-	q := db.New(h.db)
+	q := h.newStore(h.db)
 	_, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
 		EntityType:          "webhook",
 		EntityID:            0,
@@ -389,7 +406,7 @@ func (h *Handler) handleNoteEvent(
 	if isCmd {
 		if h.commandProcessor == nil {
 			// Still insert the hook event for audit outside the command path.
-			if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+			if _, insertErr := h.insertHookEvent(ctx, h.newStore(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
 				if !db.IsDuplicateKeyError(insertErr) {
 					l.WarnContext(ctx, "failed to insert hook_event for note",
 						"delivery_key", deliveryKey,
@@ -444,7 +461,7 @@ func (h *Handler) handleNoteEvent(
 	}
 
 	// Non-command note: insert hook_event for audit.
-	if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+	if _, insertErr := h.insertHookEvent(ctx, h.newStore(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
 		if !db.IsDuplicateKeyError(insertErr) {
 			l.WarnContext(ctx, "failed to insert hook_event for note",
 				"delivery_key", deliveryKey,
