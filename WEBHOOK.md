@@ -1,49 +1,150 @@
 # GitLab Webhook 配置指南
 
-## 方式 1: 逐个项目配置（所有版本适用）
+本文档提供三种 Webhook 配置方式的详细步骤。
 
-在每个 GitLab 项目中：
+---
 
-1. 进入 **Settings → Webhooks**
-2. 填写：
-   - URL: `http://your-server:3100/webhook`
-   - Secret Token: `.env` 中的 `GITLAB_WEBHOOK_SECRET`
-   - Trigger: 勾选 **Merge request events**
-3. 点击 **Add webhook**
+## 方式 1: 项目级别配置（所有版本适用）
+
+### 适用场景
+- 任何 GitLab 版本（CE/EE）
+- 只需要为特定项目启用 AI Review
+- 无需管理员权限
+
+### 配置步骤
+
+1. **进入项目设置**
+   - 打开你的 GitLab 项目
+   - 左侧菜单：`Settings` → `Webhooks`
+
+2. **添加 Webhook**
+   - **URL**: `http://your-server:3100/webhook`
+     - 替换 `your-server` 为实际服务器地址
+     - 如果是本地测试：`http://localhost:3100/webhook`
+
+   - **Secret token**:
+     - 复制 `.env` 文件中的 `GITLAB_WEBHOOK_SECRET` 值
+     - 粘贴到此处
+
+   - **Trigger**:
+     - ✅ 勾选 `Merge request events`
+     - 其他选项保持默认（不勾选）
+
+   - **SSL verification**:
+     - 生产环境建议启用
+     - 本地测试可以取消勾选
+
+3. **保存并测试**
+   - 点击 `Add webhook` 按钮
+   - 在 Webhook 列表中找到刚添加的 webhook
+   - 点击 `Test` → `Merge Request events`
+   - 应该看到 HTTP 200 响应
+
+### 验证
+创建或更新一个 MR，检查：
+```bash
+docker-compose logs ingress | grep "webhook received"
+docker-compose logs worker | grep "processing review run"
+```
+
+---
 
 ## 方式 2: 组级别配置（Premium/Ultimate）
 
-如果你有 GitLab Premium 或 Ultimate：
+### 适用场景
+- GitLab Premium 或 Ultimate 版本
+- 需要为整个组（Group）的所有项目启用
+- 有组的 Owner 或 Maintainer 权限
 
-1. 进入 **Group → Settings → Webhooks**
-2. 配置同上
-3. 组内所有项目自动生效
+### 配置步骤
 
-## 方式 3: 全实例配置（管理员）
+1. **进入组设置**
+   - 打开你的 GitLab 组（Group）页面
+   - 左侧菜单：`Settings` → `Webhooks`
+   - 注意：如果看不到此选项，说明你的 GitLab 版本不是 Premium/Ultimate
 
-如果你是 GitLab 管理员：
+2. **添加组级 Webhook**
+   - **URL**: `http://your-server:3100/webhook`
+   - **Secret token**: `.env` 中的 `GITLAB_WEBHOOK_SECRET`
+   - **Trigger**: ✅ 勾选 `Merge request events`
+   - 其他配置同项目级别
 
-1. 进入 **Admin Area → System Hooks**
-2. 填写：
-   - URL: `http://your-server:3100/webhook`
-   - Secret Token: `.env` 中的 `GITLAB_WEBHOOK_SECRET`
-   - Trigger: 勾选 **Merge Request Hook**
-3. 点击 **Add system hook**
-4. 全实例所有项目自动生效
+3. **保存**
+   - 点击 `Add webhook`
+   - 此 webhook 将自动应用到组内所有项目
 
-## 验证 Webhook
+### 验证
+在组内任意项目创建 MR，应该触发 review。
 
-创建或更新一个 MR，检查：
+---
 
-```bash
-# 查看 ingress 日志
-docker-compose logs ingress | grep webhook
+## 方式 3: 全实例配置（管理员级别）
 
-# 查看 worker 处理日志
-docker-compose logs worker | grep "review run"
+### 适用场景
+- 需要为整个 GitLab 实例的所有项目启用
+- 你是 GitLab 管理员（Admin）
+- 适用于 GitLab CE 和 EE
+
+### 配置步骤
+
+1. **进入管理员区域**
+   - 点击顶部导航栏右上角的 **扳手图标** 或你的头像
+   - 选择 `Admin Area`（管理中心）
+   - 如果看不到此选项，说明你不是管理员
+
+2. **进入 System Hooks 设置**
+   - 左侧菜单：`System Hooks`
+   - 路径：`Admin Area` → `System Hooks`
+   - 或直接访问：`https://your-gitlab.com/admin/hooks`
+
+3. **添加 System Hook**
+   - **URL**: `http://your-server:3100/webhook`
+     - 注意：System Hook 的 URL 必须是服务器可访问的地址
+     - 不能使用 `localhost`（除非 GitLab 和 mreviewer 在同一台机器）
+
+   - **Secret Token**:
+     - 复制 `.env` 文件中的 `GITLAB_WEBHOOK_SECRET`
+     - 粘贴到此处
+
+   - **Trigger**:
+     - ✅ 勾选 `Merge Request Hook`
+     - 其他选项保持默认
+
+   - **Enable SSL verification**:
+     - 生产环境建议启用
+     - 内网测试可以取消勾选
+
+4. **保存**
+   - 点击 `Add system hook` 按钮
+   - 此 hook 将应用到实例内所有项目
+
+5. **测试（可选）**
+   - 在 System Hooks 列表中找到刚添加的 hook
+   - 点击 `Test` → `Merge Request Hook`
+   - 应该看到 HTTP 200 响应
+
+### 验证
+在任意项目创建 MR，应该触发 review。
+
+---
+
+## 常见问题
+
+### Q: Webhook 返回 401/403 错误
+A: 检查 Secret Token 是否正确，确保与 `.env` 中的 `GITLAB_WEBHOOK_SECRET` 一致。
+
+### Q: Webhook 返回 Connection refused
+A: 检查 mreviewer 服务是否启动，端口 3100 是否可访问。
+
+### Q: MR 创建后没有触发 review
+A:
+1. 检查 webhook 是否配置成功
+2. 查看 ingress 日志：`docker-compose logs ingress`
+3. 查看 worker 日志：`docker-compose logs worker`
+
+### Q: 如何禁用某个项目的 AI Review
+A: 在项目的 `.gitlab/ai-review.yaml` 中添加：
+```yaml
+enabled: false
 ```
 
-成功标志：
-- Ingress 收到 webhook 请求（200 响应）
-- Worker 开始处理 review run
-- GitLab MR 页面出现 AI 评论
