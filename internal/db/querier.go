@@ -62,6 +62,7 @@ type Querier interface {
 	UpdateMergeRequestState(ctx context.Context, arg UpdateMergeRequestStateParams) error
 	UpdateReviewRunCompleted(ctx context.Context, arg UpdateReviewRunCompletedParams) error
 	UpdateReviewRunStatus(ctx context.Context, arg UpdateReviewRunStatusParams) error
+	UpdateRunScopeJSON(ctx context.Context, arg UpdateRunScopeJSONParams) error
 	UpsertGitlabInstance(ctx context.Context, arg UpsertGitlabInstanceParams) (sql.Result, error)
 	UpsertMergeRequest(ctx context.Context, arg UpsertMergeRequestParams) (sql.Result, error)
 	UpsertProject(ctx context.Context, arg UpsertProjectParams) (sql.Result, error)

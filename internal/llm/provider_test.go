@@ -875,7 +875,7 @@ func TestProcessRunUsesDynamicSystemPrompt(t *testing.T) {
 		},
 		Model: "MiniMax-M2.5",
 	}}}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
 	}
@@ -958,7 +958,7 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	provider := &fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{{Category: "bug", Severity: "high", Confidence: 0.9, Title: "Issue", BodyMarkdown: "body", Path: "main.go", AnchorKind: "new"}}}, Model: "MiniMax-M2.5", Tokens: 77, Latency: 25 * time.Millisecond, ResponsePayload: map[string]any{"token": "secret", "content": "prompt body"}}}
 	registry := metrics2.NewRegistry()
 	tracer := tracing.NewRecorder()
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithMetrics(registry).WithTracer(tracer)
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithMetrics(registry).WithTracer(tracer)
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
 	}
@@ -1136,7 +1136,7 @@ func TestWorkerThreadsPerPathReviewIntoReviewRequest(t *testing.T) {
 	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "src/auth/login.go", NewPath: "src/auth/login.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}, {OldPath: "pkg/util.go", NewPath: "pkg/util.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}, {OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
 	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ReviewMarkdown: "# Root review\n", DirectoryReviews: map[string]string{"src/auth": "# Auth review\n", "pkg": "# Pkg review\n"}, RulesDigest: "digest"}}}
 	provider := &fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: nil}, Model: "MiniMax-M2.5", ResponsePayload: map[string]any{}}}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-path-review", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
 	}
@@ -1185,7 +1185,7 @@ func TestDegradationSummaryNote(t *testing.T) {
 		_, _ = q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{ProjectID: project.ID, ConfidenceThreshold: 0.1, SeverityThreshold: "low", IncludePaths: json.RawMessage("[]"), ExcludePaths: json.RawMessage("[]"), Extra: json.RawMessage(`{"review":{"max_files":1}}`)})
 	}
 	provider := &fakeProvider{}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
 	}
@@ -1223,7 +1223,7 @@ func TestReviewedCleanPathBecomesFixed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMergeRequest: %v", err)
 	}
-	if err := activateSingleFinding(ctx, q, baseRun, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, baseRun, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 
@@ -1240,7 +1240,7 @@ func TestReviewedCleanPathBecomesFixed(t *testing.T) {
 		t.Fatalf("GetReviewRun new: %v", err)
 	}
 
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}, map[string]struct{}{"src/service/foo.go": {}}, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}, map[string]struct{}{"src/service/foo.go": {}}, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 
@@ -1267,7 +1267,7 @@ func TestReviewedCleanPathBecomesFixedFromNewFinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMergeRequest: %v", err)
 	}
-	if err := persistFindings(ctx, q, baseRun, mr, ReviewResult{
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), baseRun, mr, ReviewResult{
 		SchemaVersion: "1.0",
 		ReviewRunID:   fmt.Sprintf("%d", runID),
 		Summary:       "summary",
@@ -1290,7 +1290,7 @@ func TestReviewedCleanPathBecomesFixedFromNewFinding(t *testing.T) {
 		t.Fatalf("GetReviewRun new: %v", err)
 	}
 
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{
 		SchemaVersion: "1.0",
 		ReviewRunID:   fmt.Sprintf("%d", newRunID),
 		Summary:       "summary",
@@ -1342,7 +1342,7 @@ func TestParserErrorStructuredResult(t *testing.T) {
 		tokens:      456,
 		model:       "MiniMax-M2.5",
 	})}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
 	}
@@ -1481,7 +1481,7 @@ func TestNormalizeFinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMergeRequest: %v", err)
 	}
-	if err := persistFindings(ctx, q, run, mr, result, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), run, mr, result, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 
@@ -1692,7 +1692,7 @@ func TestPersistFindingsCanonicalizesLegacyAnchorLabels(t *testing.T) {
 			CanonicalKey:  "equivalent-anchor-vocabulary",
 		}},
 	}
-	if err := persistFindings(ctx, q, run, mr, legacy, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), run, mr, legacy, nil, nil); err != nil {
 		t.Fatalf("persistFindings legacy: %v", err)
 	}
 
@@ -1739,7 +1739,7 @@ func TestPersistFindingsCanonicalizesLegacyAnchorLabels(t *testing.T) {
 			CanonicalKey:  "equivalent-anchor-vocabulary",
 		}},
 	}
-	if err := persistFindings(ctx, q, secondRun, mr, current, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), secondRun, mr, current, nil, nil); err != nil {
 		t.Fatalf("persistFindings current: %v", err)
 	}
 
@@ -1822,7 +1822,7 @@ func TestSameHeadDedupe(t *testing.T) {
 	}
 
 	result := ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12), sameRunFinding(12)}}
-	if err := persistFindings(ctx, q, run, mr, result, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), run, mr, result, nil, nil); err != nil {
 		t.Fatalf("first persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -1835,7 +1835,7 @@ func TestSameHeadDedupe(t *testing.T) {
 	if err := q.UpdateFindingState(ctx, db.UpdateFindingStateParams{State: findingStateActive, ID: findings[0].ID}); err != nil {
 		t.Fatalf("UpdateFindingState active: %v", err)
 	}
-	if err := persistFindings(ctx, q, run, mr, result, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), run, mr, result, nil, nil); err != nil {
 		t.Fatalf("second persistFindings: %v", err)
 	}
 
@@ -1868,7 +1868,7 @@ func TestNewHeadLastSeenUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMergeRequest: %v", err)
 	}
-	if err := activateSingleFinding(ctx, q, baseRun, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, baseRun, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 
@@ -1884,7 +1884,7 @@ func TestNewHeadLastSeenUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReviewRun new: %v", err)
 	}
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings new: %v", err)
 	}
 
@@ -1908,7 +1908,7 @@ func TestSemanticRelocation(t *testing.T) {
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	baseRun, _ := q.GetReviewRun(ctx, runID)
 	mr, _ := q.GetMergeRequest(ctx, mrID)
-	if err := activateSingleFinding(ctx, q, baseRun, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, baseRun, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{ProjectID: projectID, MergeRequestID: mrID, TriggerType: "webhook", HeadSha: "head-2", Status: "running", MaxRetries: 3, IdempotencyKey: "project:101:mr:7:head-2:webhook"})
@@ -1918,7 +1918,7 @@ func TestSemanticRelocation(t *testing.T) {
 	newRunID, _ := res.LastInsertId()
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
 	relocated := sameRunFinding(30)
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings relocated: %v", err)
 	}
 	active, err := q.ListActiveFindingsByMR(ctx, mrID)
@@ -1986,7 +1986,7 @@ func TestRelocationSupersedes(t *testing.T) {
 	_, projectID, mrID, runID := seedRun(t, ctx, q)
 	baseRun, _ := q.GetReviewRun(ctx, runID)
 	mr, _ := q.GetMergeRequest(ctx, mrID)
-	if err := activateSingleFinding(ctx, q, baseRun, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, baseRun, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 	baseFindings, err := q.ListFindingsByRun(ctx, runID)
@@ -2001,7 +2001,7 @@ func TestRelocationSupersedes(t *testing.T) {
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
 	relocated := sameRunFinding(30)
 	relocated.AnchorSnippet = "different snippet"
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{relocated}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings relocated: %v", err)
 	}
 	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
@@ -2037,7 +2037,7 @@ func TestSameRunDuplicateCollapse(t *testing.T) {
 	dupA := sameRunFinding(12)
 	dupB := sameRunFinding(12)
 	dupB.BodyMarkdown = "different wording"
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{dupA, dupB}}, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{dupA, dupB}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -2098,7 +2098,7 @@ func TestMissingFindingFixed(t *testing.T) {
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
 	mr, _ := q.GetMergeRequest(ctx, mrID)
-	if err := activateSingleFinding(ctx, q, run, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, run, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 
@@ -2113,7 +2113,7 @@ func TestMissingFindingFixed(t *testing.T) {
 	remaining.CanonicalKey = "nil-deref:foo-service:reviewed-remaining"
 	remaining.Symbol = "(*Service).DoReviewedWork"
 	remaining.AnchorSnippet = "return *reviewedPtr"
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{remaining}}, map[string]struct{}{normalizePath(remaining.Path): {}}, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{remaining}}, map[string]struct{}{normalizePath(remaining.Path): {}}, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -2133,7 +2133,7 @@ func TestMissingFindingStale(t *testing.T) {
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
 	mr, _ := q.GetMergeRequest(ctx, mrID)
-	if err := activateSingleFinding(ctx, q, run, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, run, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 
@@ -2148,7 +2148,7 @@ func TestMissingFindingStale(t *testing.T) {
 	reviewedOtherPath.CanonicalKey = "nil-deref:bar-service:stale-scope"
 	reviewedOtherPath.Symbol = "(*Service).DoOtherWork"
 	reviewedOtherPath.AnchorSnippet = "return *otherPtr"
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedOtherPath}}, map[string]struct{}{normalizePath(reviewedOtherPath.Path): {}}, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedOtherPath}}, map[string]struct{}{normalizePath(reviewedOtherPath.Path): {}}, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -2168,7 +2168,7 @@ func TestMissingFindingNoReviewedScopeNoTransition(t *testing.T) {
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
 	mr, _ := q.GetMergeRequest(ctx, mrID)
-	if err := activateSingleFinding(ctx, q, run, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, run, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 
@@ -2178,7 +2178,7 @@ func TestMissingFindingNoReviewedScopeNoTransition(t *testing.T) {
 	}
 	newRunID, _ := res.LastInsertId()
 	newRun, _ := q.GetReviewRun(ctx, newRunID)
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: nil}, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -2198,7 +2198,7 @@ func TestDeletedFileFixed(t *testing.T) {
 	_, _, mrID, runID := seedRun(t, ctx, q)
 	run, _ := q.GetReviewRun(ctx, runID)
 	mr, _ := q.GetMergeRequest(ctx, mrID)
-	if err := activateSingleFinding(ctx, q, run, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, run, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 
@@ -2215,7 +2215,7 @@ func TestDeletedFileFixed(t *testing.T) {
 	deleted.CanonicalKey = "deleted:nil-deref:foo-service"
 	deleted.NewLine = nil
 	deleted.OldLine = func() *int32 { v := int32(12); return &v }()
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{deleted}}, map[string]struct{}{normalizePath(deleted.Path): {}}, map[string]struct{}{normalizePath(deleted.Path): {}}); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{deleted}}, map[string]struct{}{normalizePath(deleted.Path): {}}, map[string]struct{}{normalizePath(deleted.Path): {}}); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	newRunFindings, err := q.ListFindingsByRun(ctx, newRunID)
@@ -2248,7 +2248,7 @@ func TestReviewedCleanPathBecomesFixedAfterCarryForwardRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMergeRequest: %v", err)
 	}
-	if err := activateSingleFinding(ctx, q, baseRun, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, baseRun, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 
@@ -2264,7 +2264,7 @@ func TestReviewedCleanPathBecomesFixedAfterCarryForwardRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReviewRun carry forward: %v", err)
 	}
-	if err := persistFindings(ctx, q, carryForwardRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", carryForwardRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, map[string]struct{}{normalizePath("src/service/foo.go"): {}}, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), carryForwardRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", carryForwardRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, map[string]struct{}{normalizePath("src/service/foo.go"): {}}, nil); err != nil {
 		t.Fatalf("persistFindings carry forward: %v", err)
 	}
 
@@ -2294,7 +2294,7 @@ func TestReviewedCleanPathBecomesFixedAfterCarryForwardRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReviewRun clean: %v", err)
 	}
-	if err := persistFindings(ctx, q, cleanRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", cleanRunID), Summary: "summary", Status: "completed", Findings: nil}, map[string]struct{}{normalizePath("src/service/foo.go"): {}}, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), cleanRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", cleanRunID), Summary: "summary", Status: "completed", Findings: nil}, map[string]struct{}{normalizePath("src/service/foo.go"): {}}, nil); err != nil {
 		t.Fatalf("persistFindings clean: %v", err)
 	}
 
@@ -2324,7 +2324,7 @@ func TestDeletedFileFixedAfterCarryForwardRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMergeRequest: %v", err)
 	}
-	if err := activateSingleFinding(ctx, q, baseRun, mr, sameRunFinding(12)); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, baseRun, mr, sameRunFinding(12)); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 
@@ -2340,7 +2340,7 @@ func TestDeletedFileFixedAfterCarryForwardRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReviewRun carry forward: %v", err)
 	}
-	if err := persistFindings(ctx, q, carryForwardRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", carryForwardRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, map[string]struct{}{normalizePath("src/service/foo.go"): {}}, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), carryForwardRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", carryForwardRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, map[string]struct{}{normalizePath("src/service/foo.go"): {}}, nil); err != nil {
 		t.Fatalf("persistFindings carry forward: %v", err)
 	}
 
@@ -2371,7 +2371,7 @@ func TestDeletedFileFixedAfterCarryForwardRerun(t *testing.T) {
 	deleted.CanonicalKey = "deleted:nil-deref:foo-service"
 	deleted.NewLine = nil
 	deleted.OldLine = func() *int32 { v := int32(12); return &v }()
-	if err := persistFindings(ctx, q, deletedRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", deletedRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{deleted}}, map[string]struct{}{normalizePath(deleted.Path): {}}, map[string]struct{}{normalizePath(deleted.Path): {}}); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), deletedRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", deletedRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{deleted}}, map[string]struct{}{normalizePath(deleted.Path): {}}, map[string]struct{}{normalizePath(deleted.Path): {}}); err != nil {
 		t.Fatalf("persistFindings deleted: %v", err)
 	}
 
@@ -2426,7 +2426,7 @@ func TestMixedScopeMissingFindingStaysStale(t *testing.T) {
 	mr, _ := q.GetMergeRequest(ctx, mrID)
 
 	baseFinding := sameRunFinding(12)
-	if err := activateSingleFinding(ctx, q, run, mr, baseFinding); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, run, mr, baseFinding); err != nil {
 		t.Fatalf("activateSingleFinding base: %v", err)
 	}
 	baseRows, err := q.ListFindingsByRun(ctx, runID)
@@ -2441,7 +2441,7 @@ func TestMixedScopeMissingFindingStaysStale(t *testing.T) {
 	otherFinding.CanonicalKey = "nil-deref:bar-service"
 	otherFinding.Symbol = "(*Service).DoOtherWork"
 	otherFinding.AnchorSnippet = "return *otherPtr"
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", run.ID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{otherFinding}}, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", run.ID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{otherFinding}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings other: %v", err)
 	}
 	baseRows, err = q.ListFindingsByRun(ctx, runID)
@@ -2472,7 +2472,7 @@ secondActiveReady:
 	reviewedAbsentReplacement.CanonicalKey = otherFinding.CanonicalKey
 	reviewedAbsentReplacement.Symbol = otherFinding.Symbol
 	reviewedAbsentReplacement.AnchorSnippet = otherFinding.AnchorSnippet
-	if err := persistFindings(ctx, q, newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedAbsentReplacement}}, map[string]struct{}{normalizePath(reviewedAbsentReplacement.Path): {}}, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), newRun, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", newRunID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{reviewedAbsentReplacement}}, map[string]struct{}{normalizePath(reviewedAbsentReplacement.Path): {}}, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 
@@ -2503,7 +2503,7 @@ func TestConfidenceThresholdFilter(t *testing.T) {
 	if _, err := q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{ProjectID: projectID, ConfidenceThreshold: 0.95, SeverityThreshold: "low", IncludePaths: json.RawMessage("[]"), ExcludePaths: json.RawMessage("[]"), Extra: json.RawMessage("{}")}); err != nil {
 		t.Fatalf("InsertProjectPolicy: %v", err)
 	}
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{sameRunFinding(12)}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -2531,7 +2531,7 @@ func TestSeverityThresholdFilter(t *testing.T) {
 	}
 	lowSeverity := sameRunFinding(12)
 	lowSeverity.Severity = "medium"
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{lowSeverity}}, nil, nil); err != nil {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", runID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{lowSeverity}}, nil, nil); err != nil {
 		t.Fatalf("persistFindings: %v", err)
 	}
 	findings, err := q.ListFindingsByRun(ctx, runID)
@@ -2546,8 +2546,8 @@ func TestSeverityThresholdFilter(t *testing.T) {
 	}
 }
 
-func activateSingleFinding(ctx context.Context, q *db.Queries, run db.ReviewRun, mr db.MergeRequest, finding ReviewFinding) error {
-	if err := persistFindings(ctx, q, run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", run.ID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{finding}}, nil, nil); err != nil {
+func activateSingleFinding(ctx context.Context, sqlDB *sql.DB, q *db.Queries, run db.ReviewRun, mr db.MergeRequest, finding ReviewFinding) error {
+	if err := persistFindings(ctx, NewSQLProcessorStore(sqlDB), run, mr, ReviewResult{SchemaVersion: "1.0", ReviewRunID: fmt.Sprintf("%d", run.ID), Summary: "summary", Status: "completed", Findings: []ReviewFinding{finding}}, nil, nil); err != nil {
 		return err
 	}
 	findings, err := q.ListFindingsByRun(ctx, run.ID)
@@ -2784,7 +2784,7 @@ func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
 		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "enterprise"},
 		Trusted:         ctxpkg.TrustedRules{PlatformPolicy: "platform"},
 	}}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB)).WithRegistry(registry)
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB)).WithRegistry(registry)
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-route", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
 	}
@@ -2836,7 +2836,7 @@ func TestProviderRoutePolicySelectsRuntimeProvider(t *testing.T) {
 	enterpriseProv.response.Result.ReviewRunID = fmt.Sprintf("%d", runID2)
 	registry2 := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
 	registry2.Register("enterprise", enterpriseProv)
-	processor2 := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader2, nil, NewDBAuditLogger(sqlDB)).WithRegistry(registry2)
+	processor2 := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader2, nil, NewDBAuditLogger(sqlDB)).WithRegistry(registry2)
 	outcome2, err := processor2.ProcessRun(ctx, run2)
 	if err != nil {
 		t.Fatalf("ProcessRun with default route: %v", err)
@@ -2906,7 +2906,7 @@ func TestRunScopeProviderRouteOverridesPolicyRoute(t *testing.T) {
 		t.Fatalf("GetReviewRun: %v", err)
 	}
 
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB)).WithRegistry(registry)
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB)).WithRegistry(registry)
 	outcome, err := processor.ProcessRun(ctx, run)
 	if err != nil {
 		t.Fatalf("ProcessRun: %v", err)
@@ -2939,7 +2939,7 @@ func TestProcessRunUsesActiveFindingsForRequestedChangesStatus(t *testing.T) {
 	}
 	baseFinding := sameRunFinding(12)
 	baseFinding.Path = "src/service/foo.go"
-	if err := activateSingleFinding(ctx, q, baseRun, mr, baseFinding); err != nil {
+	if err := activateSingleFinding(ctx, sqlDB, q, baseRun, mr, baseFinding); err != nil {
 		t.Fatalf("activateSingleFinding: %v", err)
 	}
 
@@ -3001,7 +3001,7 @@ func TestProcessRunUsesActiveFindingsForRequestedChangesStatus(t *testing.T) {
 		ResponsePayload: map[string]any{},
 	}}
 
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 	outcome, err := processor.ProcessRun(ctx, run)
 	if err != nil {
 		t.Fatalf("ProcessRun: %v", err)
@@ -3090,7 +3090,7 @@ func TestProviderRouteEndToEnd(t *testing.T) {
 	}}
 	processor := NewProcessor(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		sqlDB, gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB),
+		NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB),
 	).WithRegistry(registry)
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-e2e", ID: runID}); err != nil {
@@ -3214,7 +3214,7 @@ func TestProviderFallbackStillWorksWithPolicyRoute(t *testing.T) {
 	}}
 	processor := NewProcessor(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		sqlDB, gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB),
+		NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, nil, NewDBAuditLogger(sqlDB),
 	).WithRegistry(registry)
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-fallback", ID: runID}); err != nil {
@@ -3371,7 +3371,7 @@ func TestDegradationSummaryPersistedForWriter(t *testing.T) {
 		})
 	}
 	provider := &fakeProvider{}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
@@ -3440,7 +3440,7 @@ func TestDegradationSummaryNoteIncludesSkippedFiles(t *testing.T) {
 		})
 	}
 	provider := &fakeProvider{}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
@@ -3680,7 +3680,7 @@ func TestProcessRunWithSummaryProvider(t *testing.T) {
 		Tokens:  30,
 		Model:   "summary-model",
 	}}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithSummaryProvider(summaryProv)
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithSummaryProvider(summaryProv)
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-summary", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
@@ -3740,7 +3740,7 @@ func TestProcessRunWithSummaryProviderFailure(t *testing.T) {
 	}}
 	// Summary provider that fails — should not block the review.
 	summaryProv := &fakeSummaryProvider{err: fmt.Errorf("summary provider error")}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithSummaryProvider(summaryProv)
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB)).WithSummaryProvider(summaryProv)
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-summary-fail", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
@@ -3786,7 +3786,7 @@ func TestProcessRunWithoutSummaryProvider(t *testing.T) {
 		ResponsePayload: map[string]any{},
 	}}
 	// No summary provider — should behave exactly as before.
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-no-summary", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
@@ -3835,7 +3835,7 @@ func TestProcessRunContinuesWhenOutputLanguagePersistenceFails(t *testing.T) {
 		Latency:         10 * time.Millisecond,
 		ResponsePayload: map[string]any{},
 	}}
-	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
 
 	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-output-language", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun: %v", err)
