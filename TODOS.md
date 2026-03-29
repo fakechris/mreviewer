@@ -1,19 +1,5 @@
 # TODOS
 
-## LLM / Consensus
-
-### Investigate existing CLI path before building cmd/review-cli
-
-**What:** `cmd/manual-trigger` + `scripts/review-mr.sh` already provide CLI invocation with provider-route override and Docker-based local usage.
-
-**Why:** Building a second CLI entry point may duplicate existing functionality. The simpler path might be to package the existing manual-trigger as a Docker image with documentation.
-
-**Context:** Codex flagged this: the existing manual trigger requires DB (MySQL), but it exercises the full product pipeline (history, dedup, discussion memory). A new stateless CLI without DB is "a generic diff-to-LLM wrapper wearing the same name." Investigation should determine: (1) Can manual-trigger work with a lightweight in-memory/SQLite stub? (2) Is "full pipeline in Docker Compose" sufficient as lightweight deploy? (3) Is the true CLI need for "no persistence" or just "easy setup"?
-
-**Effort:** S (investigation only)
-**Priority:** P0
-**Depends on:** None — informs CLI architecture decision
-
 ## Review Quality
 
 ### Review Dashboard (Grafana templates)
@@ -40,19 +26,7 @@
 
 **Effort:** XL
 **Priority:** P2
-**Depends on:** CLI architecture decision (P0 investigation)
-
-### Multi-model semantic dedup (LLM-based)
-
-**What:** For cross-model findings that rough matching misses, use lightweight LLM call for semantic comparison.
-
-**Why:** Improves consensus precision beyond canonical_key+symbol+line-window matching.
-
-**Context:** CEO plan v1.1. Prompt skeleton: "Are these two code review findings describing the same issue? JSON: {same: bool, reason: string}". Failure fallback: treat as different issues (conservative). ~5h CC estimated.
-
-**Effort:** M
-**Priority:** P2
-**Depends on:** P2 consensus rough matching
+**Depends on:** ProcessorStore interface (completed)
 
 ## Completed
 
@@ -67,3 +41,11 @@ Added `SubProviderResult` struct and `SubProviderResults []SubProviderResult` fi
 ### Verify domestic model OpenAI compatibility
 **Completed:** v0.19.2 (2025-03-25) — PR #16
 Implemented `OpenAICompatMode` with per-feature toggles (`UseSystemRole`, `DropParallelToolCalls`, `DropStrictSchema`, `DropReasoningEffort`, `UseMaxTokens`). Added `DeepSeekCompatMode()` preset. Adapter code replaces assumption of "zero code changes."
+
+### Investigate existing CLI path before building cmd/review-cli
+**Completed:** v0.19.3 (2026-03-26)
+Investigation found `cmd/manual-trigger` exercises full pipeline requiring MySQL (15+ queries). Extracted `ProcessorStore` interface as foundation for future stateless CLI / SQLite backend. Separate `cmd/review-cli` not needed — `ProcessorStore` enables swappable storage.
+
+### Multi-model semantic dedup (LLM-based)
+**Completed:** v0.19.3 (2026-03-26)
+Added three-pass finding dedup: anchor fingerprint → semantic fingerprint → LLM-based comparison via `SemanticMatcher` interface. `LLMSemanticMatcher` calls OpenAI-compatible endpoint. Conservative fallback on errors. 9 new tests (unit + integration).
