@@ -32,11 +32,7 @@ services:
       retries: 10
 
   migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        TARGET_CMD: ./cmd/worker
+    image: fakechris/mreviewer-worker:main
     container_name: mreviewer-migrate
     restart: "no"
     env_file:
@@ -50,11 +46,7 @@ services:
     command: ["/app/migrate"]
 
   ingress:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        TARGET_CMD: ./cmd/ingress
+    image: fakechris/mreviewer-ingress:main
     container_name: mreviewer-ingress
     restart: unless-stopped
     env_file:
@@ -77,11 +69,7 @@ services:
       retries: 10
 
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        TARGET_CMD: ./cmd/worker
+    image: fakechris/mreviewer-worker:main
     container_name: mreviewer-worker
     restart: unless-stopped
     env_file:
