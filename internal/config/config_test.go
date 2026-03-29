@@ -328,6 +328,42 @@ func TestConfigParsesLLMRoutesFromYAML(t *testing.T) {
 	}
 }
 
+func TestConfigExpandsEnvVarsInsideYAML(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("OPENAI_API_KEY", "openai-from-env")
+	t.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+	content := `llm:
+  default_route: openai
+  fallback_route: openai
+  routes:
+    openai:
+      provider: openai
+      base_url: ${OPENAI_BASE_URL}
+      api_key: ${OPENAI_API_KEY}
+      model: gpt-5.4
+      output_mode: json_schema
+      max_completion_tokens: 12000
+`
+	if err := os.WriteFile(yamlPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing yaml: %v", err)
+	}
+
+	cfg, err := Load(yamlPath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	route := cfg.LLM.Routes["openai"]
+	if route.BaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("route.BaseURL = %q, want env-expanded base URL", route.BaseURL)
+	}
+	if route.APIKey != "openai-from-env" {
+		t.Fatalf("route.APIKey = %q, want env-expanded api key", route.APIKey)
+	}
+}
+
 func TestConfigEnvOverridesLLMRoutePointers(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "config.yaml")

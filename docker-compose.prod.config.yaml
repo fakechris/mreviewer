@@ -1,0 +1,8 @@
+services:
+  ingress:
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+
+  worker:
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro

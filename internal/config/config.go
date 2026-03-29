@@ -112,6 +112,7 @@ func loadYAML(cfg *Config, path string) error {
 		}
 		return err
 	}
+	data = []byte(os.ExpandEnv(string(data)))
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return fmt.Errorf("parsing yaml: %w", err)
 	}

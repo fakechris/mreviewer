@@ -22,3 +22,9 @@ jobs:
 
     - name: Test
       run: go test -v ./...
+
+    - name: Script Tests
+      run: |
+        bash scripts/init-local-env_test.sh
+        bash scripts/review-mr_test.sh
+        bash scripts/verify-onboarding.sh
