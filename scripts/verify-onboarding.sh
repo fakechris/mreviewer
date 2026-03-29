@@ -9,11 +9,21 @@ fail() {
   exit 1
 }
 
+pattern_matches() {
+  local pattern="$1"
+  local file="$2"
+  if command -v rg >/dev/null 2>&1; then
+    rg -q --multiline "$pattern" "$file"
+    return
+  fi
+  grep -Eq "$pattern" "$file"
+}
+
 require_pattern() {
   local file="$1"
   local pattern="$2"
   local description="$3"
-  if ! rg -q --multiline "$pattern" "$file"; then
+  if ! pattern_matches "$pattern" "$file"; then
     fail "$description"
   fi
 }
@@ -22,7 +32,7 @@ forbid_pattern() {
   local file="$1"
   local pattern="$2"
   local description="$3"
-  if rg -q --multiline "$pattern" "$file"; then
+  if pattern_matches "$pattern" "$file"; then
     fail "$description"
   fi
 }
@@ -58,7 +68,7 @@ require_pattern "docker-compose.prod.config.yaml" "/app/config.yaml" "docker-com
 
 # Developer compose must run local source, not prebuilt images.
 require_pattern "docker-compose.yaml" "build:" "docker-compose.yaml must build local images for developer workflow"
-if rg -q "container_name:" docker-compose.yaml docker-compose.prod.yaml; then
+if pattern_matches "container_name:" docker-compose.yaml || pattern_matches "container_name:" docker-compose.prod.yaml; then
   fail "compose files must not hard-code container_name values"
 fi
 
