@@ -16,53 +16,98 @@ AI-powered Code Review for GitLab Merge Requests. Self-hosted, multi-model suppo
 
 ## Quick Start
 
-### Two Ways to Deploy
-
-**Method 1: No Git Required** (Recommended for beginners)
-- Download 2 files: `docker-compose.prod.yaml` + `.env`
-- Edit `.env` with your credentials
-- Run: `docker-compose -f docker-compose.prod.yaml up -d`
-
-**Method 2: Full Clone** (For developers)
-- Clone repo, configure `.env`, run `docker-compose up -d`
-
-👉 **Detailed guide**: [QUICKSTART.en.md](./QUICKSTART.en.md) | [快速开始指南](./QUICKSTART.zh-CN.md)
-
 ### Prerequisites
 
 - Docker & Docker Compose
 - GitLab instance with API access
 - LLM provider API key (MiniMax, OpenAI, etc.)
 
-### Minimal Example (Method 1)
+### Method 1: Minimal Setup (No Git Required)
 
-1. Download files:
+**For beginners** - Download 2 files and run
+
+1. **Download files**:
    - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
    - [.env template](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example) (rename to `.env`)
 
-2. Edit `.env`:
+2. **Edit `.env`**:
+
+**Option A: MiniMax (Simplest)**
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
+GITLAB_WEBHOOK_SECRET=your_webhook_secret
 MINIMAX_API_KEY=your_minimax_key
 ```
 
-3. Start:
+**Option B: Anthropic Claude**
+```bash
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+GITLAB_WEBHOOK_SECRET=your_webhook_secret
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+ANTHROPIC_API_KEY=your_anthropic_key
+ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+```
+
+**Option C: Other Anthropic-compatible providers**
+```bash
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+GITLAB_WEBHOOK_SECRET=your_webhook_secret
+ANTHROPIC_BASE_URL=https://your-provider.com/v1
+ANTHROPIC_API_KEY=your_key
+ANTHROPIC_MODEL=your_model
+```
+
+For OpenAI, DeepSeek, or multiple providers, edit `config.yaml`. See [config.yaml](./config.yaml) for details.
+
+3. **Start services**:
 ```bash
 docker-compose -f docker-compose.prod.yaml up -d
 ```
 
-Images auto-pulled from Docker Hub:
-- `fakechris/mreviewer-worker:main`
-- `fakechris/mreviewer-ingress:main`
+4. **Verify**:
+```bash
+docker-compose -f docker-compose.prod.yaml logs -f worker
+```
 
-### 3. Configure GitLab Webhook
+### Method 2: Full Clone (For Developers)
 
-In your GitLab project:
-- Settings → Webhooks
-- URL: `http://your-server:3100/webhook`
-- Secret: (value from `GITLAB_WEBHOOK_SECRET` in `.env`)
-- Trigger: Merge request events
+**For developers** - Clone repo and customize
+
+```bash
+git clone https://github.com/fakechris/mreviewer.git
+cd mreviewer
+cp .env.example .env
+# Edit .env with your credentials
+docker-compose up -d
+```
+
+### Configure GitLab Webhook
+
+**Required for automatic review**
+
+1. Go to GitLab project → Settings → Webhooks
+2. URL: `http://your-server:3100/webhook`
+3. Secret: Value from `GITLAB_WEBHOOK_SECRET` in `.env`
+4. Trigger: Check "Merge request events"
+5. Click "Add webhook"
+
+📖 Detailed webhook setup: [WEBHOOK.md](./WEBHOOK.md)
+
+### Manual Trigger (Optional)
+
+Trigger review without webhook:
+
+```bash
+docker exec -it mreviewer-worker /app/manual-trigger \
+  --project-id 123 \
+  --mr-iid 456 \
+  --wait
+```
+
+**Note**: Requires `GITLAB_BASE_URL`, `GITLAB_TOKEN`, and LLM API keys configured in `.env`
 
 ## Architecture
 
@@ -76,14 +121,14 @@ GitLab → ingress (webhook) → MySQL/SQLite
 
 ## Documentation
 
-- [Quick Start Guide](./QUICKSTART.md)
-- [GitLab Webhook Setup](./WEBHOOK.md)
-- [Docker Deployment](./DEPLOYMENT.md)
-- [Configuration File](./config.yaml)
+- [GitLab Webhook Setup](./WEBHOOK.md) - Three configuration methods (project/group/system)
+- [Docker Deployment](./DEPLOYMENT.md) - Build and deploy to production
+- [Contributing Guide](./CONTRIBUTING.md) - How to contribute
+- [Configuration](./config.yaml) - Full configuration reference
 
 ## Roadmap
 
-See [TODOS.md](./TODOS.md) for current priorities and [Strategic Direction](./docs/designs/strategic-direction.md) for long-term vision.
+See [TODOS.md](./TODOS.md) for current priorities.
 
 ## License
 
