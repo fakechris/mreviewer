@@ -133,8 +133,11 @@ func (q *Queries) MarkReviewRunRetryableFailure(ctx context.Context, arg db.Mark
 
 // ReapStaleRunningRuns: datetime() replaces MySQL's NOW() + INTERVAL / NOW() - INTERVAL.
 func (q *Queries) ReapStaleRunningRuns(ctx context.Context, dateSUB interface{}) (int64, error) {
+	// Build the datetime modifier string (e.g. "-30 minutes") and pass it as
+	// a parameter to avoid SQL injection via the dateSUB value.
+	modifier := fmt.Sprintf("-%v minutes", dateSUB)
 	result, err := q.db.ExecContext(ctx,
-		fmt.Sprintf(`UPDATE review_runs
+		`UPDATE review_runs
 		 SET status = 'failed',
 		     error_code = 'worker_timeout',
 		     error_detail = 'Run exceeded claim timeout and was reaped for retry',
@@ -142,7 +145,7 @@ func (q *Queries) ReapStaleRunningRuns(ctx context.Context, dateSUB interface{})
 		     next_retry_at = datetime('now', '+30 seconds'),
 		     updated_at = CURRENT_TIMESTAMP
 		 WHERE status = 'running'
-		   AND claimed_at < datetime('now', '-%v minutes')`, dateSUB))
+		   AND claimed_at < datetime('now', ?)`, modifier)
 	if err != nil {
 		return 0, err
 	}

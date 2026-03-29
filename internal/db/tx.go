@@ -15,6 +15,10 @@ import (
 // is scoped to the transaction and must be used for all DB work.
 type TxFunc func(ctx context.Context, q *Queries) error
 
+// StoreTxFunc is the callback executed inside a transaction using the Store
+// interface. This allows callers to remain dialect-agnostic (MySQL vs SQLite).
+type StoreTxFunc func(ctx context.Context, s Store) error
+
 // RunTx executes fn inside a single database transaction. If fn returns a
 // non-nil error or panics the transaction is rolled back; otherwise it is
 // committed. This prevents partial lifecycle writes such as orphaned
@@ -38,6 +42,37 @@ func RunTx(ctx context.Context, db *sql.DB, fn TxFunc) error {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			// Preserve both the original function error and the rollback
 			// error so that errors.Is works against either one.
+			return errors.Join(err, fmt.Errorf("db: rollback: %w", rbErr))
+		}
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db: commit: %w", err)
+	}
+	return nil
+}
+
+// RunTxWithStore is like RunTx but uses a caller-supplied factory to create a
+// dialect-appropriate Store from the transaction handle. This prevents the
+// MySQL-specific New(tx) from being used when SQLite is configured.
+func RunTxWithStore(ctx context.Context, db *sql.DB, newStore func(DBTX) Store, fn StoreTxFunc) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("db: begin tx: %w", err)
+	}
+
+	s := newStore(tx)
+
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p) // re-raise after rollback
+		}
+	}()
+
+	if err := fn(ctx, s); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
 			return errors.Join(err, fmt.Errorf("db: rollback: %w", rbErr))
 		}
 		return err

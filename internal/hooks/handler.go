@@ -47,6 +47,7 @@ type RunProcessor interface {
 type CommandProcessor interface {
 	Execute(ctx context.Context, noteEvent NormalizedNoteEvent, cmd *notecommand.ParsedCommand) error
 	ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent NormalizedNoteEvent, cmd *notecommand.ParsedCommand) error
+	ExecuteWithStore(ctx context.Context, s db.Store, noteEvent NormalizedNoteEvent, cmd *notecommand.ParsedCommand) error
 }
 
 // NewHandler creates a webhook handler. The secret is the expected value of
@@ -223,8 +224,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- 6. Insert hook_event record and process run lifecycle atomically ---
-	err = db.RunTx(ctx, h.db, func(ctx context.Context, q *db.Queries) error {
-		hookEventID, err := h.insertHookEvent(ctx, q, deliveryKey, hookSource, parsed, payload, "verified", "")
+	err = db.RunTxWithStore(ctx, h.db, h.newStore, func(ctx context.Context, s db.Store) error {
+		hookEventID, err := h.insertHookEvent(ctx, s, deliveryKey, hookSource, parsed, payload, "verified", "")
 		if err != nil {
 			return err
 		}
@@ -233,7 +234,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		return h.runProcessor.ProcessEventWithQuerier(ctx, q, normalized, hookEventID)
+		return h.runProcessor.ProcessEventWithQuerier(ctx, s, normalized, hookEventID)
 	})
 	if err != nil {
 		if db.IsDuplicateKeyError(err) {
@@ -425,11 +426,11 @@ func (h *Handler) handleNoteEvent(
 
 		cmd := parseNoteCommand(noteEvent.NoteBody)
 
-		err = db.RunTx(ctx, h.db, func(ctx context.Context, q *db.Queries) error {
-			if _, insertErr := h.insertHookEvent(ctx, q, deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+		err = db.RunTxWithStore(ctx, h.db, h.newStore, func(ctx context.Context, s db.Store) error {
+			if _, insertErr := h.insertHookEvent(ctx, s, deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
 				return insertErr
 			}
-			return h.commandProcessor.ExecuteWithQuerier(ctx, q, noteEvent, cmd)
+			return h.commandProcessor.ExecuteWithStore(ctx, s, noteEvent, cmd)
 		})
 
 		if err != nil {

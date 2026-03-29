@@ -53,7 +53,11 @@ func newRuntimeDepsWithStoreFactory(logger *slog.Logger, sqlDB *sql.DB, processo
 		runtimeWriter = writer.New(discussionClient, writer.NewSQLStoreWithStore(newStore(sqlDB))).WithMetrics(registry).WithTracer(tracer)
 	}
 	processor = wrapProcessorWithWriteback(sqlDB, processor, runtimeWriter, newStore)
-	gateSvc := gate.NewService(gate.NoopStatusPublisher{}, ci, gate.NewDBAuditLogger(newStore(sqlDB)))
+	var auditLogger gate.AuditLogger
+	if sqlDB != nil {
+		auditLogger = gate.NewDBAuditLogger(newStore(sqlDB))
+	}
+	gateSvc := gate.NewService(gate.NoopStatusPublisher{}, ci, auditLogger)
 	worker := scheduler.NewService(logger, sqlDB, processor,
 		scheduler.WithMetrics(registry),
 		scheduler.WithTracer(tracer),

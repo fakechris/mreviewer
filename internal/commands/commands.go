@@ -38,16 +38,31 @@ const defaultMaxRetries = 3
 
 // Processor executes /ai-review commands against the database.
 type Processor struct {
-	logger *slog.Logger
-	db     *sql.DB
+	logger   *slog.Logger
+	db       *sql.DB
+	newStore func(db.DBTX) db.Store
+}
+
+// ProcessorOption configures optional Processor behaviour.
+type ProcessorOption func(*Processor)
+
+// WithStoreFactory overrides the default db.Store constructor used when
+// creating transactions. The default is db.New (MySQL).
+func WithStoreFactory(fn func(db.DBTX) db.Store) ProcessorOption {
+	return func(p *Processor) { p.newStore = fn }
 }
 
 // NewProcessor creates a command processor.
-func NewProcessor(logger *slog.Logger, database *sql.DB) *Processor {
-	return &Processor{
-		logger: logger,
-		db:     database,
+func NewProcessor(logger *slog.Logger, database *sql.DB, opts ...ProcessorOption) *Processor {
+	p := &Processor{
+		logger:   logger,
+		db:       database,
+		newStore: func(conn db.DBTX) db.Store { return db.New(conn) },
 	}
+	for _, o := range opts {
+		o(p)
+	}
+	return p
 }
 
 // Execute processes a parsed command in the context of a note event.
@@ -57,9 +72,20 @@ func NewProcessor(logger *slog.Logger, database *sql.DB) *Processor {
 // Kind() string and Args() string methods (used when called from the hooks
 // package to avoid circular imports).
 func (p *Processor) Execute(ctx context.Context, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
-	return db.RunTx(ctx, p.db, func(ctx context.Context, q *db.Queries) error {
-		return p.ExecuteWithQuerier(ctx, q, noteEvent, cmd)
+	return db.RunTxWithStore(ctx, p.db, p.newStore, func(ctx context.Context, s db.Store) error {
+		return p.ExecuteWithStore(ctx, s, noteEvent, cmd)
 	})
+}
+
+// ExecuteWithStore processes a parsed command using the provided Store,
+// which may be scoped to an existing transaction. This is the dialect-agnostic
+// equivalent of ExecuteWithQuerier.
+func (p *Processor) ExecuteWithStore(ctx context.Context, s db.Store, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
+	// Store satisfies the *Queries interface via embedding; delegate to the
+	// concrete Querier-based implementation. Since Store embeds Querier AND
+	// the custom methods, and our internal helpers only use Querier methods,
+	// we need a *Queries-compatible value. We use a thin adapter.
+	return p.executeWithQuerier(ctx, s, noteEvent, cmd)
 }
 
 // ExecuteWithQuerier processes a parsed command using the provided querier,
@@ -68,6 +94,12 @@ func (p *Processor) Execute(ctx context.Context, noteEvent hooks.NormalizedNoteE
 // in a single atomic transaction, preventing partial failures where the
 // hook_event is committed but the command effect is lost.
 func (p *Processor) ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
+	return p.executeWithQuerier(ctx, q, noteEvent, cmd)
+}
+
+// executeWithQuerier is the shared implementation that accepts any db.Querier,
+// allowing both *db.Queries (MySQL) and db.Store (dialect-agnostic) callers.
+func (p *Processor) executeWithQuerier(ctx context.Context, q db.Querier, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
 	if cmd == nil {
 		return nil
 	}
@@ -96,7 +128,7 @@ func (p *Processor) ExecuteWithQuerier(ctx context.Context, q *db.Queries, noteE
 
 // executeRerunWith creates a new review run for the current HEAD SHA using the
 // provided querier (which may be scoped to a caller-managed transaction).
-func (p *Processor) executeRerunWith(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
+func (p *Processor) executeRerunWith(ctx context.Context, q db.Querier, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
 	// Resolve project and MR.
 	instanceID, projectID, mrID, err := p.resolveEntities(ctx, q, noteEvent)
 	if err != nil {
@@ -155,7 +187,7 @@ func (p *Processor) executeRerunWith(ctx context.Context, q *db.Queries, noteEve
 
 // executeIgnoreWith marks the target finding as ignored and resolves the bot discussion
 // using the provided querier.
-func (p *Processor) executeIgnoreWith(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent) error {
+func (p *Processor) executeIgnoreWith(ctx context.Context, q db.Querier, noteEvent hooks.NormalizedNoteEvent) error {
 	if noteEvent.DiscussionID == "" {
 		p.logger.WarnContext(ctx, "ignore command: no discussion context, skipping",
 			"mr_iid", noteEvent.MRIID,
@@ -221,7 +253,7 @@ func (p *Processor) executeIgnoreWith(ctx context.Context, q *db.Queries, noteEv
 
 // executeResolveWith resolves the bot discussion but leaves the finding active,
 // using the provided querier.
-func (p *Processor) executeResolveWith(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent) error {
+func (p *Processor) executeResolveWith(ctx context.Context, q db.Querier, noteEvent hooks.NormalizedNoteEvent) error {
 	if noteEvent.DiscussionID == "" {
 		p.logger.WarnContext(ctx, "resolve command: no discussion context, skipping",
 			"mr_iid", noteEvent.MRIID,
@@ -278,7 +310,7 @@ func (p *Processor) executeResolveWith(ctx context.Context, q *db.Queries, noteE
 
 // executeFocusWith creates a new run scoped to matching path patterns using
 // the provided querier.
-func (p *Processor) executeFocusWith(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
+func (p *Processor) executeFocusWith(ctx context.Context, q db.Querier, noteEvent hooks.NormalizedNoteEvent, cmd *ParsedCommand) error {
 	if cmd.Args == "" {
 		p.logger.WarnContext(ctx, "focus command: no path specified, skipping",
 			"mr_iid", noteEvent.MRIID,
@@ -350,7 +382,7 @@ func (p *Processor) executeFocusWith(ctx context.Context, q *db.Queries, noteEve
 
 // resolveEntities looks up the gitlab_instance, project, and merge_request
 // records for the given note event. Returns (instanceID, projectID, mrID, err).
-func (p *Processor) resolveEntities(ctx context.Context, q *db.Queries, noteEvent hooks.NormalizedNoteEvent) (int64, int64, int64, error) {
+func (p *Processor) resolveEntities(ctx context.Context, q db.Querier, noteEvent hooks.NormalizedNoteEvent) (int64, int64, int64, error) {
 	instance, err := q.GetGitlabInstanceByURL(ctx, noteEvent.GitLabInstanceURL)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("get instance: %w", err)
