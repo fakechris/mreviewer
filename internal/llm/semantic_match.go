@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
 )
@@ -81,7 +82,7 @@ func NewLLMSemanticMatcher(baseURL, apiKey, model string) *LLMSemanticMatcher {
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     apiKey,
 		model:      model,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -96,8 +97,14 @@ Rules:
 Respond with JSON only: {"same": true/false, "reason": "one sentence explanation"}`
 
 func (m *LLMSemanticMatcher) IsSameFinding(ctx context.Context, a, b SemanticFindingSummary) (bool, error) {
-	aJSON, _ := json.Marshal(a)
-	bJSON, _ := json.Marshal(b)
+	aJSON, err := json.Marshal(a)
+	if err != nil {
+		return false, fmt.Errorf("semantic_match: marshal finding A: %w", err)
+	}
+	bJSON, err := json.Marshal(b)
+	if err != nil {
+		return false, fmt.Errorf("semantic_match: marshal finding B: %w", err)
+	}
 	userContent := fmt.Sprintf("Finding A:\n%s\n\nFinding B:\n%s", aJSON, bJSON)
 
 	payload := map[string]any{
