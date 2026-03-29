@@ -7,6 +7,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 )
 
+
 // ProcessorStore abstracts all database operations used by Processor and its
 // supporting functions (persistFindings, persistSummaryNoteFallback, etc.).
 // This interface enables testing with fakes and future alternative backends
@@ -39,17 +40,16 @@ type ProcessorStore interface {
 	GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg db.GetGitlabDiscussionByMergeRequestAndFindingParams) (db.GitlabDiscussion, error)
 }
 
-// SQLProcessorStore wraps *db.Queries and *sql.DB to implement ProcessorStore.
+// SQLProcessorStore wraps *db.Queries to implement ProcessorStore.
 // This is the default production implementation — zero behavior change from
 // the previous direct-access pattern.
 type SQLProcessorStore struct {
 	queries *db.Queries
-	sqlDB   *sql.DB
 }
 
 // NewSQLProcessorStore creates a ProcessorStore backed by MySQL via sqlc-generated queries.
 func NewSQLProcessorStore(sqlDB *sql.DB) *SQLProcessorStore {
-	return &SQLProcessorStore{queries: db.New(sqlDB), sqlDB: sqlDB}
+	return &SQLProcessorStore{queries: db.New(sqlDB)}
 }
 
 func (s *SQLProcessorStore) GetMergeRequest(ctx context.Context, id int64) (db.MergeRequest, error) {
@@ -77,8 +77,10 @@ func (s *SQLProcessorStore) UpdateReviewRunStatus(ctx context.Context, arg db.Up
 }
 
 func (s *SQLProcessorStore) UpdateRunScopeJSON(ctx context.Context, runID int64, scopeJSON []byte) error {
-	_, err := s.sqlDB.ExecContext(ctx, "UPDATE review_runs SET scope_json = ? WHERE id = ?", scopeJSON, runID)
-	return err
+	return s.queries.UpdateRunScopeJSON(ctx, db.UpdateRunScopeJSONParams{
+		ScopeJson: scopeJSON,
+		ID:        runID,
+	})
 }
 
 func (s *SQLProcessorStore) ListActiveFindingsByMR(ctx context.Context, mergeRequestID int64) ([]db.ReviewFinding, error) {

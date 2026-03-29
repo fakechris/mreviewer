@@ -420,3 +420,19 @@ func (q *Queries) UpdateReviewRunStatus(ctx context.Context, arg UpdateReviewRun
 	)
 	return err
 }
+
+const updateRunScopeJSON = `-- name: UpdateRunScopeJSON :exec
+UPDATE review_runs
+SET scope_json = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type UpdateRunScopeJSONParams struct {
+	ScopeJson json.RawMessage `json:"scope_json"`
+	ID        int64           `json:"id"`
+}
+
+func (q *Queries) UpdateRunScopeJSON(ctx context.Context, arg UpdateRunScopeJSONParams) error {
+	_, err := q.db.ExecContext(ctx, updateRunScopeJSON, arg.ScopeJson, arg.ID)
+	return err
+}
