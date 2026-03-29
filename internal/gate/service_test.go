@@ -150,7 +150,7 @@ func TestParserErrorDoesNotBlockThreadsResolved(t *testing.T) {
 func TestAuditTrailCompleteness(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
-	dbtest.MigrateUp(t, sqlDB, "/Users/chris/workspace/mreviewer/migrations")
+	dbtest.MigrateUp(t, sqlDB, "../../migrations")
 	queries := db.New(sqlDB)
 	audit := NewDBAuditLogger(queries)
 	run := db.ReviewRun{ID: 55}

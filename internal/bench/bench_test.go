@@ -26,7 +26,7 @@ import (
 
 const (
 	benchmarkEvidencePath = "testdata/bench/runtime_evidence.json"
-	migrationsDir         = "/Users/chris/workspace/mreviewer/migrations"
+	migrationsDir         = "../../migrations"
 )
 
 type CorpusScenario struct {
@@ -119,8 +119,7 @@ func TestBenchmarkCorpus(t *testing.T) {
 		t.Fatalf("large scenarios = %d, want at least 1", largeCount)
 	}
 
-	reportPath := filepath.Join("/Users/chris/workspace/mreviewer", benchmarkEvidencePath)
-	data, err := os.ReadFile(reportPath)
+	data, err := os.ReadFile(benchmarkEvidencePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			t.Skip("benchmark evidence file not found, run with MREVIEWER_WRITE_BENCH_EVIDENCE=1 to generate")
@@ -533,7 +532,7 @@ func writeEvidenceReport(t testing.TB, report EvidenceReport) {
 	if err != nil {
 		t.Fatalf("MarshalIndent: %v", err)
 	}
-	path := filepath.Join("/Users/chris/workspace/mreviewer", benchmarkEvidencePath)
+	path := benchmarkEvidencePath
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("MkdirAll(%s): %v", filepath.Dir(path), err)
 	}
