@@ -165,7 +165,7 @@ func (s *Service) Trigger(ctx context.Context, input TriggerInput) (TriggerResul
 		ev.ScopeJSON = scopeJSON
 	}
 
-	if err := runsvc.NewService(s.logger, s.db).ProcessEvent(ctx, ev, 0); err != nil {
+	if err := runsvc.NewService(s.logger, s.db, runsvc.WithStoreFactory(s.newStore)).ProcessEvent(ctx, ev, 0); err != nil {
 		return TriggerResult{}, fmt.Errorf("manual trigger: create review run: %w", err)
 	}
 
