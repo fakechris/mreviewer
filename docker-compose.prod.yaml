@@ -1,6 +1,6 @@
 # Production Docker Compose for mreviewer
 # Download this file and create a .env file with your credentials
-# Then run: docker-compose -f docker-compose.prod.yaml up -d
+# Then run: docker compose -f docker-compose.prod.yaml up -d
 
 services:
   mysql:
@@ -63,7 +63,7 @@ services:
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
       MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-}
       MINIMAX_MODEL: ${MINIMAX_MODEL:-}
       MINIMAX_GROUP_ID: ${MINIMAX_GROUP_ID:-}
@@ -95,7 +95,7 @@ services:
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
       MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-}
       MINIMAX_MODEL: ${MINIMAX_MODEL:-}
       MINIMAX_GROUP_ID: ${MINIMAX_GROUP_ID:-}

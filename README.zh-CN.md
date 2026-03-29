@@ -52,7 +52,17 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 这条 env-only 路径适用于 MiniMax 或单一 Anthropic 兼容提供商。
 
-### 方式 1B：高级无 Git 部署（多提供商 / OpenAI / 自定义路由）
+3. **启动服务**：
+```bash
+docker compose -f docker-compose.prod.yaml up -d
+```
+
+4. **验证**：
+```bash
+docker compose -f docker-compose.prod.yaml logs -f worker
+```
+
+### 方式 2：高级无 Git 部署（多提供商 / OpenAI / 自定义路由）
 
 **适合运维/高级用户** - 下载 4 个文件并挂载自定义配置
 
@@ -69,19 +79,14 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 3. **启动服务**：
 ```bash
-docker-compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
+docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
 ```
 
 OpenAI、DeepSeek、混合路由或 SQLite 部署请走这条路径。可直接参考 [config.example.yaml](./config.example.yaml)。
 
-3. **启动服务**：
-```bash
-docker-compose -f docker-compose.prod.yaml up -d
-```
-
 4. **验证**：
 ```bash
-docker-compose -f docker-compose.prod.yaml logs -f worker
+docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml logs -f worker
 ```
 
 ### 方式 2：完整克隆（开发者）

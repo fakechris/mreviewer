@@ -52,7 +52,17 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 This env-only path is intended for MiniMax or a single Anthropic-compatible provider.
 
-### Method 1B: Advanced No-Git Setup (Multi-Provider / OpenAI / Custom Routes)
+3. **Start services**:
+```bash
+docker compose -f docker-compose.prod.yaml up -d
+```
+
+4. **Verify**:
+```bash
+docker compose -f docker-compose.prod.yaml logs -f worker
+```
+
+### Method 2: Advanced No-Git Setup (Multi-Provider / OpenAI / Custom Routes)
 
 **For operators** - Download 4 files and mount a custom config
 
@@ -69,19 +79,14 @@ This env-only path is intended for MiniMax or a single Anthropic-compatible prov
 
 3. **Start services**:
 ```bash
-docker-compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
+docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
 ```
 
 Use this path for OpenAI, DeepSeek, mixed-provider routing, or SQLite deployments. See [config.example.yaml](./config.example.yaml) for a working template.
 
-3. **Start services**:
-```bash
-docker-compose -f docker-compose.prod.yaml up -d
-```
-
 4. **Verify**:
 ```bash
-docker-compose -f docker-compose.prod.yaml logs -f worker
+docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml logs -f worker
 ```
 
 ### Method 2: Full Clone (For Developers)
