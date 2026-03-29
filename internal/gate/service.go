@@ -252,9 +252,9 @@ type DBAuditLogger struct {
 	insert func(context.Context, db.InsertAuditLogParams) error
 }
 
-func NewDBAuditLogger(queries *db.Queries) *DBAuditLogger {
+func NewDBAuditLogger(store db.Store) *DBAuditLogger {
 	return &DBAuditLogger{insert: func(ctx context.Context, arg db.InsertAuditLogParams) error {
-		_, err := queries.InsertAuditLog(ctx, arg)
+		_, err := store.InsertAuditLog(ctx, arg)
 		return err
 	}}
 }

@@ -103,6 +103,7 @@ type Service struct {
 	metrics             *metrics.Registry
 	tracer              *tracing.Recorder
 	workerConcurrency   int
+	newStore            func(db.DBTX) db.Store
 }
 
 func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts ...Option) *Service {
@@ -122,6 +123,7 @@ func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts
 		reaperInterval:      defaultReaperInterval,
 		now:                 time.Now,
 		workerConcurrency:   defaultWorkerConcurrency,
+		newStore:            defaultNewStore,
 	}
 
 	for _, opt := range opts {
@@ -223,6 +225,19 @@ func WithWorkerConcurrency(concurrency int) Option {
 		}
 	}
 }
+
+// WithStoreFactory overrides the function used to create db.Store instances.
+// This enables SQLite support by injecting sqlitedb.New instead of db.New.
+func WithStoreFactory(fn func(db.DBTX) db.Store) Option {
+	return func(s *Service) {
+		if fn != nil {
+			s.newStore = fn
+		}
+	}
+}
+
+// defaultNewStore wraps db.New to satisfy the db.Store interface.
+func defaultNewStore(conn db.DBTX) db.Store { return db.New(conn) }
 
 func NewNoopProcessor(logger *slog.Logger) Processor {
 	return FuncProcessor(func(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error) {
@@ -340,7 +355,7 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
 			return nil, fmt.Errorf("scheduler: begin claim tx: %w", err)
 		}
 
-		q := db.New(tx)
+		q := s.newStore(tx)
 		run, err := q.GetNextClaimableReviewRun(ctx)
 		if err != nil {
 			_ = tx.Rollback()
@@ -393,7 +408,7 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
 // timeout back to failed with a retry scheduled, allowing them to be
 // reclaimed by another worker.
 func (s *Service) ReapStaleRuns(ctx context.Context) (int64, error) {
-	reaped, err := db.New(s.db).ReapStaleRunningRuns(ctx, s.claimTimeoutMinutes)
+	reaped, err := s.newStore(s.db).ReapStaleRunningRuns(ctx, s.claimTimeoutMinutes)
 	if err != nil {
 		return 0, fmt.Errorf("scheduler: reap stale runs: %w", err)
 	}
@@ -442,7 +457,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 			status = "completed"
 		}
 		if status == "parser_error" {
-			currentRun, err := db.New(s.db).GetReviewRun(ctx, run.ID)
+			currentRun, err := s.newStore(s.db).GetReviewRun(ctx, run.ID)
 			if err != nil {
 				return fmt.Errorf("scheduler: reload run %d before parser_error completion: %w", run.ID, err)
 			}
@@ -452,7 +467,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 			if currentRun.Status != "parser_error" {
 				return fmt.Errorf("scheduler: run %d expected parser_error status, got %q", run.ID, currentRun.Status)
 			}
-			if err := db.New(s.db).UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
+			if err := s.newStore(s.db).UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
 				return fmt.Errorf("scheduler: mark run %d parser_error: %w", run.ID, err)
 			}
 			if err := s.persistProviderMetricsIfNeeded(ctx, run.ID, currentRun, outcome); err != nil {
@@ -482,7 +497,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		if gateResult != nil {
 			s.publishDirectStatus(ctx, *gateResult)
 		}
-		updated, err := db.New(s.db).UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
+		updated, err := s.newStore(s.db).UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
 			ProviderLatencyMs:   outcome.ProviderLatencyMs,
 			ProviderTokensTotal: outcome.ProviderTokensTotal,
 			ID:                  run.ID,
@@ -527,7 +542,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		delay := s.retryDelay(run.RetryCount)
 		nextRetryAt := s.now().Add(delay)
 
-		updated, err := db.New(s.db).MarkReviewRunRetryableFailureIfRunning(ctx, db.MarkReviewRunRetryableFailureParams{
+		updated, err := s.newStore(s.db).MarkReviewRunRetryableFailureIfRunning(ctx, db.MarkReviewRunRetryableFailureParams{
 			ErrorCode:   code,
 			ErrorDetail: nullableString(detail),
 			RetryCount:  nextRetryCount,
@@ -569,7 +584,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
 		return nil
 	}
 
-	updated, err := db.New(s.db).MarkReviewRunFailedIfRunning(ctx, db.MarkReviewRunFailedParams{
+	updated, err := s.newStore(s.db).MarkReviewRunFailedIfRunning(ctx, db.MarkReviewRunFailedParams{
 		ErrorCode:   code,
 		ErrorDetail: nullableString(detail),
 		RetryCount:  run.RetryCount,
@@ -628,7 +643,7 @@ func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outco
 	if status != "completed" && status != "requested_changes" {
 		return nil, nil
 	}
-	queries := db.New(s.db)
+	queries := s.newStore(s.db)
 	var policyPtr *db.ProjectPolicy
 	policy, err := queries.GetProjectPolicy(ctx, run.ProjectID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -727,7 +742,7 @@ func (s *Service) startSpan(ctx context.Context, name string, attrs map[string]s
 }
 
 func (s *Service) handleSkippedTerminalWrite(ctx context.Context, run db.ReviewRun, terminalState string) (db.ReviewRun, error) {
-	currentRun, err := db.New(s.db).GetReviewRun(ctx, run.ID)
+	currentRun, err := s.newStore(s.db).GetReviewRun(ctx, run.ID)
 	if err != nil {
 		return db.ReviewRun{}, fmt.Errorf("scheduler: reload run %d after skipped %s write: %w", run.ID, terminalState, err)
 	}
@@ -767,7 +782,7 @@ func (s *Service) persistProviderMetricsIfNeeded(ctx context.Context, runID int6
 	if currentRun.ProviderLatencyMs == outcome.ProviderLatencyMs && currentRun.ProviderTokensTotal == outcome.ProviderTokensTotal {
 		return nil
 	}
-	if err := db.New(s.db).UpdateReviewRunProviderMetrics(ctx, db.UpdateReviewRunProviderMetricsParams{
+	if err := s.newStore(s.db).UpdateReviewRunProviderMetrics(ctx, db.UpdateReviewRunProviderMetricsParams{
 		ProviderLatencyMs:   outcome.ProviderLatencyMs,
 		ProviderTokensTotal: outcome.ProviderTokensTotal,
 		ID:                  runID,
@@ -827,7 +842,7 @@ func defaultWorkerID() string {
 }
 
 func (s *Service) reloadRunningRun(ctx context.Context, runID int64) (db.ReviewRun, error) {
-	run, err := db.New(s.db).GetReviewRun(ctx, runID)
+	run, err := s.newStore(s.db).GetReviewRun(ctx, runID)
 	if err != nil {
 		return db.ReviewRun{}, fmt.Errorf("scheduler: reload run %d before processing: %w", runID, err)
 	}

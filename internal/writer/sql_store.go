@@ -8,7 +8,7 @@ import (
 )
 
 type SQLStore struct {
-	queries *db.Queries
+	queries db.Store
 }
 
 func NewSQLStore(sqlDB *sql.DB) *SQLStore {
@@ -16,6 +16,13 @@ func NewSQLStore(sqlDB *sql.DB) *SQLStore {
 		return nil
 	}
 	return &SQLStore{queries: db.New(sqlDB)}
+}
+
+func NewSQLStoreWithStore(store db.Store) *SQLStore {
+	if store == nil {
+		return nil
+	}
+	return &SQLStore{queries: store}
 }
 
 func (s *SQLStore) GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (db.MrVersion, error) {

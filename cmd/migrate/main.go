@@ -1,13 +1,14 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/mreviewer/mreviewer/internal/database"
 	"github.com/pressly/goose/v3"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -27,13 +28,21 @@ func run() error {
 		migrationsDir = "/app/migrations"
 	}
 
-	db, err := sql.Open("mysql", dsn)
+	db, dialect, err := database.OpenWithDialect(dsn)
 	if err != nil {
-		return fmt.Errorf("open mysql: %w", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
 
-	if err := goose.SetDialect("mysql"); err != nil {
+	gooseDialect := "mysql"
+	if dialect == database.DialectSQLite {
+		gooseDialect = "sqlite3"
+		if migrationsDir == "/app/migrations" {
+			migrationsDir = "/app/migrations_sqlite"
+		}
+	}
+
+	if err := goose.SetDialect(gooseDialect); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
 

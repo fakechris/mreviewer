@@ -20,6 +20,8 @@ type runtimeDeps struct {
 	Scheduler   *scheduler.Service
 }
 
+var defaultRuntimeNewStore = func(conn db.DBTX) db.Store { return db.New(conn) }
+
 func newRuntimeDeps(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor) runtimeDeps {
 	return newRuntimeDepsWithGatePublishers(logger, sqlDB, processor, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
 }
@@ -33,6 +35,10 @@ func newRuntimeDepsWithWriteback(logger *slog.Logger, sqlDB *sql.DB, processor s
 }
 
 func newRuntimeDepsWithWritebackAndGatePublishers(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor, discussionClient writer.DiscussionClient, status gate.StatusPublisher, ci gate.CIGatePublisher) runtimeDeps {
+	return newRuntimeDepsWithStoreFactory(logger, sqlDB, processor, discussionClient, status, ci, defaultRuntimeNewStore)
+}
+
+func newRuntimeDepsWithStoreFactory(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor, discussionClient writer.DiscussionClient, status gate.StatusPublisher, ci gate.CIGatePublisher, newStore func(db.DBTX) db.Store) runtimeDeps {
 	registry := metrics.NewRegistry()
 	tracer := tracing.NewRecorder()
 	if configurable, ok := processor.(interface {
@@ -44,24 +50,29 @@ func newRuntimeDepsWithWritebackAndGatePublishers(logger *slog.Logger, sqlDB *sq
 	}
 	var runtimeWriter *writer.Writer
 	if discussionClient != nil && sqlDB != nil {
-		runtimeWriter = writer.New(discussionClient, writer.NewSQLStore(sqlDB)).WithMetrics(registry).WithTracer(tracer)
+		runtimeWriter = writer.New(discussionClient, writer.NewSQLStoreWithStore(newStore(sqlDB))).WithMetrics(registry).WithTracer(tracer)
 	}
-	processor = wrapProcessorWithWriteback(sqlDB, processor, runtimeWriter)
-	gateSvc := gate.NewService(gate.NoopStatusPublisher{}, ci, gate.NewDBAuditLogger(db.New(sqlDB)))
+	processor = wrapProcessorWithWriteback(sqlDB, processor, runtimeWriter, newStore)
+	var auditLogger gate.AuditLogger
+	if sqlDB != nil {
+		auditLogger = gate.NewDBAuditLogger(newStore(sqlDB))
+	}
+	gateSvc := gate.NewService(gate.NoopStatusPublisher{}, ci, auditLogger)
 	worker := scheduler.NewService(logger, sqlDB, processor,
 		scheduler.WithMetrics(registry),
 		scheduler.WithTracer(tracer),
 		scheduler.WithStatusPublisher(status),
 		scheduler.WithGateService(gateSvc),
+		scheduler.WithStoreFactory(newStore),
 	)
 	return runtimeDeps{GateService: gateSvc, Metrics: registry, Tracer: tracer, Scheduler: worker}
 }
 
-func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, runtimeWriter *writer.Writer) scheduler.Processor {
+func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, runtimeWriter *writer.Writer, newStore func(db.DBTX) db.Store) scheduler.Processor {
 	if processor == nil || sqlDB == nil || runtimeWriter == nil {
 		return processor
 	}
-	queries := db.New(sqlDB)
+	queries := newStore(sqlDB)
 	return scheduler.FuncProcessor(func(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
 		outcome, err := processor.ProcessRun(ctx, run)
 		if err != nil {

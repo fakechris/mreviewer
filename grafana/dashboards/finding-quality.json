@@ -1,0 +1,155 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Findings by Severity",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT severity, COUNT(*) AS count\nFROM review_findings\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY severity\nORDER BY FIELD(severity, 'critical', 'high', 'medium', 'low', 'info')",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "critical" }, "properties": [{ "id": "color", "value": { "fixedColor": "dark-red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "high" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "medium" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "low" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] }
+        ]
+      }
+    },
+    {
+      "title": "Findings by Category",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT category, COUNT(*) AS count\nFROM review_findings\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY category\nORDER BY count DESC\nLIMIT 15",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Finding States",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT state, COUNT(*) AS count\nFROM review_findings\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY state\nORDER BY count DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Confidence Distribution",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT confidence\nFROM review_findings\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "bucketSize": 0.1 }
+    },
+    {
+      "title": "Avg Findings per Review",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 8 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(AVG(cnt), 1) AS avg_findings\nFROM (\n  SELECT review_run_id, COUNT(*) AS cnt\n  FROM review_findings\n  WHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\n  GROUP BY review_run_id\n) t",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Total Findings",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 8 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS total\nFROM review_findings\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Discussion Resolution Rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 8 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(SUM(resolved) / COUNT(*) * 100, 1) AS resolution_rate\nFROM gitlab_discussions\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" } }
+    },
+    {
+      "title": "Findings Over Time by Severity",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT\n  DATE_FORMAT(created_at, '%Y-%m-%dT%H:00:00') AS time,\n  SUM(severity = 'critical') AS critical,\n  SUM(severity = 'high') AS high,\n  SUM(severity = 'medium') AS medium,\n  SUM(severity = 'low') AS low\nFROM review_findings\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY 1\nORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "options": { "stacking": { "mode": "normal" } }
+    },
+    {
+      "title": "Top Files with Findings",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT path, COUNT(*) AS findings, \n  ROUND(AVG(confidence), 2) AS avg_confidence,\n  GROUP_CONCAT(DISTINCT severity) AS severities\nFROM review_findings\nWHERE created_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY path\nORDER BY findings DESC\nLIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["mreviewer", "quality"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_MYSQL",
+        "type": "datasource",
+        "query": "mysql",
+        "current": { "text": "MySQL", "value": "MySQL" }
+      }
+    ]
+  },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "MReviewer - Finding Quality",
+  "uid": "mreviewer-finding-quality"
+}
