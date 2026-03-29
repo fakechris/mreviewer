@@ -14,6 +14,10 @@ import (
 )
 
 func persistFindings(ctx context.Context, store ProcessorStore, run db.ReviewRun, mr db.MergeRequest, result ReviewResult, reviewedPaths, deletedPaths map[string]struct{}) error {
+	return persistFindingsWithMatcher(ctx, store, run, mr, result, reviewedPaths, deletedPaths, nil)
+}
+
+func persistFindingsWithMatcher(ctx context.Context, store ProcessorStore, run db.ReviewRun, mr db.MergeRequest, result ReviewResult, reviewedPaths, deletedPaths map[string]struct{}, matcher SemanticMatcher) error {
 	existing, err := store.ListActiveFindingsByMR(ctx, mr.ID)
 	if err != nil {
 		return err
@@ -54,7 +58,7 @@ func persistFindings(ctx context.Context, store ProcessorStore, run db.ReviewRun
 			continue
 		}
 
-		matched, err := matchExistingFinding(ctx, store, run, existing, finding)
+		matched, err := matchExistingFindingWithMatcher(ctx, store, run, existing, finding, matcher)
 		if err != nil {
 			return err
 		}
@@ -247,6 +251,10 @@ func nextFindingState(current, next string) (string, bool, error) {
 }
 
 func matchExistingFinding(ctx context.Context, store ProcessorStore, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding) (findingMatchDecision, error) {
+	return matchExistingFindingWithMatcher(ctx, store, run, existing, finding, nil)
+}
+
+func matchExistingFindingWithMatcher(ctx context.Context, store ProcessorStore, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding, matcher SemanticMatcher) (findingMatchDecision, error) {
 	for _, current := range existing {
 		if current.AnchorKind == "new_line" && finding.state == findingStateDeleted && normalizePath(current.Path) == finding.normalized.Path {
 			continue
@@ -315,6 +323,29 @@ func matchExistingFinding(ctx context.Context, store ProcessorStore, run db.Revi
 			return findingMatchDecision{skipInsert: true, existingID: current.ID}, nil
 		}
 		return findingMatchDecision{supersedeID: current.ID, existingID: current.ID}, nil
+	}
+
+	// Pass 3: LLM-based semantic comparison for same-path findings that
+	// fingerprint matching missed (e.g. cross-model terminology differences).
+	if matcher != nil {
+		newSummary := summaryFromNormalized(finding.normalized)
+		for _, current := range existing {
+			if normalizePath(current.Path) != finding.normalized.Path {
+				continue
+			}
+			if current.ReviewRunID == run.ID || (current.LastSeenRunID.Valid && current.LastSeenRunID.Int64 == run.ID) {
+				continue
+			}
+			existingSummary := summaryFromDBFinding(current)
+			same, err := matcher.IsSameFinding(ctx, existingSummary, newSummary)
+			if err != nil {
+				// Conservative: on error, treat as different findings.
+				continue
+			}
+			if same {
+				return findingMatchDecision{supersedeID: current.ID, existingID: current.ID}, nil
+			}
+		}
 	}
 
 	return findingMatchDecision{}, nil

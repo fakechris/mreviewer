@@ -33,6 +33,7 @@ type Processor struct {
 	metrics         *metrics.Registry
 	tracer          *tracing.Recorder
 	summaryProvider SummaryProvider
+	semanticMatcher SemanticMatcher
 }
 
 type GitLabReader interface {
@@ -82,6 +83,11 @@ func (p *Processor) WithTracer(recorder *tracing.Recorder) *Processor {
 
 func (p *Processor) WithSummaryProvider(sp SummaryProvider) *Processor {
 	p.summaryProvider = sp
+	return p
+}
+
+func (p *Processor) WithSemanticMatcher(m SemanticMatcher) *Processor {
+	p.semanticMatcher = m
 	return p
 }
 
@@ -294,7 +300,7 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 
 	reviewedPaths, deletedPaths := reviewedScopeFromAssembly(assembled)
 	_, endDedupe := p.startSpan(ctx, "dedupe.match", nil)
-	if err := persistFindings(ctx, p.store, run, mergeRequest, response.Result, reviewedPaths, deletedPaths); err != nil {
+	if err := persistFindingsWithMatcher(ctx, p.store, run, mergeRequest, response.Result, reviewedPaths, deletedPaths, p.semanticMatcher); err != nil {
 		endDedupe()
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist findings: %w", err))
 	}

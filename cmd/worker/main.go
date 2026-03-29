@@ -94,7 +94,7 @@ func run() int {
 	// The processor uses the registry for policy-driven provider selection.
 	// At runtime, ProcessRun calls registry.ResolveWithFallback(effectivePolicy.ProviderRoute)
 	// to pick the provider for each run, instead of always using a static default.
-	processor := llm.NewProcessor(logger, llm.NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(sqlDB)).WithRegistry(providerRegistry)
+	processor := llm.NewProcessor(logger, llm.NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(sqlDB)).WithRegistry(providerRegistry).WithSemanticMatcher(llm.NoopSemanticMatcher{})
 	statusPublisher := gate.NewGitLabStatusPublisher(gitlabClient, db.New(sqlDB))
 	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(logger, sqlDB, processor, gitlabClient, statusPublisher, gate.NoopCIGatePublisher{})
 	worker := runtimeDeps.Scheduler
