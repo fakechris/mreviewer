@@ -171,6 +171,13 @@ func (q *Queries) UpdateReviewRunStatus(ctx context.Context, arg db.UpdateReview
 	return err
 }
 
+func (q *Queries) UpdateRunScopeJSON(ctx context.Context, arg db.UpdateRunScopeJSONParams) error {
+	_, err := q.db.ExecContext(ctx,
+		`UPDATE review_runs SET scope_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		arg.ScopeJson, arg.ID)
+	return err
+}
+
 // --- Custom Store methods (conditional updates only if status='running') ---
 
 func (q *Queries) MarkReviewRunRetryableFailureIfRunning(ctx context.Context, arg db.MarkReviewRunRetryableFailureParams) (bool, error) {
