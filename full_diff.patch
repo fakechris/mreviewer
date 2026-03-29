@@ -1,0 +1,2940 @@
+diff --git a/cmd/ingress/main.go b/cmd/ingress/main.go
+index 1077ef5..3697432 100644
+--- a/cmd/ingress/main.go
++++ b/cmd/ingress/main.go
+@@ -42,23 +42,24 @@ func run() int {
+ 		"port", cfg.Port,
+ 	)
+ 
+-	// Open MySQL connection.
+-	db, err := database.Open(cfg.MySQLDSN)
++	// Open database connection (MySQL or SQLite based on DSN).
++	db, dialect, err := database.OpenWithDialect(cfg.DSN())
+ 	if err != nil {
+ 		logger.Error("failed to open database", "error", err)
+ 		return 1
+ 	}
+ 	defer db.Close()
+ 
+-	logger.Info("database connection pool initialized")
++	logger.Info("database connection pool initialized", "dialect", dialect)
+ 
+ 	// Build HTTP routes.
+ 	mux := http.NewServeMux()
+ 	mux.HandleFunc("GET /health", apphttp.NewHealthHandler(logger, db))
+ 
+ 	// Webhook ingress handler.
++	newStore := database.StoreFactory(dialect)
+ 	runProcessor := runs.NewService(logger, db)
+-	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runProcessor)
++	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runProcessor, hooks.WithHandlerStoreFactory(newStore))
+ 	commandProcessor := commands.NewProcessor(logger, db)
+ 	webhookHandler.SetCommandProcessor(commandProcessor)
+ 	mux.Handle("POST /webhook", webhookHandler)
+diff --git a/cmd/migrate/main.go b/cmd/migrate/main.go
+index dbc8227..6497072 100644
+--- a/cmd/migrate/main.go
++++ b/cmd/migrate/main.go
+@@ -1,13 +1,14 @@
+ package main
+ 
+ import (
+-	"database/sql"
+ 	"fmt"
+ 	"log"
+ 	"os"
+ 
+ 	_ "github.com/go-sql-driver/mysql"
++	"github.com/mreviewer/mreviewer/internal/database"
+ 	"github.com/pressly/goose/v3"
++	_ "modernc.org/sqlite"
+ )
+ 
+ func main() {
+@@ -27,13 +28,21 @@ func run() error {
+ 		migrationsDir = "/app/migrations"
+ 	}
+ 
+-	db, err := sql.Open("mysql", dsn)
++	db, dialect, err := database.OpenWithDialect(dsn)
+ 	if err != nil {
+-		return fmt.Errorf("open mysql: %w", err)
++		return fmt.Errorf("open database: %w", err)
+ 	}
+ 	defer db.Close()
+ 
+-	if err := goose.SetDialect("mysql"); err != nil {
++	gooseDialect := "mysql"
++	if dialect == database.DialectSQLite {
++		gooseDialect = "sqlite3"
++		if migrationsDir == "/app/migrations" {
++			migrationsDir = "/app/migrations_sqlite"
++		}
++	}
++
++	if err := goose.SetDialect(gooseDialect); err != nil {
+ 		return fmt.Errorf("set goose dialect: %w", err)
+ 	}
+ 
+diff --git a/cmd/worker/main.go b/cmd/worker/main.go
+index a5c5361..d43c508 100644
+--- a/cmd/worker/main.go
++++ b/cmd/worker/main.go
+@@ -12,7 +12,6 @@ import (
+ 
+ 	"github.com/mreviewer/mreviewer/internal/config"
+ 	"github.com/mreviewer/mreviewer/internal/database"
+-	"github.com/mreviewer/mreviewer/internal/db"
+ 	"github.com/mreviewer/mreviewer/internal/gate"
+ 	"github.com/mreviewer/mreviewer/internal/gitlab"
+ 	"github.com/mreviewer/mreviewer/internal/llm"
+@@ -37,12 +36,13 @@ func run() int {
+ 		return 1
+ 	}
+ 
+-	sqlDB, err := database.Open(cfg.MySQLDSN)
++	sqlDB, dialect, err := database.OpenWithDialect(cfg.DSN())
+ 	if err != nil {
+ 		logger.Error("failed to open database", "error", err)
+ 		return 1
+ 	}
+ 	defer sqlDB.Close()
++	logger.Info("database connected", "dialect", dialect)
+ 
+ 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+ 	defer stop()
+@@ -94,9 +94,10 @@ func run() int {
+ 	// The processor uses the registry for policy-driven provider selection.
+ 	// At runtime, ProcessRun calls registry.ResolveWithFallback(effectivePolicy.ProviderRoute)
+ 	// to pick the provider for each run, instead of always using a static default.
+-	processor := llm.NewProcessor(logger, sqlDB, gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(sqlDB)).WithRegistry(providerRegistry)
+-	statusPublisher := gate.NewGitLabStatusPublisher(gitlabClient, db.New(sqlDB))
+-	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(logger, sqlDB, processor, gitlabClient, statusPublisher, gate.NoopCIGatePublisher{})
++	newStore := database.StoreFactory(dialect)
++	processor := llm.NewProcessor(logger, sqlDB, gitlabClient, rulesLoader, nil, llm.NewDBAuditLoggerWithStore(newStore(sqlDB))).WithStoreFactory(newStore).WithRegistry(providerRegistry)
++	statusPublisher := gate.NewGitLabStatusPublisher(gitlabClient, newStore(sqlDB))
++	runtimeDeps := newRuntimeDepsWithStoreFactory(logger, sqlDB, processor, gitlabClient, statusPublisher, gate.NoopCIGatePublisher{}, newStore)
+ 	worker := runtimeDeps.Scheduler
+ 	logger.Info("worker starting", "platform_default_route", defaultRoute, "fallback_route", configuredFallbackRoute, "registry_routes", providerRegistry.Routes())
+ 	if err := worker.Run(ctx); err != nil {
+diff --git a/cmd/worker/runtime.go b/cmd/worker/runtime.go
+index 0a018fa..a64828d 100644
+--- a/cmd/worker/runtime.go
++++ b/cmd/worker/runtime.go
+@@ -20,6 +20,8 @@ type runtimeDeps struct {
+ 	Scheduler   *scheduler.Service
+ }
+ 
++var defaultRuntimeNewStore = func(conn db.DBTX) db.Store { return db.New(conn) }
++
+ func newRuntimeDeps(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor) runtimeDeps {
+ 	return newRuntimeDepsWithGatePublishers(logger, sqlDB, processor, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
+ }
+@@ -33,6 +35,10 @@ func newRuntimeDepsWithWriteback(logger *slog.Logger, sqlDB *sql.DB, processor s
+ }
+ 
+ func newRuntimeDepsWithWritebackAndGatePublishers(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor, discussionClient writer.DiscussionClient, status gate.StatusPublisher, ci gate.CIGatePublisher) runtimeDeps {
++	return newRuntimeDepsWithStoreFactory(logger, sqlDB, processor, discussionClient, status, ci, defaultRuntimeNewStore)
++}
++
++func newRuntimeDepsWithStoreFactory(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor, discussionClient writer.DiscussionClient, status gate.StatusPublisher, ci gate.CIGatePublisher, newStore func(db.DBTX) db.Store) runtimeDeps {
+ 	registry := metrics.NewRegistry()
+ 	tracer := tracing.NewRecorder()
+ 	if configurable, ok := processor.(interface {
+@@ -44,24 +50,25 @@ func newRuntimeDepsWithWritebackAndGatePublishers(logger *slog.Logger, sqlDB *sq
+ 	}
+ 	var runtimeWriter *writer.Writer
+ 	if discussionClient != nil && sqlDB != nil {
+-		runtimeWriter = writer.New(discussionClient, writer.NewSQLStore(sqlDB)).WithMetrics(registry).WithTracer(tracer)
++		runtimeWriter = writer.New(discussionClient, writer.NewSQLStoreWithStore(newStore(sqlDB))).WithMetrics(registry).WithTracer(tracer)
+ 	}
+-	processor = wrapProcessorWithWriteback(sqlDB, processor, runtimeWriter)
+-	gateSvc := gate.NewService(gate.NoopStatusPublisher{}, ci, gate.NewDBAuditLogger(db.New(sqlDB)))
++	processor = wrapProcessorWithWriteback(sqlDB, processor, runtimeWriter, newStore)
++	gateSvc := gate.NewService(gate.NoopStatusPublisher{}, ci, gate.NewDBAuditLogger(newStore(sqlDB)))
+ 	worker := scheduler.NewService(logger, sqlDB, processor,
+ 		scheduler.WithMetrics(registry),
+ 		scheduler.WithTracer(tracer),
+ 		scheduler.WithStatusPublisher(status),
+ 		scheduler.WithGateService(gateSvc),
++		scheduler.WithStoreFactory(newStore),
+ 	)
+ 	return runtimeDeps{GateService: gateSvc, Metrics: registry, Tracer: tracer, Scheduler: worker}
+ }
+ 
+-func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, runtimeWriter *writer.Writer) scheduler.Processor {
++func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, runtimeWriter *writer.Writer, newStore func(db.DBTX) db.Store) scheduler.Processor {
+ 	if processor == nil || sqlDB == nil || runtimeWriter == nil {
+ 		return processor
+ 	}
+-	queries := db.New(sqlDB)
++	queries := newStore(sqlDB)
+ 	return scheduler.FuncProcessor(func(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
+ 		outcome, err := processor.ProcessRun(ctx, run)
+ 		if err != nil {
+diff --git a/go.mod b/go.mod
+index db5a4c8..a434c58 100644
+--- a/go.mod
++++ b/go.mod
+@@ -29,6 +29,7 @@ require (
+ 	github.com/docker/docker v28.5.2+incompatible // indirect
+ 	github.com/docker/go-connections v0.6.0 // indirect
+ 	github.com/docker/go-units v0.5.0 // indirect
++	github.com/dustin/go-humanize v1.0.1 // indirect
+ 	github.com/ebitengine/purego v0.10.0 // indirect
+ 	github.com/felixge/httpsnoop v1.0.4 // indirect
+ 	github.com/go-logr/logr v1.4.3 // indirect
+@@ -38,6 +39,7 @@ require (
+ 	github.com/klauspost/compress v1.18.4 // indirect
+ 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
+ 	github.com/magiconair/properties v1.8.10 // indirect
++	github.com/mattn/go-isatty v0.0.20 // indirect
+ 	github.com/mfridman/interpolate v0.0.2 // indirect
+ 	github.com/moby/docker-image-spec v1.3.1 // indirect
+ 	github.com/moby/go-archive v0.2.0 // indirect
+@@ -47,11 +49,13 @@ require (
+ 	github.com/moby/sys/userns v0.1.0 // indirect
+ 	github.com/moby/term v0.5.2 // indirect
+ 	github.com/morikuni/aec v1.0.0 // indirect
++	github.com/ncruces/go-strftime v1.0.0 // indirect
+ 	github.com/opencontainers/go-digest v1.0.0 // indirect
+ 	github.com/opencontainers/image-spec v1.1.1 // indirect
+ 	github.com/pkg/errors v0.9.1 // indirect
+ 	github.com/pmezard/go-difflib v1.0.0 // indirect
+ 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
++	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+ 	github.com/sethvargo/go-retry v0.3.0 // indirect
+ 	github.com/shirou/gopsutil/v4 v4.26.2 // indirect
+ 	github.com/sirupsen/logrus v1.9.3 // indirect
+@@ -71,5 +75,9 @@ require (
+ 	go.uber.org/multierr v1.11.0 // indirect
+ 	golang.org/x/crypto v0.48.0 // indirect
+ 	golang.org/x/sync v0.19.0 // indirect
+-	golang.org/x/sys v0.41.0 // indirect
++	golang.org/x/sys v0.42.0 // indirect
++	modernc.org/libc v1.70.0 // indirect
++	modernc.org/mathutil v1.7.1 // indirect
++	modernc.org/memory v1.11.0 // indirect
++	modernc.org/sqlite v1.47.0 // indirect
+ )
+diff --git a/go.sum b/go.sum
+index 8f78b97..ed801c3 100644
+--- a/go.sum
++++ b/go.sum
+@@ -177,8 +177,11 @@ golang.org/x/sys v0.0.0-20190916202348-b4ddaad3f8a3/go.mod h1:h1NjWce9XRLGQEsW7w
+ golang.org/x/sys v0.0.0-20201204225414-ed752295db88/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210616094352-59db8d763f22/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.0.0-20220715151400-c0bba94af5f8/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
++golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.41.0 h1:Ivj+2Cp/ylzLiEU89QhWblYnOE9zerudt9Ftecq2C6k=
+ golang.org/x/sys v0.41.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
++golang.org/x/sys v0.42.0 h1:omrd2nAlyT5ESRdCLYdm3+fMfNFE/+Rf4bDIQImRJeo=
++golang.org/x/sys v0.42.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+ golang.org/x/term v0.40.0 h1:36e4zGLqU4yhjlmxEaagx2KuYbJq3EwY8K943ZsHcvg=
+ golang.org/x/term v0.40.0/go.mod h1:w2P8uVp06p2iyKKuvXIm7N/y0UCRt3UfJTfZ7oOpglM=
+ golang.org/x/text v0.34.0 h1:oL/Qq0Kdaqxa1KbNeMKwQq0reLCCaFtqu2eNuSeNHbk=
+@@ -205,9 +208,13 @@ gotest.tools/v3 v3.5.2 h1:7koQfIKdy+I8UTetycgUqXWSDwpgv193Ka+qRsmBY8Q=
+ gotest.tools/v3 v3.5.2/go.mod h1:LtdLGcnqToBH83WByAAi/wiwSFCArdFIUV/xxN4pcjA=
+ modernc.org/libc v1.68.0 h1:PJ5ikFOV5pwpW+VqCK1hKJuEWsonkIJhhIXyuF/91pQ=
+ modernc.org/libc v1.68.0/go.mod h1:NnKCYeoYgsEqnY3PgvNgAeaJnso968ygU8Z0DxjoEc0=
++modernc.org/libc v1.70.0 h1:U58NawXqXbgpZ/dcdS9kMshu08aiA6b7gusEusqzNkw=
++modernc.org/libc v1.70.0/go.mod h1:OVmxFGP1CI/Z4L3E0Q3Mf1PDE0BucwMkcXjjLntvHJo=
+ modernc.org/mathutil v1.7.1 h1:GCZVGXdaN8gTqB1Mf/usp1Y/hSqgI2vAGGP4jZMCxOU=
+ modernc.org/mathutil v1.7.1/go.mod h1:4p5IwJITfppl0G4sUEDtCr4DthTaT47/N3aT6MhfgJg=
+ modernc.org/memory v1.11.0 h1:o4QC8aMQzmcwCK3t3Ux/ZHmwFPzE6hf2Y5LbkRs+hbI=
+ modernc.org/memory v1.11.0/go.mod h1:/JP4VbVC+K5sU2wZi9bHoq2MAkCnrt2r98UGeSK7Mjw=
+ modernc.org/sqlite v1.46.1 h1:eFJ2ShBLIEnUWlLy12raN0Z1plqmFX9Qe3rjQTKt6sU=
+ modernc.org/sqlite v1.46.1/go.mod h1:CzbrU2lSB1DKUusvwGz7rqEKIq+NUd8GWuBBZDs9/nA=
++modernc.org/sqlite v1.47.0 h1:R1XyaNpoW4Et9yly+I2EeX7pBza/w+pmYee/0HJDyKk=
++modernc.org/sqlite v1.47.0/go.mod h1:hWjRO6Tj/5Ik8ieqxQybiEOUXy0NJFNp2tpvVpKlvig=
+diff --git a/internal/config/config.go b/internal/config/config.go
+index bc515f3..88e5772 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -20,8 +20,9 @@ type Config struct {
+ 	AppEnv string `yaml:"app_env"`
+ 	Port   string `yaml:"port"`
+ 
+-	MySQLDSN  string `yaml:"mysql_dsn"`
+-	RedisAddr string `yaml:"redis_addr"`
++	MySQLDSN    string `yaml:"mysql_dsn"`
++	DatabaseDSN string `yaml:"database_dsn"`
++	RedisAddr   string `yaml:"redis_addr"`
+ 
+ 	GitLabBaseURL       string `yaml:"gitlab_base_url"`
+ 	GitLabToken         string `yaml:"gitlab_token"`
+@@ -61,6 +62,7 @@ var envMapping = []struct {
+ 	{"APP_ENV", func(c *Config, v string) { c.AppEnv = v }},
+ 	{"PORT", func(c *Config, v string) { c.Port = v }},
+ 	{"MYSQL_DSN", func(c *Config, v string) { c.MySQLDSN = v }},
++	{"DATABASE_DSN", func(c *Config, v string) { c.DatabaseDSN = v }},
+ 	{"REDIS_ADDR", func(c *Config, v string) { c.RedisAddr = v }},
+ 	{"GITLAB_BASE_URL", func(c *Config, v string) { c.GitLabBaseURL = v }},
+ 	{"GITLAB_TOKEN", func(c *Config, v string) { c.GitLabToken = v }},
+@@ -126,6 +128,15 @@ func applyEnv(cfg *Config) {
+ 	applyMiniMaxFallback(cfg)
+ }
+ 
++// DSN returns the database connection string. It prefers DatabaseDSN if set,
++// falling back to MySQLDSN for backward compatibility.
++func (c *Config) DSN() string {
++	if c.DatabaseDSN != "" {
++		return c.DatabaseDSN
++	}
++	return c.MySQLDSN
++}
++
+ func applyMiniMaxFallback(cfg *Config) {
+ 	if cfg == nil {
+ 		return
+diff --git a/internal/database/database.go b/internal/database/database.go
+index 90e953b..2c2a660 100644
+--- a/internal/database/database.go
++++ b/internal/database/database.go
+@@ -1,30 +1,50 @@
+-// Package database provides MySQL connection setup with production-grade
+-// connection pool configuration.
++// Package database provides database connection setup with production-grade
++// connection pool configuration. Supports MySQL and SQLite backends.
+ package database
+ 
+ import (
+ 	"context"
+ 	"database/sql"
+ 	"fmt"
++	"strings"
+ 	"time"
+ 
+ 	_ "github.com/go-sql-driver/mysql"
++	_ "modernc.org/sqlite"
+ )
+ 
+ const pingTimeout = 5 * time.Second
+ 
+ // Open creates a new *sql.DB with production connection pool settings.
+ // It verifies connectivity with a PingContext call so the service fails
+-// fast when MySQL is unreachable at startup. The caller should defer
++// fast when the database is unreachable at startup. The caller should defer
+ // db.Close().
+ func Open(dsn string) (*sql.DB, error) {
++	conn, _, err := OpenWithDialect(dsn)
++	return conn, err
++}
++
++// OpenWithDialect creates a new *sql.DB and returns the detected dialect.
++// SQLite DSNs are detected by prefix ("sqlite://", "file:") or suffix (".db", ".sqlite").
++// All other DSNs are treated as MySQL.
++func OpenWithDialect(dsn string) (*sql.DB, Dialect, error) {
+ 	if dsn == "" {
+-		return nil, fmt.Errorf("database: empty DSN")
++		return nil, DialectMySQL, fmt.Errorf("database: empty DSN")
++	}
++
++	dialect := DetectDialect(dsn)
++	switch dialect {
++	case DialectSQLite:
++		return openSQLite(dsn)
++	default:
++		return openMySQL(dsn)
+ 	}
++}
+ 
++func openMySQL(dsn string) (*sql.DB, Dialect, error) {
+ 	db, err := sql.Open("mysql", dsn)
+ 	if err != nil {
+-		return nil, fmt.Errorf("database: open: %w", err)
++		return nil, DialectMySQL, fmt.Errorf("database: open mysql: %w", err)
+ 	}
+ 
+ 	db.SetMaxOpenConns(25)
+@@ -32,15 +52,55 @@ func Open(dsn string) (*sql.DB, error) {
+ 	db.SetConnMaxLifetime(5 * time.Minute)
+ 	db.SetConnMaxIdleTime(1 * time.Minute)
+ 
+-	// Fail fast: verify that MySQL is actually reachable before returning
+-	// the pool to the caller.
+ 	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+ 	defer cancel()
+ 
+ 	if err := db.PingContext(ctx); err != nil {
+ 		db.Close()
+-		return nil, fmt.Errorf("database: ping: %w", err)
++		return nil, DialectMySQL, fmt.Errorf("database: ping mysql: %w", err)
++	}
++
++	return db, DialectMySQL, nil
++}
++
++func openSQLite(dsn string) (*sql.DB, Dialect, error) {
++	// Normalize DSN: strip "sqlite://" prefix if present.
++	sqliteDSN := dsn
++	if strings.HasPrefix(strings.ToLower(dsn), "sqlite://") {
++		sqliteDSN = dsn[len("sqlite://"):]
++	}
++
++	db, err := sql.Open("sqlite", sqliteDSN)
++	if err != nil {
++		return nil, DialectSQLite, fmt.Errorf("database: open sqlite: %w", err)
++	}
++
++	// SQLite optimal settings for single-writer mode.
++	db.SetMaxOpenConns(1)
++	db.SetMaxIdleConns(1)
++	db.SetConnMaxLifetime(0)
++
++	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
++	defer cancel()
++
++	if err := db.PingContext(ctx); err != nil {
++		db.Close()
++		return nil, DialectSQLite, fmt.Errorf("database: ping sqlite: %w", err)
++	}
++
++	// Enable WAL mode and foreign keys.
++	pragmas := []string{
++		"PRAGMA journal_mode=WAL",
++		"PRAGMA busy_timeout=5000",
++		"PRAGMA foreign_keys=ON",
++		"PRAGMA synchronous=NORMAL",
++	}
++	for _, p := range pragmas {
++		if _, err := db.ExecContext(ctx, p); err != nil {
++			db.Close()
++			return nil, DialectSQLite, fmt.Errorf("database: sqlite pragma %q: %w", p, err)
++		}
+ 	}
+ 
+-	return db, nil
++	return db, DialectSQLite, nil
+ }
+diff --git a/internal/database/dialect.go b/internal/database/dialect.go
+new file mode 100644
+index 0000000..ad3aa6f
+--- /dev/null
++++ b/internal/database/dialect.go
+@@ -0,0 +1,36 @@
++package database
++
++import "strings"
++
++// Dialect represents the SQL database engine in use.
++type Dialect int
++
++const (
++	DialectMySQL  Dialect = iota
++	DialectSQLite
++)
++
++func (d Dialect) String() string {
++	switch d {
++	case DialectSQLite:
++		return "sqlite"
++	default:
++		return "mysql"
++	}
++}
++
++// DetectDialect determines the database dialect from a DSN string.
++// SQLite DSNs start with "sqlite://", "file:", or end with ".db"/".sqlite".
++// Everything else is treated as MySQL.
++func DetectDialect(dsn string) Dialect {
++	lower := strings.ToLower(dsn)
++	if strings.HasPrefix(lower, "sqlite://") ||
++		strings.HasPrefix(lower, "file:") ||
++		strings.HasSuffix(lower, ".db") ||
++		strings.HasSuffix(lower, ".sqlite") ||
++		strings.HasSuffix(lower, ".sqlite3") ||
++		lower == ":memory:" {
++		return DialectSQLite
++	}
++	return DialectMySQL
++}
+diff --git a/internal/database/factory.go b/internal/database/factory.go
+new file mode 100644
+index 0000000..f40063a
+--- /dev/null
++++ b/internal/database/factory.go
+@@ -0,0 +1,30 @@
++package database
++
++import (
++	"github.com/mreviewer/mreviewer/internal/db"
++	"github.com/mreviewer/mreviewer/internal/db/sqlitedb"
++)
++
++// NewStore creates a db.Store backed by the appropriate implementation for the
++// given dialect. For MySQL it returns *db.Queries (sqlc-generated); for SQLite
++// it returns *sqlitedb.Queries (hand-written).
++func NewStore(conn db.DBTX, dialect Dialect) db.Store {
++	switch dialect {
++	case DialectSQLite:
++		return sqlitedb.New(conn)
++	default:
++		return db.New(conn)
++	}
++}
++
++// StoreFactory returns a constructor function that creates db.Store instances
++// for the given dialect. This allows services to create stores from arbitrary
++// db.DBTX values (e.g. transactions) without knowing which dialect is in use.
++func StoreFactory(dialect Dialect) func(db.DBTX) db.Store {
++	switch dialect {
++	case DialectSQLite:
++		return func(conn db.DBTX) db.Store { return sqlitedb.New(conn) }
++	default:
++		return func(conn db.DBTX) db.Store { return db.New(conn) }
++	}
++}
+diff --git a/internal/db/dberrors.go b/internal/db/dberrors.go
+index 3701deb..21b1362 100644
+--- a/internal/db/dberrors.go
++++ b/internal/db/dberrors.go
+@@ -11,10 +11,18 @@ func IsDuplicateKeyError(err error) bool {
+ 	if err == nil {
+ 		return false
+ 	}
++	// MySQL: error 1062 "Duplicate entry".
+ 	var mysqlErr *mysql.MySQLError
+ 	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+ 		return true
+ 	}
+-	return strings.Contains(err.Error(), "Duplicate entry") ||
+-		strings.Contains(err.Error(), "Error 1062")
++	msg := err.Error()
++	if strings.Contains(msg, "Duplicate entry") || strings.Contains(msg, "Error 1062") {
++		return true
++	}
++	// SQLite: UNIQUE constraint failed.
++	if strings.Contains(msg, "UNIQUE constraint failed") {
++		return true
++	}
++	return false
+ }
+diff --git a/internal/db/dberrors_test.go b/internal/db/dberrors_test.go
+index 1abd43a..26a181d 100644
+--- a/internal/db/dberrors_test.go
++++ b/internal/db/dberrors_test.go
+@@ -27,3 +27,17 @@ func TestIsDuplicateKeyErrorRejectsOtherErrors(t *testing.T) {
+ 		t.Fatal("expected non-duplicate error to be rejected")
+ 	}
+ }
++
++func TestIsDuplicateKeyErrorDetectsSQLiteUniqueConstraint(t *testing.T) {
++	err := errors.New("UNIQUE constraint failed: gitlab_instances.url")
++	if !IsDuplicateKeyError(err) {
++		t.Fatal("expected SQLite UNIQUE constraint error to be detected")
++	}
++}
++
++func TestIsDuplicateKeyErrorDetectsWrappedSQLiteUniqueConstraint(t *testing.T) {
++	err := fmt.Errorf("insert failed: %w", errors.New("UNIQUE constraint failed: projects.gitlab_instance_id, projects.gitlab_project_id"))
++	if !IsDuplicateKeyError(err) {
++		t.Fatal("expected wrapped SQLite UNIQUE constraint error to be detected")
++	}
++}
+diff --git a/internal/db/sqlitedb/audit_logs.go b/internal/db/sqlitedb/audit_logs.go
+new file mode 100644
+index 0000000..e918532
+--- /dev/null
++++ b/internal/db/sqlitedb/audit_logs.go
+@@ -0,0 +1,56 @@
++package sqlitedb
++
++import (
++	"context"
++	"database/sql"
++	"github.com/mreviewer/mreviewer/internal/db"
++)
++
++func (q *Queries) InsertAuditLog(ctx context.Context, arg db.InsertAuditLogParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO audit_logs (entity_type, entity_id, action, actor, detail, delivery_key, hook_source, verification_outcome, rejection_reason, error_code)
++		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++		arg.EntityType, arg.EntityID, arg.Action, arg.Actor, asJSON(arg.Detail),
++		arg.DeliveryKey, arg.HookSource, arg.VerificationOutcome, arg.RejectionReason, arg.ErrorCode)
++}
++
++func (q *Queries) ListAuditLogsByDeliveryKey(ctx context.Context, deliveryKey string) ([]db.AuditLog, error) {
++	rows, err := q.db.QueryContext(ctx,
++		`SELECT id, entity_type, entity_id, action, actor, detail, delivery_key, hook_source, verification_outcome, rejection_reason, error_code, created_at
++		 FROM audit_logs WHERE delivery_key = ? ORDER BY created_at DESC`, deliveryKey)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	return scanAuditLogRows(rows)
++}
++
++func (q *Queries) ListAuditLogsByEntity(ctx context.Context, arg db.ListAuditLogsByEntityParams) ([]db.AuditLog, error) {
++	rows, err := q.db.QueryContext(ctx,
++		`SELECT id, entity_type, entity_id, action, actor, detail, delivery_key, hook_source, verification_outcome, rejection_reason, error_code, created_at
++		 FROM audit_logs WHERE entity_type = ? AND entity_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
++		arg.EntityType, arg.EntityID, arg.Limit, arg.Offset)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	return scanAuditLogRows(rows)
++}
++
++func scanAuditLogRows(rows *sql.Rows) ([]db.AuditLog, error) {
++	items := []db.AuditLog{}
++	for rows.Next() {
++		var i db.AuditLog
++		if err := rows.Scan(&i.ID, &i.EntityType, &i.EntityID, &i.Action, &i.Actor,
++			jscan(&i.Detail), &i.DeliveryKey, &i.HookSource, &i.VerificationOutcome,
++			&i.RejectionReason, &i.ErrorCode, &i.CreatedAt); err != nil {
++			return nil, err
++		}
++		items = append(items, i)
++	}
++	if err := rows.Close(); err != nil {
++		return nil, err
++	}
++	return items, rows.Err()
++}
++
+diff --git a/internal/db/sqlitedb/comment_actions.go b/internal/db/sqlitedb/comment_actions.go
+new file mode 100644
+index 0000000..3a16ef0
+--- /dev/null
++++ b/internal/db/sqlitedb/comment_actions.go
+@@ -0,0 +1,60 @@
++package sqlitedb
++
++import (
++	"context"
++	"database/sql"
++
++	"github.com/mreviewer/mreviewer/internal/db"
++)
++
++func (q *Queries) GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (db.CommentAction, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, review_run_id, review_finding_id, action_type, idempotency_key, status, error_code, error_detail, retry_count, latency_ms, created_at, updated_at
++		 FROM comment_actions WHERE idempotency_key = ? LIMIT 1`, idempotencyKey)
++	var i db.CommentAction
++	err := row.Scan(&i.ID, &i.ReviewRunID, &i.ReviewFindingID, &i.ActionType,
++		&i.IdempotencyKey, &i.Status, &i.ErrorCode, &i.ErrorDetail,
++		&i.RetryCount, &i.LatencyMs, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) InsertCommentAction(ctx context.Context, arg db.InsertCommentActionParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO comment_actions (review_run_id, review_finding_id, action_type, idempotency_key, status)
++		 VALUES (?, ?, ?, ?, ?)`,
++		arg.ReviewRunID, arg.ReviewFindingID, arg.ActionType, arg.IdempotencyKey, arg.Status)
++}
++
++func (q *Queries) ListCommentActionsByRun(ctx context.Context, reviewRunID int64) ([]db.CommentAction, error) {
++	rows, err := q.db.QueryContext(ctx,
++		`SELECT id, review_run_id, review_finding_id, action_type, idempotency_key, status, error_code, error_detail, retry_count, latency_ms, created_at, updated_at
++		 FROM comment_actions WHERE review_run_id = ? ORDER BY created_at ASC`, reviewRunID)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	items := []db.CommentAction{}
++	for rows.Next() {
++		var i db.CommentAction
++		if err := rows.Scan(&i.ID, &i.ReviewRunID, &i.ReviewFindingID, &i.ActionType,
++			&i.IdempotencyKey, &i.Status, &i.ErrorCode, &i.ErrorDetail,
++			&i.RetryCount, &i.LatencyMs, &i.CreatedAt, &i.UpdatedAt); err != nil {
++			return nil, err
++		}
++		items = append(items, i)
++	}
++	if err := rows.Close(); err != nil {
++		return nil, err
++	}
++	return items, rows.Err()
++}
++
++func (q *Queries) UpdateCommentActionStatus(ctx context.Context, arg db.UpdateCommentActionStatusParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE comment_actions
++		 SET status = ?, error_code = ?, error_detail = ?, latency_ms = ?,
++		     retry_count = ?, updated_at = CURRENT_TIMESTAMP
++		 WHERE id = ?`,
++		arg.Status, arg.ErrorCode, arg.ErrorDetail, arg.LatencyMs, arg.RetryCount, arg.ID)
++	return err
++}
+diff --git a/internal/db/sqlitedb/gitlab_discussions.go b/internal/db/sqlitedb/gitlab_discussions.go
+new file mode 100644
+index 0000000..a8547fe
+--- /dev/null
++++ b/internal/db/sqlitedb/gitlab_discussions.go
+@@ -0,0 +1,60 @@
++package sqlitedb
++
++import (
++	"context"
++	"database/sql"
++
++	"github.com/mreviewer/mreviewer/internal/db"
++)
++
++func (q *Queries) GetGitlabDiscussion(ctx context.Context, id int64) (db.GitlabDiscussion, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, review_finding_id, merge_request_id, gitlab_discussion_id, discussion_type, resolved, superseded_by_discussion_id, created_at, updated_at
++		 FROM gitlab_discussions WHERE id = ? LIMIT 1`, id)
++	var i db.GitlabDiscussion
++	err := row.Scan(&i.ID, &i.ReviewFindingID, &i.MergeRequestID, &i.GitlabDiscussionID,
++		&i.DiscussionType, &i.Resolved, &i.SupersededByDiscussionID, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) GetGitlabDiscussionByFinding(ctx context.Context, reviewFindingID int64) (db.GitlabDiscussion, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, review_finding_id, merge_request_id, gitlab_discussion_id, discussion_type, resolved, superseded_by_discussion_id, created_at, updated_at
++		 FROM gitlab_discussions WHERE review_finding_id = ? ORDER BY created_at DESC LIMIT 1`, reviewFindingID)
++	var i db.GitlabDiscussion
++	err := row.Scan(&i.ID, &i.ReviewFindingID, &i.MergeRequestID, &i.GitlabDiscussionID,
++		&i.DiscussionType, &i.Resolved, &i.SupersededByDiscussionID, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) GetGitlabDiscussionByMergeRequestAndFinding(ctx context.Context, arg db.GetGitlabDiscussionByMergeRequestAndFindingParams) (db.GitlabDiscussion, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, review_finding_id, merge_request_id, gitlab_discussion_id, discussion_type, resolved, superseded_by_discussion_id, created_at, updated_at
++		 FROM gitlab_discussions WHERE merge_request_id = ? AND review_finding_id = ? ORDER BY created_at DESC LIMIT 1`,
++		arg.MergeRequestID, arg.ReviewFindingID)
++	var i db.GitlabDiscussion
++	err := row.Scan(&i.ID, &i.ReviewFindingID, &i.MergeRequestID, &i.GitlabDiscussionID,
++		&i.DiscussionType, &i.Resolved, &i.SupersededByDiscussionID, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) InsertGitlabDiscussion(ctx context.Context, arg db.InsertGitlabDiscussionParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO gitlab_discussions (review_finding_id, merge_request_id, gitlab_discussion_id, discussion_type, resolved)
++		 VALUES (?, ?, ?, ?, ?)`,
++		arg.ReviewFindingID, arg.MergeRequestID, arg.GitlabDiscussionID, arg.DiscussionType, arg.Resolved)
++}
++
++func (q *Queries) UpdateGitlabDiscussionResolved(ctx context.Context, arg db.UpdateGitlabDiscussionResolvedParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE gitlab_discussions SET resolved = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
++		arg.Resolved, arg.ID)
++	return err
++}
++
++func (q *Queries) UpdateGitlabDiscussionSupersededBy(ctx context.Context, arg db.UpdateGitlabDiscussionSupersededByParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE gitlab_discussions SET superseded_by_discussion_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
++		arg.SupersededByDiscussionID, arg.ID)
++	return err
++}
+diff --git a/internal/db/sqlitedb/hook_events.go b/internal/db/sqlitedb/hook_events.go
+new file mode 100644
+index 0000000..ab98529
+--- /dev/null
++++ b/internal/db/sqlitedb/hook_events.go
+@@ -0,0 +1,61 @@
++package sqlitedb
++
++import (
++	"context"
++	"database/sql"
++	"encoding/json"
++
++	"github.com/mreviewer/mreviewer/internal/db"
++)
++
++func (q *Queries) GetHookEventByDeliveryKey(ctx context.Context, deliveryKey string) (db.HookEvent, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, delivery_key, hook_source, event_type, gitlab_instance_id, project_id, mr_iid, action, head_sha, payload, verification_outcome, rejection_reason, received_at
++		 FROM hook_events WHERE delivery_key = ? LIMIT 1`, deliveryKey)
++	var i db.HookEvent
++	err := row.Scan(&i.ID, &i.DeliveryKey, &i.HookSource, &i.EventType,
++		&i.GitlabInstanceID, &i.ProjectID, &i.MrIid, &i.Action, &i.HeadSha,
++		jscan(&i.Payload), &i.VerificationOutcome, &i.RejectionReason, &i.ReceivedAt)
++	return i, err
++}
++
++func (q *Queries) InsertHookEvent(ctx context.Context, arg db.InsertHookEventParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO hook_events (delivery_key, hook_source, event_type, gitlab_instance_id, project_id, mr_iid, action, head_sha, payload, verification_outcome, rejection_reason)
++		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++		arg.DeliveryKey, arg.HookSource, arg.EventType, arg.GitlabInstanceID,
++		arg.ProjectID, arg.MrIid, arg.Action, arg.HeadSha, asJSONHook(arg.Payload),
++		arg.VerificationOutcome, arg.RejectionReason)
++}
++
++func (q *Queries) ListHookEventsByProjectMR(ctx context.Context, arg db.ListHookEventsByProjectMRParams) ([]db.HookEvent, error) {
++	rows, err := q.db.QueryContext(ctx,
++		`SELECT id, delivery_key, hook_source, event_type, gitlab_instance_id, project_id, mr_iid, action, head_sha, payload, verification_outcome, rejection_reason, received_at
++		 FROM hook_events WHERE project_id = ? AND mr_iid = ? ORDER BY received_at DESC LIMIT ? OFFSET ?`,
++		arg.ProjectID, arg.MrIid, arg.Limit, arg.Offset)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	items := []db.HookEvent{}
++	for rows.Next() {
++		var i db.HookEvent
++		if err := rows.Scan(&i.ID, &i.DeliveryKey, &i.HookSource, &i.EventType,
++			&i.GitlabInstanceID, &i.ProjectID, &i.MrIid, &i.Action, &i.HeadSha,
++			jscan(&i.Payload), &i.VerificationOutcome, &i.RejectionReason, &i.ReceivedAt); err != nil {
++			return nil, err
++		}
++		items = append(items, i)
++	}
++	if err := rows.Close(); err != nil {
++		return nil, err
++	}
++	return items, rows.Err()
++}
++
++func asJSONHook(v json.RawMessage) interface{} {
++	if v == nil {
++		return nil
++	}
++	return string(v)
++}
+diff --git a/internal/db/sqlitedb/json_scan.go b/internal/db/sqlitedb/json_scan.go
+new file mode 100644
+index 0000000..8eaafa6
+--- /dev/null
++++ b/internal/db/sqlitedb/json_scan.go
+@@ -0,0 +1,35 @@
++package sqlitedb
++
++import (
++	"encoding/json"
++	"fmt"
++)
++
++// jsonScanner wraps a *json.RawMessage so it can scan from SQLite TEXT columns
++// (which return string, not []byte like MySQL does).
++type jsonScanner struct {
++	dest *json.RawMessage
++}
++
++func jscan(dest *json.RawMessage) *jsonScanner {
++	return &jsonScanner{dest: dest}
++}
++
++func (j *jsonScanner) Scan(src interface{}) error {
++	if src == nil {
++		*j.dest = nil
++		return nil
++	}
++	switch v := src.(type) {
++	case []byte:
++		cp := make(json.RawMessage, len(v))
++		copy(cp, v)
++		*j.dest = cp
++		return nil
++	case string:
++		*j.dest = json.RawMessage(v)
++		return nil
++	default:
++		return fmt.Errorf("jsonScanner: unsupported type %T", src)
++	}
++}
+diff --git a/internal/db/sqlitedb/merge_requests.go b/internal/db/sqlitedb/merge_requests.go
+new file mode 100644
+index 0000000..46cfcf4
+--- /dev/null
++++ b/internal/db/sqlitedb/merge_requests.go
+@@ -0,0 +1,79 @@
++package sqlitedb
++
++import (
++	"context"
++	"database/sql"
++
++	"github.com/mreviewer/mreviewer/internal/db"
++)
++
++func (q *Queries) GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (db.MrVersion, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, merge_request_id, gitlab_version_id, base_sha, start_sha, head_sha, patch_id_sha, created_at
++		 FROM mr_versions WHERE merge_request_id = ? ORDER BY created_at DESC LIMIT 1`, mergeRequestID)
++	var i db.MrVersion
++	err := row.Scan(&i.ID, &i.MergeRequestID, &i.GitlabVersionID, &i.BaseSha, &i.StartSha, &i.HeadSha, &i.PatchIDSha, &i.CreatedAt)
++	return i, err
++}
++
++func (q *Queries) GetMergeRequest(ctx context.Context, id int64) (db.MergeRequest, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, project_id, mr_iid, title, source_branch, target_branch, author, state, is_draft, head_sha, web_url, created_at, updated_at
++		 FROM merge_requests WHERE id = ? LIMIT 1`, id)
++	var i db.MergeRequest
++	err := row.Scan(&i.ID, &i.ProjectID, &i.MrIid, &i.Title, &i.SourceBranch, &i.TargetBranch,
++		&i.Author, &i.State, &i.IsDraft, &i.HeadSha, &i.WebUrl, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) GetMergeRequestByProjectMR(ctx context.Context, arg db.GetMergeRequestByProjectMRParams) (db.MergeRequest, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, project_id, mr_iid, title, source_branch, target_branch, author, state, is_draft, head_sha, web_url, created_at, updated_at
++		 FROM merge_requests WHERE project_id = ? AND mr_iid = ? LIMIT 1`,
++		arg.ProjectID, arg.MrIid)
++	var i db.MergeRequest
++	err := row.Scan(&i.ID, &i.ProjectID, &i.MrIid, &i.Title, &i.SourceBranch, &i.TargetBranch,
++		&i.Author, &i.State, &i.IsDraft, &i.HeadSha, &i.WebUrl, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) InsertMRVersion(ctx context.Context, arg db.InsertMRVersionParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO mr_versions (merge_request_id, gitlab_version_id, base_sha, start_sha, head_sha, patch_id_sha)
++		 VALUES (?, ?, ?, ?, ?, ?)`,
++		arg.MergeRequestID, arg.GitlabVersionID, arg.BaseSha, arg.StartSha, arg.HeadSha, arg.PatchIDSha)
++}
++
++func (q *Queries) InsertMergeRequest(ctx context.Context, arg db.InsertMergeRequestParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO merge_requests (project_id, mr_iid, title, source_branch, target_branch, author, state, is_draft, head_sha, web_url)
++		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++		arg.ProjectID, arg.MrIid, arg.Title, arg.SourceBranch, arg.TargetBranch,
++		arg.Author, arg.State, arg.IsDraft, arg.HeadSha, arg.WebUrl)
++}
++
++func (q *Queries) UpdateMergeRequestState(ctx context.Context, arg db.UpdateMergeRequestStateParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE merge_requests SET state = ?, head_sha = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
++		arg.State, arg.HeadSha, arg.ID)
++	return err
++}
++
++// UpsertMergeRequest: ON CONFLICT replaces MySQL's ON DUPLICATE KEY UPDATE.
++func (q *Queries) UpsertMergeRequest(ctx context.Context, arg db.UpsertMergeRequestParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO merge_requests (project_id, mr_iid, title, source_branch, target_branch, author, state, is_draft, head_sha, web_url)
++		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++		 ON CONFLICT(project_id, mr_iid) DO UPDATE SET
++		   title = excluded.title,
++		   source_branch = excluded.source_branch,
++		   target_branch = excluded.target_branch,
++		   author = excluded.author,
++		   state = excluded.state,
++		   is_draft = excluded.is_draft,
++		   head_sha = excluded.head_sha,
++		   web_url = excluded.web_url,
++		   updated_at = CURRENT_TIMESTAMP`,
++		arg.ProjectID, arg.MrIid, arg.Title, arg.SourceBranch, arg.TargetBranch,
++		arg.Author, arg.State, arg.IsDraft, arg.HeadSha, arg.WebUrl)
++}
+diff --git a/internal/db/sqlitedb/projects.go b/internal/db/sqlitedb/projects.go
+new file mode 100644
+index 0000000..582a54e
+--- /dev/null
++++ b/internal/db/sqlitedb/projects.go
+@@ -0,0 +1,98 @@
++package sqlitedb
++
++import (
++	"context"
++	"database/sql"
++	"encoding/json"
++
++	"github.com/mreviewer/mreviewer/internal/db"
++)
++
++func (q *Queries) GetGitlabInstance(ctx context.Context, id int64) (db.GitlabInstance, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, url, name, created_at, updated_at FROM gitlab_instances WHERE id = ? LIMIT 1`, id)
++	var i db.GitlabInstance
++	err := row.Scan(&i.ID, &i.Url, &i.Name, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) GetGitlabInstanceByURL(ctx context.Context, url string) (db.GitlabInstance, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, url, name, created_at, updated_at FROM gitlab_instances WHERE url = ? LIMIT 1`, url)
++	var i db.GitlabInstance
++	err := row.Scan(&i.ID, &i.Url, &i.Name, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) GetProject(ctx context.Context, id int64) (db.Project, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, gitlab_instance_id, gitlab_project_id, path_with_namespace, enabled, created_at, updated_at FROM projects WHERE id = ? LIMIT 1`, id)
++	var i db.Project
++	err := row.Scan(&i.ID, &i.GitlabInstanceID, &i.GitlabProjectID, &i.PathWithNamespace, &i.Enabled, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) GetProjectByGitlabID(ctx context.Context, arg db.GetProjectByGitlabIDParams) (db.Project, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, gitlab_instance_id, gitlab_project_id, path_with_namespace, enabled, created_at, updated_at
++		 FROM projects WHERE gitlab_instance_id = ? AND gitlab_project_id = ? LIMIT 1`,
++		arg.GitlabInstanceID, arg.GitlabProjectID)
++	var i db.Project
++	err := row.Scan(&i.ID, &i.GitlabInstanceID, &i.GitlabProjectID, &i.PathWithNamespace, &i.Enabled, &i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) GetProjectPolicy(ctx context.Context, projectID int64) (db.ProjectPolicy, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, project_id, confidence_threshold, severity_threshold, include_paths, exclude_paths, gate_mode, provider_route, extra, created_at, updated_at
++		 FROM project_policies WHERE project_id = ? LIMIT 1`, projectID)
++	var i db.ProjectPolicy
++	err := row.Scan(&i.ID, &i.ProjectID, &i.ConfidenceThreshold, &i.SeverityThreshold,
++		jscan(&i.IncludePaths), jscan(&i.ExcludePaths), &i.GateMode, &i.ProviderRoute, jscan(&i.Extra),
++		&i.CreatedAt, &i.UpdatedAt)
++	return i, err
++}
++
++func (q *Queries) InsertGitlabInstance(ctx context.Context, arg db.InsertGitlabInstanceParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO gitlab_instances (url, name) VALUES (?, ?)`,
++		arg.Url, arg.Name)
++}
++
++func (q *Queries) InsertProject(ctx context.Context, arg db.InsertProjectParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO projects (gitlab_instance_id, gitlab_project_id, path_with_namespace, enabled) VALUES (?, ?, ?, ?)`,
++		arg.GitlabInstanceID, arg.GitlabProjectID, arg.PathWithNamespace, arg.Enabled)
++}
++
++func (q *Queries) InsertProjectPolicy(ctx context.Context, arg db.InsertProjectPolicyParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO project_policies (project_id, confidence_threshold, severity_threshold, include_paths, exclude_paths, gate_mode, provider_route, extra)
++		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
++		arg.ProjectID, arg.ConfidenceThreshold, arg.SeverityThreshold,
++		asJSON(arg.IncludePaths), asJSON(arg.ExcludePaths), arg.GateMode, arg.ProviderRoute, asJSON(arg.Extra))
++}
++
++// UpsertGitlabInstance: ON CONFLICT replaces MySQL's ON DUPLICATE KEY UPDATE.
++func (q *Queries) UpsertGitlabInstance(ctx context.Context, arg db.UpsertGitlabInstanceParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO gitlab_instances (url, name) VALUES (?, ?)
++		 ON CONFLICT(url) DO UPDATE SET name = excluded.name, updated_at = CURRENT_TIMESTAMP`,
++		arg.Url, arg.Name)
++}
++
++// UpsertProject: ON CONFLICT replaces MySQL's ON DUPLICATE KEY UPDATE.
++func (q *Queries) UpsertProject(ctx context.Context, arg db.UpsertProjectParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO projects (gitlab_instance_id, gitlab_project_id, path_with_namespace, enabled) VALUES (?, ?, ?, ?)
++		 ON CONFLICT(gitlab_instance_id, gitlab_project_id) DO UPDATE SET path_with_namespace = excluded.path_with_namespace, updated_at = CURRENT_TIMESTAMP`,
++		arg.GitlabInstanceID, arg.GitlabProjectID, arg.PathWithNamespace, arg.Enabled)
++}
++
++// asJSON converts json.RawMessage to a value safe for SQLite TEXT columns.
++func asJSON(v json.RawMessage) interface{} {
++	if v == nil {
++		return nil
++	}
++	return string(v)
++}
+diff --git a/internal/db/sqlitedb/queries.go b/internal/db/sqlitedb/queries.go
+new file mode 100644
+index 0000000..fcb5096
+--- /dev/null
++++ b/internal/db/sqlitedb/queries.go
+@@ -0,0 +1,121 @@
++// Package sqlitedb provides a hand-written implementation of the db.Store
++// interface for SQLite. It reuses the model types from the parent db package
++// and translates MySQL-specific SQL to SQLite-compatible equivalents.
++package sqlitedb
++
++import (
++	"database/sql"
++
++	"github.com/mreviewer/mreviewer/internal/db"
++)
++
++// Queries implements db.Store for SQLite.
++type Queries struct {
++	db db.DBTX
++}
++
++// New creates a new SQLite Queries instance.
++func New(conn db.DBTX) *Queries {
++	return &Queries{db: conn}
++}
++
++// WithTx returns a copy of Queries bound to the given transaction.
++func (q *Queries) WithTx(tx *sql.Tx) *Queries {
++	return &Queries{db: tx}
++}
++
++// rowsAffected is a helper that returns true when at least one row was changed.
++func rowsAffected(result sql.Result) (bool, error) {
++	n, err := result.RowsAffected()
++	if err != nil {
++		return false, err
++	}
++	return n > 0, nil
++}
++
++// Verify that *Queries satisfies db.Store at compile time.
++var _ db.Store = (*Queries)(nil)
++
++// --- delegated scan helpers live in each domain file ---
++
++// scanReviewRun scans a single ReviewRun from a *sql.Row.
++func scanReviewRun(row *sql.Row) (db.ReviewRun, error) {
++	var i db.ReviewRun
++	err := row.Scan(
++		&i.ID, &i.ProjectID, &i.MergeRequestID, &i.HookEventID,
++		&i.TriggerType, &i.HeadSha, &i.Status, &i.ErrorCode, &i.ErrorDetail,
++		&i.RetryCount, &i.MaxRetries, &i.NextRetryAt, &i.ClaimedBy, &i.ClaimedAt,
++		&i.StartedAt, &i.CompletedAt, &i.ProviderLatencyMs, &i.ProviderTokensTotal,
++		&i.IdempotencyKey, &i.CreatedAt, &i.UpdatedAt, &i.ScopeJson,
++	)
++	return i, err
++}
++
++// scanReviewRunRows scans multiple ReviewRun rows.
++func scanReviewRunRows(rows *sql.Rows) ([]db.ReviewRun, error) {
++	items := []db.ReviewRun{}
++	for rows.Next() {
++		var i db.ReviewRun
++		if err := rows.Scan(
++			&i.ID, &i.ProjectID, &i.MergeRequestID, &i.HookEventID,
++			&i.TriggerType, &i.HeadSha, &i.Status, &i.ErrorCode, &i.ErrorDetail,
++			&i.RetryCount, &i.MaxRetries, &i.NextRetryAt, &i.ClaimedBy, &i.ClaimedAt,
++			&i.StartedAt, &i.CompletedAt, &i.ProviderLatencyMs, &i.ProviderTokensTotal,
++			&i.IdempotencyKey, &i.CreatedAt, &i.UpdatedAt, &i.ScopeJson,
++		); err != nil {
++			return nil, err
++		}
++		items = append(items, i)
++	}
++	if err := rows.Close(); err != nil {
++		return nil, err
++	}
++	if err := rows.Err(); err != nil {
++		return nil, err
++	}
++	return items, nil
++}
++
++// scanReviewFinding scans a single ReviewFinding from a *sql.Row.
++func scanReviewFinding(row *sql.Row) (db.ReviewFinding, error) {
++	var i db.ReviewFinding
++	err := row.Scan(
++		&i.ID, &i.ReviewRunID, &i.MergeRequestID, &i.Category, &i.Severity,
++		&i.Confidence, &i.Title, &i.BodyMarkdown, &i.Path, &i.AnchorKind,
++		&i.OldLine, &i.NewLine, &i.RangeStartKind, &i.RangeStartOldLine,
++		&i.RangeStartNewLine, &i.RangeEndKind, &i.RangeEndOldLine,
++		&i.RangeEndNewLine, &i.AnchorSnippet, &i.Evidence, &i.SuggestedPatch,
++		&i.CanonicalKey, &i.AnchorFingerprint, &i.SemanticFingerprint,
++		&i.State, &i.MatchedFindingID, &i.LastSeenRunID,
++		&i.GitlabDiscussionID, &i.ErrorCode, &i.CreatedAt, &i.UpdatedAt,
++	)
++	return i, err
++}
++
++// scanReviewFindingRows scans multiple ReviewFinding rows.
++func scanReviewFindingRows(rows *sql.Rows) ([]db.ReviewFinding, error) {
++	items := []db.ReviewFinding{}
++	for rows.Next() {
++		var i db.ReviewFinding
++		if err := rows.Scan(
++			&i.ID, &i.ReviewRunID, &i.MergeRequestID, &i.Category, &i.Severity,
++			&i.Confidence, &i.Title, &i.BodyMarkdown, &i.Path, &i.AnchorKind,
++			&i.OldLine, &i.NewLine, &i.RangeStartKind, &i.RangeStartOldLine,
++			&i.RangeStartNewLine, &i.RangeEndKind, &i.RangeEndOldLine,
++			&i.RangeEndNewLine, &i.AnchorSnippet, &i.Evidence, &i.SuggestedPatch,
++			&i.CanonicalKey, &i.AnchorFingerprint, &i.SemanticFingerprint,
++			&i.State, &i.MatchedFindingID, &i.LastSeenRunID,
++			&i.GitlabDiscussionID, &i.ErrorCode, &i.CreatedAt, &i.UpdatedAt,
++		); err != nil {
++			return nil, err
++		}
++		items = append(items, i)
++	}
++	if err := rows.Close(); err != nil {
++		return nil, err
++	}
++	if err := rows.Err(); err != nil {
++		return nil, err
++	}
++	return items, nil
++}
+diff --git a/internal/db/sqlitedb/queries_test.go b/internal/db/sqlitedb/queries_test.go
+new file mode 100644
+index 0000000..12fbeae
+--- /dev/null
++++ b/internal/db/sqlitedb/queries_test.go
+@@ -0,0 +1,695 @@
++package sqlitedb_test
++
++import (
++	"context"
++	"database/sql"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/mreviewer/mreviewer/internal/db"
++	"github.com/mreviewer/mreviewer/internal/db/sqlitedb"
++	_ "modernc.org/sqlite"
++)
++
++const migrationsDir = "../../../migrations_sqlite"
++
++// setupDB opens an in-memory SQLite database and applies migrations.
++func setupDB(t *testing.T) *sql.DB {
++	t.Helper()
++	conn, err := sql.Open("sqlite", ":memory:")
++	if err != nil {
++		t.Fatalf("open sqlite: %v", err)
++	}
++	t.Cleanup(func() { conn.Close() })
++
++	// Enable foreign keys and WAL.
++	for _, pragma := range []string{
++		"PRAGMA journal_mode=WAL",
++		"PRAGMA foreign_keys=ON",
++	} {
++		if _, err := conn.Exec(pragma); err != nil {
++			t.Fatalf("pragma %q: %v", pragma, err)
++		}
++	}
++
++	// Read and execute migration SQL.
++	entries, err := os.ReadDir(migrationsDir)
++	if err != nil {
++		t.Fatalf("read migrations dir: %v", err)
++	}
++	for _, e := range entries {
++		if e.IsDir() {
++			continue
++		}
++		data, err := os.ReadFile(filepath.Join(migrationsDir, e.Name()))
++		if err != nil {
++			t.Fatalf("read migration %s: %v", e.Name(), err)
++		}
++		// Only execute the Up portion (before +goose Down).
++		sqlStr := string(data)
++		if idx := indexOf(sqlStr, "-- +goose Down"); idx > 0 {
++			sqlStr = sqlStr[:idx]
++		}
++		// Strip the +goose Up marker.
++		sqlStr = stripPrefix(sqlStr, "-- +goose Up")
++		if _, err := conn.Exec(sqlStr); err != nil {
++			t.Fatalf("exec migration %s: %v", e.Name(), err)
++		}
++	}
++
++	return conn
++}
++
++func indexOf(s, sub string) int {
++	for i := 0; i+len(sub) <= len(s); i++ {
++		if s[i:i+len(sub)] == sub {
++			return i
++		}
++	}
++	return -1
++}
++
++func stripPrefix(s, prefix string) string {
++	if idx := indexOf(s, prefix); idx >= 0 {
++		return s[:idx] + s[idx+len(prefix):]
++	}
++	return s
++}
++
++func newQueries(t *testing.T) *sqlitedb.Queries {
++	t.Helper()
++	return sqlitedb.New(setupDB(t))
++}
++
++// --- Tests ---
++
++func TestUpsertGitlabInstance(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++
++	// Insert
++	res, err := q.UpsertGitlabInstance(ctx, db.UpsertGitlabInstanceParams{Url: "https://gitlab.example.com", Name: "Example"})
++	if err != nil {
++		t.Fatalf("insert: %v", err)
++	}
++	id, _ := res.LastInsertId()
++	if id == 0 {
++		t.Fatal("expected non-zero id")
++	}
++
++	// Upsert updates name
++	_, err = q.UpsertGitlabInstance(ctx, db.UpsertGitlabInstanceParams{Url: "https://gitlab.example.com", Name: "Updated"})
++	if err != nil {
++		t.Fatalf("upsert: %v", err)
++	}
++
++	inst, err := q.GetGitlabInstance(ctx, id)
++	if err != nil {
++		t.Fatalf("get: %v", err)
++	}
++	if inst.Name != "Updated" {
++		t.Fatalf("want name Updated, got %s", inst.Name)
++	}
++
++	// GetByURL
++	inst2, err := q.GetGitlabInstanceByURL(ctx, "https://gitlab.example.com")
++	if err != nil {
++		t.Fatalf("get by url: %v", err)
++	}
++	if inst2.ID != id {
++		t.Fatalf("want id %d, got %d", id, inst2.ID)
++	}
++}
++
++func TestUpsertProject(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++
++	// Prerequisite: instance
++	res, err := q.InsertGitlabInstance(ctx, db.InsertGitlabInstanceParams{Url: "https://gl.test", Name: "test"})
++	if err != nil {
++		t.Fatalf("insert instance: %v", err)
++	}
++	instID, _ := res.LastInsertId()
++
++	// Insert project
++	res, err = q.UpsertProject(ctx, db.UpsertProjectParams{
++		GitlabInstanceID: instID, GitlabProjectID: 42, PathWithNamespace: "org/repo", Enabled: true,
++	})
++	if err != nil {
++		t.Fatalf("insert project: %v", err)
++	}
++	projID, _ := res.LastInsertId()
++
++	// Upsert updates path
++	_, err = q.UpsertProject(ctx, db.UpsertProjectParams{
++		GitlabInstanceID: instID, GitlabProjectID: 42, PathWithNamespace: "org/renamed-repo", Enabled: true,
++	})
++	if err != nil {
++		t.Fatalf("upsert project: %v", err)
++	}
++
++	proj, err := q.GetProject(ctx, projID)
++	if err != nil {
++		t.Fatalf("get: %v", err)
++	}
++	if proj.PathWithNamespace != "org/renamed-repo" {
++		t.Fatalf("want renamed path, got %s", proj.PathWithNamespace)
++	}
++}
++
++func TestUpsertMergeRequest(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	instID, projID := seedProject(t, q, ctx)
++	_ = instID
++
++	// Insert MR
++	res, err := q.UpsertMergeRequest(ctx, db.UpsertMergeRequestParams{
++		ProjectID: projID, MrIid: 1, Title: "Initial",
++		SourceBranch: "feat", TargetBranch: "main",
++		Author: "dev", State: "opened", IsDraft: false,
++		HeadSha: "abc123", WebUrl: "https://gl.test/mr/1",
++	})
++	if err != nil {
++		t.Fatalf("insert MR: %v", err)
++	}
++	mrID, _ := res.LastInsertId()
++
++	// Upsert updates title
++	_, err = q.UpsertMergeRequest(ctx, db.UpsertMergeRequestParams{
++		ProjectID: projID, MrIid: 1, Title: "Updated Title",
++		SourceBranch: "feat", TargetBranch: "main",
++		Author: "dev", State: "opened", IsDraft: false,
++		HeadSha: "def456", WebUrl: "https://gl.test/mr/1",
++	})
++	if err != nil {
++		t.Fatalf("upsert MR: %v", err)
++	}
++
++	mr, err := q.GetMergeRequest(ctx, mrID)
++	if err != nil {
++		t.Fatalf("get: %v", err)
++	}
++	if mr.Title != "Updated Title" {
++		t.Fatalf("want Updated Title, got %s", mr.Title)
++	}
++	if mr.HeadSha != "def456" {
++		t.Fatalf("want def456, got %s", mr.HeadSha)
++	}
++}
++
++func TestReviewRunLifecycle(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	_, projID := seedProject(t, q, ctx)
++	mrID := seedMR(t, q, ctx, projID)
++
++	// Insert a run
++	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
++		ProjectID: projID, MergeRequestID: mrID,
++		TriggerType: "webhook", HeadSha: "abc",
++		Status: "pending", MaxRetries: 3,
++		IdempotencyKey: "key-1",
++	})
++	if err != nil {
++		t.Fatalf("insert run: %v", err)
++	}
++	runID, _ := res.LastInsertId()
++
++	// Claim it
++	claimable, err := q.GetNextClaimableReviewRun(ctx)
++	if err != nil {
++		t.Fatalf("get claimable: %v", err)
++	}
++	if claimable.ID != runID {
++		t.Fatalf("want run %d, got %d", runID, claimable.ID)
++	}
++
++	err = q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID})
++	if err != nil {
++		t.Fatalf("claim: %v", err)
++	}
++
++	// Complete it (conditional)
++	ok, err := q.UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
++		ProviderLatencyMs: 500, ProviderTokensTotal: 1000, ID: runID,
++	})
++	if err != nil {
++		t.Fatalf("complete: %v", err)
++	}
++	if !ok {
++		t.Fatal("expected rows affected")
++	}
++
++	run, err := q.GetReviewRun(ctx, runID)
++	if err != nil {
++		t.Fatalf("get run: %v", err)
++	}
++	if run.Status != "completed" {
++		t.Fatalf("want completed, got %s", run.Status)
++	}
++
++	// Completing again should return false (already completed, not running)
++	ok, err = q.UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
++		ProviderLatencyMs: 100, ProviderTokensTotal: 200, ID: runID,
++	})
++	if err != nil {
++		t.Fatalf("complete again: %v", err)
++	}
++	if ok {
++		t.Fatal("expected no rows affected for already-completed run")
++	}
++}
++
++func TestReviewRunRetryableFailure(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	_, projID := seedProject(t, q, ctx)
++	mrID := seedMR(t, q, ctx, projID)
++
++	res, _ := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
++		ProjectID: projID, MergeRequestID: mrID,
++		TriggerType: "webhook", HeadSha: "abc",
++		Status: "pending", MaxRetries: 3,
++		IdempotencyKey: "key-retry",
++	})
++	runID, _ := res.LastInsertId()
++
++	// Claim first
++	q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "w1", ID: runID})
++
++	// Mark retryable failure
++	retryAt := sql.NullTime{Time: time.Now().Add(30 * time.Second), Valid: true}
++	ok, err := q.MarkReviewRunRetryableFailureIfRunning(ctx, db.MarkReviewRunRetryableFailureParams{
++		ErrorCode:   "provider_error",
++		ErrorDetail: sql.NullString{String: "timeout", Valid: true},
++		RetryCount:  1,
++		NextRetryAt: retryAt,
++		ID:          runID,
++	})
++	if err != nil {
++		t.Fatalf("retryable failure: %v", err)
++	}
++	if !ok {
++		t.Fatal("expected rows affected")
++	}
++
++	run, _ := q.GetReviewRun(ctx, runID)
++	if run.Status != "failed" {
++		t.Fatalf("want failed, got %s", run.Status)
++	}
++	if !run.NextRetryAt.Valid {
++		t.Fatal("expected next_retry_at to be set")
++	}
++}
++
++func TestCancelPendingRunsForMR(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	_, projID := seedProject(t, q, ctx)
++	mrID := seedMR(t, q, ctx, projID)
++
++	// Insert 2 pending runs
++	q.InsertReviewRun(ctx, db.InsertReviewRunParams{
++		ProjectID: projID, MergeRequestID: mrID,
++		TriggerType: "webhook", HeadSha: "a",
++		Status: "pending", MaxRetries: 3, IdempotencyKey: "c1",
++	})
++	q.InsertReviewRun(ctx, db.InsertReviewRunParams{
++		ProjectID: projID, MergeRequestID: mrID,
++		TriggerType: "webhook", HeadSha: "b",
++		Status: "pending", MaxRetries: 3, IdempotencyKey: "c2",
++	})
++
++	err := q.CancelPendingRunsForMR(ctx, mrID)
++	if err != nil {
++		t.Fatalf("cancel: %v", err)
++	}
++
++	runs, err := q.ListReviewRunsByMR(ctx, mrID)
++	if err != nil {
++		t.Fatalf("list: %v", err)
++	}
++	for _, r := range runs {
++		if r.Status != "cancelled" {
++			t.Fatalf("want cancelled, got %s for run %d", r.Status, r.ID)
++		}
++	}
++}
++
++func TestReviewFindings(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	_, projID := seedProject(t, q, ctx)
++	mrID := seedMR(t, q, ctx, projID)
++	runID := seedRun(t, q, ctx, projID, mrID)
++
++	// Insert finding
++	res, err := q.InsertReviewFinding(ctx, db.InsertReviewFindingParams{
++		ReviewRunID:         runID,
++		MergeRequestID:      mrID,
++		Category:            "security",
++		Severity:            "high",
++		Confidence:          0.9,
++		Title:               "SQL injection",
++		Path:                "app/handler.go",
++		AnchorKind:          "new_line",
++		NewLine:             sql.NullInt32{Int32: 42, Valid: true},
++		CanonicalKey:        "sec-sqli-001",
++		AnchorFingerprint:   "fp-abc",
++		SemanticFingerprint: "sem-abc",
++		State:               "new",
++	})
++	if err != nil {
++		t.Fatalf("insert finding: %v", err)
++	}
++	findingID, _ := res.LastInsertId()
++
++	// Get by ID
++	f, err := q.GetReviewFinding(ctx, findingID)
++	if err != nil {
++		t.Fatalf("get finding: %v", err)
++	}
++	if f.Title != "SQL injection" {
++		t.Fatalf("want SQL injection, got %s", f.Title)
++	}
++
++	// List active by MR
++	findings, err := q.ListActiveFindingsByMR(ctx, mrID)
++	if err != nil {
++		t.Fatalf("list active: %v", err)
++	}
++	if len(findings) != 1 {
++		t.Fatalf("want 1, got %d", len(findings))
++	}
++
++	// Update state
++	err = q.UpdateFindingState(ctx, db.UpdateFindingStateParams{
++		State: "resolved", ID: findingID,
++	})
++	if err != nil {
++		t.Fatalf("update state: %v", err)
++	}
++
++	// No longer active
++	findings, err = q.ListActiveFindingsByMR(ctx, mrID)
++	if err != nil {
++		t.Fatalf("list active after resolve: %v", err)
++	}
++	if len(findings) != 0 {
++		t.Fatalf("want 0, got %d", len(findings))
++	}
++}
++
++func TestGitlabDiscussions(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	_, projID := seedProject(t, q, ctx)
++	mrID := seedMR(t, q, ctx, projID)
++	runID := seedRun(t, q, ctx, projID, mrID)
++	findingID := seedFinding(t, q, ctx, runID, mrID)
++
++	// Insert discussion
++	res, err := q.InsertGitlabDiscussion(ctx, db.InsertGitlabDiscussionParams{
++		ReviewFindingID:    findingID,
++		MergeRequestID:     mrID,
++		GitlabDiscussionID: "disc-001",
++		DiscussionType:     "diff",
++		Resolved:           false,
++	})
++	if err != nil {
++		t.Fatalf("insert discussion: %v", err)
++	}
++	discID, _ := res.LastInsertId()
++
++	// Get by finding
++	d, err := q.GetGitlabDiscussionByFinding(ctx, findingID)
++	if err != nil {
++		t.Fatalf("get by finding: %v", err)
++	}
++	if d.GitlabDiscussionID != "disc-001" {
++		t.Fatalf("want disc-001, got %s", d.GitlabDiscussionID)
++	}
++
++	// Resolve
++	err = q.UpdateGitlabDiscussionResolved(ctx, db.UpdateGitlabDiscussionResolvedParams{Resolved: true, ID: discID})
++	if err != nil {
++		t.Fatalf("resolve: %v", err)
++	}
++	d, _ = q.GetGitlabDiscussion(ctx, discID)
++	if !d.Resolved {
++		t.Fatal("expected resolved")
++	}
++}
++
++func TestCommentActions(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	_, projID := seedProject(t, q, ctx)
++	mrID := seedMR(t, q, ctx, projID)
++	runID := seedRun(t, q, ctx, projID, mrID)
++
++	res, err := q.InsertCommentAction(ctx, db.InsertCommentActionParams{
++		ReviewRunID:    runID,
++		ActionType:     "create_thread",
++		IdempotencyKey: "ca-1",
++		Status:         "pending",
++	})
++	if err != nil {
++		t.Fatalf("insert: %v", err)
++	}
++	caID, _ := res.LastInsertId()
++
++	// Get by idempotency key
++	ca, err := q.GetCommentActionByIdempotencyKey(ctx, "ca-1")
++	if err != nil {
++		t.Fatalf("get: %v", err)
++	}
++	if ca.ID != caID {
++		t.Fatalf("want %d, got %d", caID, ca.ID)
++	}
++
++	// Update status
++	err = q.UpdateCommentActionStatus(ctx, db.UpdateCommentActionStatusParams{
++		Status: "completed", LatencyMs: 100, ID: caID,
++	})
++	if err != nil {
++		t.Fatalf("update: %v", err)
++	}
++
++	actions, err := q.ListCommentActionsByRun(ctx, runID)
++	if err != nil {
++		t.Fatalf("list: %v", err)
++	}
++	if len(actions) != 1 || actions[0].Status != "completed" {
++		t.Fatalf("unexpected actions: %+v", actions)
++	}
++}
++
++func TestAuditLogs(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++
++	_, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
++		EntityType:  "review_run",
++		EntityID:    1,
++		Action:      "provider_called",
++		Actor:       "worker-1",
++		Detail:      json.RawMessage(`{"model":"claude-3"}`),
++		DeliveryKey: "dk-1",
++	})
++	if err != nil {
++		t.Fatalf("insert: %v", err)
++	}
++
++	logs, err := q.ListAuditLogsByDeliveryKey(ctx, "dk-1")
++	if err != nil {
++		t.Fatalf("list by dk: %v", err)
++	}
++	if len(logs) != 1 {
++		t.Fatalf("want 1, got %d", len(logs))
++	}
++
++	logs, err = q.ListAuditLogsByEntity(ctx, db.ListAuditLogsByEntityParams{
++		EntityType: "review_run", EntityID: 1, Limit: 10, Offset: 0,
++	})
++	if err != nil {
++		t.Fatalf("list by entity: %v", err)
++	}
++	if len(logs) != 1 {
++		t.Fatalf("want 1, got %d", len(logs))
++	}
++}
++
++func TestHookEvents(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++
++	_, err := q.InsertHookEvent(ctx, db.InsertHookEventParams{
++		DeliveryKey:         "he-1",
++		HookSource:          "gitlab",
++		EventType:           "merge_request",
++		Action:              "open",
++		HeadSha:             "abc",
++		Payload:             json.RawMessage(`{}`),
++		VerificationOutcome: "verified",
++	})
++	if err != nil {
++		t.Fatalf("insert: %v", err)
++	}
++
++	ev, err := q.GetHookEventByDeliveryKey(ctx, "he-1")
++	if err != nil {
++		t.Fatalf("get: %v", err)
++	}
++	if ev.DeliveryKey != "he-1" {
++		t.Fatalf("want he-1, got %s", ev.DeliveryKey)
++	}
++}
++
++func TestProjectPolicy(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	_, projID := seedProject(t, q, ctx)
++
++	_, err := q.InsertProjectPolicy(ctx, db.InsertProjectPolicyParams{
++		ProjectID:           projID,
++		ConfidenceThreshold: 0.7,
++		SeverityThreshold:   "medium",
++		GateMode:            "threads_resolved",
++	})
++	if err != nil {
++		t.Fatalf("insert policy: %v", err)
++	}
++
++	pol, err := q.GetProjectPolicy(ctx, projID)
++	if err != nil {
++		t.Fatalf("get policy: %v", err)
++	}
++	if pol.ConfidenceThreshold != 0.7 {
++		t.Fatalf("want 0.7, got %f", pol.ConfidenceThreshold)
++	}
++}
++
++func TestMRVersion(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	_, projID := seedProject(t, q, ctx)
++	mrID := seedMR(t, q, ctx, projID)
++
++	_, err := q.InsertMRVersion(ctx, db.InsertMRVersionParams{
++		MergeRequestID:  mrID,
++		GitlabVersionID: 1,
++		BaseSha:         "base",
++		StartSha:        "start",
++		HeadSha:         "head",
++		PatchIDSha:      "patch",
++	})
++	if err != nil {
++		t.Fatalf("insert version: %v", err)
++	}
++
++	v, err := q.GetLatestMRVersion(ctx, mrID)
++	if err != nil {
++		t.Fatalf("get version: %v", err)
++	}
++	if v.HeadSha != "head" {
++		t.Fatalf("want head, got %s", v.HeadSha)
++	}
++}
++
++func TestProviderMetrics(t *testing.T) {
++	q := newQueries(t)
++	ctx := context.Background()
++	_, projID := seedProject(t, q, ctx)
++	mrID := seedMR(t, q, ctx, projID)
++	runID := seedRun(t, q, ctx, projID, mrID)
++
++	err := q.UpdateReviewRunProviderMetrics(ctx, db.UpdateReviewRunProviderMetricsParams{
++		ProviderLatencyMs: 250, ProviderTokensTotal: 5000, ID: runID,
++	})
++	if err != nil {
++		t.Fatalf("update metrics: %v", err)
++	}
++
++	run, _ := q.GetReviewRun(ctx, runID)
++	if run.ProviderLatencyMs != 250 {
++		t.Fatalf("want 250, got %d", run.ProviderLatencyMs)
++	}
++}
++
++// --- seed helpers ---
++
++func seedProject(t *testing.T, q *sqlitedb.Queries, ctx context.Context) (instID, projID int64) {
++	t.Helper()
++	res, err := q.InsertGitlabInstance(ctx, db.InsertGitlabInstanceParams{Url: "https://gl.test", Name: "test"})
++	if err != nil {
++		t.Fatalf("seed instance: %v", err)
++	}
++	instID, _ = res.LastInsertId()
++
++	res, err = q.InsertProject(ctx, db.InsertProjectParams{
++		GitlabInstanceID: instID, GitlabProjectID: 1, PathWithNamespace: "org/repo", Enabled: true,
++	})
++	if err != nil {
++		t.Fatalf("seed project: %v", err)
++	}
++	projID, _ = res.LastInsertId()
++	return
++}
++
++func seedMR(t *testing.T, q *sqlitedb.Queries, ctx context.Context, projID int64) int64 {
++	t.Helper()
++	res, err := q.InsertMergeRequest(ctx, db.InsertMergeRequestParams{
++		ProjectID: projID, MrIid: 1, Title: "Test MR",
++		SourceBranch: "feat", TargetBranch: "main",
++		Author: "dev", State: "opened", HeadSha: "abc",
++	})
++	if err != nil {
++		t.Fatalf("seed MR: %v", err)
++	}
++	id, _ := res.LastInsertId()
++	return id
++}
++
++func seedRun(t *testing.T, q *sqlitedb.Queries, ctx context.Context, projID, mrID int64) int64 {
++	t.Helper()
++	res, err := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
++		ProjectID: projID, MergeRequestID: mrID,
++		TriggerType: "webhook", HeadSha: "abc",
++		Status: "pending", MaxRetries: 3,
++		IdempotencyKey: "run-" + time.Now().Format(time.RFC3339Nano),
++	})
++	if err != nil {
++		t.Fatalf("seed run: %v", err)
++	}
++	id, _ := res.LastInsertId()
++	return id
++}
++
++func seedFinding(t *testing.T, q *sqlitedb.Queries, ctx context.Context, runID, mrID int64) int64 {
++	t.Helper()
++	res, err := q.InsertReviewFinding(ctx, db.InsertReviewFindingParams{
++		ReviewRunID:         runID,
++		MergeRequestID:      mrID,
++		Category:            "test",
++		Severity:            "low",
++		Confidence:          0.5,
++		Title:               "test finding",
++		Path:                "test.go",
++		AnchorKind:          "new_line",
++		CanonicalKey:        "test-" + time.Now().Format(time.RFC3339Nano),
++		AnchorFingerprint:   "fp",
++		SemanticFingerprint: "sem",
++		State:               "new",
++	})
++	if err != nil {
++		t.Fatalf("seed finding: %v", err)
++	}
++	id, _ := res.LastInsertId()
++	return id
++}
+diff --git a/internal/db/sqlitedb/review_findings.go b/internal/db/sqlitedb/review_findings.go
+new file mode 100644
+index 0000000..2916dd5
+--- /dev/null
++++ b/internal/db/sqlitedb/review_findings.go
+@@ -0,0 +1,119 @@
++package sqlitedb
++
++import (
++	"context"
++	"database/sql"
++
++	"github.com/mreviewer/mreviewer/internal/db"
++)
++
++func (q *Queries) GetFindingByMRAndDiscussionID(ctx context.Context, arg db.GetFindingByMRAndDiscussionIDParams) (db.ReviewFinding, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown,
++		        path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line,
++		        range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch,
++		        canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id,
++		        gitlab_discussion_id, error_code, created_at, updated_at
++		 FROM review_findings WHERE merge_request_id = ? AND gitlab_discussion_id = ? LIMIT 1`,
++		arg.MergeRequestID, arg.GitlabDiscussionID)
++	return scanReviewFinding(row)
++}
++
++func (q *Queries) GetReviewFinding(ctx context.Context, id int64) (db.ReviewFinding, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown,
++		        path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line,
++		        range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch,
++		        canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id,
++		        gitlab_discussion_id, error_code, created_at, updated_at
++		 FROM review_findings WHERE id = ? LIMIT 1`, id)
++	return scanReviewFinding(row)
++}
++
++func (q *Queries) InsertReviewFinding(ctx context.Context, arg db.InsertReviewFindingParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO review_findings (
++		    review_run_id, merge_request_id, category, severity, confidence,
++		    title, body_markdown, path, anchor_kind, old_line, new_line,
++		    range_start_kind, range_start_old_line, range_start_new_line,
++		    range_end_kind, range_end_old_line, range_end_new_line,
++		    anchor_snippet, evidence, suggested_patch, canonical_key,
++		    anchor_fingerprint, semantic_fingerprint, state
++		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++		arg.ReviewRunID, arg.MergeRequestID, arg.Category, arg.Severity, arg.Confidence,
++		arg.Title, arg.BodyMarkdown, arg.Path, arg.AnchorKind, arg.OldLine, arg.NewLine,
++		arg.RangeStartKind, arg.RangeStartOldLine, arg.RangeStartNewLine,
++		arg.RangeEndKind, arg.RangeEndOldLine, arg.RangeEndNewLine,
++		arg.AnchorSnippet, arg.Evidence, arg.SuggestedPatch, arg.CanonicalKey,
++		arg.AnchorFingerprint, arg.SemanticFingerprint, arg.State)
++}
++
++func (q *Queries) ListActiveFindingsByMR(ctx context.Context, mergeRequestID int64) ([]db.ReviewFinding, error) {
++	rows, err := q.db.QueryContext(ctx,
++		`SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown,
++		        path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line,
++		        range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch,
++		        canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id,
++		        gitlab_discussion_id, error_code, created_at, updated_at
++		 FROM review_findings WHERE merge_request_id = ? AND state IN ('new', 'posted', 'active') ORDER BY created_at ASC`,
++		mergeRequestID)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	return scanReviewFindingRows(rows)
++}
++
++func (q *Queries) ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]db.ReviewFinding, error) {
++	rows, err := q.db.QueryContext(ctx,
++		`SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown,
++		        path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line,
++		        range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch,
++		        canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id,
++		        gitlab_discussion_id, error_code, created_at, updated_at
++		 FROM review_findings WHERE review_run_id = ? ORDER BY created_at ASC`,
++		reviewRunID)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	return scanReviewFindingRows(rows)
++}
++
++func (q *Queries) UpdateFindingDiscussionID(ctx context.Context, arg db.UpdateFindingDiscussionIDParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_findings SET gitlab_discussion_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
++		arg.GitlabDiscussionID, arg.ID)
++	return err
++}
++
++func (q *Queries) UpdateFindingLastSeen(ctx context.Context, arg db.UpdateFindingLastSeenParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_findings SET last_seen_run_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
++		arg.LastSeenRunID, arg.ID)
++	return err
++}
++
++func (q *Queries) UpdateFindingRelocation(ctx context.Context, arg db.UpdateFindingRelocationParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_findings
++		 SET path = ?, anchor_kind = ?, old_line = ?, new_line = ?,
++		     range_start_kind = ?, range_start_old_line = ?, range_start_new_line = ?,
++		     range_end_kind = ?, range_end_old_line = ?, range_end_new_line = ?,
++		     anchor_snippet = ?, anchor_fingerprint = ?, semantic_fingerprint = ?,
++		     last_seen_run_id = ?, updated_at = CURRENT_TIMESTAMP
++		 WHERE id = ?`,
++		arg.Path, arg.AnchorKind, arg.OldLine, arg.NewLine,
++		arg.RangeStartKind, arg.RangeStartOldLine, arg.RangeStartNewLine,
++		arg.RangeEndKind, arg.RangeEndOldLine, arg.RangeEndNewLine,
++		arg.AnchorSnippet, arg.AnchorFingerprint, arg.SemanticFingerprint,
++		arg.LastSeenRunID, arg.ID)
++	return err
++}
++
++func (q *Queries) UpdateFindingState(ctx context.Context, arg db.UpdateFindingStateParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_findings SET state = ?, matched_finding_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
++		arg.State, arg.MatchedFindingID, arg.ID)
++	return err
++}
+diff --git a/internal/db/sqlitedb/review_runs.go b/internal/db/sqlitedb/review_runs.go
+new file mode 100644
+index 0000000..c6cc547
+--- /dev/null
++++ b/internal/db/sqlitedb/review_runs.go
+@@ -0,0 +1,219 @@
++package sqlitedb
++
++import (
++	"context"
++	"database/sql"
++	"fmt"
++
++	"github.com/mreviewer/mreviewer/internal/db"
++)
++
++func (q *Queries) CancelPendingRunsForMR(ctx context.Context, mergeRequestID int64) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs
++		 SET status = 'cancelled', next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
++		 WHERE merge_request_id = ?
++		   AND (status IN ('pending', 'running') OR (status = 'failed' AND next_retry_at IS NOT NULL))`,
++		mergeRequestID)
++	return err
++}
++
++func (q *Queries) ClaimReviewRun(ctx context.Context, arg db.ClaimReviewRunParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs
++		 SET status = 'running',
++		     claimed_by = ?,
++		     claimed_at = CURRENT_TIMESTAMP,
++		     started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
++		     next_retry_at = NULL,
++		     error_code = '',
++		     error_detail = NULL,
++		     updated_at = CURRENT_TIMESTAMP
++		 WHERE id = ?`,
++		arg.ClaimedBy, arg.ID)
++	return err
++}
++
++// GetNextClaimableReviewRun: FOR UPDATE SKIP LOCKED removed (SQLite single-writer).
++func (q *Queries) GetNextClaimableReviewRun(ctx context.Context) (db.ReviewRun, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
++		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
++		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
++		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
++		 FROM review_runs
++		 WHERE status = 'pending'
++		    OR (status = 'failed' AND next_retry_at IS NOT NULL AND next_retry_at <= CURRENT_TIMESTAMP)
++		 ORDER BY
++		   CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
++		   COALESCE(next_retry_at, created_at) ASC,
++		   created_at ASC,
++		   id ASC
++		 LIMIT 1`)
++	return scanReviewRun(row)
++}
++
++func (q *Queries) GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
++		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
++		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
++		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
++		 FROM review_runs WHERE id = ? LIMIT 1`, id)
++	return scanReviewRun(row)
++}
++
++func (q *Queries) GetReviewRunByIdempotencyKey(ctx context.Context, idempotencyKey string) (db.ReviewRun, error) {
++	row := q.db.QueryRowContext(ctx,
++		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
++		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
++		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
++		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
++		 FROM review_runs WHERE idempotency_key = ? LIMIT 1`, idempotencyKey)
++	return scanReviewRun(row)
++}
++
++func (q *Queries) InsertReviewRun(ctx context.Context, arg db.InsertReviewRunParams) (sql.Result, error) {
++	return q.db.ExecContext(ctx,
++		`INSERT INTO review_runs (project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, max_retries, idempotency_key, scope_json)
++		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++		arg.ProjectID, arg.MergeRequestID, arg.HookEventID, arg.TriggerType,
++		arg.HeadSha, arg.Status, arg.MaxRetries, arg.IdempotencyKey, arg.ScopeJson)
++}
++
++func (q *Queries) ListPendingRuns(ctx context.Context, limit int32) ([]db.ReviewRun, error) {
++	rows, err := q.db.QueryContext(ctx,
++		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
++		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
++		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
++		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
++		 FROM review_runs
++		 WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
++		 ORDER BY created_at ASC LIMIT ?`, limit)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	return scanReviewRunRows(rows)
++}
++
++func (q *Queries) ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) ([]db.ReviewRun, error) {
++	rows, err := q.db.QueryContext(ctx,
++		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
++		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
++		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
++		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
++		 FROM review_runs WHERE merge_request_id = ? ORDER BY created_at DESC`, mergeRequestID)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	return scanReviewRunRows(rows)
++}
++
++func (q *Queries) MarkReviewRunFailed(ctx context.Context, arg db.MarkReviewRunFailedParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs
++		 SET status = 'failed', error_code = ?, error_detail = ?, retry_count = ?,
++		     next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
++		 WHERE id = ?`,
++		arg.ErrorCode, arg.ErrorDetail, arg.RetryCount, arg.ID)
++	return err
++}
++
++func (q *Queries) MarkReviewRunRetryableFailure(ctx context.Context, arg db.MarkReviewRunRetryableFailureParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs
++		 SET status = 'failed', error_code = ?, error_detail = ?, retry_count = ?,
++		     next_retry_at = ?, updated_at = CURRENT_TIMESTAMP
++		 WHERE id = ?`,
++		arg.ErrorCode, arg.ErrorDetail, arg.RetryCount, arg.NextRetryAt, arg.ID)
++	return err
++}
++
++// ReapStaleRunningRuns: datetime() replaces MySQL's NOW() + INTERVAL / NOW() - INTERVAL.
++func (q *Queries) ReapStaleRunningRuns(ctx context.Context, dateSUB interface{}) (int64, error) {
++	result, err := q.db.ExecContext(ctx,
++		fmt.Sprintf(`UPDATE review_runs
++		 SET status = 'failed',
++		     error_code = 'worker_timeout',
++		     error_detail = 'Run exceeded claim timeout and was reaped for retry',
++		     retry_count = retry_count + 1,
++		     next_retry_at = datetime('now', '+30 seconds'),
++		     updated_at = CURRENT_TIMESTAMP
++		 WHERE status = 'running'
++		   AND claimed_at < datetime('now', '-%v minutes')`, dateSUB))
++	if err != nil {
++		return 0, err
++	}
++	return result.RowsAffected()
++}
++
++func (q *Queries) UpdateReviewRunCompleted(ctx context.Context, arg db.UpdateReviewRunCompletedParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs
++		 SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
++		     provider_latency_ms = ?, provider_tokens_total = ?,
++		     error_code = '', error_detail = NULL, next_retry_at = NULL,
++		     updated_at = CURRENT_TIMESTAMP
++		 WHERE id = ?`,
++		arg.ProviderLatencyMs, arg.ProviderTokensTotal, arg.ID)
++	return err
++}
++
++func (q *Queries) UpdateReviewRunStatus(ctx context.Context, arg db.UpdateReviewRunStatusParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs SET status = ?, error_code = ?, error_detail = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
++		arg.Status, arg.ErrorCode, arg.ErrorDetail, arg.ID)
++	return err
++}
++
++// --- Custom Store methods (conditional updates only if status='running') ---
++
++func (q *Queries) MarkReviewRunRetryableFailureIfRunning(ctx context.Context, arg db.MarkReviewRunRetryableFailureParams) (bool, error) {
++	result, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs
++		 SET status = 'failed', error_code = ?, error_detail = ?, retry_count = ?,
++		     next_retry_at = ?, updated_at = CURRENT_TIMESTAMP
++		 WHERE id = ? AND status = 'running'`,
++		arg.ErrorCode, arg.ErrorDetail, arg.RetryCount, arg.NextRetryAt, arg.ID)
++	if err != nil {
++		return false, err
++	}
++	return rowsAffected(result)
++}
++
++func (q *Queries) MarkReviewRunFailedIfRunning(ctx context.Context, arg db.MarkReviewRunFailedParams) (bool, error) {
++	result, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs
++		 SET status = 'failed', error_code = ?, error_detail = ?, retry_count = ?,
++		     next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
++		 WHERE id = ? AND status = 'running'`,
++		arg.ErrorCode, arg.ErrorDetail, arg.RetryCount, arg.ID)
++	if err != nil {
++		return false, err
++	}
++	return rowsAffected(result)
++}
++
++func (q *Queries) UpdateReviewRunCompletedIfRunning(ctx context.Context, arg db.UpdateReviewRunCompletedParams) (bool, error) {
++	result, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs
++		 SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
++		     provider_latency_ms = ?, provider_tokens_total = ?,
++		     error_code = '', error_detail = NULL, next_retry_at = NULL,
++		     updated_at = CURRENT_TIMESTAMP
++		 WHERE id = ? AND status = 'running'`,
++		arg.ProviderLatencyMs, arg.ProviderTokensTotal, arg.ID)
++	if err != nil {
++		return false, err
++	}
++	return rowsAffected(result)
++}
++
++func (q *Queries) UpdateReviewRunProviderMetrics(ctx context.Context, arg db.UpdateReviewRunProviderMetricsParams) error {
++	_, err := q.db.ExecContext(ctx,
++		`UPDATE review_runs SET provider_latency_ms = ?, provider_tokens_total = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
++		arg.ProviderLatencyMs, arg.ProviderTokensTotal, arg.ID)
++	return err
++}
+diff --git a/internal/db/store.go b/internal/db/store.go
+new file mode 100644
+index 0000000..bc476ca
+--- /dev/null
++++ b/internal/db/store.go
+@@ -0,0 +1,19 @@
++package db
++
++import "context"
++
++// Store extends the sqlc-generated Querier interface with custom methods
++// that both MySQL and SQLite backends must implement. This is the primary
++// abstraction for swapping database backends.
++type Store interface {
++	Querier
++
++	// Custom methods not generated by sqlc (defined in review_runs_custom.go for MySQL).
++	MarkReviewRunRetryableFailureIfRunning(ctx context.Context, arg MarkReviewRunRetryableFailureParams) (bool, error)
++	MarkReviewRunFailedIfRunning(ctx context.Context, arg MarkReviewRunFailedParams) (bool, error)
++	UpdateReviewRunCompletedIfRunning(ctx context.Context, arg UpdateReviewRunCompletedParams) (bool, error)
++	UpdateReviewRunProviderMetrics(ctx context.Context, arg UpdateReviewRunProviderMetricsParams) error
++}
++
++// Verify that *Queries satisfies Store at compile time.
++var _ Store = (*Queries)(nil)
+diff --git a/internal/gate/service.go b/internal/gate/service.go
+index f1909db..dc80fe8 100644
+--- a/internal/gate/service.go
++++ b/internal/gate/service.go
+@@ -252,9 +252,9 @@ type DBAuditLogger struct {
+ 	insert func(context.Context, db.InsertAuditLogParams) error
+ }
+ 
+-func NewDBAuditLogger(queries *db.Queries) *DBAuditLogger {
++func NewDBAuditLogger(store db.Store) *DBAuditLogger {
+ 	return &DBAuditLogger{insert: func(ctx context.Context, arg db.InsertAuditLogParams) error {
+-		_, err := queries.InsertAuditLog(ctx, arg)
++		_, err := store.InsertAuditLog(ctx, arg)
+ 		return err
+ 	}}
+ }
+diff --git a/internal/hooks/handler.go b/internal/hooks/handler.go
+index 3803eb7..6e3d557 100644
+--- a/internal/hooks/handler.go
++++ b/internal/hooks/handler.go
+@@ -31,6 +31,7 @@ type Handler struct {
+ 	secret           string
+ 	runProcessor     RunProcessor
+ 	commandProcessor CommandProcessor
++	newStore         func(db.DBTX) db.Store
+ }
+ 
+ // RunProcessor creates or cancels review runs for normalized MR events.
+@@ -51,15 +52,31 @@ type CommandProcessor interface {
+ // NewHandler creates a webhook handler. The secret is the expected value of
+ // the X-Gitlab-Token header. An empty secret causes all requests to be
+ // rejected with 401.
+-func NewHandler(logger *slog.Logger, database *sql.DB, secret string, runProcessor RunProcessor) *Handler {
+-	return &Handler{
++// HandlerOption configures optional Handler behaviour.
++type HandlerOption func(*Handler)
++
++// WithHandlerStoreFactory overrides the default db.Store constructor used for
++// non-transactional queries. The default is db.New (MySQL).
++func WithHandlerStoreFactory(fn func(db.DBTX) db.Store) HandlerOption {
++	return func(h *Handler) { h.newStore = fn }
++}
++
++func NewHandler(logger *slog.Logger, database *sql.DB, secret string, runProcessor RunProcessor, opts ...HandlerOption) *Handler {
++	h := &Handler{
+ 		logger:       logger,
+ 		db:           database,
+ 		secret:       secret,
+ 		runProcessor: runProcessor,
++		newStore:     defaultHandlerNewStore,
+ 	}
++	for _, o := range opts {
++		o(h)
++	}
++	return h
+ }
+ 
++func defaultHandlerNewStore(conn db.DBTX) db.Store { return db.New(conn) }
++
+ // SetCommandProcessor sets an optional command processor for /ai-review
+ // note commands. This is separated from the constructor to avoid a circular
+ // dependency.
+@@ -128,7 +145,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 
+ 	// --- 3. Check for duplicate delivery ---
+ 	if deliveryKey != "" {
+-		existing, lookupErr := db.New(h.db).GetHookEventByDeliveryKey(ctx, deliveryKey)
++		existing, lookupErr := h.newStore(h.db).GetHookEventByDeliveryKey(ctx, deliveryKey)
+ 		if lookupErr == nil && existing.ID > 0 {
+ 			l.InfoContext(ctx, "duplicate delivery key, acknowledging",
+ 				"delivery_key", deliveryKey,
+@@ -172,7 +189,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 			"delivery_key", deliveryKey,
+ 			"event_type", parsed.EventType,
+ 		)
+-		if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
++		if _, insertErr := h.insertHookEvent(ctx, h.newStore(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+ 			l.WarnContext(ctx, "failed to insert hook_event for non-MR event",
+ 				"delivery_key", deliveryKey,
+ 				"error", insertErr,
+@@ -323,7 +340,7 @@ func (h *Handler) writeAuditLog(
+ 	ctx context.Context,
+ 	deliveryKey, hookSource, outcome, rejectionReason, eventType string,
+ ) {
+-	q := db.New(h.db)
++	q := h.newStore(h.db)
+ 	_, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+ 		EntityType:          "webhook",
+ 		EntityID:            0,
+@@ -389,7 +406,7 @@ func (h *Handler) handleNoteEvent(
+ 	if isCmd {
+ 		if h.commandProcessor == nil {
+ 			// Still insert the hook event for audit outside the command path.
+-			if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
++			if _, insertErr := h.insertHookEvent(ctx, h.newStore(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+ 				if !db.IsDuplicateKeyError(insertErr) {
+ 					l.WarnContext(ctx, "failed to insert hook_event for note",
+ 						"delivery_key", deliveryKey,
+@@ -444,7 +461,7 @@ func (h *Handler) handleNoteEvent(
+ 	}
+ 
+ 	// Non-command note: insert hook_event for audit.
+-	if _, insertErr := h.insertHookEvent(ctx, db.New(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
++	if _, insertErr := h.insertHookEvent(ctx, h.newStore(h.db), deliveryKey, hookSource, parsed, payload, "verified", ""); insertErr != nil {
+ 		if !db.IsDuplicateKeyError(insertErr) {
+ 			l.WarnContext(ctx, "failed to insert hook_event for note",
+ 				"delivery_key", deliveryKey,
+diff --git a/internal/llm/dedup.go b/internal/llm/dedup.go
+index 024eeb8..98a7d71 100644
+--- a/internal/llm/dedup.go
++++ b/internal/llm/dedup.go
+@@ -13,7 +13,7 @@ import (
+ 	"github.com/mreviewer/mreviewer/internal/db"
+ )
+ 
+-func persistFindings(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, result ReviewResult, reviewedPaths, deletedPaths map[string]struct{}) error {
++func persistFindings(ctx context.Context, queries db.Store, run db.ReviewRun, mr db.MergeRequest, result ReviewResult, reviewedPaths, deletedPaths map[string]struct{}) error {
+ 	existing, err := queries.ListActiveFindingsByMR(ctx, mr.ID)
+ 	if err != nil {
+ 		return err
+@@ -246,7 +246,7 @@ func nextFindingState(current, next string) (string, bool, error) {
+ 	return next, true, nil
+ }
+ 
+-func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding) (findingMatchDecision, error) {
++func matchExistingFinding(ctx context.Context, queries db.Store, run db.ReviewRun, existing []db.ReviewFinding, finding persistedFinding) (findingMatchDecision, error) {
+ 	for _, current := range existing {
+ 		if current.AnchorKind == "new_line" && finding.state == findingStateDeleted && normalizePath(current.Path) == finding.normalized.Path {
+ 			continue
+@@ -320,7 +320,7 @@ func matchExistingFinding(ctx context.Context, queries *db.Queries, run db.Revie
+ 	return findingMatchDecision{}, nil
+ }
+ 
+-func insertFinding(ctx context.Context, queries *db.Queries, run db.ReviewRun, mr db.MergeRequest, finding persistedFinding) (int64, error) {
++func insertFinding(ctx context.Context, queries db.Store, run db.ReviewRun, mr db.MergeRequest, finding persistedFinding) (int64, error) {
+ 	var oldLine, newLine sql.NullInt32
+ 	if finding.normalized.OldLine.Valid {
+ 		oldLine = finding.normalized.OldLine
+diff --git a/internal/llm/processor.go b/internal/llm/processor.go
+index a30dd39..c8eaec2 100644
+--- a/internal/llm/processor.go
++++ b/internal/llm/processor.go
+@@ -23,7 +23,7 @@ import (
+ type Processor struct {
+ 	logger          *slog.Logger
+ 	sqlDB           *sql.DB
+-	queries         *db.Queries
++	queries         db.Store
+ 	gitlab          GitLabReader
+ 	rulesLoader     RulesLoader
+ 	assembler       *ctxpkg.Assembler
+@@ -34,6 +34,7 @@ type Processor struct {
+ 	metrics         *metrics.Registry
+ 	tracer          *tracing.Recorder
+ 	summaryProvider SummaryProvider
++	newStore        func(db.DBTX) db.Store
+ }
+ 
+ type GitLabReader interface {
+@@ -54,19 +55,29 @@ func NewProcessor(logger *slog.Logger, sqlDB *sql.DB, gitlabClient GitLabReader,
+ 	if logger == nil {
+ 		logger = slog.Default()
+ 	}
++	newStore := defaultProcessorNewStore
+ 	return &Processor{
+ 		logger:         logger,
+ 		sqlDB:          sqlDB,
+-		queries:        db.New(sqlDB),
++		queries:        newStore(sqlDB),
+ 		gitlab:         gitlabClient,
+ 		rulesLoader:    rulesLoader,
+ 		assembler:      ctxpkg.NewAssembler(),
+ 		provider:       provider,
+ 		timeoutRetries: defaultTimeoutRetry,
+ 		auditLogger:    audit,
++		newStore:       newStore,
+ 	}
+ }
+ 
++func (p *Processor) WithStoreFactory(fn func(db.DBTX) db.Store) *Processor {
++	p.newStore = fn
++	p.queries = fn(p.sqlDB)
++	return p
++}
++
++func defaultProcessorNewStore(conn db.DBTX) db.Store { return db.New(conn) }
++
+ func (p *Processor) WithRegistry(registry *ProviderRegistry) *Processor {
+ 	p.registry = registry
+ 	return p
+@@ -412,9 +423,15 @@ func providerRouteFromRunScope(raw []byte) string {
+ 	return strings.TrimSpace(scope.ProviderRoute)
+ }
+ 
+-type DBAuditLogger struct{ queries *db.Queries }
++type DBAuditLogger struct{ queries db.Store }
+ 
+-func NewDBAuditLogger(sqlDB *sql.DB) *DBAuditLogger { return &DBAuditLogger{queries: db.New(sqlDB)} }
++func NewDBAuditLogger(sqlDB *sql.DB) *DBAuditLogger {
++	return &DBAuditLogger{queries: db.New(sqlDB)}
++}
++
++func NewDBAuditLoggerWithStore(store db.Store) *DBAuditLogger {
++	return &DBAuditLogger{queries: store}
++}
+ 
+ func (l *DBAuditLogger) LogProviderCall(ctx context.Context, run db.ReviewRun, payload map[string]any, response ProviderResponse) error {
+ 	detail, _ := json.Marshal(map[string]any{"request": payload, "response": response.ResponsePayload, "provider_model": response.Model, "provider_latency_ms": response.Latency.Milliseconds(), "provider_tokens_total": response.Tokens, "fallback_stage": response.FallbackStage})
+diff --git a/internal/llm/summary.go b/internal/llm/summary.go
+index f8a1444..f5bc6df 100644
+--- a/internal/llm/summary.go
++++ b/internal/llm/summary.go
+@@ -14,7 +14,7 @@ import (
+ 	"github.com/mreviewer/mreviewer/internal/reviewlang"
+ )
+ 
+-func persistSummaryNoteFallback(ctx context.Context, queries *db.Queries, run db.ReviewRun, result ReviewResult) error {
++func persistSummaryNoteFallback(ctx context.Context, queries db.Store, run db.ReviewRun, result ReviewResult) error {
+ 	if result.SummaryNote == nil || strings.TrimSpace(result.SummaryNote.BodyMarkdown) == "" {
+ 		return nil
+ 	}
+diff --git a/internal/manualtrigger/service.go b/internal/manualtrigger/service.go
+index 8584cd3..7f37b71 100644
+--- a/internal/manualtrigger/service.go
++++ b/internal/manualtrigger/service.go
+@@ -24,12 +24,13 @@ type MergeRequestReader interface {
+ type Option func(*Service)
+ 
+ type Service struct {
+-	logger  *slog.Logger
+-	db      *sql.DB
+-	gitlab  MergeRequestReader
+-	baseURL string
+-	now     func() time.Time
+-	poll    time.Duration
++	logger   *slog.Logger
++	db       *sql.DB
++	gitlab   MergeRequestReader
++	baseURL  string
++	now      func() time.Time
++	poll     time.Duration
++	newStore func(db.DBTX) db.Store
+ }
+ 
+ type TriggerInput struct {
+@@ -52,12 +53,13 @@ func NewService(logger *slog.Logger, sqlDB *sql.DB, client MergeRequestReader, b
+ 	}
+ 
+ 	svc := &Service{
+-		logger:  logger,
+-		db:      sqlDB,
+-		gitlab:  client,
+-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+-		now:     time.Now,
+-		poll:    time.Second,
++		logger:   logger,
++		db:       sqlDB,
++		gitlab:   client,
++		baseURL:  strings.TrimRight(strings.TrimSpace(baseURL), "/"),
++		now:      time.Now,
++		poll:     time.Second,
++		newStore: defaultManualNewStore,
+ 	}
+ 
+ 	for _, opt := range opts {
+@@ -88,6 +90,14 @@ func WithPollInterval(interval time.Duration) Option {
+ 	}
+ }
+ 
++func WithStoreFactory(fn func(db.DBTX) db.Store) Option {
++	return func(s *Service) {
++		s.newStore = fn
++	}
++}
++
++func defaultManualNewStore(conn db.DBTX) db.Store { return db.New(conn) }
++
+ func (s *Service) Trigger(ctx context.Context, input TriggerInput) (TriggerResult, error) {
+ 	if s.db == nil {
+ 		return TriggerResult{}, fmt.Errorf("manual trigger: database is required")
+@@ -159,7 +169,7 @@ func (s *Service) Trigger(ctx context.Context, input TriggerInput) (TriggerResul
+ 		return TriggerResult{}, fmt.Errorf("manual trigger: create review run: %w", err)
+ 	}
+ 
+-	run, err := db.New(s.db).GetReviewRunByIdempotencyKey(ctx, ev.IdempotencyKey)
++	run, err := s.newStore(s.db).GetReviewRunByIdempotencyKey(ctx, ev.IdempotencyKey)
+ 	if err != nil {
+ 		return TriggerResult{}, fmt.Errorf("manual trigger: load created review run: %w", err)
+ 	}
+@@ -185,7 +195,7 @@ func (s *Service) WaitForTerminalRun(ctx context.Context, runID int64) (db.Revie
+ 	defer ticker.Stop()
+ 
+ 	for {
+-		run, err := db.New(s.db).GetReviewRun(ctx, runID)
++		run, err := s.newStore(s.db).GetReviewRun(ctx, runID)
+ 		if err != nil {
+ 			return db.ReviewRun{}, fmt.Errorf("manual trigger: load review run %d: %w", runID, err)
+ 		}
+diff --git a/internal/scheduler/service.go b/internal/scheduler/service.go
+index 763b1e5..8b6cdc6 100644
+--- a/internal/scheduler/service.go
++++ b/internal/scheduler/service.go
+@@ -103,6 +103,7 @@ type Service struct {
+ 	metrics             *metrics.Registry
+ 	tracer              *tracing.Recorder
+ 	workerConcurrency   int
++	newStore            func(db.DBTX) db.Store
+ }
+ 
+ func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts ...Option) *Service {
+@@ -122,6 +123,7 @@ func NewService(logger *slog.Logger, database *sql.DB, processor Processor, opts
+ 		reaperInterval:      defaultReaperInterval,
+ 		now:                 time.Now,
+ 		workerConcurrency:   defaultWorkerConcurrency,
++		newStore:            defaultNewStore,
+ 	}
+ 
+ 	for _, opt := range opts {
+@@ -224,6 +226,19 @@ func WithWorkerConcurrency(concurrency int) Option {
+ 	}
+ }
+ 
++// WithStoreFactory overrides the function used to create db.Store instances.
++// This enables SQLite support by injecting sqlitedb.New instead of db.New.
++func WithStoreFactory(fn func(db.DBTX) db.Store) Option {
++	return func(s *Service) {
++		if fn != nil {
++			s.newStore = fn
++		}
++	}
++}
++
++// defaultNewStore wraps db.New to satisfy the db.Store interface.
++func defaultNewStore(conn db.DBTX) db.Store { return db.New(conn) }
++
+ func NewNoopProcessor(logger *slog.Logger) Processor {
+ 	return FuncProcessor(func(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error) {
+ 		if logger != nil {
+@@ -340,7 +355,7 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
+ 			return nil, fmt.Errorf("scheduler: begin claim tx: %w", err)
+ 		}
+ 
+-		q := db.New(tx)
++		q := s.newStore(tx)
+ 		run, err := q.GetNextClaimableReviewRun(ctx)
+ 		if err != nil {
+ 			_ = tx.Rollback()
+@@ -393,7 +408,7 @@ func (s *Service) ClaimNextRun(ctx context.Context) (*db.ReviewRun, error) {
+ // timeout back to failed with a retry scheduled, allowing them to be
+ // reclaimed by another worker.
+ func (s *Service) ReapStaleRuns(ctx context.Context) (int64, error) {
+-	reaped, err := db.New(s.db).ReapStaleRunningRuns(ctx, s.claimTimeoutMinutes)
++	reaped, err := s.newStore(s.db).ReapStaleRunningRuns(ctx, s.claimTimeoutMinutes)
+ 	if err != nil {
+ 		return 0, fmt.Errorf("scheduler: reap stale runs: %w", err)
+ 	}
+@@ -442,7 +457,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
+ 			status = "completed"
+ 		}
+ 		if status == "parser_error" {
+-			currentRun, err := db.New(s.db).GetReviewRun(ctx, run.ID)
++			currentRun, err := s.newStore(s.db).GetReviewRun(ctx, run.ID)
+ 			if err != nil {
+ 				return fmt.Errorf("scheduler: reload run %d before parser_error completion: %w", run.ID, err)
+ 			}
+@@ -452,7 +467,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
+ 			if currentRun.Status != "parser_error" {
+ 				return fmt.Errorf("scheduler: run %d expected parser_error status, got %q", run.ID, currentRun.Status)
+ 			}
+-			if err := db.New(s.db).UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
++			if err := s.newStore(s.db).UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: status, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
+ 				return fmt.Errorf("scheduler: mark run %d parser_error: %w", run.ID, err)
+ 			}
+ 			if err := s.persistProviderMetricsIfNeeded(ctx, run.ID, currentRun, outcome); err != nil {
+@@ -482,7 +497,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
+ 		if gateResult != nil {
+ 			s.publishDirectStatus(ctx, *gateResult)
+ 		}
+-		updated, err := db.New(s.db).UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
++		updated, err := s.newStore(s.db).UpdateReviewRunCompletedIfRunning(ctx, db.UpdateReviewRunCompletedParams{
+ 			ProviderLatencyMs:   outcome.ProviderLatencyMs,
+ 			ProviderTokensTotal: outcome.ProviderTokensTotal,
+ 			ID:                  run.ID,
+@@ -527,7 +542,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
+ 		delay := s.retryDelay(run.RetryCount)
+ 		nextRetryAt := s.now().Add(delay)
+ 
+-		updated, err := db.New(s.db).MarkReviewRunRetryableFailureIfRunning(ctx, db.MarkReviewRunRetryableFailureParams{
++		updated, err := s.newStore(s.db).MarkReviewRunRetryableFailureIfRunning(ctx, db.MarkReviewRunRetryableFailureParams{
+ 			ErrorCode:   code,
+ 			ErrorDetail: nullableString(detail),
+ 			RetryCount:  nextRetryCount,
+@@ -569,7 +584,7 @@ func (s *Service) processClaimedRun(ctx context.Context, run db.ReviewRun) error
+ 		return nil
+ 	}
+ 
+-	updated, err := db.New(s.db).MarkReviewRunFailedIfRunning(ctx, db.MarkReviewRunFailedParams{
++	updated, err := s.newStore(s.db).MarkReviewRunFailedIfRunning(ctx, db.MarkReviewRunFailedParams{
+ 		ErrorCode:   code,
+ 		ErrorDetail: nullableString(detail),
+ 		RetryCount:  run.RetryCount,
+@@ -628,7 +643,7 @@ func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outco
+ 	if status != "completed" && status != "requested_changes" {
+ 		return nil, nil
+ 	}
+-	queries := db.New(s.db)
++	queries := s.newStore(s.db)
+ 	var policyPtr *db.ProjectPolicy
+ 	policy, err := queries.GetProjectPolicy(ctx, run.ProjectID)
+ 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+@@ -727,7 +742,7 @@ func (s *Service) startSpan(ctx context.Context, name string, attrs map[string]s
+ }
+ 
+ func (s *Service) handleSkippedTerminalWrite(ctx context.Context, run db.ReviewRun, terminalState string) (db.ReviewRun, error) {
+-	currentRun, err := db.New(s.db).GetReviewRun(ctx, run.ID)
++	currentRun, err := s.newStore(s.db).GetReviewRun(ctx, run.ID)
+ 	if err != nil {
+ 		return db.ReviewRun{}, fmt.Errorf("scheduler: reload run %d after skipped %s write: %w", run.ID, terminalState, err)
+ 	}
+@@ -767,7 +782,7 @@ func (s *Service) persistProviderMetricsIfNeeded(ctx context.Context, runID int6
+ 	if currentRun.ProviderLatencyMs == outcome.ProviderLatencyMs && currentRun.ProviderTokensTotal == outcome.ProviderTokensTotal {
+ 		return nil
+ 	}
+-	if err := db.New(s.db).UpdateReviewRunProviderMetrics(ctx, db.UpdateReviewRunProviderMetricsParams{
++	if err := s.newStore(s.db).UpdateReviewRunProviderMetrics(ctx, db.UpdateReviewRunProviderMetricsParams{
+ 		ProviderLatencyMs:   outcome.ProviderLatencyMs,
+ 		ProviderTokensTotal: outcome.ProviderTokensTotal,
+ 		ID:                  runID,
+@@ -827,7 +842,7 @@ func defaultWorkerID() string {
+ }
+ 
+ func (s *Service) reloadRunningRun(ctx context.Context, runID int64) (db.ReviewRun, error) {
+-	run, err := db.New(s.db).GetReviewRun(ctx, runID)
++	run, err := s.newStore(s.db).GetReviewRun(ctx, runID)
+ 	if err != nil {
+ 		return db.ReviewRun{}, fmt.Errorf("scheduler: reload run %d before processing: %w", runID, err)
+ 	}
+diff --git a/internal/writer/sql_store.go b/internal/writer/sql_store.go
+index 95860bc..7e1fed3 100644
+--- a/internal/writer/sql_store.go
++++ b/internal/writer/sql_store.go
+@@ -8,7 +8,7 @@ import (
+ )
+ 
+ type SQLStore struct {
+-	queries *db.Queries
++	queries db.Store
+ }
+ 
+ func NewSQLStore(sqlDB *sql.DB) *SQLStore {
+@@ -18,6 +18,13 @@ func NewSQLStore(sqlDB *sql.DB) *SQLStore {
+ 	return &SQLStore{queries: db.New(sqlDB)}
+ }
+ 
++func NewSQLStoreWithStore(store db.Store) *SQLStore {
++	if store == nil {
++		return nil
++	}
++	return &SQLStore{queries: store}
++}
++
+ func (s *SQLStore) GetLatestMRVersion(ctx context.Context, mergeRequestID int64) (db.MrVersion, error) {
+ 	return s.queries.GetLatestMRVersion(ctx, mergeRequestID)
+ }
+diff --git a/migrations_sqlite/001_create_core_tables.sql b/migrations_sqlite/001_create_core_tables.sql
+new file mode 100644
+index 0000000..f61bb74
+--- /dev/null
++++ b/migrations_sqlite/001_create_core_tables.sql
+@@ -0,0 +1,242 @@
++-- +goose Up
++
++-- GitLab instance registry.
++CREATE TABLE gitlab_instances (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    url TEXT NOT NULL,
++    name TEXT NOT NULL DEFAULT '',
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    UNIQUE (url)
++);
++
++-- Projects registered for review.
++CREATE TABLE projects (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    gitlab_instance_id INTEGER NOT NULL,
++    gitlab_project_id INTEGER NOT NULL,
++    path_with_namespace TEXT NOT NULL DEFAULT '',
++    enabled BOOLEAN NOT NULL DEFAULT 1,
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    UNIQUE (gitlab_instance_id, gitlab_project_id),
++    CONSTRAINT fk_projects_instance FOREIGN KEY (gitlab_instance_id) REFERENCES gitlab_instances(id) ON DELETE CASCADE
++);
++CREATE INDEX idx_projects_enabled ON projects(enabled);
++
++-- Per-project review policies.
++CREATE TABLE project_policies (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    project_id INTEGER NOT NULL,
++    confidence_threshold REAL NOT NULL DEFAULT 0.5,
++    severity_threshold TEXT NOT NULL DEFAULT 'low',
++    include_paths TEXT,
++    exclude_paths TEXT,
++    gate_mode TEXT NOT NULL DEFAULT 'threads_resolved',
++    provider_route TEXT NOT NULL DEFAULT '',
++    extra TEXT,
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    UNIQUE (project_id),
++    CONSTRAINT fk_policies_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
++);
++
++-- Inbound webhook events (idempotency and audit).
++CREATE TABLE hook_events (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    delivery_key TEXT NOT NULL,
++    hook_source TEXT NOT NULL DEFAULT '',
++    event_type TEXT NOT NULL DEFAULT '',
++    gitlab_instance_id INTEGER,
++    project_id INTEGER,
++    mr_iid INTEGER,
++    action TEXT NOT NULL DEFAULT '',
++    head_sha TEXT NOT NULL DEFAULT '',
++    payload TEXT,
++    verification_outcome TEXT NOT NULL DEFAULT 'verified',
++    rejection_reason TEXT NOT NULL DEFAULT '',
++    received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    UNIQUE (delivery_key)
++);
++CREATE INDEX idx_hook_events_project_mr ON hook_events(project_id, mr_iid);
++CREATE INDEX idx_hook_events_received ON hook_events(received_at);
++
++-- Merge request tracking.
++CREATE TABLE merge_requests (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    project_id INTEGER NOT NULL,
++    mr_iid INTEGER NOT NULL,
++    title TEXT NOT NULL DEFAULT '',
++    source_branch TEXT NOT NULL DEFAULT '',
++    target_branch TEXT NOT NULL DEFAULT '',
++    author TEXT NOT NULL DEFAULT '',
++    state TEXT NOT NULL DEFAULT 'opened',
++    is_draft BOOLEAN NOT NULL DEFAULT 0,
++    head_sha TEXT NOT NULL DEFAULT '',
++    web_url TEXT NOT NULL DEFAULT '',
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    UNIQUE (project_id, mr_iid),
++    CONSTRAINT fk_mr_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
++);
++CREATE INDEX idx_merge_requests_state ON merge_requests(state);
++
++-- MR version snapshots (SHAs for diff discussion positioning).
++CREATE TABLE mr_versions (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    merge_request_id INTEGER NOT NULL,
++    gitlab_version_id INTEGER NOT NULL,
++    base_sha TEXT NOT NULL DEFAULT '',
++    start_sha TEXT NOT NULL DEFAULT '',
++    head_sha TEXT NOT NULL DEFAULT '',
++    patch_id_sha TEXT NOT NULL DEFAULT '',
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    UNIQUE (merge_request_id, gitlab_version_id),
++    CONSTRAINT fk_version_mr FOREIGN KEY (merge_request_id) REFERENCES merge_requests(id) ON DELETE CASCADE
++);
++
++-- Review run lifecycle.
++CREATE TABLE review_runs (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    project_id INTEGER NOT NULL,
++    merge_request_id INTEGER NOT NULL,
++    hook_event_id INTEGER,
++    trigger_type TEXT NOT NULL DEFAULT 'webhook',
++    head_sha TEXT NOT NULL DEFAULT '',
++    status TEXT NOT NULL DEFAULT 'pending',
++    error_code TEXT NOT NULL DEFAULT '',
++    error_detail TEXT,
++    retry_count INTEGER NOT NULL DEFAULT 0,
++    max_retries INTEGER NOT NULL DEFAULT 3,
++    next_retry_at TIMESTAMP NULL DEFAULT NULL,
++    claimed_by TEXT NOT NULL DEFAULT '',
++    claimed_at TIMESTAMP NULL DEFAULT NULL,
++    started_at TIMESTAMP NULL DEFAULT NULL,
++    completed_at TIMESTAMP NULL DEFAULT NULL,
++    provider_latency_ms INTEGER NOT NULL DEFAULT 0,
++    provider_tokens_total INTEGER NOT NULL DEFAULT 0,
++    idempotency_key TEXT NOT NULL DEFAULT '',
++    scope_json TEXT DEFAULT NULL,
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    UNIQUE (idempotency_key),
++    CONSTRAINT fk_run_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
++    CONSTRAINT fk_run_mr FOREIGN KEY (merge_request_id) REFERENCES merge_requests(id) ON DELETE CASCADE,
++    CONSTRAINT fk_run_hook FOREIGN KEY (hook_event_id) REFERENCES hook_events(id) ON DELETE SET NULL
++);
++CREATE INDEX idx_review_runs_status_retry ON review_runs(status, next_retry_at);
++CREATE INDEX idx_review_runs_project_mr ON review_runs(project_id, merge_request_id);
++CREATE INDEX idx_review_runs_head_sha ON review_runs(head_sha);
++
++-- Individual review findings.
++CREATE TABLE review_findings (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    review_run_id INTEGER NOT NULL,
++    merge_request_id INTEGER NOT NULL,
++    category TEXT NOT NULL DEFAULT '',
++    severity TEXT NOT NULL DEFAULT 'medium',
++    confidence REAL NOT NULL DEFAULT 0.0,
++    title TEXT NOT NULL DEFAULT '',
++    body_markdown TEXT,
++    path TEXT NOT NULL DEFAULT '',
++    anchor_kind TEXT NOT NULL DEFAULT 'new_line',
++    old_line INTEGER,
++    new_line INTEGER,
++    range_start_kind TEXT,
++    range_start_old_line INTEGER,
++    range_start_new_line INTEGER,
++    range_end_kind TEXT,
++    range_end_old_line INTEGER,
++    range_end_new_line INTEGER,
++    anchor_snippet TEXT,
++    evidence TEXT,
++    suggested_patch TEXT,
++    canonical_key TEXT NOT NULL DEFAULT '',
++    anchor_fingerprint TEXT NOT NULL DEFAULT '',
++    semantic_fingerprint TEXT NOT NULL DEFAULT '',
++    state TEXT NOT NULL DEFAULT 'new',
++    matched_finding_id INTEGER,
++    last_seen_run_id INTEGER,
++    gitlab_discussion_id TEXT NOT NULL DEFAULT '',
++    error_code TEXT NOT NULL DEFAULT '',
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    CONSTRAINT fk_finding_run FOREIGN KEY (review_run_id) REFERENCES review_runs(id) ON DELETE CASCADE,
++    CONSTRAINT fk_finding_mr FOREIGN KEY (merge_request_id) REFERENCES merge_requests(id) ON DELETE CASCADE
++);
++CREATE INDEX idx_review_findings_run ON review_findings(review_run_id);
++CREATE INDEX idx_review_findings_mr_state ON review_findings(merge_request_id, state);
++CREATE INDEX idx_review_findings_anchor_fp ON review_findings(anchor_fingerprint);
++CREATE INDEX idx_review_findings_semantic_fp ON review_findings(semantic_fingerprint);
++
++-- GitLab discussions created by the bot.
++CREATE TABLE gitlab_discussions (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    review_finding_id INTEGER NOT NULL,
++    merge_request_id INTEGER NOT NULL,
++    gitlab_discussion_id TEXT NOT NULL DEFAULT '',
++    discussion_type TEXT NOT NULL DEFAULT 'diff',
++    resolved BOOLEAN NOT NULL DEFAULT 0,
++    superseded_by_discussion_id INTEGER,
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    CONSTRAINT fk_disc_finding FOREIGN KEY (review_finding_id) REFERENCES review_findings(id) ON DELETE CASCADE,
++    CONSTRAINT fk_disc_mr FOREIGN KEY (merge_request_id) REFERENCES merge_requests(id) ON DELETE CASCADE
++);
++CREATE INDEX idx_gitlab_discussions_finding ON gitlab_discussions(review_finding_id);
++CREATE INDEX idx_gitlab_discussions_mr ON gitlab_discussions(merge_request_id);
++CREATE INDEX idx_gitlab_discussions_gitlab_disc ON gitlab_discussions(gitlab_discussion_id);
++
++-- Idempotent comment/write action tracking.
++CREATE TABLE comment_actions (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    review_run_id INTEGER NOT NULL,
++    review_finding_id INTEGER,
++    action_type TEXT NOT NULL DEFAULT '',
++    idempotency_key TEXT NOT NULL DEFAULT '',
++    status TEXT NOT NULL DEFAULT 'pending',
++    error_code TEXT NOT NULL DEFAULT '',
++    error_detail TEXT,
++    retry_count INTEGER NOT NULL DEFAULT 0,
++    latency_ms INTEGER NOT NULL DEFAULT 0,
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    UNIQUE (idempotency_key),
++    CONSTRAINT fk_action_run FOREIGN KEY (review_run_id) REFERENCES review_runs(id) ON DELETE CASCADE,
++    CONSTRAINT fk_action_finding FOREIGN KEY (review_finding_id) REFERENCES review_findings(id) ON DELETE SET NULL
++);
++CREATE INDEX idx_comment_actions_run ON comment_actions(review_run_id);
++CREATE INDEX idx_comment_actions_status ON comment_actions(status);
++
++-- Audit log for all significant actions.
++CREATE TABLE audit_logs (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    entity_type TEXT NOT NULL DEFAULT '',
++    entity_id INTEGER NOT NULL DEFAULT 0,
++    action TEXT NOT NULL DEFAULT '',
++    actor TEXT NOT NULL DEFAULT '',
++    detail TEXT,
++    delivery_key TEXT NOT NULL DEFAULT '',
++    hook_source TEXT NOT NULL DEFAULT '',
++    verification_outcome TEXT NOT NULL DEFAULT '',
++    rejection_reason TEXT NOT NULL DEFAULT '',
++    error_code TEXT NOT NULL DEFAULT '',
++    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
++);
++CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
++CREATE INDEX idx_audit_logs_action ON audit_logs(action);
++CREATE INDEX idx_audit_logs_delivery_key ON audit_logs(delivery_key);
++CREATE INDEX idx_audit_logs_created ON audit_logs(created_at);
++
++-- +goose Down
++DROP TABLE IF EXISTS audit_logs;
++DROP TABLE IF EXISTS comment_actions;
++DROP TABLE IF EXISTS gitlab_discussions;
++DROP TABLE IF EXISTS review_findings;
++DROP TABLE IF EXISTS review_runs;
++DROP TABLE IF EXISTS mr_versions;
++DROP TABLE IF EXISTS merge_requests;
++DROP TABLE IF EXISTS hook_events;
++DROP TABLE IF EXISTS project_policies;
++DROP TABLE IF EXISTS projects;
++DROP TABLE IF EXISTS gitlab_instances;

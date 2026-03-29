@@ -1,0 +1,94 @@
+# Production Docker Compose for mreviewer
+# Download this file and create a .env file with your credentials
+# Then run: docker-compose -f docker-compose.prod.yaml up -d
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: mreviewer-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: mreviewer
+      MYSQL_USER: mreviewer
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mreviewer_password}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "3306", "-umreviewer", "-p${MYSQL_PASSWORD:-mreviewer_password}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: mreviewer-redis
+    restart: unless-stopped
+    command: redis-server --port 6379
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: fakechris/mreviewer-worker:main
+    container_name: mreviewer-migrate
+    restart: "no"
+    environment:
+      GOOSE_DBSTRING: mreviewer:${MYSQL_PASSWORD:-mreviewer_password}@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci
+      GOOSE_MIGRATION_DIR: /app/migrations
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: ["/app/migrate"]
+
+  ingress:
+    image: fakechris/mreviewer-ingress:main
+    container_name: mreviewer-ingress
+    restart: unless-stopped
+    environment:
+      MYSQL_DSN: mreviewer:${MYSQL_PASSWORD:-mreviewer_password}@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci
+      REDIS_ADDR: redis:6379
+      PORT: 3100
+      GITLAB_BASE_URL: ${GITLAB_BASE_URL}
+      GITLAB_TOKEN: ${GITLAB_TOKEN}
+      GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-change_me}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
+      MINIMAX_GROUP_ID: ${MINIMAX_GROUP_ID}
+    ports:
+      - "${PORT:-3100}:3100"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    image: fakechris/mreviewer-worker:main
+    container_name: mreviewer-worker
+    restart: unless-stopped
+    environment:
+      MYSQL_DSN: mreviewer:${MYSQL_PASSWORD:-mreviewer_password}@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci
+      REDIS_ADDR: redis:6379
+      GITLAB_BASE_URL: ${GITLAB_BASE_URL}
+      GITLAB_TOKEN: ${GITLAB_TOKEN}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
+      MINIMAX_GROUP_ID: ${MINIMAX_GROUP_ID}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  mysql_data:

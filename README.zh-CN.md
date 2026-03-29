@@ -14,37 +14,43 @@ GitLab Merge Request AI 代码审查工具。支持自托管、多模型、SQLit
 
 ## 快速开始
 
+### 两种部署方式
+
+**方式 1：无需 Git**（推荐新手）
+- 下载 2 个文件：`docker-compose.prod.yaml` + `.env`
+- 编辑 `.env` 填入凭证
+- 运行：`docker-compose -f docker-compose.prod.yaml up -d`
+
+**方式 2：完整克隆**（开发者）
+- 克隆仓库，配置 `.env`，运行 `docker-compose up -d`
+
+👉 **详细指南**：[快速开始指南](./QUICKSTART.zh-CN.md) | [QUICKSTART.en.md](./QUICKSTART.en.md)
+
 ### 前置要求
 
 - Docker & Docker Compose
 - GitLab 实例及 API 访问权限
 - LLM 提供商 API Key（MiniMax、OpenAI 等）
 
-### 1. 克隆并配置
+### 极简示例（方式 1）
 
-```bash
-git clone https://github.com/fakechris/mreviewer.git
-cd mreviewer
-cp .env.example .env
-```
+1. 下载文件：
+   - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
+   - [.env 模板](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example)（重命名为 `.env`）
 
-编辑 `.env` 填入你的凭证：
-
+2. 编辑 `.env`：
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
 MINIMAX_API_KEY=your_minimax_key
 ```
 
-### 2. 启动服务
-
-使用 Docker Hub 预构建镜像：
-
+3. 启动：
 ```bash
-docker-compose up -d
+docker-compose -f docker-compose.prod.yaml up -d
 ```
 
-镜像将自动拉取：
+镜像自动从 Docker Hub 拉取：
 - `fakechris/mreviewer-worker:main`
 - `fakechris/mreviewer-ingress:main`
 

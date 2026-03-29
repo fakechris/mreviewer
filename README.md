@@ -16,37 +16,43 @@ AI-powered Code Review for GitLab Merge Requests. Self-hosted, multi-model suppo
 
 ## Quick Start
 
+### Two Ways to Deploy
+
+**Method 1: No Git Required** (Recommended for beginners)
+- Download 2 files: `docker-compose.prod.yaml` + `.env`
+- Edit `.env` with your credentials
+- Run: `docker-compose -f docker-compose.prod.yaml up -d`
+
+**Method 2: Full Clone** (For developers)
+- Clone repo, configure `.env`, run `docker-compose up -d`
+
+👉 **Detailed guide**: [QUICKSTART.en.md](./QUICKSTART.en.md) | [快速开始指南](./QUICKSTART.zh-CN.md)
+
 ### Prerequisites
 
 - Docker & Docker Compose
 - GitLab instance with API access
 - LLM provider API key (MiniMax, OpenAI, etc.)
 
-### 1. Clone and Configure
+### Minimal Example (Method 1)
 
-```bash
-git clone https://github.com/fakechris/mreviewer.git
-cd mreviewer
-cp .env.example .env
-```
+1. Download files:
+   - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
+   - [.env template](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example) (rename to `.env`)
 
-Edit `.env` with your credentials:
-
+2. Edit `.env`:
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
 MINIMAX_API_KEY=your_minimax_key
 ```
 
-### 2. Start Services
-
-Using pre-built Docker images from Docker Hub:
-
+3. Start:
 ```bash
-docker-compose up -d
+docker-compose -f docker-compose.prod.yaml up -d
 ```
 
-The images will be automatically pulled:
+Images auto-pulled from Docker Hub:
 - `fakechris/mreviewer-worker:main`
 - `fakechris/mreviewer-ingress:main`
 
