@@ -54,6 +54,17 @@
 
 ## Completed
 
+### Open Source Readiness Package — v0.21.0
+
+**Completed:** 2026-03-29
+**What:** Essential files for open source release: bilingual documentation, license, contribution guidelines, CI.
+**Delivered:**
+- Bilingual README (English + Chinese)
+- MIT License
+- CONTRIBUTING.md
+- GitHub Actions CI workflow
+- QUICKSTART.md for core functionality verification
+
 ### Review Dashboard (Grafana templates) — v0.20.0
 
 **Completed:** 2026-03-27
