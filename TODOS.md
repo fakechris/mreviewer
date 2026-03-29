@@ -1,51 +1,80 @@
 # TODOS
 
-## Review Quality
+## LLM / Consensus
 
-### Review Dashboard (Grafana templates)
+### Unify Anthropic compact schema for consensus matching
 
-**What:** Provide Grafana dashboard templates for team-level review insights.
+**What:** Anthropic compact schema (`reviewResultSchemaAnthropicCompact()`) strips `canonical_key`, `symbol`, and line number fields that consensus matching depends on.
 
-**Why:** Deferred from v1.0 CEO plan. Increases value for team leads who want review quality metrics.
+**Why:** Without these fields, Anthropic provider responses cannot participate in cross-model consensus matching. The P2 multi-model consensus feature is broken for Anthropic providers.
 
-**Context:** CEO plan scope decision #4. Audit logs already capture per-run latency, tokens, findings count, and provider model. Dashboard needs: (1) Grafana JSON dashboard templates, (2) MySQL → Grafana datasource queries, (3) Documentation for setup. Does not require code changes — pure dashboard templates.
+**Context:** Codex outside-voice review discovered this: `minimax.go:240-245` selects compact schema for Anthropic profile via `reviewResultSchemaForProfile()`. The compact schema omits fields that `computeSemanticFingerprint()` in `dedup.go:490-497` relies on. Either the compact schema needs to include these fields (may increase token cost), or a post-parse extraction step needs to normalize findings from Anthropic responses into full-schema format. Must be resolved before P2 consensus work begins.
 
 **Effort:** M
-**Priority:** P3
-**Depends on:** None
+**Priority:** P0
+**Depends on:** None — blocks P2 consensus
 
-## Infrastructure
+### Extend ProviderResponse for multi-provider observability
 
-### SQLite lightweight deploy mode
+**What:** `ConsensusReviewService` implementing `Provider` interface means a single `ProviderResponse` must carry per-provider latency/token/audit data for 2-3 providers.
 
-**What:** Replace MySQL with SQLite for single-machine deployment.
+**Why:** Current `ProviderResponse` has single `Latency`, `Tokens`, `Model` fields. Hiding 3 providers behind one response loses per-provider observability in audit logs and metrics.
 
-**Why:** Removes MySQL dependency for small teams. CEO plan Phase 2.
+**Context:** Codex pointed this out: `processor.go:260-264` records one `response.Latency` and `response.Tokens`. Options: (1) Add `[]SubProviderResult` field to `ProviderResponse`, (2) ConsensusReviewService writes audit logs directly via side-channel before returning merged response, (3) Return aggregated totals in response + detailed breakdown in `ResponsePayload` map. Option 3 is simplest and backward-compatible.
 
-**Context:** Requires: (1) Database abstraction layer (current sqlc generates MySQL-specific queries), (2) goose migration SQLite dialect, (3) Redis replacement with in-memory token bucket rate limiting. Architecture project, not simple feature. ~13h CC estimated.
+**Effort:** S
+**Priority:** P1
+**Depends on:** ConsensusReviewService implementation
 
-**Effort:** XL
+## Review Quality
+
+### Multi-model semantic dedup (LLM-based)
+
+**What:** For cross-model findings that rough matching misses, use lightweight LLM call for semantic comparison.
+
+**Why:** Improves consensus precision beyond canonical_key+symbol+line-window matching.
+
+**Context:** CEO plan v1.1. Prompt skeleton: "Are these two code review findings describing the same issue? JSON: {same: bool, reason: string}". Failure fallback: treat as different issues (conservative). ~5h CC estimated.
+
+**Effort:** M
 **Priority:** P2
-**Depends on:** ProcessorStore interface (completed)
+**Depends on:** P2 consensus rough matching
+
+### Verify domestic model OpenAI compatibility
+
+**What:** Test that DeepSeek and other "OpenAI-compatible" models handle `json_schema`, `strict`, `parallel_tool_calls`, and `reasoning_effort` fields correctly.
+
+**Why:** Codex flagged that "zero code changes" is an unverified assumption. Many vendors only partially implement the OpenAI surface. If true, the domestic model moat is documentation; if false, adapter code is needed.
+
+**Context:** `openai.go:127-173` sends these vendor-specific fields. Test with actual DeepSeek V3/R1 API calls. Record which features work, which silently fail, which error. May need conditional field emission per vendor.
+
+**Effort:** S
+**Priority:** P1
+**Depends on:** None
 
 ## Completed
 
-### Unify Anthropic compact schema for consensus matching
-**Completed:** v0.19.2 (2025-03-25) — PR #14
-Added `old_line`, `new_line`, `canonical_key`, `symbol`, `introduced_by_this_change` to `reviewFindingSchemaAnthropicCompact()` so Anthropic responses can participate in cross-model consensus dedup.
+### Review Dashboard (Grafana templates) — v0.20.0
 
-### Extend ProviderResponse for multi-provider observability
-**Completed:** v0.19.2 (2025-03-25) — PR #15
-Added `SubProviderResult` struct and `SubProviderResults []SubProviderResult` field to `ProviderResponse`. Updated `recordProviderMetrics()` to emit per-sub-provider histograms/counters and audit logs.
+**Completed:** 2026-03-27
+**What:** Grafana JSON dashboard templates for review operations, provider performance, and finding quality.
+**Delivered:** `grafana/dashboards/review-operations.json`, `grafana/dashboards/provider-performance.json`, `grafana/dashboards/finding-quality.json`, `grafana/README.md`
 
-### Verify domestic model OpenAI compatibility
-**Completed:** v0.19.2 (2025-03-25) — PR #16
-Implemented `OpenAICompatMode` with per-feature toggles (`UseSystemRole`, `DropParallelToolCalls`, `DropStrictSchema`, `DropReasoningEffort`, `UseMaxTokens`). Added `DeepSeekCompatMode()` preset. Adapter code replaces assumption of "zero code changes."
+### SQLite lightweight deploy mode — v0.20.0
 
-### Investigate existing CLI path before building cmd/review-cli
-**Completed:** v0.19.3 (2026-03-26)
-Investigation found `cmd/manual-trigger` exercises full pipeline requiring MySQL (15+ queries). Extracted `ProcessorStore` interface as foundation for future stateless CLI / SQLite backend. Separate `cmd/review-cli` not needed — `ProcessorStore` enables swappable storage.
+**Completed:** 2026-03-27
+**What:** Full SQLite backend alternative to MySQL for single-machine deployment.
+**Delivered:**
+- `db.Store` interface abstracting MySQL/SQLite behind a common API
+- DSN-based dialect auto-detection (`sqlite://` prefix → SQLite, else MySQL)
+- Hand-written SQLite Querier (`internal/db/sqlitedb/`) — 60+ methods returning shared `db.*` model types
+- SQLite migrations (`migrations_sqlite/001_create_core_tables.sql`)
+- `database.StoreFactory(dialect)` for runtime store construction
+- All production call sites updated: scheduler, hooks, llm processor, writer, gate, manualtrigger, worker, ingress
+- 14 SQLite CRUD tests + 571 total tests passing
 
-### Multi-model semantic dedup (LLM-based)
-**Completed:** v0.19.3 (2026-03-26)
-Added three-pass finding dedup: anchor fingerprint → semantic fingerprint → LLM-based comparison via `SemanticMatcher` interface. `LLMSemanticMatcher` calls OpenAI-compatible endpoint. Conservative fallback on errors. 9 new tests (unit + integration).
+### Investigate existing CLI path before building cmd/review-cli — v0.20.0
+
+**Completed:** 2026-03-25
+**What:** Investigation concluded that SQLite deploy mode satisfies the "easy setup" need. The existing `cmd/manual-trigger` + full pipeline with SQLite provides a better experience than a stateless CLI wrapper.
+**Outcome:** SQLite mode chosen over a new cmd/review-cli. Full pipeline (history, dedup, discussion memory) preserved.

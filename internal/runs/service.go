@@ -20,16 +20,31 @@ const defaultMaxRetries = 3
 // Service handles review run lifecycle operations: creating pending runs
 // from normalized webhook events and cancelling runs on close/merge.
 type Service struct {
-	logger *slog.Logger
-	db     *sql.DB
+	logger   *slog.Logger
+	db       *sql.DB
+	newStore func(db.DBTX) db.Store
+}
+
+// ServiceOption configures optional Service behaviour.
+type ServiceOption func(*Service)
+
+// WithStoreFactory overrides the default db.Store constructor used when
+// creating transactions. The default is db.New (MySQL).
+func WithStoreFactory(fn func(db.DBTX) db.Store) ServiceOption {
+	return func(s *Service) { s.newStore = fn }
 }
 
 // NewService creates a new run lifecycle service.
-func NewService(logger *slog.Logger, database *sql.DB) *Service {
-	return &Service{
-		logger: logger,
-		db:     database,
+func NewService(logger *slog.Logger, database *sql.DB, opts ...ServiceOption) *Service {
+	s := &Service{
+		logger:   logger,
+		db:       database,
+		newStore: func(conn db.DBTX) db.Store { return db.New(conn) },
 	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // ProcessEvent handles a normalized MR lifecycle event. It determines
@@ -44,8 +59,8 @@ func NewService(logger *slog.Logger, database *sql.DB) *Service {
 // The hookEventID is the ID of the hook_events row created during ingress.
 // It may be 0 if unknown.
 func (s *Service) ProcessEvent(ctx context.Context, ev hooks.NormalizedEvent, hookEventID int64) error {
-	return db.RunTx(ctx, s.db, func(ctx context.Context, q *db.Queries) error {
-		return s.ProcessEventWithQuerier(ctx, q, ev, hookEventID)
+	return db.RunTxWithStore(ctx, s.db, s.newStore, func(ctx context.Context, store db.Store) error {
+		return s.ProcessEventWithQuerier(ctx, store, ev, hookEventID)
 	})
 }
 

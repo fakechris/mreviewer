@@ -27,3 +27,17 @@ func TestIsDuplicateKeyErrorRejectsOtherErrors(t *testing.T) {
 		t.Fatal("expected non-duplicate error to be rejected")
 	}
 }
+
+func TestIsDuplicateKeyErrorDetectsSQLiteUniqueConstraint(t *testing.T) {
+	err := errors.New("UNIQUE constraint failed: gitlab_instances.url")
+	if !IsDuplicateKeyError(err) {
+		t.Fatal("expected SQLite UNIQUE constraint error to be detected")
+	}
+}
+
+func TestIsDuplicateKeyErrorDetectsWrappedSQLiteUniqueConstraint(t *testing.T) {
+	err := fmt.Errorf("insert failed: %w", errors.New("UNIQUE constraint failed: projects.gitlab_instance_id, projects.gitlab_project_id"))
+	if !IsDuplicateKeyError(err) {
+		t.Fatal("expected wrapped SQLite UNIQUE constraint error to be detected")
+	}
+}
