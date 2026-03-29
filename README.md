@@ -62,9 +62,14 @@ GitLab → ingress (webhook) → MySQL/SQLite
 
 ## Documentation
 
-- [Configuration Guide](./docs/configuration.md)
-- [Deployment Options](./docs/deployment.md)
-- [Provider Setup](./docs/providers.md)
+- [Quick Start Guide](./QUICKSTART.md)
+- [GitLab Webhook Setup](./WEBHOOK.md)
+- [Docker Deployment](./DEPLOYMENT.md)
+- [Configuration File](./config.yaml)
+
+## Roadmap
+
+See [TODOS.md](./TODOS.md) for current priorities and [Strategic Direction](./docs/designs/strategic-direction.md) for long-term vision.
 
 ## License
 
