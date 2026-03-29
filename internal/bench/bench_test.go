@@ -122,6 +122,9 @@ func TestBenchmarkCorpus(t *testing.T) {
 	reportPath := filepath.Join("/Users/chris/workspace/mreviewer", benchmarkEvidencePath)
 	data, err := os.ReadFile(reportPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skip("benchmark evidence file not found, run with MREVIEWER_WRITE_BENCH_EVIDENCE=1 to generate")
+		}
 		t.Fatalf("read evidence report: %v", err)
 	}
 	var report EvidenceReport

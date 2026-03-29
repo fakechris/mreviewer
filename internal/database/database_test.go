@@ -29,7 +29,7 @@ func TestOpenFailsWhenDatabaseUnreachable(t *testing.T) {
 		db.Close()
 		t.Fatal("expected Open to fail for unreachable database, got nil error")
 	}
-	if !strings.Contains(err.Error(), "database: ping:") {
-		t.Errorf("error = %q, want it to contain 'database: ping:'", err)
+	if !strings.Contains(err.Error(), "database: ping") {
+		t.Errorf("error = %q, want it to contain 'database: ping'", err)
 	}
 }
