@@ -111,12 +111,38 @@ See detailed steps: [WEBHOOK.md](./WEBHOOK.md)
 
 ## Manual Trigger (Optional)
 
-Trigger review without webhook:
+Trigger review without webhook.
+
+### Prerequisites
+
+Manual trigger requires the following configuration (via `.env` file or environment variables):
+
+```bash
+# GitLab Configuration (Required)
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+
+# LLM Configuration (Required)
+MINIMAX_API_KEY=your_minimax_key
+MINIMAX_GROUP_ID=your_group_id
+
+# Database Configuration (Already configured in docker-compose)
+MYSQL_DSN=mreviewer:mreviewer_password@tcp(mysql:3306)/mreviewer?parseTime=true
+```
+
+### Usage
 
 ```bash
 docker exec -it mreviewer-worker /app/manual-trigger \
   --project-id 123 \
-  --mr-iid 456
+  --mr-iid 456 \
+  --wait
+```
+
+**Parameters**:
+- `--project-id`: GitLab project ID (visible on project homepage)
+- `--mr-iid`: Merge Request number (number in MR URL)
+- `--wait`: Wait for review completion and return results (optional)
 ```
 
 ---

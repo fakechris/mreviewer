@@ -111,12 +111,38 @@ docker-compose logs -f worker
 
 ## 手动触发审查（可选）
 
-如果不想配置 Webhook，可以手动触发：
+如果不想配置 Webhook，可以手动触发审查。
+
+### 前置条件
+
+手动触发需要以下配置（通过 `.env` 文件或环境变量）：
+
+```bash
+# GitLab 配置（必需）
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+
+# LLM 配置（必需）
+MINIMAX_API_KEY=your_minimax_key
+MINIMAX_GROUP_ID=your_group_id
+
+# 数据库配置（已在 docker-compose 中配置）
+MYSQL_DSN=mreviewer:mreviewer_password@tcp(mysql:3306)/mreviewer?parseTime=true
+```
+
+### 使用方法
 
 ```bash
 docker exec -it mreviewer-worker /app/manual-trigger \
   --project-id 123 \
-  --mr-iid 456
+  --mr-iid 456 \
+  --wait
+```
+
+**参数说明**：
+- `--project-id`: GitLab 项目 ID（在项目首页可以看到）
+- `--mr-iid`: Merge Request 编号（MR URL 中的数字）
+- `--wait`: 等待审查完成并返回结果（可选）
 ```
 
 ---
