@@ -656,6 +656,14 @@ func (f *failOnceCommandProcessor) ExecuteWithQuerier(ctx context.Context, q *db
 	return f.real.ExecuteWithQuerier(ctx, q, noteEvent, cmd)
 }
 
+func (f *failOnceCommandProcessor) ExecuteWithStore(ctx context.Context, s db.Store, noteEvent hooks.NormalizedNoteEvent, cmd *notecommand.ParsedCommand) error {
+	f.calls++
+	if f.calls <= f.failCount {
+		return fmt.Errorf("simulated command failure (call %d)", f.calls)
+	}
+	return f.real.ExecuteWithStore(ctx, s, noteEvent, cmd)
+}
+
 // alwaysFailCommandProcessor always returns an error.
 type alwaysFailCommandProcessor struct{}
 
@@ -664,6 +672,10 @@ func (a *alwaysFailCommandProcessor) Execute(_ context.Context, _ hooks.Normaliz
 }
 
 func (a *alwaysFailCommandProcessor) ExecuteWithQuerier(_ context.Context, _ *db.Queries, _ hooks.NormalizedNoteEvent, _ *notecommand.ParsedCommand) error {
+	return fmt.Errorf("simulated permanent command failure")
+}
+
+func (a *alwaysFailCommandProcessor) ExecuteWithStore(_ context.Context, _ db.Store, _ hooks.NormalizedNoteEvent, _ *notecommand.ParsedCommand) error {
 	return fmt.Errorf("simulated permanent command failure")
 }
 

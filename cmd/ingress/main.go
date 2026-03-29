@@ -58,9 +58,9 @@ func run() int {
 
 	// Webhook ingress handler.
 	newStore := database.StoreFactory(dialect)
-	runProcessor := runs.NewService(logger, db)
+	runProcessor := runs.NewService(logger, db, runs.WithStoreFactory(newStore))
 	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runProcessor, hooks.WithHandlerStoreFactory(newStore))
-	commandProcessor := commands.NewProcessor(logger, db)
+	commandProcessor := commands.NewProcessor(logger, db, commands.WithStoreFactory(newStore))
 	webhookHandler.SetCommandProcessor(commandProcessor)
 	mux.Handle("POST /webhook", webhookHandler)
 
