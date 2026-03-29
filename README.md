@@ -1,5 +1,7 @@
 # mreviewer
 
+[![Docker Hub](https://img.shields.io/badge/docker-fakechris%2Fmreviewer-blue)](https://hub.docker.com/u/fakechris)
+
 [中文文档](./README.zh-CN.md) | English
 
 AI-powered Code Review for GitLab Merge Requests. Self-hosted, multi-model support, SQLite or MySQL.
