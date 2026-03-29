@@ -244,7 +244,7 @@ func runSingleScenario(t testing.TB, scenario CorpusScenario, verifyExpectations
 	}
 
 	provider := benchmarkProvider{scenarioName: scenario.Name, size: scenario.Size}
-	processor := llm.NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), sqlDB, &benchmarkGitLabReader{snapshot: benchmarkSnapshot(scenario)}, benchmarkRulesLoader{}, provider, llm.NewDBAuditLogger(sqlDB))
+	processor := llm.NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), llm.NewSQLProcessorStore(sqlDB), &benchmarkGitLabReader{snapshot: benchmarkSnapshot(scenario)}, benchmarkRulesLoader{}, provider, llm.NewDBAuditLogger(sqlDB))
 	if err := queries.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "bench-worker", ID: runID}); err != nil {
 		t.Fatalf("ClaimReviewRun(%s): %v", scenario.Name, err)
 	}

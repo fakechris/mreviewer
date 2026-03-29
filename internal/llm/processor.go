@@ -22,8 +22,7 @@ import (
 
 type Processor struct {
 	logger          *slog.Logger
-	sqlDB           *sql.DB
-	queries         *db.Queries
+	store           ProcessorStore
 	gitlab          GitLabReader
 	rulesLoader     RulesLoader
 	assembler       *ctxpkg.Assembler
@@ -50,14 +49,13 @@ type AuditLogger interface {
 	LogRunLifecycle(ctx context.Context, run db.ReviewRun, action string, detail map[string]any) error
 }
 
-func NewProcessor(logger *slog.Logger, sqlDB *sql.DB, gitlabClient GitLabReader, rulesLoader RulesLoader, provider Provider, audit AuditLogger) *Processor {
+func NewProcessor(logger *slog.Logger, store ProcessorStore, gitlabClient GitLabReader, rulesLoader RulesLoader, provider Provider, audit AuditLogger) *Processor {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Processor{
 		logger:         logger,
-		sqlDB:          sqlDB,
-		queries:        db.New(sqlDB),
+		store:          store,
 		gitlab:         gitlabClient,
 		rulesLoader:    rulesLoader,
 		assembler:      ctxpkg.NewAssembler(),
@@ -90,19 +88,19 @@ func (p *Processor) WithSummaryProvider(sp SummaryProvider) *Processor {
 func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
 	ctx, endWebhookVerify := p.startSpan(ctx, "webhook.verify", map[string]string{"run_id": fmt.Sprintf("%d", run.ID)})
 	defer endWebhookVerify()
-	if p.queries == nil || p.gitlab == nil || p.rulesLoader == nil || p.assembler == nil || (p.provider == nil && p.registry == nil) {
+	if p.store == nil || p.gitlab == nil || p.rulesLoader == nil || p.assembler == nil || (p.provider == nil && p.registry == nil) {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: processor dependencies are not configured"))
 	}
 
-	mergeRequest, err := p.queries.GetMergeRequest(ctx, run.MergeRequestID)
+	mergeRequest, err := p.store.GetMergeRequest(ctx, run.MergeRequestID)
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load merge request: %w", err))
 	}
-	project, err := p.queries.GetProject(ctx, run.ProjectID)
+	project, err := p.store.GetProject(ctx, run.ProjectID)
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load project: %w", err))
 	}
-	instance, err := p.queries.GetGitlabInstance(ctx, project.GitlabInstanceID)
+	instance, err := p.store.GetGitlabInstance(ctx, project.GitlabInstanceID)
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load gitlab instance: %w", err))
 	}
@@ -118,11 +116,11 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	_, endFetchDiffs := p.startSpan(ctx, "gitlab.fetch_diffs", nil)
 	endFetchDiffs()
 
-	if _, err := p.queries.InsertMRVersion(ctx, db.InsertMRVersionParams{MergeRequestID: mergeRequest.ID, GitlabVersionID: snapshot.Version.GitLabVersionID, BaseSha: snapshot.Version.BaseSHA, StartSha: snapshot.Version.StartSHA, HeadSha: snapshot.Version.HeadSHA, PatchIDSha: snapshot.Version.PatchIDSHA}); err != nil && !db.IsDuplicateKeyError(err) {
+	if _, err := p.store.InsertMRVersion(ctx, db.InsertMRVersionParams{MergeRequestID: mergeRequest.ID, GitlabVersionID: snapshot.Version.GitLabVersionID, BaseSha: snapshot.Version.BaseSHA, StartSha: snapshot.Version.StartSHA, HeadSha: snapshot.Version.HeadSHA, PatchIDSha: snapshot.Version.PatchIDSHA}); err != nil && !db.IsDuplicateKeyError(err) {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist MR version: %w", err))
 	}
 
-	policy, err := p.queries.GetProjectPolicy(ctx, project.ID)
+	policy, err := p.store.GetProjectPolicy(ctx, project.ID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load project policy: %w", err))
 	}
@@ -165,7 +163,7 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: parse policy settings: %w", err))
 	}
-	historical, err := ctxpkg.LoadHistoricalContext(ctx, p.queries, mergeRequest.ID)
+	historical, err := ctxpkg.LoadHistoricalContext(ctx, p.store, mergeRequest.ID)
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load historical context: %w", err))
 	}
@@ -191,10 +189,10 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 			ResponsePayload: map[string]any{"mode": assembled.Mode, "coverage": assembled.Coverage},
 		}
 		degradationSummary := buildDegradationSummaryNote(run, assembled, outputLanguage)
-		if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "degradation_mode", ErrorDetail: sql.NullString{String: degradationSummary, Valid: true}, ID: run.ID}); err != nil {
+		if err := p.store.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: response.Result.Status, ErrorCode: "degradation_mode", ErrorDetail: sql.NullString{String: degradationSummary, Valid: true}, ID: run.ID}); err != nil {
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: update degraded run status: %w", err))
 		}
-		if err := persistSummaryNoteFallback(ctx, p.queries, run, response.Result); err != nil {
+		if err := persistSummaryNoteFallback(ctx, p.store, run, response.Result); err != nil {
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist degradation summary note: %w", err))
 		}
 		if p.auditLogger != nil {
@@ -296,23 +294,23 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 
 	reviewedPaths, deletedPaths := reviewedScopeFromAssembly(assembled)
 	_, endDedupe := p.startSpan(ctx, "dedupe.match", nil)
-	if err := persistFindings(ctx, p.queries, run, mergeRequest, response.Result, reviewedPaths, deletedPaths); err != nil {
+	if err := persistFindings(ctx, p.store, run, mergeRequest, response.Result, reviewedPaths, deletedPaths); err != nil {
 		endDedupe()
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist findings: %w", err))
 	}
 	endDedupe()
 	if response.Result.Status == parserErrorCode {
-		if err := persistSummaryNoteFallback(ctx, p.queries, run, response.Result); err != nil {
+		if err := persistSummaryNoteFallback(ctx, p.store, run, response.Result); err != nil {
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: persist parser-error summary note fallback: %w", err))
 		}
 	}
-	findingsForOutcome, err := p.queries.ListActiveFindingsByMR(ctx, mergeRequest.ID)
+	findingsForOutcome, err := p.store.ListActiveFindingsByMR(ctx, mergeRequest.ID)
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load active findings for outcome: %w", err))
 	}
 	finalStatus := canonicalRunStatus(response.Result.Status, len(findingsForOutcome))
 	response.Result.Status = finalStatus
-	if err := p.queries.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: finalStatus, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
+	if err := p.store.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{Status: finalStatus, ErrorCode: "", ErrorDetail: sql.NullString{}, ID: run.ID}); err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: update run status: %w", err))
 	}
 	if p.auditLogger != nil {
@@ -377,15 +375,14 @@ func summarizeWithSystemPrompt(provider SummaryProvider, ctx context.Context, re
 }
 
 func (p *Processor) persistRunOutputLanguage(ctx context.Context, run db.ReviewRun, outputLanguage string) error {
-	if p == nil || p.sqlDB == nil || run.ID == 0 {
+	if p == nil || p.store == nil || run.ID == 0 {
 		return nil
 	}
 	scope, err := mergeRunScopeMetadata(json.RawMessage(run.ScopeJson), outputLanguage)
 	if err != nil {
 		return err
 	}
-	_, err = p.sqlDB.ExecContext(ctx, "UPDATE review_runs SET scope_json = ? WHERE id = ?", scope, run.ID)
-	return err
+	return p.store.UpdateRunScopeJSON(ctx, run.ID, scope)
 }
 
 func mergeRunScopeMetadata(existing json.RawMessage, outputLanguage string) (json.RawMessage, error) {

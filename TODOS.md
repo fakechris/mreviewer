@@ -2,30 +2,6 @@
 
 ## LLM / Consensus
 
-### Unify Anthropic compact schema for consensus matching
-
-**What:** Anthropic compact schema (`reviewResultSchemaAnthropicCompact()`) strips `canonical_key`, `symbol`, and line number fields that consensus matching depends on.
-
-**Why:** Without these fields, Anthropic provider responses cannot participate in cross-model consensus matching. The P2 multi-model consensus feature is broken for Anthropic providers.
-
-**Context:** Codex outside-voice review discovered this: `minimax.go:240-245` selects compact schema for Anthropic profile via `reviewResultSchemaForProfile()`. The compact schema omits fields that `computeSemanticFingerprint()` in `dedup.go:490-497` relies on. Either the compact schema needs to include these fields (may increase token cost), or a post-parse extraction step needs to normalize findings from Anthropic responses into full-schema format. Must be resolved before P2 consensus work begins.
-
-**Effort:** M
-**Priority:** P0
-**Depends on:** None — blocks P2 consensus
-
-### Extend ProviderResponse for multi-provider observability
-
-**What:** `ConsensusReviewService` implementing `Provider` interface means a single `ProviderResponse` must carry per-provider latency/token/audit data for 2-3 providers.
-
-**Why:** Current `ProviderResponse` has single `Latency`, `Tokens`, `Model` fields. Hiding 3 providers behind one response loses per-provider observability in audit logs and metrics.
-
-**Context:** Codex pointed this out: `processor.go:260-264` records one `response.Latency` and `response.Tokens`. Options: (1) Add `[]SubProviderResult` field to `ProviderResponse`, (2) ConsensusReviewService writes audit logs directly via side-channel before returning merged response, (3) Return aggregated totals in response + detailed breakdown in `ResponsePayload` map. Option 3 is simplest and backward-compatible.
-
-**Effort:** S
-**Priority:** P1
-**Depends on:** ConsensusReviewService implementation
-
 ### Investigate existing CLI path before building cmd/review-cli
 
 **What:** `cmd/manual-trigger` + `scripts/review-mr.sh` already provide CLI invocation with provider-route override and Docker-based local usage.
@@ -78,18 +54,16 @@
 **Priority:** P2
 **Depends on:** P2 consensus rough matching
 
-### Verify domestic model OpenAI compatibility
-
-**What:** Test that DeepSeek and other "OpenAI-compatible" models handle `json_schema`, `strict`, `parallel_tool_calls`, and `reasoning_effort` fields correctly.
-
-**Why:** Codex flagged that "zero code changes" is an unverified assumption. Many vendors only partially implement the OpenAI surface. If true, the domestic model moat is documentation; if false, adapter code is needed.
-
-**Context:** `openai.go:127-173` sends these vendor-specific fields. Test with actual DeepSeek V3/R1 API calls. Record which features work, which silently fail, which error. May need conditional field emission per vendor.
-
-**Effort:** S
-**Priority:** P1
-**Depends on:** None
-
 ## Completed
 
-*No items completed yet.*
+### Unify Anthropic compact schema for consensus matching
+**Completed:** v0.19.2 (2025-03-25) — PR #14
+Added `old_line`, `new_line`, `canonical_key`, `symbol`, `introduced_by_this_change` to `reviewFindingSchemaAnthropicCompact()` so Anthropic responses can participate in cross-model consensus dedup.
+
+### Extend ProviderResponse for multi-provider observability
+**Completed:** v0.19.2 (2025-03-25) — PR #15
+Added `SubProviderResult` struct and `SubProviderResults []SubProviderResult` field to `ProviderResponse`. Updated `recordProviderMetrics()` to emit per-sub-provider histograms/counters and audit logs.
+
+### Verify domestic model OpenAI compatibility
+**Completed:** v0.19.2 (2025-03-25) — PR #16
+Implemented `OpenAICompatMode` with per-feature toggles (`UseSystemRole`, `DropParallelToolCalls`, `DropStrictSchema`, `DropReasoningEffort`, `UseMaxTokens`). Added `DeepSeekCompatMode()` preset. Adapter code replaces assumption of "zero code changes."

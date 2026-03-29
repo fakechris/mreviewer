@@ -95,6 +95,11 @@ SET status = 'failed',
 WHERE status = 'running'
   AND claimed_at < NOW() - INTERVAL ? MINUTE;
 
+-- name: UpdateRunScopeJSON :exec
+UPDATE review_runs
+SET scope_json = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;
+
 -- name: ListReviewRunsByMR :many
 SELECT * FROM review_runs
 WHERE merge_request_id = ?
