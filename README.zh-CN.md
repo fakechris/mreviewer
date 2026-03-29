@@ -31,13 +31,36 @@ GitLab Merge Request AI 代码审查工具。支持自托管、多模型、SQLit
    - [.env 模板](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example)（重命名为 `.env`）
 
 2. **编辑 `.env`**：
+
+**选项 A: MiniMax（最简单）**
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
 GITLAB_WEBHOOK_SECRET=your_webhook_secret
 MINIMAX_API_KEY=your_minimax_key
-MINIMAX_GROUP_ID=your_group_id
 ```
+
+**选项 B: Anthropic Claude**
+```bash
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+GITLAB_WEBHOOK_SECRET=your_webhook_secret
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+ANTHROPIC_API_KEY=your_anthropic_key
+ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+```
+
+**选项 C: 其他 Anthropic 兼容提供商**
+```bash
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+GITLAB_WEBHOOK_SECRET=your_webhook_secret
+ANTHROPIC_BASE_URL=https://your-provider.com/v1
+ANTHROPIC_API_KEY=your_key
+ANTHROPIC_MODEL=your_model
+```
+
+对于 OpenAI、DeepSeek 或多提供商，编辑 `config.yaml`。查看 [config.yaml](./config.yaml) 了解详情。
 
 3. **启动服务**：
 ```bash
