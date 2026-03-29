@@ -2,29 +2,17 @@
 
 ## LLM / Consensus
 
-### Unify Anthropic compact schema for consensus matching
+### Verify domestic model OpenAI compatibility
 
-**What:** Anthropic compact schema (`reviewResultSchemaAnthropicCompact()`) strips `canonical_key`, `symbol`, and line number fields that consensus matching depends on.
+**What:** Test that DeepSeek and other "OpenAI-compatible" models handle `json_schema`, `strict`, `parallel_tool_calls`, and `reasoning_effort` fields correctly.
 
-**Why:** Without these fields, Anthropic provider responses cannot participate in cross-model consensus matching. The P2 multi-model consensus feature is broken for Anthropic providers.
+**Why:** Codex flagged that "zero code changes" is an unverified assumption. Many vendors only partially implement the OpenAI surface. If true, the domestic model moat is documentation; if false, adapter code is needed.
 
-**Context:** Codex outside-voice review discovered this: `minimax.go:240-245` selects compact schema for Anthropic profile via `reviewResultSchemaForProfile()`. The compact schema omits fields that `computeSemanticFingerprint()` in `dedup.go:490-497` relies on. Either the compact schema needs to include these fields (may increase token cost), or a post-parse extraction step needs to normalize findings from Anthropic responses into full-schema format. Must be resolved before P2 consensus work begins.
-
-**Effort:** M
-**Priority:** P0
-**Depends on:** None — blocks P2 consensus
-
-### Extend ProviderResponse for multi-provider observability
-
-**What:** `ConsensusReviewService` implementing `Provider` interface means a single `ProviderResponse` must carry per-provider latency/token/audit data for 2-3 providers.
-
-**Why:** Current `ProviderResponse` has single `Latency`, `Tokens`, `Model` fields. Hiding 3 providers behind one response loses per-provider observability in audit logs and metrics.
-
-**Context:** Codex pointed this out: `processor.go:260-264` records one `response.Latency` and `response.Tokens`. Options: (1) Add `[]SubProviderResult` field to `ProviderResponse`, (2) ConsensusReviewService writes audit logs directly via side-channel before returning merged response, (3) Return aggregated totals in response + detailed breakdown in `ResponsePayload` map. Option 3 is simplest and backward-compatible.
+**Context:** `openai.go:127-173` sends these vendor-specific fields. Test with actual DeepSeek V3/R1 API calls. Record which features work, which silently fail, which error. May need conditional field emission per vendor.
 
 **Effort:** S
 **Priority:** P1
-**Depends on:** ConsensusReviewService implementation
+**Depends on:** None
 
 ## Review Quality
 
@@ -53,6 +41,24 @@
 **Depends on:** None
 
 ## Completed
+
+### Anthropic compact schema consensus fields — v0.21.0
+
+**Completed:** 2026-03-29
+**What:** Added `canonical_key` and `symbol` fields to Anthropic compact schema for consensus matching.
+**Delivered:** Commit 7720ce2. Fields now included in `reviewFindingSchemaAnthropicCompact()` (parser.go:465-466), enabling Anthropic providers to participate in cross-model consensus.
+
+### Multi-provider observability in ProviderResponse — v0.21.0
+
+**Completed:** 2026-03-29
+**What:** Added `SubProviderResults` field to capture per-provider metrics for composite providers.
+**Delivered:** `SubProviderResults []SubProviderResult` field in ProviderResponse (provider.go:65), used in processor.go:267-277 for audit logging with per-provider latency/tokens/status.
+
+### Fireworks Kimi model compatibility verification — v0.21.0
+
+**Completed:** 2026-03-29
+**What:** Verified Fireworks AI Kimi-k2.5-turbo model works with Anthropic SDK.
+**Result:** Model `fireworks_ai/accounts/fireworks/models/kimi-k2p5` fully compatible. Returns thinking block + text block. Chinese responses verified.
 
 ### Open Source Readiness Package — v0.21.0
 
