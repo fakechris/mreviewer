@@ -31,13 +31,36 @@ AI-powered Code Review for GitLab Merge Requests. Self-hosted, multi-model suppo
    - [.env template](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example) (rename to `.env`)
 
 2. **Edit `.env`**:
+
+**Option A: MiniMax (Simplest)**
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
 GITLAB_WEBHOOK_SECRET=your_webhook_secret
 MINIMAX_API_KEY=your_minimax_key
-MINIMAX_GROUP_ID=your_group_id
 ```
+
+**Option B: Anthropic Claude**
+```bash
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+GITLAB_WEBHOOK_SECRET=your_webhook_secret
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+ANTHROPIC_API_KEY=your_anthropic_key
+ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+```
+
+**Option C: Other Anthropic-compatible providers**
+```bash
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+GITLAB_WEBHOOK_SECRET=your_webhook_secret
+ANTHROPIC_BASE_URL=https://your-provider.com/v1
+ANTHROPIC_API_KEY=your_key
+ANTHROPIC_MODEL=your_model
+```
+
+For OpenAI, DeepSeek, or multiple providers, edit `config.yaml`. See [config.yaml](./config.yaml) for details.
 
 3. **Start services**:
 ```bash
