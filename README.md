@@ -38,9 +38,15 @@ MINIMAX_API_KEY=your_minimax_key
 
 ### 2. Start Services
 
+Using pre-built Docker images from Docker Hub:
+
 ```bash
 docker-compose up -d
 ```
+
+The images will be automatically pulled:
+- `fakechris/mreviewer-worker:main`
+- `fakechris/mreviewer-ingress:main`
 
 ### 3. Configure GitLab Webhook
 

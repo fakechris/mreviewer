@@ -38,9 +38,15 @@ MINIMAX_API_KEY=your_minimax_key
 
 ### 2. 启动服务
 
+使用 Docker Hub 预构建镜像：
+
 ```bash
 docker-compose up -d
 ```
+
+镜像将自动拉取：
+- `fakechris/mreviewer-worker:main`
+- `fakechris/mreviewer-ingress:main`
 
 ### 3. 配置 GitLab Webhook
 
