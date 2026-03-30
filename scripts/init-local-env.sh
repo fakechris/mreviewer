@@ -13,6 +13,7 @@ usage() {
 Usage: scripts/init-local-env.sh [--output PATH] [--force] [--gitlab-base-url URL] [--gitlab-webhook-secret SECRET]
 
 Generates a local .env file for the default Docker Compose deployment.
+The generated file uses the provider-neutral quick-start contract.
 
 Required environment variables:
   GITLAB_TOKEN
@@ -105,9 +106,10 @@ REDIS_ADDR=127.0.0.1:6380
 GITLAB_BASE_URL=$gitlab_base_url
 GITLAB_TOKEN=$GITLAB_TOKEN
 GITLAB_WEBHOOK_SECRET=$gitlab_webhook_secret
-MINIMAX_BASE_URL=$minimax_base_url
-MINIMAX_API_KEY=$MINIMAX_API_KEY
-MINIMAX_MODEL=$minimax_model
+LLM_PROVIDER=minimax
+LLM_BASE_URL=$minimax_base_url
+LLM_API_KEY=$MINIMAX_API_KEY
+LLM_MODEL=$minimax_model
 EOF
 
 echo "Wrote $output_file" >&2

@@ -7,11 +7,15 @@ package db
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 type Querier interface {
 	CancelPendingRunsForMR(ctx context.Context, mergeRequestID int64) error
 	ClaimReviewRun(ctx context.Context, arg ClaimReviewRunParams) error
+	CountPendingQueue(ctx context.Context) (int64, error)
+	CountRetryScheduledRuns(ctx context.Context) (int64, error)
+	CountSupersededRunsSince(ctx context.Context, updatedAt time.Time) (int64, error)
 	GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (CommentAction, error)
 	GetFindingByMRAndDiscussionID(ctx context.Context, arg GetFindingByMRAndDiscussionIDParams) (ReviewFinding, error)
 	GetGitlabDiscussion(ctx context.Context, id int64) (GitlabDiscussion, error)
@@ -24,6 +28,7 @@ type Querier interface {
 	GetMergeRequest(ctx context.Context, id int64) (MergeRequest, error)
 	GetMergeRequestByProjectMR(ctx context.Context, arg GetMergeRequestByProjectMRParams) (MergeRequest, error)
 	GetNextClaimableReviewRun(ctx context.Context) (ReviewRun, error)
+	GetOldestWaitingRunCreatedAt(ctx context.Context) (interface{}, error)
 	GetProject(ctx context.Context, id int64) (Project, error)
 	GetProjectByGitlabID(ctx context.Context, arg GetProjectByGitlabIDParams) (Project, error)
 	GetProjectPolicy(ctx context.Context, projectID int64) (ProjectPolicy, error)
@@ -42,16 +47,24 @@ type Querier interface {
 	InsertReviewFinding(ctx context.Context, arg InsertReviewFindingParams) (sql.Result, error)
 	InsertReviewRun(ctx context.Context, arg InsertReviewRunParams) (sql.Result, error)
 	ListActiveFindingsByMR(ctx context.Context, mergeRequestID int64) ([]ReviewFinding, error)
+	ListActiveWorkerHeartbeats(ctx context.Context, lastSeenAt time.Time) ([]WorkerHeartbeat, error)
+	ListActiveWorkersWithCapacity(ctx context.Context, lastSeenAt time.Time) ([]ListActiveWorkersWithCapacityRow, error)
 	ListAuditLogsByDeliveryKey(ctx context.Context, deliveryKey string) ([]AuditLog, error)
 	ListAuditLogsByEntity(ctx context.Context, arg ListAuditLogsByEntityParams) ([]AuditLog, error)
 	ListCommentActionsByRun(ctx context.Context, reviewRunID int64) ([]CommentAction, error)
+	ListFailureCountsByErrorCode(ctx context.Context, updatedAt time.Time) ([]ListFailureCountsByErrorCodeRow, error)
 	ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]ReviewFinding, error)
 	ListHookEventsByProjectMR(ctx context.Context, arg ListHookEventsByProjectMRParams) ([]HookEvent, error)
 	ListPendingRuns(ctx context.Context, limit int32) ([]ReviewRun, error)
+	ListRecentFailedRuns(ctx context.Context, limit int32) ([]ListRecentFailedRunsRow, error)
 	ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) ([]ReviewRun, error)
+	ListRunningRunCountsByWorker(ctx context.Context) ([]ListRunningRunCountsByWorkerRow, error)
+	ListTopQueuedProjects(ctx context.Context, limit int32) ([]ListTopQueuedProjectsRow, error)
+	ListWebhookVerificationCounts(ctx context.Context, createdAt time.Time) ([]ListWebhookVerificationCountsRow, error)
 	MarkReviewRunFailed(ctx context.Context, arg MarkReviewRunFailedParams) error
 	MarkReviewRunRetryableFailure(ctx context.Context, arg MarkReviewRunRetryableFailureParams) error
 	ReapStaleRunningRuns(ctx context.Context, dateSUB interface{}) (int64, error)
+	SupersedeActiveRunsForMR(ctx context.Context, arg SupersedeActiveRunsForMRParams) error
 	UpdateCommentActionStatus(ctx context.Context, arg UpdateCommentActionStatusParams) error
 	UpdateFindingDiscussionID(ctx context.Context, arg UpdateFindingDiscussionIDParams) error
 	UpdateFindingLastSeen(ctx context.Context, arg UpdateFindingLastSeenParams) error
@@ -66,6 +79,7 @@ type Querier interface {
 	UpsertGitlabInstance(ctx context.Context, arg UpsertGitlabInstanceParams) (sql.Result, error)
 	UpsertMergeRequest(ctx context.Context, arg UpsertMergeRequestParams) (sql.Result, error)
 	UpsertProject(ctx context.Context, arg UpsertProjectParams) (sql.Result, error)
+	UpsertWorkerHeartbeat(ctx context.Context, arg UpsertWorkerHeartbeatParams) error
 }
 
 var _ Querier = (*Queries)(nil)

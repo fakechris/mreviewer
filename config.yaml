@@ -11,6 +11,19 @@ gitlab_base_url: "https://gitlab.example.com"
 gitlab_token: ""
 gitlab_webhook_secret: ""
 
+# Single-provider quick-start contract:
+# - Preferred for the equal quick-start path shared by MiniMax / Anthropic / OpenAI.
+# - Use environment variables so the same docker-compose flow works across providers:
+#   LLM_PROVIDER=minimax|anthropic|openai
+#   LLM_API_KEY=...
+#   LLM_BASE_URL=...
+#   LLM_MODEL=...
+# - Route-based `llm.routes` below remains the advanced path.
+llm_provider: ""
+llm_api_key: ""
+llm_base_url: ""
+llm_model: ""
+
 anthropic_base_url: "https://api.minimaxi.com/anthropic"
 anthropic_api_key: ""
 anthropic_model: "MiniMax-M2.7-highspeed"

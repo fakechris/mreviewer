@@ -8,12 +8,14 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 )
 
 const cancelPendingRunsForMR = `-- name: CancelPendingRunsForMR :exec
 UPDATE review_runs
 SET status = 'cancelled',
+    error_code = '',
+    error_detail = NULL,
+    superseded_by_run_id = NULL,
     next_retry_at = NULL,
     updated_at = CURRENT_TIMESTAMP
 WHERE merge_request_id = ?
@@ -52,7 +54,7 @@ func (q *Queries) ClaimReviewRun(ctx context.Context, arg ClaimReviewRunParams) 
 }
 
 const getNextClaimableReviewRun = `-- name: GetNextClaimableReviewRun :one
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs
 WHERE status = 'pending'
    OR (status = 'failed' AND next_retry_at IS NOT NULL AND next_retry_at <= CURRENT_TIMESTAMP)
 ORDER BY
@@ -77,6 +79,7 @@ func (q *Queries) GetNextClaimableReviewRun(ctx context.Context) (ReviewRun, err
 		&i.Status,
 		&i.ErrorCode,
 		&i.ErrorDetail,
+		&i.SupersededByRunID,
 		&i.RetryCount,
 		&i.MaxRetries,
 		&i.NextRetryAt,
@@ -95,7 +98,7 @@ func (q *Queries) GetNextClaimableReviewRun(ctx context.Context) (ReviewRun, err
 }
 
 const getReviewRun = `-- name: GetReviewRun :one
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs WHERE id = ? LIMIT 1
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetReviewRun(ctx context.Context, id int64) (ReviewRun, error) {
@@ -111,6 +114,7 @@ func (q *Queries) GetReviewRun(ctx context.Context, id int64) (ReviewRun, error)
 		&i.Status,
 		&i.ErrorCode,
 		&i.ErrorDetail,
+		&i.SupersededByRunID,
 		&i.RetryCount,
 		&i.MaxRetries,
 		&i.NextRetryAt,
@@ -129,7 +133,7 @@ func (q *Queries) GetReviewRun(ctx context.Context, id int64) (ReviewRun, error)
 }
 
 const getReviewRunByIdempotencyKey = `-- name: GetReviewRunByIdempotencyKey :one
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs WHERE idempotency_key = ? LIMIT 1
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs WHERE idempotency_key = ? LIMIT 1
 `
 
 func (q *Queries) GetReviewRunByIdempotencyKey(ctx context.Context, idempotencyKey string) (ReviewRun, error) {
@@ -145,6 +149,7 @@ func (q *Queries) GetReviewRunByIdempotencyKey(ctx context.Context, idempotencyK
 		&i.Status,
 		&i.ErrorCode,
 		&i.ErrorDetail,
+		&i.SupersededByRunID,
 		&i.RetryCount,
 		&i.MaxRetries,
 		&i.NextRetryAt,
@@ -170,15 +175,15 @@ INSERT INTO review_runs (
 `
 
 type InsertReviewRunParams struct {
-	ProjectID      int64           `json:"project_id"`
-	MergeRequestID int64           `json:"merge_request_id"`
-	HookEventID    sql.NullInt64   `json:"hook_event_id"`
-	TriggerType    string          `json:"trigger_type"`
-	HeadSha        string          `json:"head_sha"`
-	Status         string          `json:"status"`
-	MaxRetries     int32           `json:"max_retries"`
-	IdempotencyKey string          `json:"idempotency_key"`
-	ScopeJson      json.RawMessage `json:"scope_json"`
+	ProjectID      int64          `json:"project_id"`
+	MergeRequestID int64          `json:"merge_request_id"`
+	HookEventID    sql.NullInt64  `json:"hook_event_id"`
+	TriggerType    string         `json:"trigger_type"`
+	HeadSha        string         `json:"head_sha"`
+	Status         string         `json:"status"`
+	MaxRetries     int32          `json:"max_retries"`
+	IdempotencyKey string         `json:"idempotency_key"`
+	ScopeJson      NullRawMessage `json:"scope_json"`
 }
 
 func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams) (sql.Result, error) {
@@ -196,7 +201,7 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 }
 
 const listPendingRuns = `-- name: ListPendingRuns :many
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs
 WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
 ORDER BY created_at ASC
 LIMIT ?
@@ -221,6 +226,7 @@ func (q *Queries) ListPendingRuns(ctx context.Context, limit int32) ([]ReviewRun
 			&i.Status,
 			&i.ErrorCode,
 			&i.ErrorDetail,
+			&i.SupersededByRunID,
 			&i.RetryCount,
 			&i.MaxRetries,
 			&i.NextRetryAt,
@@ -249,7 +255,7 @@ func (q *Queries) ListPendingRuns(ctx context.Context, limit int32) ([]ReviewRun
 }
 
 const listReviewRunsByMR = `-- name: ListReviewRunsByMR :many
-SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs
+SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha, status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at, claimed_by, claimed_at, started_at, completed_at, provider_latency_ms, provider_tokens_total, idempotency_key, created_at, updated_at, scope_json FROM review_runs
 WHERE merge_request_id = ?
 ORDER BY created_at DESC
 `
@@ -273,6 +279,7 @@ func (q *Queries) ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) 
 			&i.Status,
 			&i.ErrorCode,
 			&i.ErrorDetail,
+			&i.SupersededByRunID,
 			&i.RetryCount,
 			&i.MaxRetries,
 			&i.NextRetryAt,
@@ -378,6 +385,33 @@ func (q *Queries) ReapStaleRunningRuns(ctx context.Context, dateSUB interface{})
 	return result.RowsAffected()
 }
 
+const supersedeActiveRunsForMR = `-- name: SupersedeActiveRunsForMR :exec
+UPDATE review_runs
+SET status = 'cancelled',
+    error_code = 'superseded_by_new_head',
+    error_detail = 'Superseded by a newer MR head review run',
+    superseded_by_run_id = ?,
+    next_retry_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE merge_request_id = ?
+  AND id <> ?
+  AND (
+    status IN ('pending', 'running')
+    OR (status = 'failed' AND next_retry_at IS NOT NULL)
+  )
+`
+
+type SupersedeActiveRunsForMRParams struct {
+	SupersededByRunID sql.NullInt64 `json:"superseded_by_run_id"`
+	MergeRequestID    int64         `json:"merge_request_id"`
+	ID                int64         `json:"id"`
+}
+
+func (q *Queries) SupersedeActiveRunsForMR(ctx context.Context, arg SupersedeActiveRunsForMRParams) error {
+	_, err := q.db.ExecContext(ctx, supersedeActiveRunsForMR, arg.SupersededByRunID, arg.MergeRequestID, arg.ID)
+	return err
+}
+
 const updateReviewRunCompleted = `-- name: UpdateReviewRunCompleted :exec
 UPDATE review_runs
 SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
@@ -428,8 +462,8 @@ WHERE id = ?
 `
 
 type UpdateRunScopeJSONParams struct {
-	ScopeJson json.RawMessage `json:"scope_json"`
-	ID        int64           `json:"id"`
+	ScopeJson NullRawMessage `json:"scope_json"`
+	ID        int64          `json:"id"`
 }
 
 func (q *Queries) UpdateRunScopeJSON(ctx context.Context, arg UpdateRunScopeJSONParams) error {

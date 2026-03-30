@@ -95,7 +95,24 @@ func (s *Service) handleUpdate(ctx context.Context, q db.Querier, ev hooks.Norma
 	// The webhook payload includes oldrev when a new commit is pushed.
 	// The normalization layer captures the new HEAD SHA. If head_sha is empty
 	// (deferred), we still create the run — the scheduler will resolve it later.
-	return s.createPendingRun(ctx, q, ev, hookEventID)
+	if err := s.createPendingRun(ctx, q, ev, hookEventID); err != nil {
+		return err
+	}
+
+	newRun, err := q.GetReviewRunByIdempotencyKey(ctx, ev.IdempotencyKey)
+	if err != nil {
+		return fmt.Errorf("load newly created review run: %w", err)
+	}
+
+	if err := q.SupersedeActiveRunsForMR(ctx, db.SupersedeActiveRunsForMRParams{
+		SupersededByRunID: sql.NullInt64{Int64: newRun.ID, Valid: true},
+		MergeRequestID:    newRun.MergeRequestID,
+		ID:                newRun.ID,
+	}); err != nil {
+		return fmt.Errorf("supersede active runs: %w", err)
+	}
+
+	return nil
 }
 
 // createPendingRun creates a new pending review run inside a transaction.
@@ -150,7 +167,7 @@ func (s *Service) createPendingRun(ctx context.Context, q db.Querier, ev hooks.N
 		Status:         "pending",
 		MaxRetries:     defaultMaxRetries,
 		IdempotencyKey: ev.IdempotencyKey,
-		ScopeJson:      ev.ScopeJSON,
+		ScopeJson:      db.NullRawMessage(ev.ScopeJSON),
 	})
 	if err != nil {
 		// Handle race condition: another concurrent request may have

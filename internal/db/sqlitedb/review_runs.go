@@ -11,10 +11,26 @@ import (
 func (q *Queries) CancelPendingRunsForMR(ctx context.Context, mergeRequestID int64) error {
 	_, err := q.db.ExecContext(ctx,
 		`UPDATE review_runs
-		 SET status = 'cancelled', next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
+		 SET status = 'cancelled', error_code = '', error_detail = NULL, superseded_by_run_id = NULL, next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
 		 WHERE merge_request_id = ?
 		   AND (status IN ('pending', 'running') OR (status = 'failed' AND next_retry_at IS NOT NULL))`,
 		mergeRequestID)
+	return err
+}
+
+func (q *Queries) SupersedeActiveRunsForMR(ctx context.Context, arg db.SupersedeActiveRunsForMRParams) error {
+	_, err := q.db.ExecContext(ctx,
+		`UPDATE review_runs
+		 SET status = 'cancelled',
+		     error_code = 'superseded_by_new_head',
+		     error_detail = 'Superseded by a newer MR head review run',
+		     superseded_by_run_id = ?,
+		     next_retry_at = NULL,
+		     updated_at = CURRENT_TIMESTAMP
+		 WHERE merge_request_id = ?
+		   AND id <> ?
+		   AND (status IN ('pending', 'running') OR (status = 'failed' AND next_retry_at IS NOT NULL))`,
+		arg.SupersededByRunID, arg.MergeRequestID, arg.ID)
 	return err
 }
 
@@ -38,7 +54,7 @@ func (q *Queries) ClaimReviewRun(ctx context.Context, arg db.ClaimReviewRunParam
 func (q *Queries) GetNextClaimableReviewRun(ctx context.Context) (db.ReviewRun, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
-		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
+		        status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at,
 		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
 		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
 		 FROM review_runs
@@ -56,7 +72,7 @@ func (q *Queries) GetNextClaimableReviewRun(ctx context.Context) (db.ReviewRun, 
 func (q *Queries) GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
-		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
+		        status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at,
 		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
 		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
 		 FROM review_runs WHERE id = ? LIMIT 1`, id)
@@ -66,7 +82,7 @@ func (q *Queries) GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, err
 func (q *Queries) GetReviewRunByIdempotencyKey(ctx context.Context, idempotencyKey string) (db.ReviewRun, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
-		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
+		        status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at,
 		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
 		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
 		 FROM review_runs WHERE idempotency_key = ? LIMIT 1`, idempotencyKey)
@@ -84,7 +100,7 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg db.InsertReviewRunPar
 func (q *Queries) ListPendingRuns(ctx context.Context, limit int32) ([]db.ReviewRun, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
-		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
+		        status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at,
 		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
 		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
 		 FROM review_runs
@@ -100,7 +116,7 @@ func (q *Queries) ListPendingRuns(ctx context.Context, limit int32) ([]db.Review
 func (q *Queries) ListReviewRunsByMR(ctx context.Context, mergeRequestID int64) ([]db.ReviewRun, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, project_id, merge_request_id, hook_event_id, trigger_type, head_sha,
-		        status, error_code, error_detail, retry_count, max_retries, next_retry_at,
+		        status, error_code, error_detail, superseded_by_run_id, retry_count, max_retries, next_retry_at,
 		        claimed_by, claimed_at, started_at, completed_at, provider_latency_ms,
 		        provider_tokens_total, idempotency_key, created_at, updated_at, scope_json
 		 FROM review_runs WHERE merge_request_id = ? ORDER BY created_at DESC`, mergeRequestID)

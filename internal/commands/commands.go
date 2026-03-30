@@ -356,7 +356,7 @@ func (p *Processor) executeFocusWith(ctx context.Context, q db.Querier, noteEven
 		Status:         "pending",
 		MaxRetries:     defaultMaxRetries,
 		IdempotencyKey: idempotencyKey,
-		ScopeJson:      json.RawMessage(scopeJSON),
+		ScopeJson:      db.NullRawMessage(scopeJSON),
 	})
 	if err != nil {
 		if db.IsDuplicateKeyError(err) {

@@ -4,6 +4,15 @@
 
 ---
 
+## 企业语义概览
+
+- Webhook 入口只做验签、去重、审计、入队和快速返回
+- Review 队列采用 `latest-head-wins` 语义
+- 同一个 MR 出现更新 head 时，旧的 run 会被 superseded，而不是继续无限排队
+- 运维可以通过 `/admin/`、`/admin/api/queue`、`/admin/api/concurrency`、`/admin/api/failures` 观察当前状态
+
+这意味着 Webhook 不是同步调用大模型的黑盒链路，而是企业可观测的异步控制面。
+
 ## 方式 1: 项目级别配置（所有版本适用）
 
 ### 适用场景
@@ -43,8 +52,8 @@
 ### 验证
 创建或更新一个 MR，检查：
 ```bash
-docker-compose logs ingress | grep "webhook received"
-docker-compose logs worker | grep "processing review run"
+docker compose logs ingress | grep "webhook"
+docker compose logs worker | grep "processing review run"
 ```
 
 ---
@@ -142,9 +151,14 @@ A:
 2. 查看 ingress 日志：`docker-compose logs ingress`
 3. 查看 worker 日志：`docker-compose logs worker`
 
+### Q: 为什么同一个 MR 连续 push 时，旧 review run 消失了？
+A: 这是 `latest-head-wins` 的预期行为。旧 run 会被标记为 superseded / cancelled，避免对过期 diff 继续消费模型和写回评论。
+
+### Q: 如何确认 webhook 当前有没有堆积？
+A: 打开 `/admin/`，或查询 `/admin/api/queue`。这里能直接看到 pending queue、retry-scheduled queue、以及近 24 小时 superseded run 数。
+
 ### Q: 如何禁用某个项目的 AI Review
 A: 在项目的 `.gitlab/ai-review.yaml` 中添加：
 ```yaml
 enabled: false
 ```
-

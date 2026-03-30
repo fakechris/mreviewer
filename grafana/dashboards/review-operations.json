@@ -134,6 +134,33 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "title": "Active Workers (90s)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS active_workers\nFROM worker_heartbeats\nWHERE last_seen_at >= DATE_SUB(NOW(), INTERVAL 90 SECOND)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "title": "Claimed Running Runs by Worker",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 16 },
+      "datasource": { "type": "mysql", "uid": "${DS_MYSQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT\n  h.worker_id,\n  h.configured_concurrency,\n  COUNT(r.id) AS running_runs\nFROM worker_heartbeats h\nLEFT JOIN review_runs r\n  ON r.claimed_by = h.worker_id\n AND r.status = 'running'\nWHERE h.last_seen_at >= DATE_SUB(NOW(), INTERVAL 90 SECOND)\nGROUP BY h.worker_id, h.configured_concurrency\nORDER BY running_runs DESC, h.worker_id ASC",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "schemaVersion": 39,

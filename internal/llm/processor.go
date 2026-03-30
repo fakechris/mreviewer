@@ -152,7 +152,7 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load rules: %w", err))
 	}
-	if overrideRoute := providerRouteFromRunScope(run.ScopeJson); overrideRoute != "" {
+	if overrideRoute := providerRouteFromRunScope([]byte(run.ScopeJson)); overrideRoute != "" {
 		if p.registry == nil {
 			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: provider route override %q requires provider registry", overrideRoute))
 		}
@@ -179,6 +179,13 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: assemble request: %w", err))
 	}
 	if assembled.Mode == ctxpkg.ReviewModeDegradation {
+		cancelled, err := p.isRunCancelled(ctx, run.ID)
+		if err != nil {
+			return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, err)
+		}
+		if cancelled {
+			return scheduler.ProcessOutcome{Status: "cancelled"}, nil
+		}
 		response := ProviderResponse{
 			Result: ReviewResult{
 				SchemaVersion: assembled.Request.SchemaVersion,
@@ -281,6 +288,14 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 	_, endParserValidate := p.startSpan(ctx, "parser.validate", nil)
 	endParserValidate()
 
+	cancelled, err := p.isRunCancelled(ctx, run.ID)
+	if err != nil {
+		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, err)
+	}
+	if cancelled {
+		return scheduler.ProcessOutcome{Status: "cancelled"}, nil
+	}
+
 	if p.summaryProvider != nil && response.Result.Status != parserErrorCode {
 		summaryResp, summaryErr := summarizeWithSystemPrompt(p.summaryProvider, ctx, assembled.Request, buildSummarySystemPrompt(outputLanguage))
 		if summaryErr != nil {
@@ -357,6 +372,17 @@ func (p *Processor) startSpan(ctx context.Context, name string, attrs map[string
 		return ctx, func() {}
 	}
 	return p.tracer.Start(ctx, name, attrs)
+}
+
+func (p *Processor) isRunCancelled(ctx context.Context, runID int64) (bool, error) {
+	if p == nil || p.store == nil || runID == 0 {
+		return false, nil
+	}
+	run, err := p.store.GetReviewRun(ctx, runID)
+	if err != nil {
+		return false, fmt.Errorf("llm: load review run: %w", err)
+	}
+	return strings.EqualFold(strings.TrimSpace(run.Status), "cancelled"), nil
 }
 
 func requestPayloadWithSystemPrompt(provider Provider, request ctxpkg.ReviewRequest, systemPrompt string) map[string]any {

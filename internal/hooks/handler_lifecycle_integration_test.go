@@ -287,8 +287,13 @@ func TestUpdateCreatesNewHeadRun(t *testing.T) {
 
 	if run, ok := runsByHeadSHA["head-sha-sample-001"]; !ok {
 		t.Fatal("expected open-event run for original HEAD SHA")
-	} else if run.Status != "pending" {
-		t.Errorf("open-event run: expected status 'pending', got %q", run.Status)
+	} else {
+		if run.Status != "cancelled" {
+			t.Errorf("open-event run: expected status 'cancelled', got %q", run.Status)
+		}
+		if run.ErrorCode != "superseded_by_new_head" {
+			t.Errorf("open-event run: expected error_code 'superseded_by_new_head', got %q", run.ErrorCode)
+		}
 	}
 
 	if run, ok := runsByHeadSHA["fedcba654321"]; !ok {

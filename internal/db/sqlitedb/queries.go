@@ -44,7 +44,7 @@ func scanReviewRun(row *sql.Row) (db.ReviewRun, error) {
 	err := row.Scan(
 		&i.ID, &i.ProjectID, &i.MergeRequestID, &i.HookEventID,
 		&i.TriggerType, &i.HeadSha, &i.Status, &i.ErrorCode, &i.ErrorDetail,
-		&i.RetryCount, &i.MaxRetries, &i.NextRetryAt, &i.ClaimedBy, &i.ClaimedAt,
+		&i.SupersededByRunID, &i.RetryCount, &i.MaxRetries, &i.NextRetryAt, &i.ClaimedBy, &i.ClaimedAt,
 		&i.StartedAt, &i.CompletedAt, &i.ProviderLatencyMs, &i.ProviderTokensTotal,
 		&i.IdempotencyKey, &i.CreatedAt, &i.UpdatedAt, &i.ScopeJson,
 	)
@@ -59,7 +59,7 @@ func scanReviewRunRows(rows *sql.Rows) ([]db.ReviewRun, error) {
 		if err := rows.Scan(
 			&i.ID, &i.ProjectID, &i.MergeRequestID, &i.HookEventID,
 			&i.TriggerType, &i.HeadSha, &i.Status, &i.ErrorCode, &i.ErrorDetail,
-			&i.RetryCount, &i.MaxRetries, &i.NextRetryAt, &i.ClaimedBy, &i.ClaimedAt,
+			&i.SupersededByRunID, &i.RetryCount, &i.MaxRetries, &i.NextRetryAt, &i.ClaimedBy, &i.ClaimedAt,
 			&i.StartedAt, &i.CompletedAt, &i.ProviderLatencyMs, &i.ProviderTokensTotal,
 			&i.IdempotencyKey, &i.CreatedAt, &i.UpdatedAt, &i.ScopeJson,
 		); err != nil {

@@ -7,6 +7,7 @@ Usage: scripts/show-run-audit.sh [--latest] [run-id]
 
 Prints the stored review_run row and full audit_logs.detail payloads for a run.
 By default this reads from the local Docker Compose MySQL container.
+Useful for investigating provider_failed, worker_timeout, or superseded_by_new_head runs.
 EOF
 }
 
@@ -75,6 +76,9 @@ SELECT
   status,
   trigger_type,
   head_sha,
+  superseded_by_run_id,
+  claimed_by,
+  claimed_at,
   error_code,
   error_detail,
   provider_latency_ms,

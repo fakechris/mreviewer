@@ -14,6 +14,12 @@ GitLab Merge Request AI 代码审查工具。支持自托管、多模型、SQLit
 - 🔄 **智能去重**: 指纹匹配 + LLM 语义去重
 - 📊 **可观测性**: Grafana 仪表板、审计日志、指标
 
+## 部署决策
+
+- 个人 / 小团队试用：直接走单 provider quick start、Webhook 和内置 `/admin/` 控制面
+- 企业默认：使用 MySQL 作为中心存储，可选 Redis 协调，配合 Webhook 自动触发和 `/admin/` 页面查看排队、并发、失败
+- SQLite 继续保留给单机场景，但共享环境和生产环境默认推荐 MySQL
+
 ## 快速开始
 
 ### 前置要求
@@ -30,27 +36,42 @@ GitLab Merge Request AI 代码审查工具。支持自托管、多模型、SQLit
    - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
    - [.env 模板](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example)（重命名为 `.env`）
 
-2. **编辑 `.env`**：
+2. **编辑 `.env`，从下面三条等价 quick start 里选一条**：
 
-**选项 A: MiniMax（最简单）**
+#### 方式 1A：MiniMax
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
 GITLAB_WEBHOOK_SECRET=your_webhook_secret
-MINIMAX_API_KEY=your_minimax_key
+LLM_PROVIDER=minimax
+LLM_API_KEY=your_minimax_key
+LLM_BASE_URL=https://api.minimaxi.com/anthropic
+LLM_MODEL=MiniMax-M2.7-highspeed
 ```
 
-**选项 B: Anthropic 兼容提供商**
+#### 方式 1B：Anthropic
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
 GITLAB_WEBHOOK_SECRET=your_webhook_secret
-ANTHROPIC_BASE_URL=https://api.anthropic.com
-ANTHROPIC_API_KEY=your_anthropic_key
-ANTHROPIC_MODEL=claude-sonnet-4-6
+LLM_PROVIDER=anthropic
+LLM_API_KEY=your_anthropic_key
+LLM_BASE_URL=https://api.anthropic.com
+LLM_MODEL=claude-sonnet-4-6
 ```
 
-这条 env-only 路径适用于 MiniMax 或单一 Anthropic 兼容提供商。
+#### 方式 1C：ChatGPT / OpenAI
+```bash
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+GITLAB_WEBHOOK_SECRET=your_webhook_secret
+LLM_PROVIDER=openai
+LLM_API_KEY=your_openai_key
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-5.4
+```
+
+这三条 quick start 共用同一套 env-only 合约和同一条启动命令。
 
 3. **启动服务**：
 ```bash
@@ -82,7 +103,7 @@ docker compose -f docker-compose.prod.yaml logs -f worker
 docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
 ```
 
-OpenAI、DeepSeek、混合路由或 SQLite 部署请走这条路径。可直接参考 [config.example.yaml](./config.example.yaml)。
+DeepSeek、Fireworks、混合路由或 SQLite 部署请走这条路径。可直接参考 [config.example.yaml](./config.example.yaml)。
 
 4. **验证**：
 ```bash
@@ -115,6 +136,16 @@ docker compose up -d --build
 
 📖 详细配置: [WEBHOOK.md](./WEBHOOK.md)
 
+### Admin 控制面
+
+`ingress` 现在会暴露只读运维页面 `/admin/`，以及以下 JSON 接口：
+
+- `/admin/api/queue`
+- `/admin/api/concurrency`
+- `/admin/api/failures`
+
+配置 `MREVIEWER_ADMIN_TOKEN` 或 `ADMIN_TOKEN` 后，这些路由会要求 `Authorization: Bearer <token>`。这让运维可以直接查看排队、活跃 worker 和失败情况，而不必先翻日志。
+
 ### 手动触发（可选）
 
 无需 webhook 手动触发审查：
@@ -142,6 +173,9 @@ GitLab → ingress (webhook) → MySQL/SQLite
 
 - [GitLab Webhook 配置](./WEBHOOK.md) - 三种配置方式（项目/组/系统）
 - [Docker 部署](./DEPLOYMENT.md) - 构建和生产部署
+- [企业 Webhook 架构](./docs/architecture/enterprise-webhook.md) - 队列语义、并发模型与控制面设计
+- [Admin 控制台说明](./docs/operations/admin-dashboard.md) - `/admin/` 使用方式与 Bearer 鉴权
+- [故障处理手册](./docs/operations/failure-playbook.md) - provider、worker、superseded run 的排障方式
 - [贡献指南](./CONTRIBUTING.md) - 如何贡献
 - [配置参考](./config.yaml) - 安全默认运行配置
 - [高级配置模板](./config.example.yaml) - 带环境变量展开的多 provider 示例

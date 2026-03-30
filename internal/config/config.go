@@ -23,6 +23,8 @@ type Config struct {
 	AppEnv string `yaml:"app_env"`
 	Port   string `yaml:"port"`
 
+	AdminToken string `yaml:"admin_token"`
+
 	MySQLDSN    string `yaml:"mysql_dsn"`
 	DatabaseDSN string `yaml:"database_dsn"`
 	RedisAddr   string `yaml:"redis_addr"`
@@ -34,6 +36,11 @@ type Config struct {
 	AnthropicBaseURL string `yaml:"anthropic_base_url"`
 	AnthropicAPIKey  string `yaml:"anthropic_api_key"`
 	AnthropicModel   string `yaml:"anthropic_model"`
+
+	LLMProvider string `yaml:"llm_provider"`
+	LLMAPIKey   string `yaml:"llm_api_key"`
+	LLMBaseURL  string `yaml:"llm_base_url"`
+	LLMModel    string `yaml:"llm_model"`
 
 	LLM LLMConfig `yaml:"llm"`
 }
@@ -64,6 +71,8 @@ var envMapping = []struct {
 }{
 	{"APP_ENV", func(c *Config, v string) { c.AppEnv = v }},
 	{"PORT", func(c *Config, v string) { c.Port = v }},
+	{"ADMIN_TOKEN", func(c *Config, v string) { c.AdminToken = v }},
+	{"MREVIEWER_ADMIN_TOKEN", func(c *Config, v string) { c.AdminToken = v }},
 	{"MYSQL_DSN", func(c *Config, v string) { c.MySQLDSN = v }},
 	{"DATABASE_DSN", func(c *Config, v string) { c.DatabaseDSN = v }},
 	{"REDIS_ADDR", func(c *Config, v string) { c.RedisAddr = v }},
@@ -73,6 +82,10 @@ var envMapping = []struct {
 	{"ANTHROPIC_BASE_URL", func(c *Config, v string) { c.AnthropicBaseURL = v }},
 	{"ANTHROPIC_API_KEY", func(c *Config, v string) { c.AnthropicAPIKey = v }},
 	{"ANTHROPIC_MODEL", func(c *Config, v string) { c.AnthropicModel = v }},
+	{"LLM_PROVIDER", func(c *Config, v string) { c.LLMProvider = v }},
+	{"LLM_API_KEY", func(c *Config, v string) { c.LLMAPIKey = v }},
+	{"LLM_BASE_URL", func(c *Config, v string) { c.LLMBaseURL = v }},
+	{"LLM_MODEL", func(c *Config, v string) { c.LLMModel = v }},
 	{"LLM_DEFAULT_ROUTE", func(c *Config, v string) { c.LLM.DefaultRoute = v }},
 	{"LLM_FALLBACK_ROUTE", func(c *Config, v string) { c.LLM.FallbackRoute = v }},
 }
@@ -150,6 +163,9 @@ func (c *Config) DSN() string {
 
 func applyMiniMaxFallback(cfg *Config) {
 	if cfg == nil {
+		return
+	}
+	if strings.TrimSpace(cfg.LLMProvider) != "" {
 		return
 	}
 	minimaxKey := strings.TrimSpace(os.Getenv("MINIMAX_API_KEY"))

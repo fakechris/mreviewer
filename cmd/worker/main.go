@@ -19,6 +19,8 @@ import (
 	"github.com/mreviewer/mreviewer/internal/rules"
 )
 
+const defaultHeartbeatInterval = 15 * time.Second
+
 func main() {
 	os.Exit(run())
 }
@@ -99,6 +101,13 @@ func run() int {
 	statusPublisher := gate.NewGitLabStatusPublisher(gitlabClient, newStore(sqlDB))
 	runtimeDeps := newRuntimeDepsWithStoreFactory(logger, sqlDB, processor, gitlabClient, statusPublisher, gate.NoopCIGatePublisher{}, newStore)
 	worker := runtimeDeps.Scheduler
+	if runtimeDeps.Heartbeat != nil {
+		go func() {
+			if err := runtimeDeps.Heartbeat.Run(ctx, defaultHeartbeatInterval, runtimeDeps.HeartbeatIdentity); err != nil && err != context.Canceled {
+				logger.Error("worker heartbeat stopped", "error", err)
+			}
+		}()
+	}
 	logger.Info("worker starting", "platform_default_route", defaultRoute, "fallback_route", configuredFallbackRoute, "registry_routes", providerRegistry.Routes())
 	if err := worker.Run(ctx); err != nil {
 		logger.Error("worker stopped with error", "error", err)
@@ -124,6 +133,33 @@ func providerConfigsFromConfig(cfg *config.Config) (string, string, map[string]l
 		return "", "", nil, fmt.Errorf("worker: configuration is required")
 	}
 	routes := make(map[string]llm.ProviderConfig)
+	if providerKind := strings.ToLower(strings.TrimSpace(cfg.LLMProvider)); providerKind != "" {
+		const quickStartDefaultRoute = "default"
+		const quickStartFallbackRoute = "secondary"
+
+		quickStart := llm.ProviderConfig{
+			Kind:       providerKind,
+			BaseURL:    strings.TrimSpace(cfg.LLMBaseURL),
+			APIKey:     strings.TrimSpace(cfg.LLMAPIKey),
+			Model:      strings.TrimSpace(cfg.LLMModel),
+			MaxTokens:  4096,
+			OutputMode: "tool_call",
+		}
+		if providerKind == llm.ProviderKindOpenAI {
+			quickStart.OutputMode = "json_schema"
+			quickStart.MaxCompletionTokens = 12000
+			quickStart.ReasoningEffort = "medium"
+			quickStart.MaxTokens = 0
+		}
+
+		defaultProvider := quickStart
+		defaultProvider.RouteName = quickStartDefaultRoute
+		secondaryProvider := quickStart
+		secondaryProvider.RouteName = quickStartFallbackRoute
+		routes[quickStartDefaultRoute] = defaultProvider
+		routes[quickStartFallbackRoute] = secondaryProvider
+		return quickStartDefaultRoute, quickStartFallbackRoute, routes, nil
+	}
 	if len(cfg.LLM.Routes) > 0 {
 		defaultRoute := strings.TrimSpace(cfg.LLM.DefaultRoute)
 		if defaultRoute == "" {

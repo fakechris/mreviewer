@@ -12,6 +12,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/mreviewer/mreviewer/internal/adminapi"
+	"github.com/mreviewer/mreviewer/internal/adminui"
 	"github.com/mreviewer/mreviewer/internal/commands"
 	"github.com/mreviewer/mreviewer/internal/config"
 	"github.com/mreviewer/mreviewer/internal/database"
@@ -63,6 +65,10 @@ func run() int {
 	commandProcessor := commands.NewProcessor(logger, db, commands.WithStoreFactory(newStore))
 	webhookHandler.SetCommandProcessor(commandProcessor)
 	mux.Handle("POST /webhook", webhookHandler)
+
+	adminSvc := adminapi.NewService(newStore(db))
+	mux.Handle("/admin/api/", adminapi.NewHandler(adminSvc, cfg.AdminToken))
+	mux.Handle("/admin/", adminui.NewHandler(cfg.AdminToken))
 
 	// Wrap with request-id middleware.
 	handler := apphttp.RequestIDMiddleware(logger, mux)

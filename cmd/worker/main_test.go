@@ -130,3 +130,72 @@ func TestProviderConfigsFromLLMRoutesRequiresProviderKind(t *testing.T) {
 		t.Fatalf("error = %q, want provider required message", err.Error())
 	}
 }
+
+func TestProviderConfigsFromSingleProviderQuickStartMiniMax(t *testing.T) {
+	cfg := &config.Config{
+		LLMProvider: "minimax",
+		LLMBaseURL:  "https://api.minimaxi.com/anthropic",
+		LLMAPIKey:   "minimax-secret",
+		LLMModel:    "MiniMax-M2.7-highspeed",
+	}
+
+	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("providerConfigsFromConfig: %v", err)
+	}
+	if defaultRoute != "default" {
+		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
+	}
+	if fallbackRoute != "secondary" {
+		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
+	}
+	if got := routes["default"].Kind; got != "minimax" {
+		t.Fatalf("default kind = %q, want minimax", got)
+	}
+}
+
+func TestProviderConfigsFromSingleProviderQuickStartAnthropic(t *testing.T) {
+	cfg := &config.Config{
+		LLMProvider: "anthropic",
+		LLMBaseURL:  "https://api.anthropic.com",
+		LLMAPIKey:   "anthropic-secret",
+		LLMModel:    "claude-sonnet-4-6",
+	}
+
+	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("providerConfigsFromConfig: %v", err)
+	}
+	if defaultRoute != "default" {
+		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
+	}
+	if fallbackRoute != "secondary" {
+		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
+	}
+	if got := routes["default"].Kind; got != "anthropic" {
+		t.Fatalf("default kind = %q, want anthropic", got)
+	}
+}
+
+func TestProviderConfigsFromSingleProviderQuickStartOpenAI(t *testing.T) {
+	cfg := &config.Config{
+		LLMProvider: "openai",
+		LLMBaseURL:  "https://api.openai.com/v1",
+		LLMAPIKey:   "openai-secret",
+		LLMModel:    "gpt-5.4",
+	}
+
+	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("providerConfigsFromConfig: %v", err)
+	}
+	if defaultRoute != "default" {
+		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
+	}
+	if fallbackRoute != "secondary" {
+		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
+	}
+	if got := routes["default"].Kind; got != "openai" {
+		t.Fatalf("default kind = %q, want openai", got)
+	}
+}

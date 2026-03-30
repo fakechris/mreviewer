@@ -157,6 +157,7 @@ func TestConfigAllEnvVars(t *testing.T) {
 	// Verify every env var mapping works.
 	envVals := map[string]string{
 		"APP_ENV":               "test",
+		"MREVIEWER_ADMIN_TOKEN": "admin-secret",
 		"PORT":                  "9999",
 		"MYSQL_DSN":             "test-dsn",
 		"REDIS_ADDR":            "test-redis",
@@ -179,6 +180,9 @@ func TestConfigAllEnvVars(t *testing.T) {
 
 	if cfg.AppEnv != "test" {
 		t.Errorf("AppEnv = %q, want %q", cfg.AppEnv, "test")
+	}
+	if cfg.AdminToken != "admin-secret" {
+		t.Errorf("AdminToken = %q, want %q", cfg.AdminToken, "admin-secret")
 	}
 	if cfg.Port != "9999" {
 		t.Errorf("Port = %q, want %q", cfg.Port, "9999")
@@ -432,5 +436,103 @@ func TestConfigEnvOverridesLLMRoutePointers(t *testing.T) {
 	}
 	if cfg.LLM.FallbackRoute != "minimax" {
 		t.Fatalf("LLM.FallbackRoute = %q, want minimax", cfg.LLM.FallbackRoute)
+	}
+}
+
+func TestConfigLoadsSingleProviderQuickStartEnvForMiniMax(t *testing.T) {
+	clearQuickStartEnv(t)
+	t.Setenv("LLM_PROVIDER", "minimax")
+	t.Setenv("LLM_API_KEY", "minimax-secret")
+	t.Setenv("LLM_BASE_URL", "https://api.minimaxi.com/anthropic")
+	t.Setenv("LLM_MODEL", "MiniMax-M2.7-highspeed")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.LLMProvider != "minimax" {
+		t.Fatalf("LLMProvider = %q, want minimax", cfg.LLMProvider)
+	}
+	if cfg.LLMAPIKey != "minimax-secret" {
+		t.Fatalf("LLMAPIKey = %q, want minimax-secret", cfg.LLMAPIKey)
+	}
+	if cfg.LLMBaseURL != "https://api.minimaxi.com/anthropic" {
+		t.Fatalf("LLMBaseURL = %q, want minimax base URL", cfg.LLMBaseURL)
+	}
+	if cfg.LLMModel != "MiniMax-M2.7-highspeed" {
+		t.Fatalf("LLMModel = %q, want MiniMax-M2.7-highspeed", cfg.LLMModel)
+	}
+}
+
+func TestConfigLoadsSingleProviderQuickStartEnvForAnthropic(t *testing.T) {
+	clearQuickStartEnv(t)
+	t.Setenv("LLM_PROVIDER", "anthropic")
+	t.Setenv("LLM_API_KEY", "anthropic-secret")
+	t.Setenv("LLM_BASE_URL", "https://api.anthropic.com")
+	t.Setenv("LLM_MODEL", "claude-sonnet-4-6")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.LLMProvider != "anthropic" {
+		t.Fatalf("LLMProvider = %q, want anthropic", cfg.LLMProvider)
+	}
+	if cfg.LLMAPIKey != "anthropic-secret" {
+		t.Fatalf("LLMAPIKey = %q, want anthropic-secret", cfg.LLMAPIKey)
+	}
+	if cfg.LLMBaseURL != "https://api.anthropic.com" {
+		t.Fatalf("LLMBaseURL = %q, want anthropic base URL", cfg.LLMBaseURL)
+	}
+	if cfg.LLMModel != "claude-sonnet-4-6" {
+		t.Fatalf("LLMModel = %q, want claude-sonnet-4-6", cfg.LLMModel)
+	}
+}
+
+func TestConfigLoadsSingleProviderQuickStartEnvForOpenAI(t *testing.T) {
+	clearQuickStartEnv(t)
+	t.Setenv("LLM_PROVIDER", "openai")
+	t.Setenv("LLM_API_KEY", "openai-secret")
+	t.Setenv("LLM_BASE_URL", "https://api.openai.com/v1")
+	t.Setenv("LLM_MODEL", "gpt-5.4")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.LLMProvider != "openai" {
+		t.Fatalf("LLMProvider = %q, want openai", cfg.LLMProvider)
+	}
+	if cfg.LLMAPIKey != "openai-secret" {
+		t.Fatalf("LLMAPIKey = %q, want openai-secret", cfg.LLMAPIKey)
+	}
+	if cfg.LLMBaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("LLMBaseURL = %q, want openai base URL", cfg.LLMBaseURL)
+	}
+	if cfg.LLMModel != "gpt-5.4" {
+		t.Fatalf("LLMModel = %q, want gpt-5.4", cfg.LLMModel)
+	}
+}
+
+func clearQuickStartEnv(t *testing.T) {
+	t.Helper()
+	for _, m := range envMapping {
+		t.Setenv(m.envVar, "")
+		os.Unsetenv(m.envVar)
+	}
+	for _, envVar := range []string{
+		"MINIMAX_API_KEY",
+		"MINIMAX_BASE_URL",
+		"MINIMAX_MODEL",
+		"LLM_PROVIDER",
+		"LLM_API_KEY",
+		"LLM_BASE_URL",
+		"LLM_MODEL",
+	} {
+		t.Setenv(envVar, "")
+		os.Unsetenv(envVar)
 	}
 }

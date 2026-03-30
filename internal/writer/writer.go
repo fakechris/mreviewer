@@ -111,6 +111,11 @@ func (w *Writer) Write(ctx context.Context, run db.ReviewRun, findings []db.Revi
 	if w.client == nil || w.store == nil {
 		return fmt.Errorf("writer: dependencies are not configured")
 	}
+	if active, err := w.isRunActive(ctx, run.ID); err != nil {
+		return err
+	} else if !active {
+		return nil
+	}
 	if strings.EqualFold(strings.TrimSpace(run.Status), "parser_error") {
 		return w.writeParserErrorNote(ctx, run)
 	}
@@ -178,6 +183,11 @@ func (w *Writer) writeFindings(ctx context.Context, run db.ReviewRun, mr db.Merg
 }
 
 func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, version db.MrVersion, finding db.ReviewFinding, gitlabProjectID int64) error {
+	if active, err := w.isRunActive(ctx, run.ID); err != nil {
+		return err
+	} else if !active {
+		return nil
+	}
 	idempotencyKey := fmt.Sprintf("run:%d:finding:%d:%s", run.ID, finding.ID, actionTypeCreateDiscussion)
 	if action, err := w.store.GetCommentActionByIdempotencyKey(ctx, idempotencyKey); err == nil && action.Status == commentActionStatusSucceeded {
 		return nil
@@ -214,6 +224,11 @@ func (w *Writer) writeFinding(ctx context.Context, run db.ReviewRun, mr db.Merge
 }
 
 func (w *Writer) writeParserErrorNote(ctx context.Context, run db.ReviewRun) error {
+	if active, err := w.isRunActive(ctx, run.ID); err != nil {
+		return err
+	} else if !active {
+		return nil
+	}
 	idempotencyKey := fmt.Sprintf("run:%d:parser_error_summary_note", run.ID)
 	if action, err := w.store.GetCommentActionByIdempotencyKey(ctx, idempotencyKey); err == nil && action.Status == commentActionStatusSucceeded {
 		return nil
@@ -282,6 +297,11 @@ func nullableReplacementDiscussionID(matched sql.NullInt64, discussions map[int6
 }
 
 func (w *Writer) resolveFindingDiscussion(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, finding db.ReviewFinding, supersededBy sql.NullInt64, gitlabProjectID int64) error {
+	if active, err := w.isRunActive(ctx, run.ID); err != nil {
+		return err
+	} else if !active {
+		return nil
+	}
 	if finding.ID == 0 {
 		return nil
 	}
@@ -321,6 +341,11 @@ func (w *Writer) resolveFindingDiscussion(ctx context.Context, run db.ReviewRun,
 }
 
 func (w *Writer) writeSummaryNote(ctx context.Context, run db.ReviewRun, mr db.MergeRequest, findings []db.ReviewFinding, gitlabProjectID int64) error {
+	if active, err := w.isRunActive(ctx, run.ID); err != nil {
+		return err
+	} else if !active {
+		return nil
+	}
 	idempotencyKey := fmt.Sprintf("run:%d:summary_note", run.ID)
 	if action, err := w.store.GetCommentActionByIdempotencyKey(ctx, idempotencyKey); err == nil && action.Status == commentActionStatusSucceeded {
 		return nil
@@ -357,6 +382,17 @@ func (w *Writer) startSpan(ctx context.Context, name string, attrs map[string]st
 		return ctx, func() {}
 	}
 	return w.tracer.Start(ctx, name, attrs)
+}
+
+func (w *Writer) isRunActive(ctx context.Context, runID int64) (bool, error) {
+	if w == nil || w.store == nil || runID == 0 {
+		return true, nil
+	}
+	run, err := w.store.GetReviewRun(ctx, runID)
+	if err != nil {
+		return true, nil
+	}
+	return !strings.EqualFold(strings.TrimSpace(run.Status), "cancelled"), nil
 }
 
 func (w *Writer) performDiscussionAction(ctx context.Context, run db.ReviewRun, finding db.ReviewFinding, idempotencyKey, actionType, discussionType string, req CreateDiscussionRequest) (Discussion, error) {
@@ -1072,7 +1108,7 @@ func (w *Writer) suggestionConfidenceThreshold(ctx context.Context, projectID in
 }
 
 func (w *Writer) outputLanguage(ctx context.Context, run db.ReviewRun, projectID int64) string {
-	if outputLanguage := outputLanguageFromRunScope(run.ScopeJson); outputLanguage != "" {
+	if outputLanguage := outputLanguageFromRunScope([]byte(run.ScopeJson)); outputLanguage != "" {
 		return outputLanguage
 	}
 	policy, err := w.store.GetProjectPolicy(ctx, projectID)

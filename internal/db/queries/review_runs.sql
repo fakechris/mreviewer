@@ -70,9 +70,27 @@ WHERE id = ?;
 -- name: CancelPendingRunsForMR :exec
 UPDATE review_runs
 SET status = 'cancelled',
+    error_code = '',
+    error_detail = NULL,
+    superseded_by_run_id = NULL,
     next_retry_at = NULL,
     updated_at = CURRENT_TIMESTAMP
 WHERE merge_request_id = ?
+  AND (
+    status IN ('pending', 'running')
+    OR (status = 'failed' AND next_retry_at IS NOT NULL)
+  );
+
+-- name: SupersedeActiveRunsForMR :exec
+UPDATE review_runs
+SET status = 'cancelled',
+    error_code = 'superseded_by_new_head',
+    error_detail = 'Superseded by a newer MR head review run',
+    superseded_by_run_id = ?,
+    next_retry_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE merge_request_id = ?
+  AND id <> ?
   AND (
     status IN ('pending', 'running')
     OR (status = 'failed' AND next_retry_at IS NOT NULL)
