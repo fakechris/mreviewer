@@ -198,4 +198,13 @@ func TestProviderConfigsFromSingleProviderQuickStartOpenAI(t *testing.T) {
 	if got := routes["default"].Kind; got != "openai" {
 		t.Fatalf("default kind = %q, want openai", got)
 	}
+	if got := routes["default"].MaxTokens; got != 4096 {
+		t.Fatalf("default max_tokens = %d, want 4096", got)
+	}
+	if got := routes["default"].MaxCompletionTokens; got != 12000 {
+		t.Fatalf("default max_completion_tokens = %d, want 12000", got)
+	}
+	if got := routes["default"].OutputMode; got != "json_schema" {
+		t.Fatalf("default output_mode = %q, want json_schema", got)
+	}
 }

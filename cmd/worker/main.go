@@ -149,7 +149,6 @@ func providerConfigsFromConfig(cfg *config.Config) (string, string, map[string]l
 			quickStart.OutputMode = "json_schema"
 			quickStart.MaxCompletionTokens = 12000
 			quickStart.ReasoningEffort = "medium"
-			quickStart.MaxTokens = 0
 		}
 
 		defaultProvider := quickStart
