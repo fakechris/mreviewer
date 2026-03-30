@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -14,6 +15,8 @@ const (
 	defaultMiniMaxBaseURL = "https://api.minimaxi.com/anthropic"
 	defaultMiniMaxModel   = "MiniMax-M2.7-highspeed"
 )
+
+var braceEnvPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
 // Config holds all application configuration values.
 type Config struct {
@@ -112,11 +115,18 @@ func loadYAML(cfg *Config, path string) error {
 		}
 		return err
 	}
-	data = []byte(os.ExpandEnv(string(data)))
+	data = []byte(expandBraceEnv(string(data)))
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return fmt.Errorf("parsing yaml: %w", err)
 	}
 	return nil
+}
+
+func expandBraceEnv(input string) string {
+	return braceEnvPattern.ReplaceAllStringFunc(input, func(match string) string {
+		name := strings.TrimSuffix(strings.TrimPrefix(match, "${"), "}")
+		return os.Getenv(name)
+	})
 }
 
 // applyEnv overlays environment variables onto cfg for every set variable.

@@ -86,7 +86,7 @@ volumes:
 启动：
 
 ```bash
-docker-compose -f docker-compose.prod.yaml up -d
+docker compose -f docker-compose.prod.yaml up -d
 ```
 
 如果你需要挂载自定义 `config.yaml`，改为：

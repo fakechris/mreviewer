@@ -364,6 +364,50 @@ func TestConfigExpandsEnvVarsInsideYAML(t *testing.T) {
 	}
 }
 
+func TestConfigPreservesLiteralDollarSignsInsideYAML(t *testing.T) {
+	for _, m := range envMapping {
+		t.Setenv(m.envVar, "")
+		os.Unsetenv(m.envVar)
+	}
+	for _, envVar := range []string{"MINIMAX_API_KEY", "MINIMAX_BASE_URL", "MINIMAX_MODEL"} {
+		t.Setenv(envVar, "")
+		os.Unsetenv(envVar)
+	}
+
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "config.yaml")
+	content := `mysql_dsn: "user:pa$$word@tcp(localhost:3306)/mreviewer"
+anthropic_api_key: "sk$ecret"
+llm:
+  default_route: literal
+  fallback_route: literal
+  routes:
+    literal:
+      provider: openai
+      base_url: https://api.openai.com/v1
+      api_key: "route$token"
+      model: gpt-5.4
+`
+	if err := os.WriteFile(yamlPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing yaml: %v", err)
+	}
+
+	cfg, err := Load(yamlPath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.MySQLDSN != "user:pa$$word@tcp(localhost:3306)/mreviewer" {
+		t.Fatalf("MySQLDSN = %q, want literal dollar signs preserved", cfg.MySQLDSN)
+	}
+	if cfg.AnthropicAPIKey != "sk$ecret" {
+		t.Fatalf("AnthropicAPIKey = %q, want literal dollar sign preserved", cfg.AnthropicAPIKey)
+	}
+	if got := cfg.LLM.Routes["literal"].APIKey; got != "route$token" {
+		t.Fatalf("route APIKey = %q, want literal dollar sign preserved", got)
+	}
+}
+
 func TestConfigEnvOverridesLLMRoutePointers(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "config.yaml")

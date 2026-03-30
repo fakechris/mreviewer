@@ -54,13 +54,16 @@ require_pattern ".env.prod.example" "^ANTHROPIC_MODEL=" ".env.prod.example must 
 require_pattern "README.md" "^### Method 1: Minimal Setup \\(No Git Required\\)" "README.md must keep a dedicated minimal setup section"
 require_pattern "README.md" "docker compose -f docker-compose\\.prod\\.yaml up -d" "README.md must show how to start the minimal no-git path"
 require_pattern "README.md" "^### Method 2: Advanced No-Git Setup" "README.md must present advanced no-git setup as Method 2"
+require_pattern "README.md" "^### Method 3: Full Clone \\(For Developers\\)" "README.md must renumber the developer workflow to Method 3"
 forbid_pattern "README.md" "^### Method 1B:" "README.md must not use the Method 1B heading"
 forbid_pattern "README.md" "docker-compose " "README.md must use docker compose consistently"
 require_pattern "README.zh-CN.md" "^### 方式 1：极简部署（无需 Git）" "README.zh-CN.md must keep a dedicated minimal setup section"
 require_pattern "README.zh-CN.md" "docker compose -f docker-compose\\.prod\\.yaml up -d" "README.zh-CN.md must show how to start the minimal no-git path"
 require_pattern "README.zh-CN.md" "^### 方式 2：高级无 Git 部署" "README.zh-CN.md must present advanced no-git setup as 方式 2"
+require_pattern "README.zh-CN.md" "^### 方式 3：完整克隆（开发者）" "README.zh-CN.md must renumber the developer workflow to 方式 3"
 forbid_pattern "README.zh-CN.md" "^### 方式 1B：" "README.zh-CN.md must not use the 方式 1B heading"
 forbid_pattern "README.zh-CN.md" "docker-compose " "README.zh-CN.md must use docker compose consistently"
+forbid_pattern "DEPLOYMENT.md" "docker-compose " "DEPLOYMENT.md must use docker compose consistently"
 
 # Advanced no-git setup must have a dedicated config override compose file.
 [[ -f docker-compose.prod.config.yaml ]] || fail "missing docker-compose.prod.config.yaml for advanced config-based setup"

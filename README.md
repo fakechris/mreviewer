@@ -89,7 +89,7 @@ Use this path for OpenAI, DeepSeek, mixed-provider routing, or SQLite deployment
 docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml logs -f worker
 ```
 
-### Method 2: Full Clone (For Developers)
+### Method 3: Full Clone (For Developers)
 
 **For developers** - Clone repo and run local source builds
 
