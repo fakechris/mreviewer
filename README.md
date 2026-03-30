@@ -40,49 +40,68 @@ GITLAB_WEBHOOK_SECRET=your_webhook_secret
 MINIMAX_API_KEY=your_minimax_key
 ```
 
-**Option B: Anthropic Claude**
+**Option B: Anthropic-compatible provider**
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
 GITLAB_WEBHOOK_SECRET=your_webhook_secret
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 ANTHROPIC_API_KEY=your_anthropic_key
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+ANTHROPIC_MODEL=claude-sonnet-4-6
 ```
 
-**Option C: Other Anthropic-compatible providers**
-```bash
-GITLAB_BASE_URL=https://gitlab.example.com
-GITLAB_TOKEN=your_gitlab_token
-GITLAB_WEBHOOK_SECRET=your_webhook_secret
-ANTHROPIC_BASE_URL=https://your-provider.com/v1
-ANTHROPIC_API_KEY=your_key
-ANTHROPIC_MODEL=your_model
-```
-
-For OpenAI, DeepSeek, or multiple providers, edit `config.yaml`. See [config.yaml](./config.yaml) for details.
+This env-only path is intended for MiniMax or a single Anthropic-compatible provider.
 
 3. **Start services**:
 ```bash
-docker-compose -f docker-compose.prod.yaml up -d
+docker compose -f docker-compose.prod.yaml up -d
 ```
 
 4. **Verify**:
 ```bash
-docker-compose -f docker-compose.prod.yaml logs -f worker
+docker compose -f docker-compose.prod.yaml logs -f worker
 ```
 
-### Method 2: Full Clone (For Developers)
+### Method 2: Advanced No-Git Setup (Multi-Provider / OpenAI / Custom Routes)
 
-**For developers** - Clone repo and customize
+**For operators** - Download 4 files and mount a custom config
+
+1. **Download files**:
+   - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
+   - [docker-compose.prod.config.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.config.yaml)
+   - [.env template](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example) (rename to `.env`)
+   - [config example](https://raw.githubusercontent.com/fakechris/mreviewer/main/config.example.yaml) (rename to `config.yaml`)
+
+2. **Edit `.env` and `config.yaml`**:
+- `docker-compose.prod.yaml` passes through your entire `.env`, so custom provider secrets are available inside the containers.
+- `docker-compose.prod.config.yaml` mounts your local `config.yaml` into `/app/config.yaml`.
+- `config.example.yaml` supports `${VAR}` syntax; environment variables are expanded at startup.
+
+3. **Start services**:
+```bash
+docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
+```
+
+Use this path for OpenAI, DeepSeek, mixed-provider routing, or SQLite deployments. See [config.example.yaml](./config.example.yaml) for a working template.
+
+4. **Verify**:
+```bash
+docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml logs -f worker
+```
+
+### Method 3: Full Clone (For Developers)
+
+**For developers** - Clone repo and run local source builds
 
 ```bash
 git clone https://github.com/fakechris/mreviewer.git
 cd mreviewer
 cp .env.example .env
 # Edit .env with your credentials
-docker-compose up -d
+docker compose up -d --build
 ```
+
+This path builds `ingress` and `worker` from your local checkout, so code changes are reflected in the running containers.
 
 ### Configure GitLab Webhook
 
@@ -101,7 +120,7 @@ docker-compose up -d
 Trigger review without webhook:
 
 ```bash
-docker exec -it mreviewer-worker /app/manual-trigger \
+docker compose exec worker /app/manual-trigger \
   --project-id 123 \
   --mr-iid 456 \
   --wait
@@ -124,7 +143,8 @@ GitLab → ingress (webhook) → MySQL/SQLite
 - [GitLab Webhook Setup](./WEBHOOK.md) - Three configuration methods (project/group/system)
 - [Docker Deployment](./DEPLOYMENT.md) - Build and deploy to production
 - [Contributing Guide](./CONTRIBUTING.md) - How to contribute
-- [Configuration](./config.yaml) - Full configuration reference
+- [Configuration](./config.yaml) - Safe default runtime config
+- [Advanced Configuration Template](./config.example.yaml) - Multi-provider example with env expansion
 
 ## Roadmap
 

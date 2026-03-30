@@ -1,7 +1,6 @@
 services:
   mysql:
     image: mysql:8.4
-    container_name: mreviewer-mysql
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root_password
@@ -20,7 +19,6 @@ services:
 
   redis:
     image: redis:7
-    container_name: mreviewer-redis
     restart: unless-stopped
     command: redis-server --port 6379
     ports:
@@ -32,8 +30,11 @@ services:
       retries: 10
 
   migrate:
-    image: fakechris/mreviewer-worker:main
-    container_name: mreviewer-migrate
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET_CMD: ./cmd/worker
     restart: "no"
     env_file:
       - .env
@@ -46,8 +47,11 @@ services:
     command: ["/app/migrate"]
 
   ingress:
-    image: fakechris/mreviewer-ingress:main
-    container_name: mreviewer-ingress
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET_CMD: ./cmd/ingress
     restart: unless-stopped
     env_file:
       - .env
@@ -69,8 +73,11 @@ services:
       retries: 10
 
   worker:
-    image: fakechris/mreviewer-worker:main
-    container_name: mreviewer-worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET_CMD: ./cmd/worker
     restart: unless-stopped
     env_file:
       - .env
