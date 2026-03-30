@@ -14,6 +14,12 @@ AI-powered Code Review for GitLab Merge Requests. Self-hosted, multi-model suppo
 - 🔄 **Deduplication**: Fingerprint-based + LLM semantic matching
 - 📊 **Observability**: Grafana dashboards, audit logs, metrics
 
+## Deployment Decision
+
+- Personal / small-team trial: quick start with one provider, webhook, and the built-in `/admin/` control plane
+- Enterprise default: MySQL-backed deployment, optional Redis coordination, webhook automation, and the `/admin/` page for queue/concurrency/failure visibility
+- SQLite remains supported for single-machine setups, but MySQL is the default recommendation for shared or production environments
+
 ## Quick Start
 
 ### Prerequisites
@@ -30,27 +36,42 @@ AI-powered Code Review for GitLab Merge Requests. Self-hosted, multi-model suppo
    - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
    - [.env template](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example) (rename to `.env`)
 
-2. **Edit `.env`**:
+2. **Edit `.env` with one of these equal quick-start profiles**:
 
-**Option A: MiniMax (Simplest)**
+#### Method 1A: MiniMax
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
 GITLAB_WEBHOOK_SECRET=your_webhook_secret
-MINIMAX_API_KEY=your_minimax_key
+LLM_PROVIDER=minimax
+LLM_API_KEY=your_minimax_key
+LLM_BASE_URL=https://api.minimaxi.com/anthropic
+LLM_MODEL=MiniMax-M2.7-highspeed
 ```
 
-**Option B: Anthropic-compatible provider**
+#### Method 1B: Anthropic
 ```bash
 GITLAB_BASE_URL=https://gitlab.example.com
 GITLAB_TOKEN=your_gitlab_token
 GITLAB_WEBHOOK_SECRET=your_webhook_secret
-ANTHROPIC_BASE_URL=https://api.anthropic.com
-ANTHROPIC_API_KEY=your_anthropic_key
-ANTHROPIC_MODEL=claude-sonnet-4-6
+LLM_PROVIDER=anthropic
+LLM_API_KEY=your_anthropic_key
+LLM_BASE_URL=https://api.anthropic.com
+LLM_MODEL=claude-sonnet-4-6
 ```
 
-This env-only path is intended for MiniMax or a single Anthropic-compatible provider.
+#### Method 1C: ChatGPT / OpenAI
+```bash
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token
+GITLAB_WEBHOOK_SECRET=your_webhook_secret
+LLM_PROVIDER=openai
+LLM_API_KEY=your_openai_key
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-5.4
+```
+
+All three quick-start profiles use the same env-only contract and the same start command.
 
 3. **Start services**:
 ```bash
@@ -82,7 +103,7 @@ docker compose -f docker-compose.prod.yaml logs -f worker
 docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
 ```
 
-Use this path for OpenAI, DeepSeek, mixed-provider routing, or SQLite deployments. See [config.example.yaml](./config.example.yaml) for a working template.
+Use this path for DeepSeek, Fireworks, mixed-provider routing, or SQLite deployments. See [config.example.yaml](./config.example.yaml) for a working template.
 
 4. **Verify**:
 ```bash
@@ -115,6 +136,16 @@ This path builds `ingress` and `worker` from your local checkout, so code change
 
 📖 Detailed webhook setup: [WEBHOOK.md](./WEBHOOK.md)
 
+### Admin Control Plane
+
+`ingress` now serves a small read-only operator page at `/admin/` plus JSON endpoints at:
+
+- `/admin/api/queue`
+- `/admin/api/concurrency`
+- `/admin/api/failures`
+
+Set `MREVIEWER_ADMIN_TOKEN` or `ADMIN_TOKEN` to require `Authorization: Bearer <token>` on those routes. This is the fastest way to inspect queue depth, active workers, and recent failures without tailing logs.
+
 ### Manual Trigger (Optional)
 
 Trigger review without webhook:
@@ -142,6 +173,9 @@ GitLab → ingress (webhook) → MySQL/SQLite
 
 - [GitLab Webhook Setup](./WEBHOOK.md) - Three configuration methods (project/group/system)
 - [Docker Deployment](./DEPLOYMENT.md) - Build and deploy to production
+- [Enterprise Webhook Architecture](./docs/architecture/enterprise-webhook.md) - Queue semantics, concurrency model, and control-plane design
+- [Admin Dashboard Operations](./docs/operations/admin-dashboard.md) - `/admin/` usage and bearer auth
+- [Failure Playbook](./docs/operations/failure-playbook.md) - How to triage provider, worker, and supersede failures
 - [Contributing Guide](./CONTRIBUTING.md) - How to contribute
 - [Configuration](./config.yaml) - Safe default runtime config
 - [Advanced Configuration Template](./config.example.yaml) - Multi-provider example with env expansion

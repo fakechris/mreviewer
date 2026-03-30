@@ -265,6 +265,80 @@ func TestReviewRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestAdminDashboardQueriesUseRetryEligibilityAndExcludeSupersedes(t *testing.T) {
+	sqlDB := setupDB(t)
+	q := sqlitedb.New(sqlDB)
+	ctx := context.Background()
+
+	_, projID := seedProject(t, q, ctx)
+	mrID := seedMR(t, q, ctx, projID)
+
+	pendingRunID := seedRun(t, q, ctx, projID, mrID)
+	retryRunID := seedRun(t, q, ctx, projID, mrID)
+	supersededRunID := seedRun(t, q, ctx, projID, mrID)
+	failedRunID := seedRun(t, q, ctx, projID, mrID)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	pendingCreatedAt := now.Add(-10 * time.Minute)
+	retryCreatedAt := now.Add(-24 * time.Hour)
+	retryEligibleAt := now.Add(-20 * time.Minute)
+	supersededUpdatedAt := now.Add(-5 * time.Minute)
+	failedUpdatedAt := now.Add(-2 * time.Minute)
+
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET created_at = ?, updated_at = ? WHERE id = ?", pendingCreatedAt, pendingCreatedAt, pendingRunID); err != nil {
+		t.Fatalf("update pending run timestamps: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET status = 'failed', error_code = 'provider_timeout', created_at = ?, updated_at = ?, next_retry_at = ? WHERE id = ?", retryCreatedAt, retryEligibleAt, retryEligibleAt, retryRunID); err != nil {
+		t.Fatalf("update retry run timestamps: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET status = 'failed', error_code = 'superseded_by_new_head', updated_at = ?, superseded_by_run_id = ? WHERE id = ?", supersededUpdatedAt, pendingRunID, supersededRunID); err != nil {
+		t.Fatalf("update superseded run: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET status = 'failed', error_code = 'provider_failed', updated_at = ? WHERE id = ?", failedUpdatedAt, failedRunID); err != nil {
+		t.Fatalf("update failed run: %v", err)
+	}
+
+	oldestWaiting, err := q.GetOldestWaitingRunCreatedAt(ctx)
+	if err != nil {
+		t.Fatalf("GetOldestWaitingRunCreatedAt: %v", err)
+	}
+	gotOldestWaiting := mustNormalizeSQLiteDashboardTime(t, oldestWaiting)
+	if !gotOldestWaiting.Equal(retryEligibleAt) {
+		t.Fatalf("oldest waiting time = %s, want retry eligibility %s", gotOldestWaiting, retryEligibleAt)
+	}
+
+	supersededCount, err := q.CountSupersededRunsSince(ctx, now.Add(-1*time.Hour))
+	if err != nil {
+		t.Fatalf("CountSupersededRunsSince: %v", err)
+	}
+	if supersededCount != 1 {
+		t.Fatalf("superseded count = %d, want 1", supersededCount)
+	}
+
+	recentFailures, err := q.ListRecentFailedRuns(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListRecentFailedRuns: %v", err)
+	}
+	if len(recentFailures) != 2 {
+		t.Fatalf("recent failures len = %d, want 2", len(recentFailures))
+	}
+	for _, failure := range recentFailures {
+		if failure.ErrorCode == "superseded_by_new_head" {
+			t.Fatalf("recent failures unexpectedly included superseded run: %+v", failure)
+		}
+	}
+
+	failureCounts, err := q.ListFailureCountsByErrorCode(ctx, now.Add(-1*time.Hour))
+	if err != nil {
+		t.Fatalf("ListFailureCountsByErrorCode: %v", err)
+	}
+	for _, item := range failureCounts {
+		if item.ErrorCode == "superseded_by_new_head" {
+			t.Fatalf("failure counts unexpectedly included superseded bucket: %+v", item)
+		}
+	}
+}
+
 func TestReviewRunRetryableFailure(t *testing.T) {
 	q := newQueries(t)
 	ctx := context.Background()
@@ -338,6 +412,91 @@ func TestCancelPendingRunsForMR(t *testing.T) {
 		if r.Status != "cancelled" {
 			t.Fatalf("want cancelled, got %s for run %d", r.Status, r.ID)
 		}
+	}
+}
+
+func TestSupersedeActiveRunsForMR(t *testing.T) {
+	q := newQueries(t)
+	ctx := context.Background()
+	_, projID := seedProject(t, q, ctx)
+	mrID := seedMR(t, q, ctx, projID)
+
+	oldPendingRes, _ := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID: projID, MergeRequestID: mrID,
+		TriggerType: "webhook", HeadSha: "old-pending",
+		Status: "pending", MaxRetries: 3, IdempotencyKey: "supersede-pending",
+	})
+	oldPendingID, _ := oldPendingRes.LastInsertId()
+
+	oldRunningRes, _ := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID: projID, MergeRequestID: mrID,
+		TriggerType: "webhook", HeadSha: "old-running",
+		Status: "pending", MaxRetries: 3, IdempotencyKey: "supersede-running",
+	})
+	oldRunningID, _ := oldRunningRes.LastInsertId()
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-a", ID: oldRunningID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+
+	oldRetryRes, _ := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID: projID, MergeRequestID: mrID,
+		TriggerType: "webhook", HeadSha: "old-retry",
+		Status: "pending", MaxRetries: 3, IdempotencyKey: "supersede-retry",
+	})
+	oldRetryID, _ := oldRetryRes.LastInsertId()
+	if err := q.MarkReviewRunRetryableFailure(ctx, db.MarkReviewRunRetryableFailureParams{
+		ErrorCode:   "provider_timeout",
+		ErrorDetail: sql.NullString{String: "retry later", Valid: true},
+		RetryCount:  1,
+		NextRetryAt: sql.NullTime{Time: time.Now().Add(30 * time.Second), Valid: true},
+		ID:          oldRetryID,
+	}); err != nil {
+		t.Fatalf("MarkReviewRunRetryableFailure: %v", err)
+	}
+
+	newRunRes, _ := q.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID: projID, MergeRequestID: mrID,
+		TriggerType: "webhook", HeadSha: "new-head",
+		Status: "pending", MaxRetries: 3, IdempotencyKey: "supersede-new",
+	})
+	newRunID, _ := newRunRes.LastInsertId()
+
+	if err := q.SupersedeActiveRunsForMR(ctx, db.SupersedeActiveRunsForMRParams{
+		SupersededByRunID: sql.NullInt64{Int64: newRunID, Valid: true},
+		MergeRequestID:    mrID,
+		ID:                newRunID,
+	}); err != nil {
+		t.Fatalf("SupersedeActiveRunsForMR: %v", err)
+	}
+
+	for _, runID := range []int64{oldPendingID, oldRunningID, oldRetryID} {
+		run, err := q.GetReviewRun(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetReviewRun(%d): %v", runID, err)
+		}
+		if run.Status != "cancelled" {
+			t.Fatalf("run %d status = %q, want cancelled", runID, run.Status)
+		}
+		if run.ErrorCode != "superseded_by_new_head" {
+			t.Fatalf("run %d error_code = %q, want superseded_by_new_head", runID, run.ErrorCode)
+		}
+		if run.NextRetryAt.Valid {
+			t.Fatalf("run %d next_retry_at = %+v, want NULL", runID, run.NextRetryAt)
+		}
+		if !run.SupersededByRunID.Valid || run.SupersededByRunID.Int64 != newRunID {
+			t.Fatalf("run %d superseded_by_run_id = %+v, want %d", runID, run.SupersededByRunID, newRunID)
+		}
+	}
+
+	newRun, err := q.GetReviewRun(ctx, newRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun(new): %v", err)
+	}
+	if newRun.Status != "pending" {
+		t.Fatalf("new run status = %q, want pending", newRun.Status)
+	}
+	if newRun.SupersededByRunID.Valid {
+		t.Fatalf("new run superseded_by_run_id = %+v, want NULL", newRun.SupersededByRunID)
 	}
 }
 
@@ -622,6 +781,54 @@ func TestProviderMetrics(t *testing.T) {
 	}
 }
 
+func TestWorkerHeartbeats(t *testing.T) {
+	sqlDB := setupDB(t)
+	q := sqlitedb.New(sqlDB)
+	ctx := context.Background()
+	_, projID := seedProject(t, q, ctx)
+	mrID := seedMR(t, q, ctx, projID)
+	now := time.Date(2026, time.March, 29, 18, 30, 0, 0, time.UTC)
+
+	if err := q.UpsertWorkerHeartbeat(ctx, db.UpsertWorkerHeartbeatParams{
+		WorkerID:              "worker-1",
+		Hostname:              "host-a",
+		Version:               "dev",
+		ConfiguredConcurrency: 4,
+		StartedAt:             now,
+		LastSeenAt:            now,
+	}); err != nil {
+		t.Fatalf("upsert worker heartbeat: %v", err)
+	}
+
+	if _, err := sqlDB.ExecContext(ctx, `INSERT INTO review_runs (project_id, merge_request_id, status, trigger_type, idempotency_key, head_sha, claimed_by, claimed_at, started_at, max_retries)
+		VALUES (?, ?, 'running', 'mr_open', ?, ?, ?, ?, ?, 3)`,
+		projID, mrID, "sqlite-heartbeat-running", "sha-running", "worker-1", now, now); err != nil {
+		t.Fatalf("insert running review run: %v", err)
+	}
+
+	heartbeats, err := q.ListActiveWorkerHeartbeats(ctx, now.Add(-30*time.Second))
+	if err != nil {
+		t.Fatalf("list active worker heartbeats: %v", err)
+	}
+	if len(heartbeats) != 1 {
+		t.Fatalf("active worker heartbeats = %d, want 1", len(heartbeats))
+	}
+	if heartbeats[0].WorkerID != "worker-1" {
+		t.Fatalf("worker id = %q, want worker-1", heartbeats[0].WorkerID)
+	}
+
+	counts, err := q.ListRunningRunCountsByWorker(ctx)
+	if err != nil {
+		t.Fatalf("list running run counts by worker: %v", err)
+	}
+	if len(counts) != 1 {
+		t.Fatalf("running worker counts = %d, want 1", len(counts))
+	}
+	if counts[0].WorkerID != "worker-1" || counts[0].RunningRuns != 1 {
+		t.Fatalf("running worker count = %+v, want worker-1 => 1", counts[0])
+	}
+}
+
 // --- seed helpers ---
 
 func seedProject(t *testing.T, q *sqlitedb.Queries, ctx context.Context) (instID, projID int64) {
@@ -692,4 +899,39 @@ func seedFinding(t *testing.T, q *sqlitedb.Queries, ctx context.Context, runID, 
 	}
 	id, _ := res.LastInsertId()
 	return id
+}
+
+func mustNormalizeSQLiteDashboardTime(t *testing.T, raw interface{}) time.Time {
+	t.Helper()
+
+	switch v := raw.(type) {
+	case time.Time:
+		return v.UTC().Truncate(time.Second)
+	case string:
+		return mustParseSQLiteDashboardTimeString(t, v)
+	case []byte:
+		return mustParseSQLiteDashboardTimeString(t, string(v))
+	default:
+		t.Fatalf("unexpected dashboard time type %T", raw)
+		return time.Time{}
+	}
+}
+
+func mustParseSQLiteDashboardTimeString(t *testing.T, value string) time.Time {
+	t.Helper()
+
+	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if ts, err := time.Parse(layout, value); err == nil {
+			return ts.UTC().Truncate(time.Second)
+		}
+	}
+	t.Fatalf("unsupported dashboard time string %q", value)
+	return time.Time{}
 }

@@ -6,37 +6,9 @@ package db
 
 import (
 	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"time"
 )
-
-type NullRawMessage []byte
-
-func (m *NullRawMessage) Scan(src any) error {
-	if src == nil {
-		*m = nil
-		return nil
-	}
-
-	switch v := src.(type) {
-	case []byte:
-		*m = append((*m)[:0], v...)
-		return nil
-	case string:
-		*m = append((*m)[:0], v...)
-		return nil
-	default:
-		return nil
-	}
-}
-
-func (m NullRawMessage) Value() (driver.Value, error) {
-	if m == nil {
-		return nil, nil
-	}
-	return []byte(m), nil
-}
 
 type AuditLog struct {
 	ID                  int64           `json:"id"`
@@ -168,12 +140,6 @@ type ReviewFinding struct {
 	AnchorKind          string         `json:"anchor_kind"`
 	OldLine             sql.NullInt32  `json:"old_line"`
 	NewLine             sql.NullInt32  `json:"new_line"`
-	RangeStartKind      sql.NullString `json:"range_start_kind"`
-	RangeStartOldLine   sql.NullInt32  `json:"range_start_old_line"`
-	RangeStartNewLine   sql.NullInt32  `json:"range_start_new_line"`
-	RangeEndKind        sql.NullString `json:"range_end_kind"`
-	RangeEndOldLine     sql.NullInt32  `json:"range_end_old_line"`
-	RangeEndNewLine     sql.NullInt32  `json:"range_end_new_line"`
 	AnchorSnippet       sql.NullString `json:"anchor_snippet"`
 	Evidence            sql.NullString `json:"evidence"`
 	SuggestedPatch      sql.NullString `json:"suggested_patch"`
@@ -187,6 +153,12 @@ type ReviewFinding struct {
 	ErrorCode           string         `json:"error_code"`
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
+	RangeStartKind      sql.NullString `json:"range_start_kind"`
+	RangeStartOldLine   sql.NullInt32  `json:"range_start_old_line"`
+	RangeStartNewLine   sql.NullInt32  `json:"range_start_new_line"`
+	RangeEndKind        sql.NullString `json:"range_end_kind"`
+	RangeEndOldLine     sql.NullInt32  `json:"range_end_old_line"`
+	RangeEndNewLine     sql.NullInt32  `json:"range_end_new_line"`
 }
 
 type ReviewRun struct {
@@ -199,6 +171,7 @@ type ReviewRun struct {
 	Status              string         `json:"status"`
 	ErrorCode           string         `json:"error_code"`
 	ErrorDetail         sql.NullString `json:"error_detail"`
+	SupersededByRunID   sql.NullInt64  `json:"superseded_by_run_id"`
 	RetryCount          int32          `json:"retry_count"`
 	MaxRetries          int32          `json:"max_retries"`
 	NextRetryAt         sql.NullTime   `json:"next_retry_at"`
@@ -212,4 +185,15 @@ type ReviewRun struct {
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
 	ScopeJson           NullRawMessage `json:"scope_json"`
+}
+
+type WorkerHeartbeat struct {
+	WorkerID              string    `json:"worker_id"`
+	Hostname              string    `json:"hostname"`
+	Version               string    `json:"version"`
+	ConfiguredConcurrency int32     `json:"configured_concurrency"`
+	StartedAt             time.Time `json:"started_at"`
+	LastSeenAt            time.Time `json:"last_seen_at"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }

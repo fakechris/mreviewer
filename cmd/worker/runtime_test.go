@@ -105,6 +105,15 @@ func TestWorkerRuntimeInjectsGateService(t *testing.T) {
 	if runtimeDeps.Tracer == nil {
 		t.Fatal("expected tracer to be configured")
 	}
+	if runtimeDeps.Heartbeat == nil {
+		t.Fatal("expected heartbeat service to be configured")
+	}
+	if runtimeDeps.HeartbeatIdentity.WorkerID == "" {
+		t.Fatal("expected heartbeat worker identity to be configured")
+	}
+	if runtimeDeps.HeartbeatIdentity.ConfiguredConcurrency != 4 {
+		t.Fatalf("configured concurrency = %d, want 4", runtimeDeps.HeartbeatIdentity.ConfiguredConcurrency)
+	}
 
 	status := &fakeStatusPublisher{}
 	ci := &fakeCIPublisher{}

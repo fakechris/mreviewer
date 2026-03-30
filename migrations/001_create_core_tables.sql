@@ -106,6 +106,7 @@ CREATE TABLE review_runs (
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     error_code VARCHAR(100) NOT NULL DEFAULT '',
     error_detail TEXT,
+    superseded_by_run_id BIGINT NULL,
     retry_count INT NOT NULL DEFAULT 0,
     max_retries INT NOT NULL DEFAULT 3,
     next_retry_at TIMESTAMP NULL DEFAULT NULL,
@@ -122,9 +123,11 @@ CREATE TABLE review_runs (
     INDEX idx_status_retry (status, next_retry_at),
     INDEX idx_project_mr (project_id, merge_request_id),
     INDEX idx_head_sha (head_sha),
+    INDEX idx_superseded_by_run (superseded_by_run_id),
     CONSTRAINT fk_run_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
     CONSTRAINT fk_run_mr FOREIGN KEY (merge_request_id) REFERENCES merge_requests(id) ON DELETE CASCADE,
-    CONSTRAINT fk_run_hook FOREIGN KEY (hook_event_id) REFERENCES hook_events(id) ON DELETE SET NULL
+    CONSTRAINT fk_run_hook FOREIGN KEY (hook_event_id) REFERENCES hook_events(id) ON DELETE SET NULL,
+    CONSTRAINT fk_run_superseded_by FOREIGN KEY (superseded_by_run_id) REFERENCES review_runs(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Individual review findings.

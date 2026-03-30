@@ -226,6 +226,20 @@ func WithWorkerConcurrency(concurrency int) Option {
 	}
 }
 
+func (s *Service) WorkerID() string {
+	if s == nil {
+		return ""
+	}
+	return s.workerID
+}
+
+func (s *Service) ConfiguredConcurrency() int {
+	if s == nil {
+		return 0
+	}
+	return s.workerConcurrency
+}
+
 // WithStoreFactory overrides the function used to create db.Store instances.
 // This enables SQLite support by injecting sqlitedb.New instead of db.New.
 func WithStoreFactory(fn func(db.DBTX) db.Store) Option {

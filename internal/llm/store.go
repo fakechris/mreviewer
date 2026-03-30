@@ -22,6 +22,7 @@ type ProcessorStore interface {
 	InsertMRVersion(ctx context.Context, arg db.InsertMRVersionParams) (sql.Result, error)
 
 	// Review run lifecycle
+	GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error)
 	UpdateReviewRunStatus(ctx context.Context, arg db.UpdateReviewRunStatusParams) error
 	UpdateRunScopeJSON(ctx context.Context, runID int64, scopeJSON []byte) error
 
@@ -67,6 +68,10 @@ func (s *SQLProcessorStore) GetProjectPolicy(ctx context.Context, projectID int6
 	return s.queries.GetProjectPolicy(ctx, projectID)
 }
 
+func (s *SQLProcessorStore) GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error) {
+	return s.queries.GetReviewRun(ctx, id)
+}
+
 func (s *SQLProcessorStore) InsertMRVersion(ctx context.Context, arg db.InsertMRVersionParams) (sql.Result, error) {
 	return s.queries.InsertMRVersion(ctx, arg)
 }
@@ -77,7 +82,7 @@ func (s *SQLProcessorStore) UpdateReviewRunStatus(ctx context.Context, arg db.Up
 
 func (s *SQLProcessorStore) UpdateRunScopeJSON(ctx context.Context, runID int64, scopeJSON []byte) error {
 	return s.queries.UpdateRunScopeJSON(ctx, db.UpdateRunScopeJSONParams{
-		ScopeJson: scopeJSON,
+		ScopeJson: db.NullRawMessage(scopeJSON),
 		ID:        runID,
 	})
 }

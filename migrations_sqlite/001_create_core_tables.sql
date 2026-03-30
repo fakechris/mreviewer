@@ -106,6 +106,7 @@ CREATE TABLE review_runs (
     status TEXT NOT NULL DEFAULT 'pending',
     error_code TEXT NOT NULL DEFAULT '',
     error_detail TEXT,
+    superseded_by_run_id INTEGER,
     retry_count INTEGER NOT NULL DEFAULT 0,
     max_retries INTEGER NOT NULL DEFAULT 3,
     next_retry_at TIMESTAMP NULL DEFAULT NULL,
@@ -122,11 +123,13 @@ CREATE TABLE review_runs (
     UNIQUE (idempotency_key),
     CONSTRAINT fk_run_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
     CONSTRAINT fk_run_mr FOREIGN KEY (merge_request_id) REFERENCES merge_requests(id) ON DELETE CASCADE,
-    CONSTRAINT fk_run_hook FOREIGN KEY (hook_event_id) REFERENCES hook_events(id) ON DELETE SET NULL
+    CONSTRAINT fk_run_hook FOREIGN KEY (hook_event_id) REFERENCES hook_events(id) ON DELETE SET NULL,
+    CONSTRAINT fk_run_superseded_by FOREIGN KEY (superseded_by_run_id) REFERENCES review_runs(id) ON DELETE SET NULL
 );
 CREATE INDEX idx_review_runs_status_retry ON review_runs(status, next_retry_at);
 CREATE INDEX idx_review_runs_project_mr ON review_runs(project_id, merge_request_id);
 CREATE INDEX idx_review_runs_head_sha ON review_runs(head_sha);
+CREATE INDEX idx_review_runs_superseded_by_run ON review_runs(superseded_by_run_id);
 
 -- Individual review findings.
 CREATE TABLE review_findings (

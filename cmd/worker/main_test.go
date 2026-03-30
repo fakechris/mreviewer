@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -128,5 +130,120 @@ func TestProviderConfigsFromLLMRoutesRequiresProviderKind(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "llm.routes.openai.provider is required") {
 		t.Fatalf("error = %q, want provider required message", err.Error())
+	}
+}
+
+func TestProviderConfigsFromSingleProviderQuickStartMiniMax(t *testing.T) {
+	cfg := &config.Config{
+		LLMProvider: "minimax",
+		LLMBaseURL:  "https://api.minimaxi.com/anthropic",
+		LLMAPIKey:   "minimax-secret",
+		LLMModel:    "MiniMax-M2.7-highspeed",
+	}
+
+	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("providerConfigsFromConfig: %v", err)
+	}
+	if defaultRoute != "default" {
+		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
+	}
+	if fallbackRoute != "secondary" {
+		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
+	}
+	if got := routes["default"].Kind; got != "minimax" {
+		t.Fatalf("default kind = %q, want minimax", got)
+	}
+}
+
+func TestProviderConfigsFromSingleProviderQuickStartAnthropic(t *testing.T) {
+	cfg := &config.Config{
+		LLMProvider: "anthropic",
+		LLMBaseURL:  "https://api.anthropic.com",
+		LLMAPIKey:   "anthropic-secret",
+		LLMModel:    "claude-sonnet-4-6",
+	}
+
+	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("providerConfigsFromConfig: %v", err)
+	}
+	if defaultRoute != "default" {
+		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
+	}
+	if fallbackRoute != "secondary" {
+		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
+	}
+	if got := routes["default"].Kind; got != "anthropic" {
+		t.Fatalf("default kind = %q, want anthropic", got)
+	}
+}
+
+func TestProviderConfigsFromSingleProviderQuickStartOpenAI(t *testing.T) {
+	cfg := &config.Config{
+		LLMProvider: "openai",
+		LLMBaseURL:  "https://api.openai.com/v1",
+		LLMAPIKey:   "openai-secret",
+		LLMModel:    "gpt-5.4",
+	}
+
+	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("providerConfigsFromConfig: %v", err)
+	}
+	if defaultRoute != "default" {
+		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
+	}
+	if fallbackRoute != "secondary" {
+		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
+	}
+	if got := routes["default"].Kind; got != "openai" {
+		t.Fatalf("default kind = %q, want openai", got)
+	}
+	if got := routes["default"].MaxTokens; got != 4096 {
+		t.Fatalf("default max_tokens = %d, want 4096", got)
+	}
+	if got := routes["default"].MaxCompletionTokens; got != 12000 {
+		t.Fatalf("default max_completion_tokens = %d, want 12000", got)
+	}
+	if got := routes["default"].OutputMode; got != "json_schema" {
+		t.Fatalf("default output_mode = %q, want json_schema", got)
+	}
+}
+
+func TestShouldLogHeartbeatStop(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "context canceled",
+			err:  context.Canceled,
+			want: false,
+		},
+		{
+			name: "wrapped context canceled",
+			err:  errors.Join(errors.New("db shutdown"), context.Canceled),
+			want: false,
+		},
+		{
+			name: "unexpected error",
+			err:  errors.New("boom"),
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldLogHeartbeatStop(tt.err); got != tt.want {
+				t.Fatalf("shouldLogHeartbeatStop(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }

@@ -1050,6 +1050,81 @@ func TestWorkerExecutesRealProcessor(t *testing.T) {
 	}
 }
 
+func TestProcessorSkipsSupersededRunAfterProviderResponse(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, providerTestMigrationsDir)
+	q := db.New(sqlDB)
+	_, _, mrID, runID := seedRun(t, ctx, q)
+	gitlabClient := &fakeGitLabReader{snapshot: gitlab.MergeRequestSnapshot{MergeRequest: gitlab.MergeRequest{GitLabID: 11, IID: 7, ProjectID: 101, Title: "Title", Author: struct {
+		Username string "json:\"username\""
+	}{Username: "alice"}, DiffRefs: &gitlab.DiffRefs{BaseSHA: "base", HeadSHA: "head", StartSHA: "start"}}, Version: gitlab.MergeRequestVersion{GitLabVersionID: 55, BaseSHA: "base", StartSHA: "start", HeadSHA: "head", PatchIDSHA: "patch"}, Diffs: []gitlab.MergeRequestDiff{{OldPath: "main.go", NewPath: "main.go", Diff: "@@ -1,1 +1,2 @@\n line1\n+line2"}}}}
+	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{Trusted: ctxpkg.TrustedRules{PlatformPolicy: "platform", ProjectPolicy: "project", ReviewMarkdown: "review", RulesDigest: "digest"}}}
+	provider := &fakeProvider{
+		response: ProviderResponse{
+			Result: ReviewResult{
+				SchemaVersion: "1.0",
+				ReviewRunID:   fmt.Sprintf("%d", runID),
+				Summary:       "summary",
+				Status:        "completed",
+				Findings: []ReviewFinding{{
+					Category:     "bug",
+					Severity:     "high",
+					Confidence:   0.9,
+					Title:        "Issue",
+					BodyMarkdown: "body",
+					Path:         "main.go",
+					AnchorKind:   "new",
+					NewLine:      func() *int32 { line := int32(2); return &line }(),
+				}},
+			},
+			Model:   "MiniMax-M2.5",
+			Tokens:  77,
+			Latency: 25 * time.Millisecond,
+		},
+		onReview: func() {
+			if err := q.UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{
+				Status:      "cancelled",
+				ErrorCode:   "superseded_by_new_head",
+				ErrorDetail: sql.NullString{String: "superseded during processing", Valid: true},
+				ID:          runID,
+			}); err != nil {
+				t.Fatalf("UpdateReviewRunStatus(cancelled): %v", err)
+			}
+		},
+	}
+	processor := NewProcessor(slog.New(slog.NewTextHandler(io.Discard, nil)), NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, provider, NewDBAuditLogger(sqlDB))
+	if err := q.ClaimReviewRun(ctx, db.ClaimReviewRunParams{ClaimedBy: "worker-1", ID: runID}); err != nil {
+		t.Fatalf("ClaimReviewRun: %v", err)
+	}
+	run, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "cancelled" {
+		t.Fatalf("outcome status = %q, want cancelled", outcome.Status)
+	}
+	updatedRun, err := q.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun(updated): %v", err)
+	}
+	if updatedRun.Status != "cancelled" {
+		t.Fatalf("run status = %q, want cancelled", updatedRun.Status)
+	}
+	findings, err := q.ListActiveFindingsByMR(ctx, mrID)
+	if err != nil {
+		t.Fatalf("ListActiveFindingsByMR: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("findings = %d, want 0", len(findings))
+	}
+}
+
 func TestProviderFailureAuditStoresFullRequestAndRawResponse(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := dbtest.New(t)
@@ -2634,10 +2709,14 @@ type fakeProvider struct {
 	response ProviderResponse
 	err      error
 	request  ctxpkg.ReviewRequest
+	onReview func()
 }
 
 func (f *fakeProvider) Review(_ context.Context, request ctxpkg.ReviewRequest) (ProviderResponse, error) {
 	f.request = request
+	if f.onReview != nil {
+		f.onReview()
+	}
 	if f.err != nil {
 		f.response.Latency = 13 * time.Millisecond
 		f.response.Tokens = 21
@@ -2657,6 +2736,9 @@ type fakeDynamicPromptProvider struct {
 func (f *fakeDynamicPromptProvider) ReviewWithSystemPrompt(_ context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (ProviderResponse, error) {
 	f.request = request
 	f.systemPrompt = systemPrompt
+	if f.onReview != nil {
+		f.onReview()
+	}
 	if f.err != nil {
 		f.response.Latency = 13 * time.Millisecond
 		f.response.Tokens = 21

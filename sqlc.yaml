@@ -14,8 +14,9 @@ sql:
         emit_exact_table_names: false
         emit_empty_slices: true
         overrides:
-          - db_type: "json"
-            go_type: "encoding/json.RawMessage"
+          - column: "review_runs.scope_json"
+            go_type:
+              type: "NullRawMessage"
           - db_type: "bigint"
             go_type: "int64"
           - db_type: "timestamp"

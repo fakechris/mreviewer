@@ -223,7 +223,7 @@ func TestUpdateCreatesNewHeadRun(t *testing.T) {
 		t.Fatalf("ProcessEvent update: %v", err)
 	}
 
-	// Verify two review runs exist.
+	// Verify the new run exists and the old active run was superseded.
 	openRun, err := db.New(sqlDB).GetReviewRunByIdempotencyKey(context.Background(), openEv.IdempotencyKey)
 	if err != nil {
 		t.Fatalf("GetReviewRunByIdempotencyKey (open): %v", err)
@@ -245,6 +245,125 @@ func TestUpdateCreatesNewHeadRun(t *testing.T) {
 	}
 	if updateRun.Status != "pending" {
 		t.Errorf("update run: expected status='pending', got %q", updateRun.Status)
+	}
+	if openRun.Status != "cancelled" {
+		t.Errorf("open run: expected status='cancelled', got %q", openRun.Status)
+	}
+	if openRun.ErrorCode != "superseded_by_new_head" {
+		t.Errorf("open run: expected error_code='superseded_by_new_head', got %q", openRun.ErrorCode)
+	}
+	if !openRun.SupersededByRunID.Valid || openRun.SupersededByRunID.Int64 != updateRun.ID {
+		t.Errorf("open run: expected superseded_by_run_id=%d, got %+v", updateRun.ID, openRun.SupersededByRunID)
+	}
+}
+
+func TestUpdateReplayDoesNotSupersedeNewerRun(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	svc := NewService(testLogger(), sqlDB)
+	ctx := context.Background()
+	q := db.New(sqlDB)
+
+	if err := svc.ProcessEvent(ctx, makeOpenEvent("sha_initial"), 0); err != nil {
+		t.Fatalf("ProcessEvent open: %v", err)
+	}
+
+	updateA := makeUpdateEvent("sha_a")
+	if err := svc.ProcessEvent(ctx, updateA, 0); err != nil {
+		t.Fatalf("ProcessEvent update A: %v", err)
+	}
+	runA, err := q.GetReviewRunByIdempotencyKey(ctx, updateA.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("GetReviewRunByIdempotencyKey (A): %v", err)
+	}
+
+	updateB := makeUpdateEvent("sha_b")
+	if err := svc.ProcessEvent(ctx, updateB, 0); err != nil {
+		t.Fatalf("ProcessEvent update B: %v", err)
+	}
+	runB, err := q.GetReviewRunByIdempotencyKey(ctx, updateB.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("GetReviewRunByIdempotencyKey (B): %v", err)
+	}
+
+	if err := svc.ProcessEvent(ctx, updateA, 0); err != nil {
+		t.Fatalf("ProcessEvent replay update A: %v", err)
+	}
+
+	runAAfterReplay, err := q.GetReviewRun(ctx, runA.ID)
+	if err != nil {
+		t.Fatalf("GetReviewRun (A after replay): %v", err)
+	}
+	runBAfterReplay, err := q.GetReviewRun(ctx, runB.ID)
+	if err != nil {
+		t.Fatalf("GetReviewRun (B after replay): %v", err)
+	}
+
+	if runBAfterReplay.Status != "pending" {
+		t.Fatalf("run B status after replay = %q, want pending", runBAfterReplay.Status)
+	}
+	if runBAfterReplay.SupersededByRunID.Valid {
+		t.Fatalf("run B superseded_by_run_id after replay = %+v, want NULL", runBAfterReplay.SupersededByRunID)
+	}
+	if runAAfterReplay.Status != "cancelled" {
+		t.Fatalf("run A status after replay = %q, want cancelled", runAAfterReplay.Status)
+	}
+	if !runAAfterReplay.SupersededByRunID.Valid || runAAfterReplay.SupersededByRunID.Int64 != runB.ID {
+		t.Fatalf("run A superseded_by_run_id after replay = %+v, want %d", runAAfterReplay.SupersededByRunID, runB.ID)
+	}
+}
+
+func TestUpdateSupersedesRetryScheduledRun(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	svc := NewService(testLogger(), sqlDB)
+	ctx := context.Background()
+	q := db.New(sqlDB)
+
+	openEv := makeOpenEvent("sha_initial")
+	if err := svc.ProcessEvent(ctx, openEv, 0); err != nil {
+		t.Fatalf("ProcessEvent open: %v", err)
+	}
+
+	openRun, err := q.GetReviewRunByIdempotencyKey(ctx, openEv.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("GetReviewRunByIdempotencyKey (open): %v", err)
+	}
+
+	retryAt := sql.NullTime{Time: time.Now().Add(30 * time.Second), Valid: true}
+	if err := q.MarkReviewRunRetryableFailure(ctx, db.MarkReviewRunRetryableFailureParams{
+		ErrorCode:   "provider_timeout",
+		ErrorDetail: sql.NullString{String: "retry me", Valid: true},
+		RetryCount:  1,
+		NextRetryAt: retryAt,
+		ID:          openRun.ID,
+	}); err != nil {
+		t.Fatalf("MarkReviewRunRetryableFailure: %v", err)
+	}
+
+	updateEv := makeUpdateEvent("sha_new_commit")
+	if err := svc.ProcessEvent(ctx, updateEv, 0); err != nil {
+		t.Fatalf("ProcessEvent update: %v", err)
+	}
+
+	supersededRun, err := q.GetReviewRun(ctx, openRun.ID)
+	if err != nil {
+		t.Fatalf("GetReviewRun (superseded): %v", err)
+	}
+	updateRun, err := q.GetReviewRunByIdempotencyKey(ctx, updateEv.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("GetReviewRunByIdempotencyKey (update): %v", err)
+	}
+
+	if supersededRun.Status != "cancelled" {
+		t.Fatalf("superseded run status = %q, want cancelled", supersededRun.Status)
+	}
+	if supersededRun.NextRetryAt.Valid {
+		t.Fatalf("superseded run next_retry_at = %+v, want NULL", supersededRun.NextRetryAt)
+	}
+	if supersededRun.ErrorCode != "superseded_by_new_head" {
+		t.Fatalf("superseded run error_code = %q, want superseded_by_new_head", supersededRun.ErrorCode)
+	}
+	if !supersededRun.SupersededByRunID.Valid || supersededRun.SupersededByRunID.Int64 != updateRun.ID {
+		t.Fatalf("superseded run superseded_by_run_id = %+v, want %d", supersededRun.SupersededByRunID, updateRun.ID)
 	}
 }
 

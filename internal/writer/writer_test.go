@@ -827,6 +827,46 @@ func TestWriterUsesPersistedDegradationSummary(t *testing.T) {
 	}
 }
 
+func TestWriterSkipsSupersededRunBeforePosting(t *testing.T) {
+	client := &fakeDiscussionClient{}
+	store := &fakeStore{
+		mr:      db.MergeRequest{ID: 99, ProjectID: 123, MrIid: 7},
+		project: db.Project{ID: 123, GitlabProjectID: 456},
+		version: db.MrVersion{BaseSha: "base", StartSha: "start", HeadSha: "head"},
+		runsByID: map[int64]db.ReviewRun{
+			55: {
+				ID:                55,
+				MergeRequestID:    99,
+				Status:            "cancelled",
+				ErrorCode:         "superseded_by_new_head",
+				SupersededByRunID: sql.NullInt64{Int64: 56, Valid: true},
+			},
+		},
+	}
+	w := New(client, store)
+
+	err := w.Write(context.Background(), db.ReviewRun{ID: 55, MergeRequestID: 99, Status: "running"}, []db.ReviewFinding{{
+		ID:         1,
+		Path:       "pkg/file.go",
+		AnchorKind: "new_line",
+		NewLine:    sql.NullInt32{Int32: 17, Valid: true},
+		Title:      "Issue one",
+		Confidence: 0.8,
+	}})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("discussion requests = %d, want 0", len(client.requests))
+	}
+	if len(client.noteRequests) != 0 {
+		t.Fatalf("note requests = %d, want 0", len(client.noteRequests))
+	}
+	if len(store.insertedDiscussions) != 0 {
+		t.Fatalf("inserted discussions = %d, want 0", len(store.insertedDiscussions))
+	}
+}
+
 type fakeDiscussionClient struct {
 	mu               sync.Mutex
 	requests         []CreateDiscussionRequest

@@ -11,7 +11,7 @@ import (
 )
 
 const getFindingByMRAndDiscussionID = `-- name: GetFindingByMRAndDiscussionID :one
-SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line FROM review_findings
 WHERE merge_request_id = ? AND gitlab_discussion_id = ?
 LIMIT 1
 `
@@ -37,12 +37,6 @@ func (q *Queries) GetFindingByMRAndDiscussionID(ctx context.Context, arg GetFind
 		&i.AnchorKind,
 		&i.OldLine,
 		&i.NewLine,
-		&i.RangeStartKind,
-		&i.RangeStartOldLine,
-		&i.RangeStartNewLine,
-		&i.RangeEndKind,
-		&i.RangeEndOldLine,
-		&i.RangeEndNewLine,
 		&i.AnchorSnippet,
 		&i.Evidence,
 		&i.SuggestedPatch,
@@ -56,12 +50,18 @@ func (q *Queries) GetFindingByMRAndDiscussionID(ctx context.Context, arg GetFind
 		&i.ErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RangeStartKind,
+		&i.RangeStartOldLine,
+		&i.RangeStartNewLine,
+		&i.RangeEndKind,
+		&i.RangeEndOldLine,
+		&i.RangeEndNewLine,
 	)
 	return i, err
 }
 
 const getReviewFinding = `-- name: GetReviewFinding :one
-SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings WHERE id = ? LIMIT 1
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line FROM review_findings WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetReviewFinding(ctx context.Context, id int64) (ReviewFinding, error) {
@@ -80,12 +80,6 @@ func (q *Queries) GetReviewFinding(ctx context.Context, id int64) (ReviewFinding
 		&i.AnchorKind,
 		&i.OldLine,
 		&i.NewLine,
-		&i.RangeStartKind,
-		&i.RangeStartOldLine,
-		&i.RangeStartNewLine,
-		&i.RangeEndKind,
-		&i.RangeEndOldLine,
-		&i.RangeEndNewLine,
 		&i.AnchorSnippet,
 		&i.Evidence,
 		&i.SuggestedPatch,
@@ -99,6 +93,12 @@ func (q *Queries) GetReviewFinding(ctx context.Context, id int64) (ReviewFinding
 		&i.ErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RangeStartKind,
+		&i.RangeStartOldLine,
+		&i.RangeStartNewLine,
+		&i.RangeEndKind,
+		&i.RangeEndOldLine,
+		&i.RangeEndNewLine,
 	)
 	return i, err
 }
@@ -171,7 +171,7 @@ func (q *Queries) InsertReviewFinding(ctx context.Context, arg InsertReviewFindi
 }
 
 const listActiveFindingsByMR = `-- name: ListActiveFindingsByMR :many
-SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line FROM review_findings
 WHERE merge_request_id = ? AND state IN ('new', 'posted', 'active')
 ORDER BY created_at ASC
 `
@@ -198,12 +198,6 @@ func (q *Queries) ListActiveFindingsByMR(ctx context.Context, mergeRequestID int
 			&i.AnchorKind,
 			&i.OldLine,
 			&i.NewLine,
-			&i.RangeStartKind,
-			&i.RangeStartOldLine,
-			&i.RangeStartNewLine,
-			&i.RangeEndKind,
-			&i.RangeEndOldLine,
-			&i.RangeEndNewLine,
 			&i.AnchorSnippet,
 			&i.Evidence,
 			&i.SuggestedPatch,
@@ -217,6 +211,12 @@ func (q *Queries) ListActiveFindingsByMR(ctx context.Context, mergeRequestID int
 			&i.ErrorCode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RangeStartKind,
+			&i.RangeStartOldLine,
+			&i.RangeStartNewLine,
+			&i.RangeEndKind,
+			&i.RangeEndOldLine,
+			&i.RangeEndNewLine,
 		); err != nil {
 			return nil, err
 		}
@@ -232,7 +232,7 @@ func (q *Queries) ListActiveFindingsByMR(ctx context.Context, mergeRequestID int
 }
 
 const listFindingsByRun = `-- name: ListFindingsByRun :many
-SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at FROM review_findings
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line FROM review_findings
 WHERE review_run_id = ?
 ORDER BY created_at ASC
 `
@@ -259,12 +259,6 @@ func (q *Queries) ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]R
 			&i.AnchorKind,
 			&i.OldLine,
 			&i.NewLine,
-			&i.RangeStartKind,
-			&i.RangeStartOldLine,
-			&i.RangeStartNewLine,
-			&i.RangeEndKind,
-			&i.RangeEndOldLine,
-			&i.RangeEndNewLine,
 			&i.AnchorSnippet,
 			&i.Evidence,
 			&i.SuggestedPatch,
@@ -278,6 +272,12 @@ func (q *Queries) ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]R
 			&i.ErrorCode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RangeStartKind,
+			&i.RangeStartOldLine,
+			&i.RangeStartNewLine,
+			&i.RangeEndKind,
+			&i.RangeEndOldLine,
+			&i.RangeEndNewLine,
 		); err != nil {
 			return nil, err
 		}

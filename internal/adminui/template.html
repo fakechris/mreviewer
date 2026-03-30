@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>MReviewer Admin</title>
+  </head>
+  <body>
+    <h1>MReviewer Admin</h1>
+    <p>Live control-plane view for queue, concurrency, and failures.</p>
+    <ul>
+      <li><code>/admin/api/queue</code></li>
+      <li><code>/admin/api/concurrency</code></li>
+      <li><code>/admin/api/failures</code></li>
+    </ul>
+    <script>
+      const endpoints = ["/admin/api/queue", "/admin/api/concurrency", "/admin/api/failures"];
+      window.__MREVIEWER_ADMIN_ENDPOINTS__ = endpoints;
+    </script>
+  </body>
+</html>

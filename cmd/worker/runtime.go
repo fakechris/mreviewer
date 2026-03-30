@@ -4,23 +4,28 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"os"
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/metrics"
+	"github.com/mreviewer/mreviewer/internal/ops"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 	"github.com/mreviewer/mreviewer/internal/writer"
 )
 
 type runtimeDeps struct {
-	GateService *gate.Service
-	Metrics     *metrics.Registry
-	Tracer      *tracing.Recorder
-	Scheduler   *scheduler.Service
+	GateService       *gate.Service
+	Metrics           *metrics.Registry
+	Tracer            *tracing.Recorder
+	Scheduler         *scheduler.Service
+	Heartbeat         *ops.Service
+	HeartbeatIdentity ops.WorkerIdentity
 }
 
 var defaultRuntimeNewStore = func(conn db.DBTX) db.Store { return db.New(conn) }
+var workerVersion = "dev"
 
 func newRuntimeDeps(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor) runtimeDeps {
 	return newRuntimeDepsWithGatePublishers(logger, sqlDB, processor, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
@@ -65,7 +70,28 @@ func newRuntimeDepsWithStoreFactory(logger *slog.Logger, sqlDB *sql.DB, processo
 		scheduler.WithGateService(gateSvc),
 		scheduler.WithStoreFactory(newStore),
 	)
-	return runtimeDeps{GateService: gateSvc, Metrics: registry, Tracer: tracer, Scheduler: worker}
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "worker"
+	}
+	heartbeatIdentity := ops.WorkerIdentity{
+		WorkerID:              worker.WorkerID(),
+		Hostname:              hostname,
+		Version:               workerVersion,
+		ConfiguredConcurrency: int32(worker.ConfiguredConcurrency()),
+	}
+	var heartbeatSvc *ops.Service
+	if sqlDB != nil {
+		heartbeatSvc = ops.NewService(newStore(sqlDB))
+	}
+	return runtimeDeps{
+		GateService:       gateSvc,
+		Metrics:           registry,
+		Tracer:            tracer,
+		Scheduler:         worker,
+		Heartbeat:         heartbeatSvc,
+		HeartbeatIdentity: heartbeatIdentity,
+	}
 }
 
 func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, runtimeWriter *writer.Writer, newStore func(db.DBTX) db.Store) scheduler.Processor {
