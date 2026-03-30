@@ -15,27 +15,31 @@ anthropic_base_url: "https://api.minimaxi.com/anthropic"
 anthropic_api_key: ""
 anthropic_model: "MiniMax-M2.7-highspeed"
 
-# Advanced multi-provider example:
-# - Environment variables inside this file are expanded at startup.
-# - Uncomment the block below, or copy `config.example.yaml` to start from a fuller template.
-#
-# llm:
-#   default_route: minimax-review
-#   fallback_route: claude-sonnet-4-6
-#   routes:
-#     minimax-review:
-#       provider: minimax
-#       base_url: ${MINIMAX_BASE_URL}
-#       api_key: ${MINIMAX_API_KEY}
-#       model: ${MINIMAX_MODEL}
-#       output_mode: tool_call
-#       max_tokens: 4096
-#       temperature: 0.2
-#     claude-sonnet-4-6:
-#       provider: anthropic
-#       base_url: ${ANTHROPIC_BASE_URL}
-#       api_key: ${ANTHROPIC_API_KEY}
-#       model: claude-sonnet-4-6
-#       output_mode: tool_call
-#       max_tokens: 12000
-#       temperature: 0.2
+llm:
+  default_route: ark-anthropic
+  fallback_route: ark-openai
+  routes:
+    ark-anthropic:
+      provider: ark_anthropic
+      base_url: https://ark.cn-beijing.volces.com/api/coding
+      api_key: ""
+      model: kimi-k2.5
+      output_mode: tool_call
+      max_tokens: 8192
+      temperature: 0.2
+    ark-openai:
+      provider: ark_openai
+      base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+      api_key: ""
+      model: deepseek-v3.2
+      output_mode: tool_call
+      max_tokens: 8192
+      temperature: 0.2
+    fireworks-router:
+      provider: fireworks_router
+      base_url: https://api.fireworks.ai/inference
+      api_key: ""
+      model: accounts/fireworks/routers/kimi-k2p5-turbo
+      output_mode: tool_call
+      max_tokens: 8192
+      temperature: 0.2
