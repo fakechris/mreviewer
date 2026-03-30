@@ -59,6 +59,7 @@ require_pattern "README.md" "^#### Method 1C: ChatGPT / OpenAI" "README.md must 
 require_pattern "README.md" "docker compose -f docker-compose\\.prod\\.yaml up -d" "README.md must show how to start the minimal no-git path"
 require_pattern "README.md" "^### Method 2: Advanced No-Git Setup" "README.md must present advanced no-git setup as Method 2"
 require_pattern "README.md" "^### Method 3: Full Clone \\(For Developers\\)" "README.md must renumber the developer workflow to Method 3"
+require_pattern "README.md" "/app/manual-trigger" "README.md must document the in-container manual-trigger command"
 forbid_pattern "README.md" "^\\*\\*Option A:" "README.md must not describe quick starts as Option A"
 forbid_pattern "README.md" "^\\*\\*Option B:" "README.md must not describe quick starts as Option B"
 forbid_pattern "README.md" "docker-compose " "README.md must use docker compose consistently"
@@ -69,6 +70,7 @@ require_pattern "README.zh-CN.md" "^#### 方式 1C：ChatGPT / OpenAI" "README.z
 require_pattern "README.zh-CN.md" "docker compose -f docker-compose\\.prod\\.yaml up -d" "README.zh-CN.md must show how to start the minimal no-git path"
 require_pattern "README.zh-CN.md" "^### 方式 2：高级无 Git 部署" "README.zh-CN.md must present advanced no-git setup as 方式 2"
 require_pattern "README.zh-CN.md" "^### 方式 3：完整克隆（开发者）" "README.zh-CN.md must renumber the developer workflow to 方式 3"
+require_pattern "README.zh-CN.md" "/app/manual-trigger" "README.zh-CN.md must document the in-container manual-trigger command"
 forbid_pattern "README.zh-CN.md" "^\\*\\*选项 A:" "README.zh-CN.md must not describe quick starts as 选项 A"
 forbid_pattern "README.zh-CN.md" "^\\*\\*选项 B:" "README.zh-CN.md must not describe quick starts as 选项 B"
 forbid_pattern "README.zh-CN.md" "docker-compose " "README.zh-CN.md must use docker compose consistently"
@@ -101,6 +103,8 @@ require_pattern "docker-compose.prod.config.yaml" "/app/config.yaml" "docker-com
 
 # Developer compose must run local source, not prebuilt images.
 require_pattern "docker-compose.yaml" "build:" "docker-compose.yaml must build local images for developer workflow"
+require_pattern "Dockerfile" "/out/manual-trigger" "Dockerfile must build and package the manual-trigger binary"
+require_pattern "Dockerfile" "cmd/manual-trigger" "Dockerfile must compile cmd/manual-trigger for the documented in-container CLI"
 if pattern_matches "container_name:" docker-compose.yaml || pattern_matches "container_name:" docker-compose.prod.yaml; then
   fail "compose files must not hard-code container_name values"
 fi
