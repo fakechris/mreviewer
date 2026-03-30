@@ -130,9 +130,13 @@ docker compose up -d --build
 
 1. 进入 GitLab 项目 → Settings → Webhooks
 2. URL: `http://your-server:3100/webhook`
+   - 如果是在局域网内联调，把 `your-server` 换成你机器的局域网 IP，例如 `http://10.0.0.16:3100/webhook`
+   - 只有 GitLab 和 mreviewer 跑在同一台机器上时，才应该使用 `localhost`
 3. Secret: 填入 `.env` 中的 `GITLAB_WEBHOOK_SECRET`
 4. 触发器: 勾选 "Merge request events"
 5. 点击 "Add webhook"
+
+如果 GitLab 返回 `Invalid url given`，需要让 GitLab 管理员打开 `Allow requests to the local network from web hooks and services`，或者改用公网 HTTPS tunnel，而不是直接填局域网 IP。
 
 📖 详细配置: [WEBHOOK.md](./WEBHOOK.md)
 

@@ -29,7 +29,9 @@
 2. **添加 Webhook**
    - **URL**: `http://your-server:3100/webhook`
      - 替换 `your-server` 为实际服务器地址
-     - 如果是本地测试：`http://localhost:3100/webhook`
+     - 如果是本机开发、GitLab 也跑在同一台机器上：`http://localhost:3100/webhook`
+     - 如果是局域网联调，必须改成你机器的局域网 IP，例如：`http://10.0.0.16:3100/webhook`
+     - 不要在远端 GitLab 上配置 `localhost`，那只会指向 GitLab 自己
 
    - **Secret token**:
      - 复制 `.env` 文件中的 `GITLAB_WEBHOOK_SECRET` 值
@@ -43,11 +45,17 @@
      - 生产环境建议启用
      - 本地测试可以取消勾选
 
+   - **GitLab 实例设置（局域网联调时必看）**:
+     - 如果 GitLab 在保存 webhook 时返回 `Invalid url given`
+     - 需要 GitLab 管理员在实例级打开 `Allow requests to the local network from web hooks and services`
+     - 如果不想改实例设置，请改用公网 HTTPS tunnel，而不是直接使用局域网 IP
+
 3. **保存并测试**
    - 点击 `Add webhook` 按钮
    - 在 Webhook 列表中找到刚添加的 webhook
    - 点击 `Test` → `Merge Request events`
    - 应该看到 HTTP 200 响应
+   - 注意：GitLab 的测试事件只验证连通性和 secret，不一定会创建真实 review run；完整验证要靠真实创建或更新一个 MR
 
 ### 验证
 创建或更新一个 MR，检查：
@@ -144,6 +152,12 @@ A: 检查 Secret Token 是否正确，确保与 `.env` 中的 `GITLAB_WEBHOOK_SE
 
 ### Q: Webhook 返回 Connection refused
 A: 检查 mreviewer 服务是否启动，端口 3100 是否可访问。
+
+### Q: 保存 webhook 时 GitLab 返回 `Invalid url given`
+A:
+1. 确认你填的不是 `localhost`，而是 mreviewer 机器可从 GitLab 访问到的地址
+2. 如果你填的是局域网 IP，联系 GitLab 管理员打开 `Allow requests to the local network from web hooks and services`
+3. 如果不能改 GitLab 实例设置，就使用公网 HTTPS tunnel
 
 ### Q: MR 创建后没有触发 review
 A:

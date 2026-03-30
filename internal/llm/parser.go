@@ -692,6 +692,14 @@ func buildReviewRepairPayload(request ctxpkg.ReviewRequest, invalidRaw string, v
 	return mustJSON(payload)
 }
 
+func salvageReviewResultAfterStrictValidationFailure(raw string, validationErr error) (ReviewResult, error) {
+	result, _, err := ParseReviewResult(raw)
+	if err == nil {
+		return result, nil
+	}
+	return ReviewResult{}, fmt.Errorf("llm: strict validation failed after repair: %w", validationErr)
+}
+
 func validateReviewResultStrictJSON(raw string) error {
 	var value any
 	decoder := json.NewDecoder(strings.NewReader(raw))

@@ -246,13 +246,25 @@ func (p *OpenAIProvider) ReviewWithSystemPrompt(ctx context.Context, request ctx
 				})
 			}
 			if repairValidationErr := validateReviewResultStrictJSON(repairedRaw); repairValidationErr != nil {
-				return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
-					cause:       fmt.Errorf("llm: strict validation failed after repair: %w", repairValidationErr),
-					rawResponse: repairedRaw,
-					latency:     p.now().Sub(started),
-					tokens:      tokens,
-					model:       p.routeName,
-				})
+				result, salvageErr := salvageReviewResultAfterStrictValidationFailure(repairedRaw, repairValidationErr)
+				if salvageErr != nil {
+					return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
+						cause:       salvageErr,
+						rawResponse: repairedRaw,
+						latency:     p.now().Sub(started),
+						tokens:      tokens,
+						model:       p.routeName,
+					})
+				}
+				return ProviderResponse{
+					Result:          result,
+					RawText:         repairedRaw,
+					Latency:         p.now().Sub(started),
+					Tokens:          tokens,
+					FallbackStage:   "repair_retry",
+					Model:           p.routeName,
+					ResponsePayload: map[string]any{"text": repairedRaw, "fallback_stage": "repair_retry"},
+				}, nil
 			}
 			raw = repairedRaw
 			stage = "repair_retry"

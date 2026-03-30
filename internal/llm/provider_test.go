@@ -481,10 +481,47 @@ func TestMiniMaxToolCallRepairsInvalidToolInput(t *testing.T) {
 	}
 }
 
+func TestMiniMaxToolCallSalvagesRepairOutputMissingBodyMarkdown(t *testing.T) {
+	transport := &captureTransport{responseBodies: []string{
+		`{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":42}}`,
+		`{"id":"msg_2","content":[{"type":"tool_use","id":"toolu_2","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":21}}`,
+	}}
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL:    "https://api.minimaxi.com/anthropic",
+		APIKey:     "secret-token",
+		Model:      "MiniMax-M2.7",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if transport.calls != 2 {
+		t.Fatalf("calls = %d, want 2", transport.calls)
+	}
+	if response.FallbackStage != "repair_retry" {
+		t.Fatalf("fallback stage = %q, want repair_retry", response.FallbackStage)
+	}
+	if len(response.Result.Findings) != 1 {
+		t.Fatalf("findings = %#v, want one finding", response.Result.Findings)
+	}
+	if response.Result.Findings[0].Category != "bug" {
+		t.Fatalf("category = %q, want bug", response.Result.Findings[0].Category)
+	}
+	if response.Result.Findings[0].BodyMarkdown != "" {
+		t.Fatalf("body_markdown = %q, want empty string salvage", response.Result.Findings[0].BodyMarkdown)
+	}
+}
+
 func TestMiniMaxToolCallFailsAfterInvalidRepairRetry(t *testing.T) {
 	transport := &captureTransport{responseBodies: []string{
 		`{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":42}}`,
-		`{"id":"msg_2","content":[{"type":"tool_use","id":"toolu_2","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":21}}`,
+		`{"id":"msg_2","content":[{"type":"tool_use","id":"toolu_2","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":21}}`,
 	}}
 	provider, err := NewMiniMaxProvider(ProviderConfig{
 		BaseURL:    "https://api.minimaxi.com/anthropic",

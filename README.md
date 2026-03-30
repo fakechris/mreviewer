@@ -130,9 +130,13 @@ This path builds `ingress` and `worker` from your local checkout, so code change
 
 1. Go to GitLab project → Settings → Webhooks
 2. URL: `http://your-server:3100/webhook`
+   - For local-network testing, replace `your-server` with your machine's LAN IP, for example `http://10.0.0.16:3100/webhook`
+   - Do not use `localhost` unless GitLab and mreviewer are running on the same host
 3. Secret: Value from `GITLAB_WEBHOOK_SECRET` in `.env`
 4. Trigger: Check "Merge request events"
 5. Click "Add webhook"
+
+If your GitLab instance rejects the hook with `Invalid url given`, ask a GitLab admin to enable `Allow requests to the local network from web hooks and services`, or use a public HTTPS tunnel instead of a LAN IP.
 
 📖 Detailed webhook setup: [WEBHOOK.md](./WEBHOOK.md)
 
