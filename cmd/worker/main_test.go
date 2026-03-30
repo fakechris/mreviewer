@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -206,5 +208,42 @@ func TestProviderConfigsFromSingleProviderQuickStartOpenAI(t *testing.T) {
 	}
 	if got := routes["default"].OutputMode; got != "json_schema" {
 		t.Fatalf("default output_mode = %q, want json_schema", got)
+	}
+}
+
+func TestShouldLogHeartbeatStop(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "context canceled",
+			err:  context.Canceled,
+			want: false,
+		},
+		{
+			name: "wrapped context canceled",
+			err:  errors.Join(errors.New("db shutdown"), context.Canceled),
+			want: false,
+		},
+		{
+			name: "unexpected error",
+			err:  errors.New("boom"),
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldLogHeartbeatStop(tt.err); got != tt.want {
+				t.Fatalf("shouldLogHeartbeatStop(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }

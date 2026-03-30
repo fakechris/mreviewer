@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -103,7 +104,7 @@ func run() int {
 	worker := runtimeDeps.Scheduler
 	if runtimeDeps.Heartbeat != nil {
 		go func() {
-			if err := runtimeDeps.Heartbeat.Run(ctx, defaultHeartbeatInterval, runtimeDeps.HeartbeatIdentity); err != nil && err != context.Canceled {
+			if err := runtimeDeps.Heartbeat.Run(ctx, defaultHeartbeatInterval, runtimeDeps.HeartbeatIdentity); shouldLogHeartbeatStop(err) {
 				logger.Error("worker heartbeat stopped", "error", err)
 			}
 		}()
@@ -116,6 +117,10 @@ func run() int {
 
 	logger.Info("worker shutdown complete")
 	return 0
+}
+
+func shouldLogHeartbeatStop(err error) bool {
+	return err != nil && !errors.Is(err, context.Canceled)
 }
 
 func validateWorkerConfig(cfg *config.Config) error {
