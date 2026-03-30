@@ -60,6 +60,8 @@ require_pattern "README.md" "docker compose -f docker-compose\\.prod\\.yaml up -
 require_pattern "README.md" "^### Method 2: Advanced No-Git Setup" "README.md must present advanced no-git setup as Method 2"
 require_pattern "README.md" "^### Method 3: Full Clone \\(For Developers\\)" "README.md must renumber the developer workflow to Method 3"
 require_pattern "README.md" "/app/manual-trigger" "README.md must document the in-container manual-trigger command"
+require_pattern "README.md" "LAN IP|local-network testing|localhost" "README.md must explain local-network webhook addressing"
+require_pattern "README.md" "Allow requests to the local network from web hooks and services|Invalid url given" "README.md must explain the GitLab local-network webhook prerequisite"
 forbid_pattern "README.md" "^\\*\\*Option A:" "README.md must not describe quick starts as Option A"
 forbid_pattern "README.md" "^\\*\\*Option B:" "README.md must not describe quick starts as Option B"
 forbid_pattern "README.md" "docker-compose " "README.md must use docker compose consistently"
@@ -71,6 +73,8 @@ require_pattern "README.zh-CN.md" "docker compose -f docker-compose\\.prod\\.yam
 require_pattern "README.zh-CN.md" "^### 方式 2：高级无 Git 部署" "README.zh-CN.md must present advanced no-git setup as 方式 2"
 require_pattern "README.zh-CN.md" "^### 方式 3：完整克隆（开发者）" "README.zh-CN.md must renumber the developer workflow to 方式 3"
 require_pattern "README.zh-CN.md" "/app/manual-trigger" "README.zh-CN.md must document the in-container manual-trigger command"
+require_pattern "README.zh-CN.md" "局域网 IP|localhost" "README.zh-CN.md must explain local-network webhook addressing"
+require_pattern "README.zh-CN.md" "Allow requests to the local network from web hooks and services|Invalid url given" "README.zh-CN.md must explain the GitLab local-network webhook prerequisite"
 forbid_pattern "README.zh-CN.md" "^\\*\\*选项 A:" "README.zh-CN.md must not describe quick starts as 选项 A"
 forbid_pattern "README.zh-CN.md" "^\\*\\*选项 B:" "README.zh-CN.md must not describe quick starts as 选项 B"
 forbid_pattern "README.zh-CN.md" "docker-compose " "README.zh-CN.md must use docker compose consistently"
@@ -87,6 +91,8 @@ require_pattern "DEPLOYMENT.md" "/admin/" "DEPLOYMENT.md must mention the admin 
 require_pattern "WEBHOOK.md" "latest head wins|latest-head-wins" "WEBHOOK.md must document latest-head-wins queue semantics"
 require_pattern "WEBHOOK.md" "supersede|superseded" "WEBHOOK.md must explain superseded runs"
 require_pattern "WEBHOOK.md" "/admin/api/queue" "WEBHOOK.md must mention admin queue visibility"
+require_pattern "WEBHOOK.md" "局域网 IP|LAN IP|localhost" "WEBHOOK.md must explain local vs LAN webhook addresses"
+require_pattern "WEBHOOK.md" "Allow requests to the local network from web hooks and services|Invalid url given" "WEBHOOK.md must document the GitLab local-network webhook prerequisite"
 
 for file in docs/architecture/enterprise-webhook.md docs/operations/admin-dashboard.md docs/operations/failure-playbook.md; do
   [[ -f "$file" ]] || fail "missing required enterprise doc: $file"
