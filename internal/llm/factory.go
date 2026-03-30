@@ -13,6 +13,7 @@ const (
 	ProviderKindOpenAI              = "openai"
 	ProviderKindArkAnthropic        = "ark_anthropic"
 	ProviderKindArkOpenAI           = "ark_openai"
+	ProviderKindFireworksRouter     = "fireworks_router"
 )
 
 func NewProviderFromConfig(cfg ProviderConfig) (Provider, error) {
@@ -31,6 +32,8 @@ func NewProviderFromConfig(cfg ProviderConfig) (Provider, error) {
 		return NewArkAnthropicProvider(cfg)
 	case ProviderKindArkOpenAI:
 		return NewArkOpenAIProvider(cfg)
+	case ProviderKindFireworksRouter:
+		return NewFireworksRouterProvider(cfg)
 	default:
 		return nil, fmt.Errorf("llm: unknown provider kind %q", cfg.Kind)
 	}

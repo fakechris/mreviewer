@@ -78,6 +78,22 @@ func TestNewProviderFromConfigSupportsKnownKinds(t *testing.T) {
 			t.Fatal("provider is nil")
 		}
 	})
+
+	t.Run("fireworks_router", func(t *testing.T) {
+		provider, err := NewProviderFromConfig(ProviderConfig{
+			Kind:      "fireworks_router",
+			BaseURL:   "https://api.fireworks.ai/inference",
+			APIKey:    "fw_test_key",
+			Model:     "accounts/fireworks/routers/kimi-k2p5-turbo",
+			RouteName: "fireworks",
+		})
+		if err != nil {
+			t.Fatalf("NewProviderFromConfig: %v", err)
+		}
+		if provider == nil {
+			t.Fatal("provider is nil")
+		}
+	})
 }
 
 func TestNewProviderFromConfigRejectsUnknownKind(t *testing.T) {
