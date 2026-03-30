@@ -257,6 +257,61 @@ func TestUpdateCreatesNewHeadRun(t *testing.T) {
 	}
 }
 
+func TestUpdateReplayDoesNotSupersedeNewerRun(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	svc := NewService(testLogger(), sqlDB)
+	ctx := context.Background()
+	q := db.New(sqlDB)
+
+	if err := svc.ProcessEvent(ctx, makeOpenEvent("sha_initial"), 0); err != nil {
+		t.Fatalf("ProcessEvent open: %v", err)
+	}
+
+	updateA := makeUpdateEvent("sha_a")
+	if err := svc.ProcessEvent(ctx, updateA, 0); err != nil {
+		t.Fatalf("ProcessEvent update A: %v", err)
+	}
+	runA, err := q.GetReviewRunByIdempotencyKey(ctx, updateA.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("GetReviewRunByIdempotencyKey (A): %v", err)
+	}
+
+	updateB := makeUpdateEvent("sha_b")
+	if err := svc.ProcessEvent(ctx, updateB, 0); err != nil {
+		t.Fatalf("ProcessEvent update B: %v", err)
+	}
+	runB, err := q.GetReviewRunByIdempotencyKey(ctx, updateB.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("GetReviewRunByIdempotencyKey (B): %v", err)
+	}
+
+	if err := svc.ProcessEvent(ctx, updateA, 0); err != nil {
+		t.Fatalf("ProcessEvent replay update A: %v", err)
+	}
+
+	runAAfterReplay, err := q.GetReviewRun(ctx, runA.ID)
+	if err != nil {
+		t.Fatalf("GetReviewRun (A after replay): %v", err)
+	}
+	runBAfterReplay, err := q.GetReviewRun(ctx, runB.ID)
+	if err != nil {
+		t.Fatalf("GetReviewRun (B after replay): %v", err)
+	}
+
+	if runBAfterReplay.Status != "pending" {
+		t.Fatalf("run B status after replay = %q, want pending", runBAfterReplay.Status)
+	}
+	if runBAfterReplay.SupersededByRunID.Valid {
+		t.Fatalf("run B superseded_by_run_id after replay = %+v, want NULL", runBAfterReplay.SupersededByRunID)
+	}
+	if runAAfterReplay.Status != "cancelled" {
+		t.Fatalf("run A status after replay = %q, want cancelled", runAAfterReplay.Status)
+	}
+	if !runAAfterReplay.SupersededByRunID.Valid || runAAfterReplay.SupersededByRunID.Int64 != runB.ID {
+		t.Fatalf("run A superseded_by_run_id after replay = %+v, want %d", runAAfterReplay.SupersededByRunID, runB.ID)
+	}
+}
+
 func TestUpdateSupersedesRetryScheduledRun(t *testing.T) {
 	sqlDB := setupTestDB(t)
 	svc := NewService(testLogger(), sqlDB)

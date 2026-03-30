@@ -23,11 +23,19 @@ func (q *Queries) CountRetryScheduledRuns(ctx context.Context) (int64, error) {
 
 func (q *Queries) GetOldestWaitingRunCreatedAt(ctx context.Context) (interface{}, error) {
 	row := q.db.QueryRowContext(ctx, `
-SELECT MIN(created_at) AS created_at
-FROM review_runs
-WHERE status = 'pending'
-   OR (status = 'failed' AND next_retry_at IS NOT NULL)
-`)
+	SELECT MIN(
+	           CASE
+	               WHEN status = 'pending' THEN created_at
+	               WHEN status = 'failed'
+	                   AND next_retry_at IS NOT NULL
+	                   AND next_retry_at <= CURRENT_TIMESTAMP THEN next_retry_at
+	               ELSE NULL
+	               END
+	       ) AS created_at
+	FROM review_runs
+	WHERE status = 'pending'
+	   OR (status = 'failed' AND next_retry_at IS NOT NULL)
+	`)
 	var createdAt interface{}
 	err := row.Scan(&createdAt)
 	return createdAt, err
@@ -67,11 +75,11 @@ LIMIT ?
 
 func (q *Queries) CountSupersededRunsSince(ctx context.Context, updatedAt time.Time) (int64, error) {
 	row := q.db.QueryRowContext(ctx, `
-SELECT COUNT(*) AS superseded_count
-FROM review_runs
-WHERE error_code = 'superseded_by_new_head'
-  AND updated_at >= ?
-`, updatedAt)
+	SELECT COUNT(*) AS superseded_count
+	FROM review_runs
+	WHERE superseded_by_run_id IS NOT NULL
+	  AND updated_at >= ?
+	`, updatedAt)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -138,12 +146,13 @@ SELECT
 	head_sha,
 	error_code,
 	updated_at
-FROM review_runs
-WHERE status = 'failed'
-  AND error_code <> ''
-ORDER BY updated_at DESC, id DESC
-LIMIT ?
-`, limit)
+	FROM review_runs
+	WHERE status = 'failed'
+	  AND error_code <> ''
+	  AND superseded_by_run_id IS NULL
+	ORDER BY updated_at DESC, id DESC
+	LIMIT ?
+	`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -176,12 +185,13 @@ func (q *Queries) ListFailureCountsByErrorCode(ctx context.Context, updatedAt ti
 SELECT
 	error_code,
 	COUNT(*) AS count
-FROM review_runs
-WHERE status = 'failed'
-  AND error_code <> ''
-  AND updated_at >= ?
-GROUP BY error_code
-ORDER BY count DESC, error_code ASC
+	FROM review_runs
+	WHERE status = 'failed'
+	  AND error_code <> ''
+	  AND superseded_by_run_id IS NULL
+	  AND updated_at >= ?
+	GROUP BY error_code
+	ORDER BY count DESC, error_code ASC
 `, updatedAt)
 	if err != nil {
 		return nil, err

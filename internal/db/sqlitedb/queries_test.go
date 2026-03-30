@@ -265,6 +265,80 @@ func TestReviewRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestAdminDashboardQueriesUseRetryEligibilityAndExcludeSupersedes(t *testing.T) {
+	sqlDB := setupDB(t)
+	q := sqlitedb.New(sqlDB)
+	ctx := context.Background()
+
+	_, projID := seedProject(t, q, ctx)
+	mrID := seedMR(t, q, ctx, projID)
+
+	pendingRunID := seedRun(t, q, ctx, projID, mrID)
+	retryRunID := seedRun(t, q, ctx, projID, mrID)
+	supersededRunID := seedRun(t, q, ctx, projID, mrID)
+	failedRunID := seedRun(t, q, ctx, projID, mrID)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	pendingCreatedAt := now.Add(-10 * time.Minute)
+	retryCreatedAt := now.Add(-24 * time.Hour)
+	retryEligibleAt := now.Add(-20 * time.Minute)
+	supersededUpdatedAt := now.Add(-5 * time.Minute)
+	failedUpdatedAt := now.Add(-2 * time.Minute)
+
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET created_at = ?, updated_at = ? WHERE id = ?", pendingCreatedAt, pendingCreatedAt, pendingRunID); err != nil {
+		t.Fatalf("update pending run timestamps: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET status = 'failed', error_code = 'provider_timeout', created_at = ?, updated_at = ?, next_retry_at = ? WHERE id = ?", retryCreatedAt, retryEligibleAt, retryEligibleAt, retryRunID); err != nil {
+		t.Fatalf("update retry run timestamps: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET status = 'failed', error_code = 'superseded_by_new_head', updated_at = ?, superseded_by_run_id = ? WHERE id = ?", supersededUpdatedAt, pendingRunID, supersededRunID); err != nil {
+		t.Fatalf("update superseded run: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, "UPDATE review_runs SET status = 'failed', error_code = 'provider_failed', updated_at = ? WHERE id = ?", failedUpdatedAt, failedRunID); err != nil {
+		t.Fatalf("update failed run: %v", err)
+	}
+
+	oldestWaiting, err := q.GetOldestWaitingRunCreatedAt(ctx)
+	if err != nil {
+		t.Fatalf("GetOldestWaitingRunCreatedAt: %v", err)
+	}
+	gotOldestWaiting := mustNormalizeSQLiteDashboardTime(t, oldestWaiting)
+	if !gotOldestWaiting.Equal(retryEligibleAt) {
+		t.Fatalf("oldest waiting time = %s, want retry eligibility %s", gotOldestWaiting, retryEligibleAt)
+	}
+
+	supersededCount, err := q.CountSupersededRunsSince(ctx, now.Add(-1*time.Hour))
+	if err != nil {
+		t.Fatalf("CountSupersededRunsSince: %v", err)
+	}
+	if supersededCount != 1 {
+		t.Fatalf("superseded count = %d, want 1", supersededCount)
+	}
+
+	recentFailures, err := q.ListRecentFailedRuns(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListRecentFailedRuns: %v", err)
+	}
+	if len(recentFailures) != 2 {
+		t.Fatalf("recent failures len = %d, want 2", len(recentFailures))
+	}
+	for _, failure := range recentFailures {
+		if failure.ErrorCode == "superseded_by_new_head" {
+			t.Fatalf("recent failures unexpectedly included superseded run: %+v", failure)
+		}
+	}
+
+	failureCounts, err := q.ListFailureCountsByErrorCode(ctx, now.Add(-1*time.Hour))
+	if err != nil {
+		t.Fatalf("ListFailureCountsByErrorCode: %v", err)
+	}
+	for _, item := range failureCounts {
+		if item.ErrorCode == "superseded_by_new_head" {
+			t.Fatalf("failure counts unexpectedly included superseded bucket: %+v", item)
+		}
+	}
+}
+
 func TestReviewRunRetryableFailure(t *testing.T) {
 	q := newQueries(t)
 	ctx := context.Background()
@@ -825,4 +899,39 @@ func seedFinding(t *testing.T, q *sqlitedb.Queries, ctx context.Context, runID, 
 	}
 	id, _ := res.LastInsertId()
 	return id
+}
+
+func mustNormalizeSQLiteDashboardTime(t *testing.T, raw interface{}) time.Time {
+	t.Helper()
+
+	switch v := raw.(type) {
+	case time.Time:
+		return v.UTC().Truncate(time.Second)
+	case string:
+		return mustParseSQLiteDashboardTimeString(t, v)
+	case []byte:
+		return mustParseSQLiteDashboardTimeString(t, string(v))
+	default:
+		t.Fatalf("unexpected dashboard time type %T", raw)
+		return time.Time{}
+	}
+}
+
+func mustParseSQLiteDashboardTimeString(t *testing.T, value string) time.Time {
+	t.Helper()
+
+	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if ts, err := time.Parse(layout, value); err == nil {
+			return ts.UTC().Truncate(time.Second)
+		}
+	}
+	t.Fatalf("unsupported dashboard time string %q", value)
+	return time.Time{}
 }

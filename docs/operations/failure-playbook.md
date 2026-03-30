@@ -12,7 +12,7 @@
 处理方式：
 
 - 通常不需要人工处理
-- 到 `/admin/api/queue` 确认是否有新的 run 已进入队列或正在运行
+- 到 `/admin/api/queue` 确认是否有新的 run 已进入队列或正在运行；请求时带上 `Authorization: Bearer <token from MREVIEWER_ADMIN_TOKEN>`
 
 ### `provider_failed`
 
@@ -22,7 +22,7 @@
 
 处理方式：
 
-- 查看 `/admin/api/failures`
+- 查看 `/admin/api/failures`；请求时带上 `Authorization: Bearer <token from MREVIEWER_ADMIN_TOKEN>`
 - 用 `scripts/show-run-audit.sh --latest` 或指定 run id 检查 provider audit detail
 - 检查 provider key、base URL、model、rate limit
 
@@ -34,7 +34,7 @@
 
 处理方式：
 
-- 查看 `/admin/api/concurrency` 是否有 worker 心跳缺失
+- 查看 `/admin/api/concurrency` 是否有 worker 心跳缺失；请求时带上 `Authorization: Bearer <token from MREVIEWER_ADMIN_TOKEN>`
 - 检查 worker 日志、数据库连接和 provider latency
 - 确认是否需要提升 worker 数量或 provider 并发
 

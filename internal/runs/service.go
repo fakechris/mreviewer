@@ -72,7 +72,8 @@ func (s *Service) ProcessEventWithQuerier(ctx context.Context, q db.Querier, ev 
 
 	switch action {
 	case "open", "reopen":
-		return s.createPendingRun(ctx, q, ev, hookEventID)
+		_, err := s.createPendingRun(ctx, q, ev, hookEventID)
+		return err
 	case "update", "ci_trigger", "manual_trigger":
 		return s.handleUpdate(ctx, q, ev, hookEventID)
 	case "close", "merge":
@@ -95,8 +96,12 @@ func (s *Service) handleUpdate(ctx context.Context, q db.Querier, ev hooks.Norma
 	// The webhook payload includes oldrev when a new commit is pushed.
 	// The normalization layer captures the new HEAD SHA. If head_sha is empty
 	// (deferred), we still create the run — the scheduler will resolve it later.
-	if err := s.createPendingRun(ctx, q, ev, hookEventID); err != nil {
+	created, err := s.createPendingRun(ctx, q, ev, hookEventID)
+	if err != nil {
 		return err
+	}
+	if !created {
+		return nil
 	}
 
 	newRun, err := q.GetReviewRunByIdempotencyKey(ctx, ev.IdempotencyKey)
@@ -118,23 +123,23 @@ func (s *Service) handleUpdate(ctx context.Context, q db.Querier, ev hooks.Norma
 // createPendingRun creates a new pending review run inside a transaction.
 // It ensures the gitlab_instance, project, and merge_request records exist
 // (upserting as needed), then inserts the review_run with idempotency dedup.
-func (s *Service) createPendingRun(ctx context.Context, q db.Querier, ev hooks.NormalizedEvent, hookEventID int64) error {
+func (s *Service) createPendingRun(ctx context.Context, q db.Querier, ev hooks.NormalizedEvent, hookEventID int64) (bool, error) {
 	// 1. Ensure gitlab_instance exists.
 	instanceID, err := s.ensureInstance(ctx, q, ev.GitLabInstanceURL)
 	if err != nil {
-		return fmt.Errorf("ensure instance: %w", err)
+		return false, fmt.Errorf("ensure instance: %w", err)
 	}
 
 	// 2. Ensure project exists.
 	projectID, err := s.ensureProject(ctx, q, instanceID, ev.ProjectID, ev.ProjectPath)
 	if err != nil {
-		return fmt.Errorf("ensure project: %w", err)
+		return false, fmt.Errorf("ensure project: %w", err)
 	}
 
 	// 3. Upsert merge request.
 	mrID, err := s.upsertMergeRequest(ctx, q, projectID, ev)
 	if err != nil {
-		return fmt.Errorf("upsert merge request: %w", err)
+		return false, fmt.Errorf("upsert merge request: %w", err)
 	}
 
 	// 4. Check idempotency: if a review_run already exists for this
@@ -146,10 +151,10 @@ func (s *Service) createPendingRun(ctx context.Context, q db.Querier, ev hooks.N
 			"existing_run_id", existing.ID,
 			"mr_iid", ev.MRIID,
 		)
-		return nil
+		return false, nil
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check idempotency: %w", err)
+		return false, fmt.Errorf("check idempotency: %w", err)
 	}
 
 	// 5. Insert review run.
@@ -177,9 +182,9 @@ func (s *Service) createPendingRun(ctx context.Context, q db.Querier, ev hooks.N
 				"idempotency_key", ev.IdempotencyKey,
 				"mr_iid", ev.MRIID,
 			)
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("insert review run: %w", err)
+		return false, fmt.Errorf("insert review run: %w", err)
 	}
 
 	runID, _ := result.LastInsertId()
@@ -192,7 +197,7 @@ func (s *Service) createPendingRun(ctx context.Context, q db.Querier, ev hooks.N
 		"idempotency_key", ev.IdempotencyKey,
 	)
 
-	return nil
+	return true, nil
 }
 
 // cancelRuns cancels any pending, running, or retry-scheduled review runs for

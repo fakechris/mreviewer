@@ -1,6 +1,9 @@
 package db
 
-import "database/sql/driver"
+import (
+	"database/sql/driver"
+	"fmt"
+)
 
 // NullRawMessage preserves nullable JSON columns without forcing generated
 // scan code to special-case NULL database values.
@@ -17,6 +20,9 @@ func (m *NullRawMessage) Scan(src any) error {
 		*m = append((*m)[:0], v...)
 	case string:
 		*m = append((*m)[:0], v...)
+	default:
+		*m = (*m)[:0]
+		return fmt.Errorf("db.NullRawMessage.Scan: unsupported src type %T", src)
 	}
 	return nil
 }
