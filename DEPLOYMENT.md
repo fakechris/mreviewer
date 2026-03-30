@@ -8,11 +8,18 @@ cp .env.example .env
 # 编辑 .env 填入 GitLab 和 MiniMax 凭证
 
 # 2. 启动所有服务
-docker-compose up -d
+docker compose up -d --build
 
 # 3. 查看日志
-docker-compose logs -f worker
+docker compose logs -f worker
 ```
+
+说明：
+
+- `docker-compose.yaml` 面向开发者，本地源码会被重新构建。
+- 如果你想用 Docker Hub 镜像做服务器部署，使用下方的 `docker-compose.prod.yaml`。
+- 如果你需要 OpenAI、多 provider 路由或 SQLite，自定义 `config.yaml` 并配合 `docker-compose.prod.config.yaml` 一起使用。
+- Compose 文件不再固定 `container_name`，便于同机并行测试多个环境。进入 worker 时优先使用 `docker compose exec worker ...`。
 
 ## 构建和推送到私有仓库
 
@@ -79,5 +86,11 @@ volumes:
 启动：
 
 ```bash
-docker-compose -f docker-compose.prod.yaml up -d
+docker compose -f docker-compose.prod.yaml up -d
+```
+
+如果你需要挂载自定义 `config.yaml`，改为：
+
+```bash
+docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
 ```

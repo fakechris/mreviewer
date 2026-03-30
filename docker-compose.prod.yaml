@@ -1,11 +1,10 @@
 # Production Docker Compose for mreviewer
 # Download this file and create a .env file with your credentials
-# Then run: docker-compose -f docker-compose.prod.yaml up -d
+# Then run: docker compose -f docker-compose.prod.yaml up -d
 
 services:
   mysql:
     image: mysql:8.4
-    container_name: mreviewer-mysql
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
@@ -24,7 +23,6 @@ services:
 
   redis:
     image: redis:7
-    container_name: mreviewer-redis
     restart: unless-stopped
     command: redis-server --port 6379
     ports:
@@ -36,9 +34,10 @@ services:
       retries: 10
 
   migrate:
-    image: fakechris/mreviewer-worker:main
-    container_name: mreviewer-migrate
+    image: ${MREVIEWER_WORKER_IMAGE:-fakechris/mreviewer-worker:main}
     restart: "no"
+    env_file:
+      - .env
     environment:
       GOOSE_DBSTRING: mreviewer:${MYSQL_PASSWORD:-mreviewer_password}@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci
       GOOSE_MIGRATION_DIR: /app/migrations
@@ -48,9 +47,10 @@ services:
     command: ["/app/migrate"]
 
   ingress:
-    image: fakechris/mreviewer-ingress:main
-    container_name: mreviewer-ingress
+    image: ${MREVIEWER_INGRESS_IMAGE:-fakechris/mreviewer-ingress:main}
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       MYSQL_DSN: mreviewer:${MYSQL_PASSWORD:-mreviewer_password}@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci
       REDIS_ADDR: redis:6379
@@ -58,8 +58,15 @@ services:
       GITLAB_BASE_URL: ${GITLAB_BASE_URL}
       GITLAB_TOKEN: ${GITLAB_TOKEN}
       GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-change_me}
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
-      MINIMAX_GROUP_ID: ${MINIMAX_GROUP_ID}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-}
+      MINIMAX_MODEL: ${MINIMAX_MODEL:-}
+      MINIMAX_GROUP_ID: ${MINIMAX_GROUP_ID:-}
     ports:
       - "${PORT:-3100}:3100"
     depends_on:
@@ -74,16 +81,24 @@ services:
       retries: 10
 
   worker:
-    image: fakechris/mreviewer-worker:main
-    container_name: mreviewer-worker
+    image: ${MREVIEWER_WORKER_IMAGE:-fakechris/mreviewer-worker:main}
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       MYSQL_DSN: mreviewer:${MYSQL_PASSWORD:-mreviewer_password}@tcp(mysql:3306)/mreviewer?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci
       REDIS_ADDR: redis:6379
       GITLAB_BASE_URL: ${GITLAB_BASE_URL}
       GITLAB_TOKEN: ${GITLAB_TOKEN}
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
-      MINIMAX_GROUP_ID: ${MINIMAX_GROUP_ID}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-}
+      MINIMAX_MODEL: ${MINIMAX_MODEL:-}
+      MINIMAX_GROUP_ID: ${MINIMAX_GROUP_ID:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
