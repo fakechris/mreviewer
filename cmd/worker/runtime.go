@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/metrics"
 	"github.com/mreviewer/mreviewer/internal/ops"
+	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
@@ -50,10 +53,14 @@ func newRuntimeDepsWithWriteback(logger *slog.Logger, sqlDB *sql.DB, processor s
 }
 
 func newRuntimeDepsWithWritebackAndGatePublishers(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor, discussionClient writer.DiscussionClient, status gate.StatusPublisher, ci gate.CIGatePublisher) runtimeDeps {
-	return newRuntimeDepsWithStoreFactory(logger, sqlDB, processor, discussionClient, status, ci, defaultRuntimeNewStore)
+	return newRuntimeDepsWithPlatformWritebacksAndGatePublishers(logger, sqlDB, processor, discussionClient, nil, status, ci, defaultRuntimeNewStore)
 }
 
 func newRuntimeDepsWithStoreFactory(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor, discussionClient writer.DiscussionClient, status gate.StatusPublisher, ci gate.CIGatePublisher, newStore func(db.DBTX) db.Store) runtimeDeps {
+	return newRuntimeDepsWithPlatformWritebacksAndGatePublishers(logger, sqlDB, processor, discussionClient, nil, status, ci, newStore)
+}
+
+func newRuntimeDepsWithPlatformWritebacksAndGatePublishers(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor, discussionClient writer.DiscussionClient, githubClient platformgithub.PublishClient, status gate.StatusPublisher, ci gate.CIGatePublisher, newStore func(db.DBTX) db.Store) runtimeDeps {
 	registry := metrics.NewRegistry()
 	tracer := tracing.NewRecorder()
 	if configurable, ok := processor.(interface {
@@ -63,13 +70,9 @@ func newRuntimeDepsWithStoreFactory(logger *slog.Logger, sqlDB *sql.DB, processo
 		configurable.WithMetrics(registry)
 		configurable.WithTracer(tracer)
 	}
-	var runtimeWriter *writer.Writer
-	if discussionClient != nil && sqlDB != nil {
-		_ = runtimeWriter
-	}
 	var writeback runtimeWriteback
-	if discussionClient != nil && sqlDB != nil {
-		writeback = platformgitlab.NewRuntimeWriteback(discussionClient, writer.NewSQLStoreWithStore(newStore(sqlDB))).WithMetrics(registry).WithTracer(tracer)
+	if sqlDB != nil {
+		writeback = newPlatformRuntimeWriteback(sqlDB, discussionClient, githubClient, registry, tracer, newStore)
 	}
 	processor = wrapProcessorWithWriteback(sqlDB, processor, writeback, newStore)
 	var auditLogger gate.AuditLogger
@@ -106,6 +109,67 @@ func newRuntimeDepsWithStoreFactory(logger *slog.Logger, sqlDB *sql.DB, processo
 		Heartbeat:         heartbeatSvc,
 		HeartbeatIdentity: heartbeatIdentity,
 	}
+}
+
+type platformRuntimeWriteback struct {
+	gitlab *platformgitlab.RuntimeWriteback
+	github *platformgithub.RuntimeWriteback
+}
+
+func newPlatformRuntimeWriteback(sqlDB *sql.DB, gitlabClient writer.DiscussionClient, githubClient platformgithub.PublishClient, registry *metrics.Registry, tracer *tracing.Recorder, newStore func(db.DBTX) db.Store) runtimeWriteback {
+	router := &platformRuntimeWriteback{}
+	if gitlabClient != nil && sqlDB != nil {
+		router.gitlab = platformgitlab.NewRuntimeWriteback(gitlabClient, writer.NewSQLStoreWithStore(newStore(sqlDB))).WithMetrics(registry).WithTracer(tracer)
+	}
+	if githubClient != nil {
+		router.github = platformgithub.NewRuntimeWriteback(githubClient)
+	}
+	if router.gitlab == nil && router.github == nil {
+		return nil
+	}
+	return router
+}
+
+func (w *platformRuntimeWriteback) Write(ctx context.Context, run db.ReviewRun, findings []db.ReviewFinding) error {
+	if w == nil {
+		return nil
+	}
+	if isGitHubRuntimeRun(run) {
+		if w.github == nil {
+			return fmt.Errorf("no github writer configured for runtime writeback")
+		}
+		return w.github.Write(ctx, run, findings)
+	}
+	if w.gitlab == nil {
+		return fmt.Errorf("no gitlab writer configured for runtime writeback")
+	}
+	return w.gitlab.Write(ctx, run, findings)
+}
+
+func (w *platformRuntimeWriteback) WriteBundle(ctx context.Context, run db.ReviewRun, bundle core.ReviewBundle) error {
+	if w == nil {
+		return nil
+	}
+	if bundle.Target.Platform == core.PlatformGitHub || isGitHubRuntimeRun(run) {
+		if w.github == nil {
+			return fmt.Errorf("no github writer configured for runtime writeback")
+		}
+		return w.github.WriteBundle(ctx, run, bundle)
+	}
+	if w.gitlab == nil {
+		return fmt.Errorf("no gitlab writer configured for runtime writeback")
+	}
+	return w.gitlab.WriteBundle(ctx, run, bundle)
+}
+
+func isGitHubRuntimeRun(run db.ReviewRun) bool {
+	var scope struct {
+		Platform core.Platform `json:"platform"`
+	}
+	if err := json.Unmarshal(run.ScopeJson, &scope); err == nil && scope.Platform == core.PlatformGitHub {
+		return true
+	}
+	return false
 }
 
 func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, runtimeWriter runtimeWriteback, newStore func(db.DBTX) db.Store) scheduler.Processor {

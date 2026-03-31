@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -143,5 +144,91 @@ func TestClientGetPullRequestSnapshotByRepositoryRefPaginatesFiles(t *testing.T)
 	}
 	if snapshot.Files[1].Filename != "internal/second.go" {
 		t.Fatalf("second filename = %q", snapshot.Files[1].Filename)
+	}
+}
+
+func TestClientSetCommitStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/repos/acme/repo/statuses/head-sha" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if payload["state"] != "pending" {
+			t.Fatalf("state = %#v, want pending", payload["state"])
+		}
+		if payload["context"] != "mreviewer/ai-review" {
+			t.Fatalf("context = %#v, want mreviewer/ai-review", payload["context"])
+		}
+		if payload["description"] != "AI review is running" {
+			t.Fatalf("description = %#v, want running description", payload["description"])
+		}
+		if payload["target_url"] != "https://github.com/acme/repo/pull/17" {
+			t.Fatalf("target_url = %#v", payload["target_url"])
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "test-token", WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	err = client.SetCommitStatus(context.Background(), CommitStatusRequest{
+		Repository:  "acme/repo",
+		SHA:         "head-sha",
+		State:       "pending",
+		Context:     "mreviewer/ai-review",
+		Description: "AI review is running",
+		TargetURL:   "https://github.com/acme/repo/pull/17",
+	})
+	if err != nil {
+		t.Fatalf("SetCommitStatus: %v", err)
+	}
+}
+
+func TestClientListIssueCommentsStopsAtMaxPages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/repo/issues/17/comments" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"id":1,"body":"still paging","user":{"login":"codex-bot"}}]`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "test-token", WithHTTPClient(server.Client()), WithMaxListPages(3))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = client.ListIssueComments(context.Background(), "acme/repo", 17)
+	if err == nil || err.Error() != "github: pagination exceeded max pages 3" {
+		t.Fatalf("ListIssueComments error = %v, want pagination exceeded", err)
+	}
+}
+
+func TestClientListReviewCommentsStopsAtMaxPages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/repo/pulls/17/comments" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"id":2,"body":"still paging","path":"internal/db/query.go","line":42,"user":{"login":"codex-bot"}}]`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "test-token", WithHTTPClient(server.Client()), WithMaxListPages(2))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = client.ListReviewComments(context.Background(), "acme/repo", 17)
+	if err == nil || err.Error() != "github: pagination exceeded max pages 2" {
+		t.Fatalf("ListReviewComments error = %v, want pagination exceeded", err)
 	}
 }

@@ -42,9 +42,9 @@ func (f *fakeReviewEngine) Run(_ context.Context, input core.ReviewInput, opts c
 }
 
 type fakeBundleWriteback struct {
-	run     db.ReviewRun
-	bundle  core.ReviewBundle
-	calls   int
+	run      db.ReviewRun
+	bundle   core.ReviewBundle
+	calls    int
 	writeErr error
 }
 
@@ -222,6 +222,25 @@ func TestEngineProcessorProcessRunPersistsBundleAsRequestedChanges(t *testing.T)
 	}
 }
 
+func TestNormalizePlatformAcceptsCommonGitHubVariants(t *testing.T) {
+	tests := map[core.Platform]core.Platform{
+		"github":  core.PlatformGitHub,
+		"GitHub":  core.PlatformGitHub,
+		"git hub": core.PlatformGitHub,
+		"gitlab":  core.PlatformGitLab,
+		"GitLab":  core.PlatformGitLab,
+		"git lab": core.PlatformGitLab,
+	}
+	for input, want := range tests {
+		if got := normalizePlatform(input); got != want {
+			t.Fatalf("normalizePlatform(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if got := normalizePlatform("bitbucket"); got != "" {
+		t.Fatalf("normalizePlatform(bitbucket) = %q, want empty", got)
+	}
+}
+
 func TestEngineProcessorProcessRunRejectsMissingDependencies(t *testing.T) {
 	processor := NewEngineProcessor(nil, nil, nil)
 	_, err := processor.ProcessRun(context.Background(), db.ReviewRun{})
@@ -291,5 +310,99 @@ func TestEngineProcessorPrefersBundleWritebackWhenAvailable(t *testing.T) {
 	}
 	if writeback.bundle.Verdict != "requested_changes" {
 		t.Fatalf("bundle writeback verdict = %q, want requested_changes", writeback.bundle.Verdict)
+	}
+}
+
+func TestEngineProcessorLoadsGitHubTargetFromScope(t *testing.T) {
+	sqlDB := setupEngineProcessorDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+
+	instRes, err := sqlDB.Exec(`INSERT INTO gitlab_instances (url, name) VALUES ('https://github.com', 'github')`)
+	if err != nil {
+		t.Fatalf("insert gitlab_instances: %v", err)
+	}
+	instanceID, _ := instRes.LastInsertId()
+
+	projRes, err := sqlDB.Exec(`INSERT INTO projects (gitlab_instance_id, gitlab_project_id, path_with_namespace, enabled) VALUES (?, ?, 'acme/repo', TRUE)`,
+		instanceID, 101,
+	)
+	if err != nil {
+		t.Fatalf("insert projects: %v", err)
+	}
+	projectID, _ := projRes.LastInsertId()
+
+	if _, err := queries.UpsertMergeRequest(ctx, db.UpsertMergeRequestParams{
+		ProjectID:    projectID,
+		MrIid:        17,
+		Title:        "GitHub runtime PR",
+		State:        "opened",
+		SourceBranch: "feature/github",
+		TargetBranch: "main",
+		HeadSha:      "github-head-sha",
+		WebUrl:       "https://github.com/acme/repo/pull/17",
+		Author:       "octocat",
+	}); err != nil {
+		t.Fatalf("UpsertMergeRequest: %v", err)
+	}
+	mr, err := queries.GetMergeRequestByProjectMR(ctx, db.GetMergeRequestByProjectMRParams{
+		ProjectID: projectID,
+		MrIid:     17,
+	})
+	if err != nil {
+		t.Fatalf("GetMergeRequestByProjectMR: %v", err)
+	}
+	runResult, err := queries.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID:      projectID,
+		MergeRequestID: mr.ID,
+		TriggerType:    "webhook",
+		HeadSha:        "github-head-sha",
+		Status:         "pending",
+		MaxRetries:     3,
+		IdempotencyKey: "engine-processor-github",
+		ScopeJson:      db.NullRawMessage([]byte(`{"platform":"github"}`)),
+	})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	runID, _ := runResult.LastInsertId()
+	run, err := queries.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	inputLoader := &fakeReviewInputLoader{
+		input: core.ReviewInput{
+			Target: core.ReviewTarget{
+				Platform:     core.PlatformGitHub,
+				URL:          "https://github.com/acme/repo/pull/17",
+				Repository:   "acme/repo",
+				ProjectID:    101,
+				ChangeNumber: 17,
+				BaseURL:      "https://github.com",
+			},
+			Request: ctxpkg.ReviewRequest{},
+		},
+	}
+	engine := &fakeReviewEngine{
+		bundle: core.ReviewBundle{
+			Target:          inputLoader.input.Target,
+			Verdict:         "approved",
+			MarkdownSummary: "Verdict: approved",
+		},
+	}
+
+	processor := NewEngineProcessor(sqlDB, inputLoader, engine)
+	if _, err := processor.ProcessRun(ctx, run); err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if inputLoader.target.Platform != core.PlatformGitHub {
+		t.Fatalf("loader target platform = %q, want github", inputLoader.target.Platform)
+	}
+	if inputLoader.target.Repository != "acme/repo" {
+		t.Fatalf("loader target repository = %q, want acme/repo", inputLoader.target.Repository)
+	}
+	if inputLoader.target.BaseURL != "https://github.com" {
+		t.Fatalf("loader target base url = %q, want https://github.com", inputLoader.target.BaseURL)
 	}
 }

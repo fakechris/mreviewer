@@ -33,3 +33,20 @@ type PullRequestSnapshot struct {
 	PullRequest PullRequest       `json:"pull_request"`
 	Files       []PullRequestFile `json:"files,omitempty"`
 }
+
+type IssueComment struct {
+	ID   int64           `json:"id"`
+	Body string          `json:"body"`
+	User PullRequestUser `json:"user"`
+}
+
+type ReviewComment struct {
+	ID        int64           `json:"id"`
+	Body      string          `json:"body"`
+	Path      string          `json:"path"`
+	Line      int             `json:"line"`
+	StartLine int             `json:"start_line"`
+	Side      string          `json:"side"`
+	StartSide string          `json:"start_side"`
+	User      PullRequestUser `json:"user"`
+}

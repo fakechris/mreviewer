@@ -11,6 +11,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/judge"
 	"github.com/mreviewer/mreviewer/internal/llm"
+	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/reviewinput"
@@ -25,15 +26,12 @@ func (f workerReviewInputLoader) Load(ctx context.Context, target core.ReviewTar
 	return f(ctx, target, providerRoute)
 }
 
-func newReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitlab.Client, rulesLoader reviewinput.RulesLoader, providerRegistry *llm.ProviderRegistry) (scheduler.Processor, error) {
+func newReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitlab.Client, githubClient *platformgithub.Client, rulesLoader reviewinput.RulesLoader, providerRegistry *llm.ProviderRegistry) (scheduler.Processor, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("worker: configuration is required")
 	}
 	if sqlDB == nil {
 		return nil, fmt.Errorf("worker: database is required")
-	}
-	if gitlabClient == nil {
-		return nil, fmt.Errorf("worker: gitlab client is required")
 	}
 	if rulesLoader == nil {
 		return nil, fmt.Errorf("worker: rules loader is required")
@@ -41,11 +39,13 @@ func newReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitl
 	if providerRegistry == nil {
 		return nil, fmt.Errorf("worker: provider registry is required")
 	}
+	if gitlabClient == nil && githubClient == nil {
+		return nil, fmt.Errorf("worker: at least one platform client is required")
+	}
 
-	adapter := platformgitlab.NewAdapter(gitlabClient)
 	builder := reviewinput.NewBuilder(rulesLoader, ctxpkg.NewAssembler(), llm.NewSQLProcessorStore(sqlDB))
 	inputLoader := workerReviewInputLoader(func(ctx context.Context, target core.ReviewTarget, providerRoute string) (core.ReviewInput, error) {
-		input, err := buildWorkerGitLabReviewInput(ctx, target, adapter, builder)
+		input, err := buildWorkerReviewInput(ctx, target, gitlabClient, githubClient, builder)
 		if err != nil {
 			return core.ReviewInput{}, err
 		}
@@ -65,8 +65,25 @@ func newReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitl
 	return reviewrun.NewEngineProcessor(sqlDB, inputLoader, engine), nil
 }
 
-func buildWorkerGitLabReviewInput(ctx context.Context, target core.ReviewTarget, fetcher *platformgitlab.Adapter, builder *reviewinput.Builder) (core.ReviewInput, error) {
-	snapshot, err := fetcher.FetchSnapshot(ctx, target)
+func buildWorkerReviewInput(ctx context.Context, target core.ReviewTarget, gitlabClient *gitlab.Client, githubClient *platformgithub.Client, builder *reviewinput.Builder) (core.ReviewInput, error) {
+	var (
+		snapshot core.PlatformSnapshot
+		err      error
+	)
+	switch target.Platform {
+	case core.PlatformGitHub:
+		if githubClient == nil {
+			return core.ReviewInput{}, fmt.Errorf("build review input: github client is required")
+		}
+		snapshot, err = platformgithub.NewAdapter(githubClient).FetchSnapshot(ctx, target)
+	case core.PlatformGitLab:
+		if gitlabClient == nil {
+			return core.ReviewInput{}, fmt.Errorf("build review input: gitlab client is required")
+		}
+		snapshot, err = platformgitlab.NewAdapter(gitlabClient).FetchSnapshot(ctx, target)
+	default:
+		return core.ReviewInput{}, fmt.Errorf("build review input: unsupported platform: %s", target.Platform)
+	}
 	if err != nil {
 		return core.ReviewInput{}, fmt.Errorf("fetch snapshot: %w", err)
 	}

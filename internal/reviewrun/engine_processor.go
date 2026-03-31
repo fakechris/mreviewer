@@ -83,8 +83,16 @@ func (p *EngineProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (sch
 		return scheduler.ProcessOutcome{}, fmt.Errorf("reviewrun: load gitlab instance: %w", err)
 	}
 
+	scope := runScopeFromJSON(run.ScopeJson)
+	platform := normalizePlatform(scope.Platform)
+	if platform == "" {
+		platform = inferPlatformFromWebURL(mr.WebUrl)
+	}
+	if platform == "" {
+		platform = core.PlatformGitLab
+	}
 	target := core.ReviewTarget{
-		Platform:     core.PlatformGitLab,
+		Platform:     platform,
 		URL:          mr.WebUrl,
 		Repository:   project.PathWithNamespace,
 		ProjectID:    project.GitlabProjectID,
@@ -186,14 +194,45 @@ func reviewedScopeFromRequest(request ctxpkg.ReviewRequest) (map[string]struct{}
 	return reviewedPaths, deletedPaths
 }
 
+type runScope struct {
+	ProviderRoute string        `json:"provider_route"`
+	Platform      core.Platform `json:"platform"`
+}
+
 func providerRouteFromScope(raw []byte) string {
-	var scope struct {
-		ProviderRoute string `json:"provider_route"`
-	}
+	return strings.TrimSpace(runScopeFromJSON(raw).ProviderRoute)
+}
+
+func runScopeFromJSON(raw []byte) runScope {
+	var scope runScope
 	if err := json.Unmarshal(raw, &scope); err != nil {
+		return runScope{}
+	}
+	return scope
+}
+
+func inferPlatformFromWebURL(webURL string) core.Platform {
+	lower := strings.ToLower(strings.TrimSpace(webURL))
+	switch {
+	case strings.Contains(lower, "/pull/"):
+		return core.PlatformGitHub
+	case strings.Contains(lower, "/-/merge_requests/"):
+		return core.PlatformGitLab
+	default:
 		return ""
 	}
-	return strings.TrimSpace(scope.ProviderRoute)
+}
+
+func normalizePlatform(platform core.Platform) core.Platform {
+	value := strings.ToLower(strings.TrimSpace(string(platform)))
+	switch value {
+	case "github", "git hub":
+		return core.PlatformGitHub
+	case "gitlab", "git lab":
+		return core.PlatformGitLab
+	default:
+		return ""
+	}
 }
 
 func int32Ptr(v int) *int32 {

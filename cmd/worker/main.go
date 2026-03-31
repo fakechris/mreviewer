@@ -17,6 +17,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/llm"
 	"github.com/mreviewer/mreviewer/internal/logging"
+	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	"github.com/mreviewer/mreviewer/internal/reviewrun"
 	"github.com/mreviewer/mreviewer/internal/rules"
 )
@@ -51,10 +52,13 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	gitlabClient, err := gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken)
-	if err != nil {
-		logger.Error("failed to configure gitlab client", "error", err)
-		return 1
+	var gitlabClient *gitlab.Client
+	if strings.TrimSpace(cfg.GitLabToken) != "" {
+		gitlabClient, err = gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken)
+		if err != nil {
+			logger.Error("failed to configure gitlab client", "error", err)
+			return 1
+		}
 	}
 
 	defaultRoute, configuredFallbackRoute, providerConfigs, err := providerConfigsFromConfig(cfg)
@@ -63,7 +67,18 @@ func run() int {
 		return 1
 	}
 
-	rulesLoader := rules.NewLoader(gitlabClient, rules.PlatformDefaults{
+	repositoryRulesClient := newWorkerRepositoryRulesClient(gitlabClient)
+	var githubClient *platformgithub.Client
+	if strings.TrimSpace(cfg.GitHubToken) != "" {
+		githubClient, err = platformgithub.NewClient(cfg.GitHubBaseURL, cfg.GitHubToken)
+		if err != nil {
+			logger.Error("failed to configure github client", "error", err)
+			return 1
+		}
+		repositoryRulesClient.github = githubClient
+	}
+
+	rulesLoader := rules.NewLoader(repositoryRulesClient, rules.PlatformDefaults{
 		Instructions:        "Platform defaults: prioritize correctness, security, and least-privilege behavior.",
 		ConfidenceThreshold: 0.72,
 		SeverityThreshold:   "medium",
@@ -72,12 +87,15 @@ func run() int {
 		GateMode:            "threads_resolved",
 		ProviderRoute:       defaultRoute,
 	})
-	gitLabLimiter := gitlab.NewInMemoryRateLimiter(gitlab.RateLimitConfig{Requests: 5, Window: time.Second}, time.Now, nil)
-	gitLabLimiter.SetLimit("global", gitlab.RateLimitConfig{Requests: 5, Window: time.Second})
-	gitlabClient, err = gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken, gitlab.WithRateLimiter(gitLabLimiter))
-	if err != nil {
-		logger.Error("failed to configure gitlab client with rate limiting", "error", err)
-		return 1
+	if gitlabClient != nil {
+		gitLabLimiter := gitlab.NewInMemoryRateLimiter(gitlab.RateLimitConfig{Requests: 5, Window: time.Second}, time.Now, nil)
+		gitLabLimiter.SetLimit("global", gitlab.RateLimitConfig{Requests: 5, Window: time.Second})
+		gitlabClient, err = gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken, gitlab.WithRateLimiter(gitLabLimiter))
+		if err != nil {
+			logger.Error("failed to configure gitlab client with rate limiting", "error", err)
+			return 1
+		}
+		repositoryRulesClient.gitlab = gitlabClient
 	}
 	llmLimiter := llm.NewInMemoryRateLimiter(llm.RateLimitConfig{Requests: 2, Window: time.Second}, time.Now, nil)
 	for route, providerCfg := range providerConfigs {
@@ -96,14 +114,14 @@ func run() int {
 		logger.Info("redis coordination configured", "redis_addr", cfg.RedisAddr)
 	}
 	newStore := database.StoreFactory(dialect)
-	processor, err := newReviewRunProcessor(cfg, sqlDB, gitlabClient, rulesLoader, providerRegistry)
+	processor, err := newReviewRunProcessor(cfg, sqlDB, gitlabClient, githubClient, rulesLoader, providerRegistry)
 	if err != nil {
 		logger.Error("failed to configure review run processor", "error", err)
 		return 1
 	}
 	runService := reviewrun.NewService(nil, processor)
-	statusPublisher := gate.NewGitLabStatusPublisher(gitlabClient, newStore(sqlDB))
-	runtimeDeps := newRuntimeDepsWithStoreFactory(logger, sqlDB, runService, gitlabClient, statusPublisher, gate.NoopCIGatePublisher{}, newStore)
+	statusPublisher := newWorkerStatusPublisher(gitlabClient, githubClient, newStore(sqlDB))
+	runtimeDeps := newRuntimeDepsWithPlatformWritebacksAndGatePublishers(logger, sqlDB, runService, gitlabClient, githubClient, statusPublisher, gate.NoopCIGatePublisher{}, newStore)
 	worker := runtimeDeps.Scheduler
 	if runtimeDeps.Heartbeat != nil {
 		go func() {
@@ -130,10 +148,85 @@ func validateWorkerConfig(cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("worker: configuration is required")
 	}
-	if strings.TrimSpace(cfg.GitLabToken) == "" {
-		return fmt.Errorf("worker: GITLAB_TOKEN is required")
+	if strings.TrimSpace(cfg.GitLabToken) == "" && strings.TrimSpace(cfg.GitHubToken) == "" {
+		return fmt.Errorf("worker: at least one of GITLAB_TOKEN or GITHUB_TOKEN is required")
 	}
 	return nil
+}
+
+type workerRepositoryRulesClient struct {
+	gitlab *gitlab.Client
+	github *platformgithub.Client
+}
+
+func newWorkerRepositoryRulesClient(gitlabClient *gitlab.Client) *workerRepositoryRulesClient {
+	return &workerRepositoryRulesClient{gitlab: gitlabClient}
+}
+
+func (c *workerRepositoryRulesClient) GetRepositoryFile(ctx context.Context, projectID int64, filePath, ref string) (string, error) {
+	if c == nil || c.gitlab == nil {
+		return "", rules.ErrNoRepositoryReader
+	}
+	return c.gitlab.GetRepositoryFile(ctx, projectID, filePath, ref)
+}
+
+func (c *workerRepositoryRulesClient) GetRepositoryFileByRepositoryRef(ctx context.Context, repositoryRef, filePath, ref string) (string, error) {
+	if c == nil || c.github == nil {
+		return "", rules.ErrNoRepositoryReader
+	}
+	return c.github.GetRepositoryFileByRepositoryRef(ctx, repositoryRef, filePath, ref)
+}
+
+type workerStatusPublisher struct {
+	publishers []gate.StatusPublisher
+}
+
+func newWorkerStatusPublisher(gitlabClient *gitlab.Client, githubClient *platformgithub.Client, store gate.StatusStore) gate.StatusPublisher {
+	publisher := &workerStatusPublisher{}
+	if gitlabClient != nil {
+		publisher.publishers = append(publisher.publishers, gate.NewGitLabStatusPublisher(gitlabClient, store))
+	}
+	if githubClient != nil {
+		publisher.publishers = append(publisher.publishers, gate.NewGitHubStatusPublisher(githubStatusClient{client: githubClient}, store))
+	}
+	if len(publisher.publishers) == 0 {
+		return gate.NoopStatusPublisher{}
+	}
+	return publisher
+}
+
+func (p *workerStatusPublisher) PublishStatus(ctx context.Context, result gate.Result) error {
+	if p == nil {
+		return nil
+	}
+	var errs []error
+	for _, publisher := range p.publishers {
+		if publisher == nil {
+			continue
+		}
+		if err := publisher.PublishStatus(ctx, result); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+type githubStatusClient struct {
+	client *platformgithub.Client
+}
+
+func (c githubStatusClient) SetCommitStatus(ctx context.Context, req gate.GitHubCommitStatusRequest) error {
+	if c.client == nil {
+		return nil
+	}
+	return c.client.SetCommitStatus(ctx, platformgithub.CommitStatusRequest{
+		Repository:  req.Repository,
+		SHA:         req.SHA,
+		State:       req.State,
+		Context:     req.Context,
+		Description: req.Description,
+		TargetURL:   req.TargetURL,
+	})
 }
 
 func providerConfigsFromConfig(cfg *config.Config) (string, string, map[string]llm.ProviderConfig, error) {

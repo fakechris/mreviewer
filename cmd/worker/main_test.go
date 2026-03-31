@@ -7,7 +7,12 @@ import (
 	"testing"
 
 	"github.com/mreviewer/mreviewer/internal/config"
+	"github.com/mreviewer/mreviewer/internal/gate"
 )
+
+type errStatusPublisher struct{ err error }
+
+func (p errStatusPublisher) PublishStatus(context.Context, gate.Result) error { return p.err }
 
 func TestValidateWorkerConfigRequiresGitLabToken(t *testing.T) {
 	err := validateWorkerConfig(&config.Config{GitLabBaseURL: "https://gitlab.example.com"})
@@ -251,10 +256,30 @@ func TestShouldLogHeartbeatStop(t *testing.T) {
 func TestNewReviewRunProcessorRequiresDependencies(t *testing.T) {
 	cfg := &config.Config{}
 
-	if _, err := newReviewRunProcessor(nil, nil, nil, nil, nil); err == nil {
+	if _, err := newReviewRunProcessor(nil, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("newReviewRunProcessor(nil, ...) error = nil, want non-nil")
 	}
-	if _, err := newReviewRunProcessor(cfg, nil, nil, nil, nil); err == nil {
+	if _, err := newReviewRunProcessor(cfg, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("newReviewRunProcessor missing db error = nil, want non-nil")
+	}
+}
+
+func TestWorkerStatusPublisherJoinsPublisherErrors(t *testing.T) {
+	publisher := &workerStatusPublisher{
+		publishers: []gate.StatusPublisher{
+			errStatusPublisher{err: errors.New("gitlab failed")},
+			errStatusPublisher{err: errors.New("github failed")},
+		},
+	}
+
+	err := publisher.PublishStatus(context.Background(), gate.Result{})
+	if err == nil {
+		t.Fatal("PublishStatus error = nil, want combined error")
+	}
+	if !strings.Contains(err.Error(), "gitlab failed") {
+		t.Fatalf("combined error = %q, want gitlab failure", err.Error())
+	}
+	if !strings.Contains(err.Error(), "github failed") {
+		t.Fatalf("combined error = %q, want github failure", err.Error())
 	}
 }
