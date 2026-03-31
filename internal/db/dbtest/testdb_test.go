@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/testcontainers/testcontainers-go"
 	mysqlcontainer "github.com/testcontainers/testcontainers-go/modules/mysql"
 )
@@ -130,6 +132,107 @@ func TestNewUsesExternalAdminDSNWhenConfigured(t *testing.T) {
 	}
 	if actualUUID != externalUUID {
 		t.Fatalf("expected dbtest to use external admin DSN, got %q want %q", actualUUID, externalUUID)
+	}
+}
+
+func TestEnsureSuiteSharedAdminDSNUsesPersistedStateWhenReachable(t *testing.T) {
+	resetSharedStateForTest(t)
+	t.Setenv(sharedStateDirEnvVar, t.TempDir())
+
+	statePath := filepath.Join(os.Getenv(sharedStateDirEnvVar), suiteSharedStateFileName)
+	wantDSN := "root:test@tcp(127.0.0.1:3307)/mysql?parseTime=true"
+	if err := writeSuiteSharedState(statePath, suiteSharedStateFile{
+		ContainerName: suiteSharedContainerName,
+		AdminDSN:      wantDSN,
+	}); err != nil {
+		t.Fatalf("write suite state: %v", err)
+	}
+
+	originalOpen := openAdminDBWithRetryFunc
+	originalDocker := dockerCommandOutputFunc
+	t.Cleanup(func() {
+		openAdminDBWithRetryFunc = originalOpen
+		dockerCommandOutputFunc = originalDocker
+	})
+
+	openAdminDBWithRetryFunc = func(ctx context.Context, dsn string) (*sql.DB, error) {
+		if dsn != wantDSN {
+			t.Fatalf("openAdminDBWithRetry called with %q, want %q", dsn, wantDSN)
+		}
+		return sql.Open("mysql", wantDSN)
+	}
+	dockerCommandOutputFunc = func(ctx context.Context, args ...string) (string, error) {
+		t.Fatalf("docker should not be called when persisted suite state is reachable: %v", args)
+		return "", nil
+	}
+
+	gotDSN, err := ensureSuiteSharedAdminDSN(context.Background())
+	if err != nil {
+		t.Fatalf("ensureSuiteSharedAdminDSN returned error: %v", err)
+	}
+	if gotDSN != wantDSN {
+		t.Fatalf("ensureSuiteSharedAdminDSN=%q, want %q", gotDSN, wantDSN)
+	}
+}
+
+func TestEnsureSuiteSharedAdminDSNStartsAndPersistsSharedContainer(t *testing.T) {
+	resetSharedStateForTest(t)
+	t.Setenv(sharedStateDirEnvVar, t.TempDir())
+
+	var dockerCalls [][]string
+	wantDSN := "root:test@tcp(127.0.0.1:44001)/mysql?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci&multiStatements=true"
+	portLookups := 0
+
+	originalOpen := openAdminDBWithRetryFunc
+	originalDocker := dockerCommandOutputFunc
+	t.Cleanup(func() {
+		openAdminDBWithRetryFunc = originalOpen
+		dockerCommandOutputFunc = originalDocker
+	})
+
+	openAdminDBWithRetryFunc = func(ctx context.Context, dsn string) (*sql.DB, error) {
+		if dsn != wantDSN {
+			t.Fatalf("openAdminDBWithRetry called with %q, want %q", dsn, wantDSN)
+		}
+		return sql.Open("mysql", wantDSN)
+	}
+	dockerCommandOutputFunc = func(ctx context.Context, args ...string) (string, error) {
+		dockerCalls = append(dockerCalls, append([]string(nil), args...))
+		if len(args) >= 3 && args[0] == "port" && args[1] == suiteSharedContainerName && args[2] == "3306/tcp" {
+			portLookups++
+			if portLookups == 1 {
+				return "", os.ErrNotExist
+			}
+			return "127.0.0.1:44001\n", nil
+		}
+		if len(args) >= 4 && args[0] == "run" && args[1] == "-d" {
+			return "new-container-id\n", nil
+		}
+		t.Fatalf("unexpected docker call: %v", args)
+		return "", nil
+	}
+
+	gotDSN, err := ensureSuiteSharedAdminDSN(context.Background())
+	if err != nil {
+		t.Fatalf("ensureSuiteSharedAdminDSN returned error: %v", err)
+	}
+	if gotDSN != wantDSN {
+		t.Fatalf("ensureSuiteSharedAdminDSN=%q, want %q", gotDSN, wantDSN)
+	}
+	if len(dockerCalls) != 3 {
+		t.Fatalf("expected docker port probe + run + docker port, got %d calls: %v", len(dockerCalls), dockerCalls)
+	}
+
+	statePath := filepath.Join(os.Getenv(sharedStateDirEnvVar), suiteSharedStateFileName)
+	state, err := readSuiteSharedState(statePath)
+	if err != nil {
+		t.Fatalf("readSuiteSharedState: %v", err)
+	}
+	if state.ContainerName != suiteSharedContainerName {
+		t.Fatalf("persisted container name=%q, want %q", state.ContainerName, suiteSharedContainerName)
+	}
+	if state.AdminDSN != wantDSN {
+		t.Fatalf("persisted admin DSN=%q, want %q", state.AdminDSN, wantDSN)
 	}
 }
 

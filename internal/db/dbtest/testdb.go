@@ -1,15 +1,20 @@
-// Package dbtest provides test helpers for spinning up a throwaway MySQL 8.4
-// container via testcontainers-go and applying Goose migrations against it.
+// Package dbtest provides test helpers for reusing a shared local MySQL admin
+// DSN when possible and otherwise falling back to a throwaway MySQL 8.4
+// container plus Goose migrations.
 package dbtest
 
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -31,16 +36,32 @@ var (
 	sharedState     *sharedMySQLState
 	sharedRefCount  int
 	sharedDBCounter uint64
+
+	openAdminDBWithRetryFunc = openAdminDBWithRetry
+	dockerCommandOutputFunc  = dockerCommandOutput
 )
 
-const adminDSNEnvVar = "MREVIEWER_TEST_ADMIN_DSN"
+const (
+	adminDSNEnvVar            = "MREVIEWER_TEST_ADMIN_DSN"
+	sharedStateDirEnvVar      = "MREVIEWER_TEST_SHARED_STATE_DIR"
+	suiteSharedContainerName  = "mreviewer-test-mysql-shared"
+	suiteSharedStateFileName  = "mysql-suite.json"
+	suiteSharedLockFileName   = "mysql-suite.lock"
+	suiteSharedDefaultImage   = "mysql:8.4"
+	suiteSharedDefaultDSNOpts = "parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci&multiStatements=true"
+)
 
-// New reuses a shared MySQL 8.4 container for the lifetime of the current
-// package test process, creates an isolated database for the current test, and
-// registers cleanup to drop that database when the test finishes. The shared
-// container itself is intentionally left running until the package test process
-// exits so later tests can reuse it; Ryuk cleans it up when the process ends.
-// Migrations are NOT automatically applied; call MigrateUp to apply them.
+type suiteSharedStateFile struct {
+	ContainerName string `json:"container_name"`
+	AdminDSN      string `json:"admin_dsn"`
+}
+
+// New prefers a shared admin MySQL reachable on 127.0.0.1 via
+// MREVIEWER_TEST_ADMIN_DSN or the suite-shared local state file. If neither is
+// available, it falls back to a package-local testcontainers MySQL container.
+// For each test handle it creates an isolated database and registers cleanup to
+// drop that database when the test finishes. Migrations are NOT automatically
+// applied; call MigrateUp to apply them.
 func New(t *testing.T) *sql.DB {
 	t.Helper()
 	if testing.Short() {
@@ -148,6 +169,19 @@ func newSharedState(ctx context.Context, source string, adminDSN string) (*share
 		}, nil
 	}
 
+	suiteSharedDSN, suiteSharedErr := ensureSuiteSharedAdminDSN(ctx)
+	if suiteSharedErr == nil && strings.TrimSpace(suiteSharedDSN) != "" {
+		adminDB, err := openAdminDBWithRetryFunc(ctx, suiteSharedDSN)
+		if err != nil {
+			return nil, fmt.Errorf("ping suite shared admin db: %w", err)
+		}
+		return &sharedMySQLState{
+			adminDB:  adminDB,
+			adminDSN: suiteSharedDSN,
+			source:   source,
+		}, nil
+	}
+
 	ctr, err := mysqlcontainer.Run(ctx,
 		"mysql:8.4",
 		mysqlcontainer.WithDatabase("mysql"),
@@ -155,6 +189,9 @@ func newSharedState(ctx context.Context, source string, adminDSN string) (*share
 		mysqlcontainer.WithPassword("test"),
 	)
 	if err != nil {
+		if suiteSharedErr != nil {
+			return nil, fmt.Errorf("start mysql container: %w (suite-shared fallback: %v)", err, suiteSharedErr)
+		}
 		return nil, fmt.Errorf("start mysql container: %w", err)
 	}
 
@@ -180,6 +217,171 @@ func newSharedState(ctx context.Context, source string, adminDSN string) (*share
 		adminDSN:  connStr,
 		source:    source,
 	}, nil
+}
+
+func ensureSuiteSharedAdminDSN(ctx context.Context) (string, error) {
+	statePath := filepath.Join(sharedStateDir(), suiteSharedStateFileName)
+
+	if state, err := readSuiteSharedState(statePath); err == nil && strings.TrimSpace(state.AdminDSN) != "" {
+		if err := pingAdminDSN(ctx, state.AdminDSN); err == nil {
+			return state.AdminDSN, nil
+		}
+	}
+
+	var resolved string
+	err := withSuiteSharedLock(func() error {
+		if state, err := readSuiteSharedState(statePath); err == nil && strings.TrimSpace(state.AdminDSN) != "" {
+			if err := pingAdminDSN(ctx, state.AdminDSN); err == nil {
+				resolved = state.AdminDSN
+				return nil
+			}
+		}
+
+		dsn, err := startOrDiscoverSuiteSharedAdminDSN(ctx)
+		if err != nil {
+			return err
+		}
+		if err := writeSuiteSharedState(statePath, suiteSharedStateFile{
+			ContainerName: suiteSharedContainerName,
+			AdminDSN:      dsn,
+		}); err != nil {
+			return err
+		}
+		resolved = dsn
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func startOrDiscoverSuiteSharedAdminDSN(ctx context.Context) (string, error) {
+	if dsn, err := adminDSNFromNamedContainer(ctx, suiteSharedContainerName); err == nil {
+		if err := pingAdminDSN(ctx, dsn); err == nil {
+			return dsn, nil
+		}
+	}
+
+	if _, err := dockerCommandOutputFunc(ctx,
+		"run",
+		"-d",
+		"--rm",
+		"--name", suiteSharedContainerName,
+		"-e", "MYSQL_ROOT_PASSWORD=test",
+		"-e", "MYSQL_ROOT_HOST=%",
+		"-e", "MYSQL_DATABASE=mysql",
+		"-p", "127.0.0.1::3306",
+		suiteSharedDefaultImage,
+	); err != nil {
+		if dsn, portErr := adminDSNFromNamedContainer(ctx, suiteSharedContainerName); portErr == nil {
+			if pingErr := pingAdminDSN(ctx, dsn); pingErr == nil {
+				return dsn, nil
+			}
+		}
+		return "", fmt.Errorf("start suite shared mysql: %w", err)
+	}
+
+	dsn, err := adminDSNFromNamedContainer(ctx, suiteSharedContainerName)
+	if err != nil {
+		return "", err
+	}
+	if err := pingAdminDSN(ctx, dsn); err != nil {
+		return "", fmt.Errorf("ping suite shared mysql: %w", err)
+	}
+	return dsn, nil
+}
+
+func adminDSNFromNamedContainer(ctx context.Context, containerName string) (string, error) {
+	output, err := dockerCommandOutputFunc(ctx, "port", containerName, "3306/tcp")
+	if err != nil {
+		return "", err
+	}
+	portLine := strings.TrimSpace(output)
+	if portLine == "" {
+		return "", fmt.Errorf("resolve mapped port for %s: empty output", containerName)
+	}
+	port := portLine
+	if idx := strings.LastIndex(portLine, ":"); idx >= 0 {
+		port = portLine[idx+1:]
+	}
+	if port == "" {
+		return "", fmt.Errorf("resolve mapped port for %s: malformed output %q", containerName, portLine)
+	}
+	return fmt.Sprintf("root:test@tcp(127.0.0.1:%s)/mysql?%s", port, suiteSharedDefaultDSNOpts), nil
+}
+
+func pingAdminDSN(ctx context.Context, dsn string) error {
+	adminDB, err := openAdminDBWithRetryFunc(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	return adminDB.Close()
+}
+
+func withSuiteSharedLock(fn func() error) error {
+	lockPath := filepath.Join(sharedStateDir(), suiteSharedLockFileName)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return fmt.Errorf("create suite shared state dir: %w", err)
+	}
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("open suite shared lock: %w", err)
+	}
+	defer lockFile.Close()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("lock suite shared mysql state: %w", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+
+	return fn()
+}
+
+func readSuiteSharedState(path string) (suiteSharedStateFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return suiteSharedStateFile{}, err
+	}
+	var state suiteSharedStateFile
+	if err := json.Unmarshal(data, &state); err != nil {
+		return suiteSharedStateFile{}, fmt.Errorf("decode suite shared state: %w", err)
+	}
+	return state, nil
+}
+
+func writeSuiteSharedState(path string, state suiteSharedStateFile) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create suite shared state dir: %w", err)
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("encode suite shared state: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write suite shared state: %w", err)
+	}
+	return nil
+}
+
+func sharedStateDir() string {
+	if dir := strings.TrimSpace(os.Getenv(sharedStateDirEnvVar)); dir != "" {
+		return dir
+	}
+	return filepath.Join(os.TempDir(), "mreviewer-dbtest")
+}
+
+func dockerCommandOutput(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	output, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(output))
+	if err != nil {
+		if trimmed == "" {
+			return "", err
+		}
+		return "", fmt.Errorf("%w: %s", err, trimmed)
+	}
+	return trimmed, nil
 }
 
 func closeSharedState(t *testing.T, state *sharedMySQLState) {
