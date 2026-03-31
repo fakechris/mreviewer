@@ -231,6 +231,67 @@ func (q *Queries) ListActiveFindingsByMR(ctx context.Context, mergeRequestID int
 	return items, nil
 }
 
+const listFindingsByMergeRequest = `-- name: ListFindingsByMergeRequest :many
+SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line FROM review_findings
+WHERE merge_request_id = ?
+ORDER BY created_at ASC
+`
+
+func (q *Queries) ListFindingsByMergeRequest(ctx context.Context, mergeRequestID int64) ([]ReviewFinding, error) {
+	rows, err := q.db.QueryContext(ctx, listFindingsByMergeRequest, mergeRequestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReviewFinding{}
+	for rows.Next() {
+		var i ReviewFinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.ReviewRunID,
+			&i.MergeRequestID,
+			&i.Category,
+			&i.Severity,
+			&i.Confidence,
+			&i.Title,
+			&i.BodyMarkdown,
+			&i.Path,
+			&i.AnchorKind,
+			&i.OldLine,
+			&i.NewLine,
+			&i.AnchorSnippet,
+			&i.Evidence,
+			&i.SuggestedPatch,
+			&i.CanonicalKey,
+			&i.AnchorFingerprint,
+			&i.SemanticFingerprint,
+			&i.State,
+			&i.MatchedFindingID,
+			&i.LastSeenRunID,
+			&i.GitlabDiscussionID,
+			&i.ErrorCode,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RangeStartKind,
+			&i.RangeStartOldLine,
+			&i.RangeStartNewLine,
+			&i.RangeEndKind,
+			&i.RangeEndOldLine,
+			&i.RangeEndNewLine,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFindingsByRun = `-- name: ListFindingsByRun :many
 SELECT id, review_run_id, merge_request_id, category, severity, confidence, title, body_markdown, path, anchor_kind, old_line, new_line, anchor_snippet, evidence, suggested_patch, canonical_key, anchor_fingerprint, semantic_fingerprint, state, matched_finding_id, last_seen_run_id, gitlab_discussion_id, error_code, created_at, updated_at, range_start_kind, range_start_old_line, range_start_new_line, range_end_kind, range_end_old_line, range_end_new_line FROM review_findings
 WHERE review_run_id = ?

@@ -10,12 +10,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
+	"github.com/mreviewer/mreviewer/internal/hooks"
+	"github.com/mreviewer/mreviewer/internal/scheduler"
 )
 
 const migrationsDir = "../../migrations"
@@ -403,5 +406,310 @@ func TestWaitForTerminalRunHonorsContextDeadline(t *testing.T) {
 	_, err = svc.WaitForTerminalRun(waitCtx, runID)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("WaitForTerminalRun error = %v, want context deadline exceeded", err)
+	}
+}
+
+type fakeRunProcessor struct {
+	processFunc func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error)
+	calls       int
+	lastRunID   int64
+}
+
+func (f *fakeRunProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
+	f.calls++
+	f.lastRunID = run.ID
+	if f.processFunc != nil {
+		return f.processFunc(ctx, run)
+	}
+	return scheduler.ProcessOutcome{}, nil
+}
+
+type fakeEventProcessor struct {
+	processFunc func(context.Context, db.Querier, hooks.NormalizedEvent, int64) error
+	calls       int
+	lastEvent   hooks.NormalizedEvent
+}
+
+func (f *fakeEventProcessor) ProcessEventWithQuerier(ctx context.Context, q db.Querier, ev hooks.NormalizedEvent, hookEventID int64) error {
+	f.calls++
+	f.lastEvent = ev
+	if f.processFunc != nil {
+		return f.processFunc(ctx, q, ev, hookEventID)
+	}
+	return nil
+}
+
+func TestWaitForTerminalRunProcessesPendingRunViaProcessor(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+	_, projectID, mrID := seedRunEntities(t, sqlDB, 201, 9, "head-sha-processor")
+
+	runResult, err := queries.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID:      projectID,
+		MergeRequestID: mrID,
+		TriggerType:    "manual",
+		HeadSha:        "head-sha-processor",
+		Status:         "pending",
+		MaxRetries:     3,
+		IdempotencyKey: "wait-run-processor",
+	})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	runID, _ := runResult.LastInsertId()
+
+	processor := &fakeRunProcessor{
+		processFunc: func(_ context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error) {
+			if err := queries.UpdateReviewRunStatus(context.Background(), db.UpdateReviewRunStatusParams{
+				ID:        run.ID,
+				Status:    "requested_changes",
+				ErrorCode: "",
+			}); err != nil {
+				t.Fatalf("UpdateReviewRunStatus: %v", err)
+			}
+			return scheduler.ProcessOutcome{Status: "requested_changes"}, nil
+		},
+	}
+
+	svc := NewService(
+		testLogger(),
+		sqlDB,
+		nil,
+		"https://gitlab.example.com",
+		WithPollInterval(5*time.Millisecond),
+		WithRunProcessor(processor),
+	)
+
+	run, err := svc.WaitForTerminalRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("WaitForTerminalRun: %v", err)
+	}
+
+	if processor.calls != 1 {
+		t.Fatalf("processor calls = %d, want 1", processor.calls)
+	}
+	if processor.lastRunID != runID {
+		t.Fatalf("processor lastRunID = %d, want %d", processor.lastRunID, runID)
+	}
+	if run.Status != "requested_changes" {
+		t.Fatalf("run status = %q, want requested_changes", run.Status)
+	}
+}
+
+func TestTriggerUsesConfiguredEventProcessor(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{
+			"id": 9004,
+			"iid": 7,
+			"project_id": 123,
+			"title": "Manual trigger event processor",
+			"description": "test mr",
+			"state": "opened",
+			"draft": false,
+			"source_branch": "feature/manual",
+			"target_branch": "main",
+			"sha": "head-sha-event-processor",
+			"web_url": %q,
+			"author": {"username": "alice"}
+		}`, server.URL+"/group/subgroup/repo/-/merge_requests/7")
+	}))
+	defer server.Close()
+
+	client, err := gitlab.NewClient(server.URL, "test-token", gitlab.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	eventProcessor := &fakeEventProcessor{
+		processFunc: func(ctx context.Context, q db.Querier, ev hooks.NormalizedEvent, _ int64) error {
+			instResult, err := q.UpsertGitlabInstance(ctx, db.UpsertGitlabInstanceParams{
+				Url:  ev.GitLabInstanceURL,
+				Name: "GitLab",
+			})
+			if err != nil {
+				return err
+			}
+			instanceID, _ := instResult.LastInsertId()
+			if instanceID == 0 {
+				instance, err := q.GetGitlabInstanceByURL(ctx, ev.GitLabInstanceURL)
+				if err != nil {
+					return err
+				}
+				instanceID = instance.ID
+			}
+			projectResult, err := q.UpsertProject(ctx, db.UpsertProjectParams{
+				GitlabInstanceID:  instanceID,
+				GitlabProjectID:   ev.ProjectID,
+				PathWithNamespace: ev.ProjectPath,
+				Enabled:           true,
+			})
+			if err != nil {
+				return err
+			}
+			projectID, _ := projectResult.LastInsertId()
+			if projectID == 0 {
+				project, err := q.GetProjectByGitlabID(ctx, db.GetProjectByGitlabIDParams{
+					GitlabInstanceID: instanceID,
+					GitlabProjectID:  ev.ProjectID,
+				})
+				if err != nil {
+					return err
+				}
+				projectID = project.ID
+			}
+			mrResult, err := q.UpsertMergeRequest(ctx, db.UpsertMergeRequestParams{
+				ProjectID:    projectID,
+				MrIid:        ev.MRIID,
+				Title:        ev.Title,
+				SourceBranch: ev.SourceBranch,
+				TargetBranch: ev.TargetBranch,
+				Author:       ev.Author,
+				State:        ev.State,
+				IsDraft:      ev.IsDraft,
+				HeadSha:      ev.HeadSHA,
+				WebUrl:       ev.WebURL,
+			})
+			if err != nil {
+				return err
+			}
+			mrID, _ := mrResult.LastInsertId()
+			if mrID == 0 {
+				mr, err := q.GetMergeRequestByProjectMR(ctx, db.GetMergeRequestByProjectMRParams{
+					ProjectID: projectID,
+					MrIid:     ev.MRIID,
+				})
+				if err != nil {
+					return err
+				}
+				mrID = mr.ID
+			}
+			_, err = q.InsertReviewRun(ctx, db.InsertReviewRunParams{
+				ProjectID:      projectID,
+				MergeRequestID: mrID,
+				TriggerType:    ev.TriggerType,
+				HeadSha:        ev.HeadSHA,
+				Status:         "pending",
+				MaxRetries:     3,
+				IdempotencyKey: ev.IdempotencyKey,
+				ScopeJson:      db.NullRawMessage(ev.ScopeJSON),
+			})
+			return err
+		},
+	}
+
+	svc := NewService(testLogger(), sqlDB, client, server.URL, WithEventProcessor(eventProcessor))
+	result, err := svc.Trigger(ctx, TriggerInput{ProjectID: 123, MRIID: 7})
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+
+	if eventProcessor.calls != 1 {
+		t.Fatalf("event processor calls = %d, want 1", eventProcessor.calls)
+	}
+	if eventProcessor.lastEvent.TriggerType != "manual" {
+		t.Fatalf("event trigger_type = %q, want manual", eventProcessor.lastEvent.TriggerType)
+	}
+	run, err := queries.GetReviewRun(ctx, result.RunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "pending" {
+		t.Fatalf("run status = %q, want pending", run.Status)
+	}
+}
+
+func TestTriggerPropagatesConfiguredEventProcessorError(t *testing.T) {
+	sqlDB := setupTestDB(t)
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{
+			"id": 9005,
+			"iid": 7,
+			"project_id": 123,
+			"title": "Manual trigger event processor failure",
+			"description": "test mr",
+			"state": "opened",
+			"draft": false,
+			"source_branch": "feature/manual",
+			"target_branch": "main",
+			"sha": "head-sha-event-failure",
+			"web_url": %q,
+			"author": {"username": "alice"}
+		}`, server.URL+"/group/subgroup/repo/-/merge_requests/7")
+	}))
+	defer server.Close()
+
+	client, err := gitlab.NewClient(server.URL, "test-token", gitlab.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	svc := NewService(testLogger(), sqlDB, client, server.URL, WithEventProcessor(&fakeEventProcessor{
+		processFunc: func(context.Context, db.Querier, hooks.NormalizedEvent, int64) error {
+			return errors.New("event processor boom")
+		},
+	}))
+
+	_, err = svc.Trigger(context.Background(), TriggerInput{ProjectID: 123, MRIID: 7})
+	if err == nil {
+		t.Fatal("Trigger error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "event processor boom") {
+		t.Fatalf("Trigger error = %q, want event processor boom", err.Error())
+	}
+}
+
+func TestWaitForTerminalRunMarksRunFailedWhenProcessorErrors(t *testing.T) {
+	sqlDB := setupTestDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+	_, projectID, mrID := seedRunEntities(t, sqlDB, 202, 10, "head-sha-processor-error")
+
+	runResult, err := queries.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID:      projectID,
+		MergeRequestID: mrID,
+		TriggerType:    "manual",
+		HeadSha:        "head-sha-processor-error",
+		Status:         "pending",
+		MaxRetries:     3,
+		IdempotencyKey: "wait-run-processor-error",
+	})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	runID, _ := runResult.LastInsertId()
+
+	svc := NewService(
+		testLogger(),
+		sqlDB,
+		nil,
+		"https://gitlab.example.com",
+		WithPollInterval(5*time.Millisecond),
+		WithRunProcessor(&fakeRunProcessor{
+			processFunc: func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+				return scheduler.ProcessOutcome{}, errors.New("boom")
+			},
+		}),
+	)
+
+	run, err := svc.WaitForTerminalRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("WaitForTerminalRun: %v", err)
+	}
+
+	if run.Status != "failed" {
+		t.Fatalf("run status = %q, want failed", run.Status)
+	}
+	if run.ErrorCode != "manual_trigger_process_failed" {
+		t.Fatalf("run error_code = %q, want manual_trigger_process_failed", run.ErrorCode)
 	}
 }

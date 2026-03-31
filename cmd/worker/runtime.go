@@ -10,6 +10,8 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/metrics"
 	"github.com/mreviewer/mreviewer/internal/ops"
+	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
+	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 	"github.com/mreviewer/mreviewer/internal/writer"
@@ -26,6 +28,14 @@ type runtimeDeps struct {
 
 var defaultRuntimeNewStore = func(conn db.DBTX) db.Store { return db.New(conn) }
 var workerVersion = "dev"
+
+type runtimeWriteback interface {
+	Write(ctx context.Context, run db.ReviewRun, findings []db.ReviewFinding) error
+}
+
+type runtimeBundleWriteback interface {
+	WriteBundle(ctx context.Context, run db.ReviewRun, bundle core.ReviewBundle) error
+}
 
 func newRuntimeDeps(logger *slog.Logger, sqlDB *sql.DB, processor scheduler.Processor) runtimeDeps {
 	return newRuntimeDepsWithGatePublishers(logger, sqlDB, processor, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
@@ -55,9 +65,13 @@ func newRuntimeDepsWithStoreFactory(logger *slog.Logger, sqlDB *sql.DB, processo
 	}
 	var runtimeWriter *writer.Writer
 	if discussionClient != nil && sqlDB != nil {
-		runtimeWriter = writer.New(discussionClient, writer.NewSQLStoreWithStore(newStore(sqlDB))).WithMetrics(registry).WithTracer(tracer)
+		_ = runtimeWriter
 	}
-	processor = wrapProcessorWithWriteback(sqlDB, processor, runtimeWriter, newStore)
+	var writeback runtimeWriteback
+	if discussionClient != nil && sqlDB != nil {
+		writeback = platformgitlab.NewRuntimeWriteback(discussionClient, writer.NewSQLStoreWithStore(newStore(sqlDB))).WithMetrics(registry).WithTracer(tracer)
+	}
+	processor = wrapProcessorWithWriteback(sqlDB, processor, writeback, newStore)
 	var auditLogger gate.AuditLogger
 	if sqlDB != nil {
 		auditLogger = gate.NewDBAuditLogger(newStore(sqlDB))
@@ -94,7 +108,7 @@ func newRuntimeDepsWithStoreFactory(logger *slog.Logger, sqlDB *sql.DB, processo
 	}
 }
 
-func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, runtimeWriter *writer.Writer, newStore func(db.DBTX) db.Store) scheduler.Processor {
+func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, runtimeWriter runtimeWriteback, newStore func(db.DBTX) db.Store) scheduler.Processor {
 	if processor == nil || sqlDB == nil || runtimeWriter == nil {
 		return processor
 	}
@@ -116,6 +130,14 @@ func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, ru
 		}
 		if runForWriteback.Status == "" {
 			runForWriteback.Status = "completed"
+		}
+		if bundleWriter, ok := runtimeWriter.(runtimeBundleWriteback); ok {
+			if bundle, ok := outcome.ReviewBundle.(core.ReviewBundle); ok {
+				if err := bundleWriter.WriteBundle(ctx, runForWriteback, bundle); err != nil {
+					return scheduler.ProcessOutcome{}, err
+				}
+				return outcome, nil
+			}
 		}
 		if err := runtimeWriter.Write(ctx, runForWriteback, outcome.ReviewFindings); err != nil {
 			return scheduler.ProcessOutcome{}, err

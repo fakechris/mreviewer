@@ -17,6 +17,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/llm"
 	"github.com/mreviewer/mreviewer/internal/logging"
+	"github.com/mreviewer/mreviewer/internal/reviewrun"
 	"github.com/mreviewer/mreviewer/internal/rules"
 )
 
@@ -94,13 +95,15 @@ func run() int {
 	} else {
 		logger.Info("redis coordination configured", "redis_addr", cfg.RedisAddr)
 	}
-	// The processor uses the registry for policy-driven provider selection.
-	// At runtime, ProcessRun calls registry.ResolveWithFallback(effectivePolicy.ProviderRoute)
-	// to pick the provider for each run, instead of always using a static default.
 	newStore := database.StoreFactory(dialect)
-	processor := llm.NewProcessor(logger, llm.NewSQLProcessorStore(sqlDB), gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(sqlDB)).WithRegistry(providerRegistry).WithSemanticMatcher(llm.NoopSemanticMatcher{})
+	processor, err := newReviewRunProcessor(cfg, sqlDB, gitlabClient, rulesLoader, providerRegistry)
+	if err != nil {
+		logger.Error("failed to configure review run processor", "error", err)
+		return 1
+	}
+	runService := reviewrun.NewService(nil, processor)
 	statusPublisher := gate.NewGitLabStatusPublisher(gitlabClient, newStore(sqlDB))
-	runtimeDeps := newRuntimeDepsWithStoreFactory(logger, sqlDB, processor, gitlabClient, statusPublisher, gate.NoopCIGatePublisher{}, newStore)
+	runtimeDeps := newRuntimeDepsWithStoreFactory(logger, sqlDB, runService, gitlabClient, statusPublisher, gate.NoopCIGatePublisher{}, newStore)
 	worker := runtimeDeps.Scheduler
 	if runtimeDeps.Heartbeat != nil {
 		go func() {

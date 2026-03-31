@@ -19,8 +19,14 @@ import (
 
 const rootReviewPath = "REVIEW.md"
 
+var ErrNoRepositoryReader = errors.New("rules: no compatible repository file reader configured")
+
 type RepositoryFileReader interface {
 	GetRepositoryFile(ctx context.Context, projectID int64, filePath, ref string) (string, error)
+}
+
+type RepositoryRefFileReader interface {
+	GetRepositoryFileByRepositoryRef(ctx context.Context, repositoryRef, filePath, ref string) (string, error)
 }
 
 type PlatformDefaults struct {
@@ -66,12 +72,14 @@ type GroupPolicy struct {
 }
 
 type LoadInput struct {
-	ProjectID         int64
-	HeadSHA           string
-	GroupPolicy       *GroupPolicy
-	ProjectPolicy     *db.ProjectPolicy
-	ChangedPaths      []string
-	UntrustedContents []UntrustedContent
+	ProjectID              int64
+	RepositoryRef          string
+	HeadSHA                string
+	GroupPolicy            *GroupPolicy
+	ProjectPolicy          *db.ProjectPolicy
+	ChangedPaths           []string
+	InstructionConfigPaths []string
+	UntrustedContents      []UntrustedContent
 }
 
 type UntrustedContent struct {
@@ -94,11 +102,11 @@ type LoadResult struct {
 }
 
 type Loader struct {
-	files    RepositoryFileReader
+	files    any
 	platform PlatformDefaults
 }
 
-func NewLoader(files RepositoryFileReader, platform PlatformDefaults) *Loader {
+func NewLoader(files any, platform PlatformDefaults) *Loader {
 	return &Loader{files: files, platform: platform}
 }
 
@@ -120,20 +128,31 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 
 	// 2. Load and apply .gitlab/ai-review.yaml (above project policy, below REVIEW.md).
 	if canFetchFiles {
-		aiBody, err := l.files.GetRepositoryFile(ctx, input.ProjectID, aiReviewYAMLPath, input.HeadSHA)
-		if err != nil && !isFileNotFound(err) {
-			return LoadResult{}, fmt.Errorf("rules: load %s: %w", aiReviewYAMLPath, err)
-		}
-		if err == nil {
-			cfg, yamlWarnings, _ := ParseAIReviewConfig(aiBody)
+		for _, configPath := range configuredInstructionPaths(input) {
+			aiBody, err := l.getRepositoryFile(ctx, input, configPath)
+			if err != nil {
+				if !isFileNotFound(err) {
+					return LoadResult{}, fmt.Errorf("rules: load %s: %w", configPath, err)
+				}
+				continue
+			}
+			cfg, yamlWarnings, parseErr := ParseAIReviewConfig(aiBody)
 			warnings = append(warnings, yamlWarnings...)
+			if parseErr != nil {
+				warnings = append(warnings, fmt.Sprintf("rules: parse %s: %v", configPath, parseErr))
+				continue
+			}
+			if cfg == nil {
+				continue
+			}
 			applyAIReviewConfig(&effective, cfg)
+			break
 		}
 	}
 
 	// 3. Load root REVIEW.md.
 	if canFetchFiles {
-		reviewBody, err := l.files.GetRepositoryFile(ctx, input.ProjectID, rootReviewPath, input.HeadSHA)
+		reviewBody, err := l.getRepositoryFile(ctx, input, rootReviewPath)
 		if err != nil {
 			if !isFileNotFound(err) {
 				return LoadResult{}, fmt.Errorf("rules: load %s: %w", rootReviewPath, err)
@@ -145,7 +164,7 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 
 	// 4. Load per-path directory-scoped REVIEW.md for changed files.
 	if canFetchFiles && len(input.ChangedPaths) > 0 {
-		dirReviews := loadDirectoryScopedReviews(ctx, l.files, input.ProjectID, input.HeadSHA, input.ChangedPaths)
+		dirReviews := loadDirectoryScopedReviews(ctx, l.files, input, input.ChangedPaths)
 		if len(dirReviews) > 0 {
 			trusted.DirectoryReviews = dirReviews
 		}
@@ -161,6 +180,30 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 		SuspiciousSources: suspicious,
 		Warnings:          warnings,
 	}, nil
+}
+
+func configuredInstructionPaths(input LoadInput) []string {
+	if len(input.InstructionConfigPaths) == 0 {
+		return []string{aiReviewYAMLPath}
+	}
+	paths := make([]string, 0, len(input.InstructionConfigPaths))
+	for _, path := range input.InstructionConfigPaths {
+		path = strings.TrimSpace(path)
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		return []string{aiReviewYAMLPath}
+	}
+	return paths
+}
+
+func (l *Loader) getRepositoryFile(ctx context.Context, input LoadInput, filePath string) (string, error) {
+	if l == nil {
+		return "", ErrNoRepositoryReader
+	}
+	return loadRepositoryFile(ctx, l.files, input, filePath)
 }
 
 func IsTrustedInstructionPath(path string) bool {
@@ -319,7 +362,7 @@ func applyGroupPolicyToEffective(effective *EffectivePolicy, group *GroupPolicy)
 // The map contains one entry per unique directory that has a REVIEW.md
 // applicable to at least one changed file, enabling per-path lookup at context
 // assembly time via TrustedRules.ReviewForPath.
-func loadDirectoryScopedReviews(ctx context.Context, files RepositoryFileReader, projectID int64, headSHA string, changedPaths []string) map[string]string {
+func loadDirectoryScopedReviews(ctx context.Context, files any, input LoadInput, changedPaths []string) map[string]string {
 	// Collect all unique parent directories from changed paths, sorted
 	// deepest-first so we can check the nearest ancestor first.
 	candidates := directoryReviewCandidates(changedPaths)
@@ -335,7 +378,7 @@ func loadDirectoryScopedReviews(ctx context.Context, files RepositoryFileReader,
 			continue
 		}
 		reviewPath := dir + "/REVIEW.md"
-		body, err := files.GetRepositoryFile(ctx, projectID, reviewPath, headSHA)
+		body, err := loadRepositoryFile(ctx, files, input, reviewPath)
 		fetched[dir] = true
 		if err == nil && strings.TrimSpace(body) != "" {
 			cache[dir] = body
@@ -369,6 +412,23 @@ func loadDirectoryScopedReviews(ctx context.Context, files RepositoryFileReader,
 		return nil
 	}
 	return result
+}
+
+func loadRepositoryFile(ctx context.Context, files any, input LoadInput, filePath string) (string, error) {
+	if files == nil {
+		return "", ErrNoRepositoryReader
+	}
+	if repositoryRef := strings.TrimSpace(input.RepositoryRef); repositoryRef != "" {
+		if reader, ok := files.(RepositoryRefFileReader); ok {
+			return reader.GetRepositoryFileByRepositoryRef(ctx, repositoryRef, filePath, input.HeadSHA)
+		}
+	}
+	if input.ProjectID > 0 {
+		if reader, ok := files.(RepositoryFileReader); ok {
+			return reader.GetRepositoryFile(ctx, input.ProjectID, filePath, input.HeadSHA)
+		}
+	}
+	return "", ErrNoRepositoryReader
 }
 
 // directoryReviewCandidates returns all unique parent directories of the given
@@ -808,6 +868,9 @@ func isFileNotFound(err error) bool {
 	if errors.Is(err, gitlab.ErrFileNotFound) {
 		return true
 	}
-	var statusErr *gitlab.HTTPStatusError
-	return errors.As(err, &statusErr) && statusErr.StatusCode == 404
+	type httpStatusErr interface {
+		HTTPStatus() int
+	}
+	var statusErr httpStatusErr
+	return errors.As(err, &statusErr) && statusErr.HTTPStatus() == 404
 }

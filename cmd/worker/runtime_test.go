@@ -11,11 +11,18 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 
+	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
+	"github.com/mreviewer/mreviewer/internal/config"
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
+	"github.com/mreviewer/mreviewer/internal/llm"
+	core "github.com/mreviewer/mreviewer/internal/reviewcore"
+	"github.com/mreviewer/mreviewer/internal/reviewpack"
+	"github.com/mreviewer/mreviewer/internal/rules"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 	"github.com/mreviewer/mreviewer/internal/writer"
@@ -631,6 +638,369 @@ func TestWorkerRuntimeAllowsWriterManagedFailedStatus(t *testing.T) {
 	}
 }
 
+type fakeRuntimeBundleWriteback struct {
+	writeCalls       int
+	writeBundleCalls int
+	lastRun          db.ReviewRun
+	lastBundle       core.ReviewBundle
+}
+
+func (f *fakeRuntimeBundleWriteback) Write(_ context.Context, run db.ReviewRun, _ []db.ReviewFinding) error {
+	f.writeCalls++
+	f.lastRun = run
+	return nil
+}
+
+func (f *fakeRuntimeBundleWriteback) WriteBundle(_ context.Context, run db.ReviewRun, bundle core.ReviewBundle) error {
+	f.writeBundleCalls++
+	f.lastRun = run
+	f.lastBundle = bundle
+	return nil
+}
+
+func TestWrapProcessorWithWritebackPrefersBundleWritebackFromOutcome(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-runtime-bundle")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-bundle", "sha-runtime-bundle")
+
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		return scheduler.ProcessOutcome{
+			Status: "requested_changes",
+			ReviewBundle: core.ReviewBundle{
+				Verdict: "requested_changes",
+				Target: core.ReviewTarget{
+					Platform:     core.PlatformGitLab,
+					ProjectID:    101,
+					ChangeNumber: 1,
+				},
+				PublishCandidates: []core.PublishCandidate{{Kind: "summary", Body: "judge summary"}},
+			},
+		}, nil
+	})
+	writeback := &fakeRuntimeBundleWriteback{}
+	wrapped := wrapProcessorWithWriteback(sqlDB, processor, writeback, defaultRuntimeNewStore)
+
+	run, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := wrapped.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "requested_changes" {
+		t.Fatalf("outcome status = %q, want requested_changes", outcome.Status)
+	}
+	if writeback.writeBundleCalls != 1 {
+		t.Fatalf("bundle writeback calls = %d, want 1", writeback.writeBundleCalls)
+	}
+	if writeback.writeCalls != 0 {
+		t.Fatalf("legacy write calls = %d, want 0", writeback.writeCalls)
+	}
+	if writeback.lastBundle.Verdict != "requested_changes" {
+		t.Fatalf("bundle verdict = %q, want requested_changes", writeback.lastBundle.Verdict)
+	}
+	if writeback.lastRun.Status != "requested_changes" {
+		t.Fatalf("run status = %q, want requested_changes", writeback.lastRun.Status)
+	}
+}
+
+func TestNewReviewRunProcessorProcessesRunViaNewEngine(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-processor-engine")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-new-engine", "sha-processor-engine")
+	if _, err := sqlDB.Exec(`UPDATE review_runs SET scope_json = ? WHERE id = ?`, db.NullRawMessage([]byte(`{"provider_route":"claude-opus-4-1"}`)), runID); err != nil {
+		t.Fatalf("update scope_json: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/projects/101/merge_requests/1":
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"id":            501,
+				"iid":           1,
+				"project_id":    101,
+				"title":         "Engine-backed worker path",
+				"description":   "test",
+				"state":         "opened",
+				"draft":         false,
+				"source_branch": "feature",
+				"target_branch": "main",
+				"sha":           "sha-processor-engine",
+				"web_url":       "https://test.gitlab.com/group/project/-/merge_requests/1",
+				"diff_refs": map[string]any{
+					"base_sha":  "base-sha",
+					"start_sha": "start-sha",
+					"head_sha":  "sha-processor-engine",
+				},
+				"author": map[string]any{"username": "worker-test"},
+			})
+		case "/api/v4/projects/101/merge_requests/1/versions":
+			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
+				"id":               1,
+				"head_commit_sha":  "sha-processor-engine",
+				"base_commit_sha":  "base-sha",
+				"start_commit_sha": "start-sha",
+				"patch_id_sha":     "patch-sha",
+				"created_at":       time.Date(2026, time.March, 30, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+				"merge_request_id": 501,
+				"state":            "collected",
+				"real_size":        "1",
+			}})
+		case "/api/v4/projects/101/merge_requests/1/diffs":
+			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
+				"old_path":     "internal/legacy.go",
+				"new_path":     "internal/legacy.go",
+				"diff":         "@@ -1 +1 @@\n-old\n+new\n",
+				"new_file":     false,
+				"renamed_file": false,
+				"deleted_file": false,
+			}})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := gitlab.NewClient(server.URL, "test-token", gitlab.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	loader := &testWorkerRulesLoader{
+		result: rules.LoadResult{
+			EffectivePolicy: rules.EffectivePolicy{
+				ProviderRoute: "default",
+			},
+		},
+	}
+	defaultProvider := &fakeWorkerDynamicProvider{}
+	overrideProvider := &fakeWorkerDynamicProvider{
+		response: llm.ProviderResponse{
+			Result: llm.ReviewResult{
+				SchemaVersion: "1.0",
+				ReviewRunID:   "runtime-new-engine",
+				Summary:       "Found a real issue",
+				Status:        "requested_changes",
+				Findings: []llm.ReviewFinding{{
+					Category:     "bug",
+					Severity:     "high",
+					Confidence:   0.93,
+					Title:        "Unsafe mutation path",
+					BodyMarkdown: "The update path skips validation.",
+					Path:         "internal/legacy.go",
+					AnchorKind:   "new_line",
+					NewLine:      int32PtrRuntime(1),
+				}},
+			},
+		},
+	}
+	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
+	registry.Register("claude-opus-4-1", overrideProvider)
+
+	processor, err := newReviewRunProcessor(&config.Config{}, sqlDB, client, loader, registry)
+	if err != nil {
+		t.Fatalf("newReviewRunProcessor: %v", err)
+	}
+	run, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+
+	if outcome.Status != "requested_changes" {
+		t.Fatalf("outcome.Status = %q, want requested_changes", outcome.Status)
+	}
+	bundle, ok := outcome.ReviewBundle.(core.ReviewBundle)
+	if !ok {
+		t.Fatalf("outcome review bundle type = %T, want reviewcore.ReviewBundle", outcome.ReviewBundle)
+	}
+	if bundle.Verdict != "requested_changes" {
+		t.Fatalf("outcome review bundle verdict = %q, want requested_changes", bundle.Verdict)
+	}
+	if len(bundle.Artifacts) != len(reviewpack.DefaultPacks()) {
+		t.Fatalf("outcome review bundle artifacts = %d, want %d", len(bundle.Artifacts), len(reviewpack.DefaultPacks()))
+	}
+	if len(bundle.PublishCandidates) == 0 {
+		t.Fatal("expected outcome review bundle publish candidates to be populated")
+	}
+	if len(outcome.ReviewFindings) != 1 {
+		t.Fatalf("outcome findings = %d, want 1", len(outcome.ReviewFindings))
+	}
+	if defaultProvider.calls != 0 {
+		t.Fatalf("default provider calls = %d, want 0", defaultProvider.calls)
+	}
+	if overrideProvider.calls != len(reviewpack.DefaultPacks()) {
+		t.Fatalf("override provider calls = %d, want %d", overrideProvider.calls, len(reviewpack.DefaultPacks()))
+	}
+
+	updatedRun, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun(updated): %v", err)
+	}
+	if updatedRun.Status != "requested_changes" {
+		t.Fatalf("run status = %q, want requested_changes", updatedRun.Status)
+	}
+	if loader.input.ProjectID != 101 {
+		t.Fatalf("rules loader project_id = %d, want 101", loader.input.ProjectID)
+	}
+	if len(loader.input.ChangedPaths) != 1 || loader.input.ChangedPaths[0] != "internal/legacy.go" {
+		t.Fatalf("changed paths = %v, want [internal/legacy.go]", loader.input.ChangedPaths)
+	}
+}
+
+func TestWorkerRuntimeProcessesNewEngineRunViaBundleWriteback(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-runtime-new-engine-writeback")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-new-engine-writeback", "sha-runtime-new-engine-writeback")
+	if _, err := sqlDB.Exec(`UPDATE review_runs SET scope_json = ? WHERE id = ?`, db.NullRawMessage([]byte(`{"provider_route":"claude-opus-4-1"}`)), runID); err != nil {
+		t.Fatalf("update scope_json: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/projects/101/merge_requests/1":
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"id":            501,
+				"iid":           1,
+				"project_id":    101,
+				"title":         "Runtime engine bundle writeback",
+				"description":   "test",
+				"state":         "opened",
+				"draft":         false,
+				"source_branch": "feature",
+				"target_branch": "main",
+				"sha":           "sha-runtime-new-engine-writeback",
+				"web_url":       "https://test.gitlab.com/group/project/-/merge_requests/1",
+				"diff_refs": map[string]any{
+					"base_sha":  "base-sha",
+					"start_sha": "start-sha",
+					"head_sha":  "sha-runtime-new-engine-writeback",
+				},
+				"author": map[string]any{"username": "worker-test"},
+			})
+		case "/api/v4/projects/101/merge_requests/1/versions":
+			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
+				"id":               1,
+				"head_commit_sha":  "sha-runtime-new-engine-writeback",
+				"base_commit_sha":  "base-sha",
+				"start_commit_sha": "start-sha",
+				"patch_id_sha":     "patch-sha",
+				"created_at":       time.Date(2026, time.March, 30, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+				"merge_request_id": 501,
+				"state":            "collected",
+				"real_size":        "1",
+			}})
+		case "/api/v4/projects/101/merge_requests/1/diffs":
+			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
+				"old_path":     "internal/legacy.go",
+				"new_path":     "internal/legacy.go",
+				"diff":         "@@ -1 +1 @@\n-old\n+new\n",
+				"new_file":     false,
+				"renamed_file": false,
+				"deleted_file": false,
+			}})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := gitlab.NewClient(server.URL, "test-token", gitlab.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	loader := &testWorkerRulesLoader{
+		result: rules.LoadResult{
+			EffectivePolicy: rules.EffectivePolicy{
+				ProviderRoute: "default",
+			},
+		},
+	}
+	defaultProvider := &fakeWorkerDynamicProvider{}
+	overrideProvider := &fakeWorkerDynamicProvider{
+		response: llm.ProviderResponse{
+			Result: llm.ReviewResult{
+				SchemaVersion: "1.0",
+				ReviewRunID:   "runtime-new-engine-writeback",
+				Summary:       "Found a runtime issue",
+				Status:        "requested_changes",
+				Findings: []llm.ReviewFinding{{
+					Category:     "bug",
+					Severity:     "high",
+					Confidence:   0.93,
+					Title:        "Unsafe mutation path",
+					BodyMarkdown: "The update path skips validation.",
+					Path:         "internal/legacy.go",
+					AnchorKind:   "new_line",
+					NewLine:      int32PtrRuntime(1),
+				}},
+			},
+		},
+	}
+	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
+	registry.Register("claude-opus-4-1", overrideProvider)
+
+	processor, err := newReviewRunProcessor(&config.Config{}, sqlDB, client, loader, registry)
+	if err != nil {
+		t.Fatalf("newReviewRunProcessor: %v", err)
+	}
+	fakeClient := &fakeDiscussionClient{}
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, fakeClient, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
+
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(fakeClient.discussions) != 1 {
+		t.Fatalf("discussion requests = %d, want 1", len(fakeClient.discussions))
+	}
+	if len(fakeClient.notes) != 1 {
+		t.Fatalf("note requests = %d, want 1", len(fakeClient.notes))
+	}
+	if fakeClient.notes[0].Body == "" {
+		t.Fatal("expected summary note body to be populated")
+	}
+	if fakeClient.discussions[0].Body == "" {
+		t.Fatal("expected discussion body to be populated")
+	}
+	updatedRun, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun(updated): %v", err)
+	}
+	if updatedRun.Status != "requested_changes" {
+		t.Fatalf("run status = %q, want requested_changes", updatedRun.Status)
+	}
+	if defaultProvider.calls != 0 {
+		t.Fatalf("default provider calls = %d, want 0", defaultProvider.calls)
+	}
+	if overrideProvider.calls != len(reviewpack.DefaultPacks()) {
+		t.Fatalf("override provider calls = %d, want %d", overrideProvider.calls, len(reviewpack.DefaultPacks()))
+	}
+	actions, err := db.New(sqlDB).ListCommentActionsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListCommentActionsByRun: %v", err)
+	}
+	if len(actions) != 2 {
+		t.Fatalf("comment action count = %d, want 2", len(actions))
+	}
+}
+
 type fakeStatusPublisher struct{ results []gate.Result }
 
 func (f *fakeStatusPublisher) PublishStatus(_ context.Context, result gate.Result) error {
@@ -673,6 +1043,50 @@ func (f *fakeDiscussionClient) CreateNote(_ context.Context, req writer.CreateNo
 func (f *fakeDiscussionClient) ResolveDiscussion(_ context.Context, req writer.ResolveDiscussionRequest) error {
 	f.resolveRequest = append(f.resolveRequest, req)
 	return f.resolveErr
+}
+
+type testWorkerRulesLoader struct {
+	input  rules.LoadInput
+	result rules.LoadResult
+}
+
+func (f *testWorkerRulesLoader) Load(_ context.Context, input rules.LoadInput) (rules.LoadResult, error) {
+	f.input = input
+	return f.result, nil
+}
+
+type fakeWorkerDynamicProvider struct {
+	response      llm.ProviderResponse
+	err           error
+	calls         int
+	systemPrompts []string
+	requests      []ctxpkg.ReviewRequest
+}
+
+func (f *fakeWorkerDynamicProvider) Review(ctx context.Context, request ctxpkg.ReviewRequest) (llm.ProviderResponse, error) {
+	return f.ReviewWithSystemPrompt(ctx, request, "")
+}
+
+func (f *fakeWorkerDynamicProvider) ReviewWithSystemPrompt(_ context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (llm.ProviderResponse, error) {
+	f.calls++
+	f.systemPrompts = append(f.systemPrompts, systemPrompt)
+	f.requests = append(f.requests, request)
+	if f.err != nil {
+		return llm.ProviderResponse{}, f.err
+	}
+	return f.response, nil
+}
+
+func (f *fakeWorkerDynamicProvider) RequestPayload(_ ctxpkg.ReviewRequest) map[string]any {
+	return map[string]any{"provider": "fake-worker"}
+}
+
+func (f *fakeWorkerDynamicProvider) RequestPayloadWithSystemPrompt(_ ctxpkg.ReviewRequest, systemPrompt string) map[string]any {
+	return map[string]any{"provider": "fake-worker", "system_prompt": systemPrompt}
+}
+
+func int32PtrRuntime(v int32) *int32 {
+	return &v
 }
 
 func writeRuntimeJSON(t *testing.T, w http.ResponseWriter, status int, payload any) {

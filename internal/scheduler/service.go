@@ -43,6 +43,7 @@ type ProcessOutcome struct {
 	ProviderLatencyMs   int64
 	ProviderTokensTotal int64
 	ReviewFindings      []db.ReviewFinding
+	ReviewBundle        any
 }
 
 type FuncProcessor func(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error)

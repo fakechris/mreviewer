@@ -58,7 +58,7 @@ func (s *SQLStore) ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]
 }
 
 func (s *SQLStore) ListFindingsByMergeRequest(ctx context.Context, mergeRequestID int64) ([]db.ReviewFinding, error) {
-	return s.queries.ListActiveFindingsByMR(ctx, mergeRequestID)
+	return s.queries.ListFindingsByMergeRequest(ctx, mergeRequestID)
 }
 
 func (s *SQLStore) GetCommentActionByIdempotencyKey(ctx context.Context, idempotencyKey string) (db.CommentAction, error) {
