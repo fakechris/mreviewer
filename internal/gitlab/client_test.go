@@ -75,6 +75,33 @@ func TestGetMergeRequest(t *testing.T) {
 	}
 }
 
+func TestGetMergeRequestByProjectRefEscapesPath(t *testing.T) {
+	var requestURI string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI = r.URL.RequestURI()
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"id":         101,
+			"iid":        7,
+			"project_id": 123,
+			"title":      "Add reader client",
+			"state":      "opened",
+			"draft":      false,
+			"sha":        "head-sha",
+			"web_url":    "https://gitlab.example.com/group/project/-/merge_requests/7",
+			"author":     map[string]any{"username": "reviewer-bot"},
+		})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	if _, err := client.GetMergeRequestByProjectRef(context.Background(), "group/sub/repo", 7); err != nil {
+		t.Fatalf("GetMergeRequestByProjectRef: %v", err)
+	}
+	if requestURI != "/api/v4/projects/group%2Fsub%2Frepo/merge_requests/7" {
+		t.Fatalf("request uri = %q, want path-escaped project ref", requestURI)
+	}
+}
+
 func TestGetMergeRequestVersions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v4/projects/123/merge_requests/7/versions" {

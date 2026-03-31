@@ -135,6 +135,13 @@ func (e *HTTPStatusError) Error() string {
 	return fmt.Sprintf("gitlab: %s %s returned status %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
 }
 
+func (e *HTTPStatusError) HTTPStatus() int {
+	if e == nil {
+		return 0
+	}
+	return e.StatusCode
+}
+
 type DiffNotReadyError struct {
 	ProjectID       int64
 	MergeRequestIID int64
@@ -266,8 +273,12 @@ func WithRateLimitJitter(jitter func(time.Duration) time.Duration) Option {
 }
 
 func (c *Client) GetMergeRequest(ctx context.Context, projectID, mergeRequestIID int64) (MergeRequest, error) {
+	return c.GetMergeRequestByProjectRef(ctx, strconv.FormatInt(projectID, 10), mergeRequestIID)
+}
+
+func (c *Client) GetMergeRequestByProjectRef(ctx context.Context, projectRef string, mergeRequestIID int64) (MergeRequest, error) {
 	var mr MergeRequest
-	_, err := c.doJSON(ctx, http.MethodGet, mergeRequestPath(projectID, mergeRequestIID, ""), nil, &mr)
+	_, err := c.doJSON(ctx, http.MethodGet, mergeRequestPathByProjectRef(projectRef, mergeRequestIID, ""), nil, &mr)
 	if err != nil {
 		return MergeRequest{}, err
 	}
@@ -378,13 +389,18 @@ func isRetriableDiffEndpointError(err error) bool {
 }
 
 func (c *Client) GetMergeRequestSnapshot(ctx context.Context, projectID, mergeRequestIID int64) (MergeRequestSnapshot, error) {
+	return c.GetMergeRequestSnapshotByProjectRef(ctx, strconv.FormatInt(projectID, 10), mergeRequestIID)
+}
+
+func (c *Client) GetMergeRequestSnapshotByProjectRef(ctx context.Context, projectRef string, mergeRequestIID int64) (MergeRequestSnapshot, error) {
 	var lastErr error
 
 	for attempt := 0; ; attempt++ {
-		mr, err := c.GetMergeRequest(ctx, projectID, mergeRequestIID)
+		mr, err := c.GetMergeRequestByProjectRef(ctx, projectRef, mergeRequestIID)
 		if err != nil {
 			return MergeRequestSnapshot{}, err
 		}
+		projectID := mr.ProjectID
 
 		version, err := c.GetMergeRequestVersions(ctx, projectID, mergeRequestIID)
 		if err != nil && !errors.Is(err, ErrDiffNotReady) {
@@ -424,11 +440,15 @@ func (c *Client) GetMergeRequestSnapshot(ctx context.Context, projectID, mergeRe
 }
 
 func (c *Client) GetRepositoryFile(ctx context.Context, projectID int64, filePath, ref string) (string, error) {
+	return c.GetRepositoryFileByRepositoryRef(ctx, strconv.FormatInt(projectID, 10), filePath, ref)
+}
+
+func (c *Client) GetRepositoryFileByRepositoryRef(ctx context.Context, repositoryRef, filePath, ref string) (string, error) {
 	query := url.Values{}
 	if strings.TrimSpace(ref) != "" {
 		query.Set("ref", ref)
 	}
-	requestURL, err := c.buildURL(fmt.Sprintf("/api/v4/projects/%s/repository/files/%s/raw", url.PathEscape(strconv.FormatInt(projectID, 10)), url.PathEscape(filePath)), query)
+	requestURL, err := c.buildURL(fmt.Sprintf("/api/v4/projects/%s/repository/files/%s/raw", url.PathEscape(repositoryRef), url.PathEscape(filePath)), query)
 	if err != nil {
 		return "", err
 	}
@@ -672,7 +692,11 @@ func (c *Client) buildURL(apiPath string, query url.Values) (string, error) {
 }
 
 func mergeRequestPath(projectID, mergeRequestIID int64, suffix string) string {
-	base := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d", url.PathEscape(strconv.FormatInt(projectID, 10)), mergeRequestIID)
+	return mergeRequestPathByProjectRef(strconv.FormatInt(projectID, 10), mergeRequestIID, suffix)
+}
+
+func mergeRequestPathByProjectRef(projectRef string, mergeRequestIID int64, suffix string) string {
+	base := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d", url.PathEscape(strings.TrimSpace(projectRef)), mergeRequestIID)
 	return base + suffix
 }
 

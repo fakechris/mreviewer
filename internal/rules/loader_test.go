@@ -77,6 +77,28 @@ func TestMissingRootReviewGraceful(t *testing.T) {
 	}
 }
 
+func TestLoadUsesRepositoryRefReaderWhenProjectIDMissing(t *testing.T) {
+	loader := NewLoader(stubRepositoryRefReader{
+		content: map[string]string{
+			"acme/repo:REVIEW.md@head-sha": "# GitHub Review\n- Focus on trust boundaries\n",
+		},
+	}, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{
+		RepositoryRef: "acme/repo",
+		HeadSHA:       "head-sha",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if result.Trusted.ReviewMarkdown == "" {
+		t.Fatal("ReviewMarkdown should be loaded from repository ref reader")
+	}
+	if !strings.Contains(result.Trusted.ReviewMarkdown, "GitHub Review") {
+		t.Fatalf("ReviewMarkdown = %q", result.Trusted.ReviewMarkdown)
+	}
+}
+
 func TestPlatformProjectMerge(t *testing.T) {
 	loader := NewLoader(stubFileReader{}, defaultPlatformDefaults())
 
@@ -430,6 +452,26 @@ func (s stubFileReader) GetRepositoryFile(_ context.Context, _ int64, filePath, 
 
 var _ RepositoryFileReader = (*gitlab.Client)(nil)
 var _ RepositoryFileReader = stubFileReader{}
+
+type stubRepositoryRefReader struct {
+	content map[string]string
+	err     error
+}
+
+func (s stubRepositoryRefReader) GetRepositoryFileByRepositoryRef(_ context.Context, repositoryRef, filePath, ref string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	if s.content == nil {
+		return "", gitlab.ErrFileNotFound
+	}
+	if body, ok := s.content[repositoryRef+":"+filePath+"@"+ref]; ok {
+		return body, nil
+	}
+	return "", gitlab.ErrFileNotFound
+}
+
+var _ RepositoryRefFileReader = stubRepositoryRefReader{}
 
 func TestLoadPropagatesUnexpectedFileErrors(t *testing.T) {
 	loader := NewLoader(stubFileReader{err: errors.New("boom")}, defaultPlatformDefaults())

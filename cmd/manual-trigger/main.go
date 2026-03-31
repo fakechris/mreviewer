@@ -19,6 +19,8 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/logging"
 	"github.com/mreviewer/mreviewer/internal/manualtrigger"
+	"github.com/mreviewer/mreviewer/internal/reviewrun"
+	runsvc "github.com/mreviewer/mreviewer/internal/runs"
 )
 
 type manualTriggerService interface {
@@ -394,7 +396,20 @@ func newDefaultService(cfg *config.Config, sqlDB *sql.DB, pollInterval time.Dura
 	if err != nil {
 		return failingService{err: fmt.Errorf("configure gitlab client: %w", err)}
 	}
-	return manualtrigger.NewService(logger, sqlDB, client, cfg.GitLabBaseURL, manualtrigger.WithPollInterval(pollInterval))
+	processor, err := newDefaultRunProcessor(cfg, sqlDB, client)
+	if err != nil {
+		return failingService{err: fmt.Errorf("configure review engine: %w", err)}
+	}
+	runService := reviewrun.NewService(runsvc.NewService(logger, sqlDB), processor)
+	return manualtrigger.NewService(
+		logger,
+		sqlDB,
+		client,
+		cfg.GitLabBaseURL,
+		manualtrigger.WithPollInterval(pollInterval),
+		manualtrigger.WithEventProcessor(runService),
+		manualtrigger.WithRunProcessor(runService),
+	)
 }
 
 type failingService struct {

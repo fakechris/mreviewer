@@ -15,6 +15,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/hooks"
 	runsvc "github.com/mreviewer/mreviewer/internal/runs"
+	"github.com/mreviewer/mreviewer/internal/scheduler"
 )
 
 type MergeRequestReader interface {
@@ -22,6 +23,10 @@ type MergeRequestReader interface {
 }
 
 type Option func(*Service)
+
+type EventProcessor interface {
+	ProcessEventWithQuerier(ctx context.Context, q db.Querier, ev hooks.NormalizedEvent, hookEventID int64) error
+}
 
 type Service struct {
 	logger   *slog.Logger
@@ -31,6 +36,12 @@ type Service struct {
 	now      func() time.Time
 	poll     time.Duration
 	newStore func(db.DBTX) db.Store
+	events   EventProcessor
+	process  RunProcessor
+}
+
+type RunProcessor interface {
+	ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler.ProcessOutcome, error)
 }
 
 type TriggerInput struct {
@@ -93,6 +104,18 @@ func WithPollInterval(interval time.Duration) Option {
 func WithStoreFactory(fn func(db.DBTX) db.Store) Option {
 	return func(s *Service) {
 		s.newStore = fn
+	}
+}
+
+func WithRunProcessor(processor RunProcessor) Option {
+	return func(s *Service) {
+		s.process = processor
+	}
+}
+
+func WithEventProcessor(processor EventProcessor) Option {
+	return func(s *Service) {
+		s.events = processor
 	}
 }
 
@@ -165,7 +188,13 @@ func (s *Service) Trigger(ctx context.Context, input TriggerInput) (TriggerResul
 		ev.ScopeJSON = scopeJSON
 	}
 
-	if err := runsvc.NewService(s.logger, s.db, runsvc.WithStoreFactory(s.newStore)).ProcessEvent(ctx, ev, 0); err != nil {
+	eventProcessor := s.events
+	if eventProcessor == nil {
+		eventProcessor = runsvc.NewService(s.logger, s.db, runsvc.WithStoreFactory(s.newStore))
+	}
+	if err := db.RunTxWithStore(ctx, s.db, s.newStore, func(ctx context.Context, store db.Store) error {
+		return eventProcessor.ProcessEventWithQuerier(ctx, store, ev, 0)
+	}); err != nil {
 		return TriggerResult{}, fmt.Errorf("manual trigger: create review run: %w", err)
 	}
 
@@ -193,6 +222,7 @@ func (s *Service) WaitForTerminalRun(ctx context.Context, runID int64) (db.Revie
 
 	ticker := time.NewTicker(s.poll)
 	defer ticker.Stop()
+	processedPendingRun := false
 
 	for {
 		run, err := s.newStore(s.db).GetReviewRun(ctx, runID)
@@ -202,6 +232,13 @@ func (s *Service) WaitForTerminalRun(ctx context.Context, runID int64) (db.Revie
 		if isTerminalStatus(run.Status) {
 			return run, nil
 		}
+		if !processedPendingRun && strings.EqualFold(strings.TrimSpace(run.Status), "pending") && s.process != nil {
+			processedPendingRun = true
+			if err := s.processPendingRun(ctx, run); err != nil {
+				return db.ReviewRun{}, err
+			}
+			continue
+		}
 
 		select {
 		case <-ctx.Done():
@@ -209,6 +246,27 @@ func (s *Service) WaitForTerminalRun(ctx context.Context, runID int64) (db.Revie
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Service) processPendingRun(ctx context.Context, run db.ReviewRun) error {
+	if s.process == nil {
+		return nil
+	}
+	if _, err := s.process.ProcessRun(ctx, run); err != nil {
+		updateErr := s.newStore(s.db).UpdateReviewRunStatus(ctx, db.UpdateReviewRunStatusParams{
+			ID:        run.ID,
+			Status:    "failed",
+			ErrorCode: "manual_trigger_process_failed",
+			ErrorDetail: sql.NullString{
+				String: err.Error(),
+				Valid:  true,
+			},
+		})
+		if updateErr != nil {
+			return fmt.Errorf("manual trigger: mark review run failed after process error: %w", updateErr)
+		}
+	}
+	return nil
 }
 
 func isTerminalStatus(status string) bool {

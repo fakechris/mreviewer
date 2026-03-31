@@ -45,6 +45,11 @@ SELECT * FROM review_findings
 WHERE merge_request_id = ? AND state IN ('new', 'posted', 'active')
 ORDER BY created_at ASC;
 
+-- name: ListFindingsByMergeRequest :many
+SELECT * FROM review_findings
+WHERE merge_request_id = ?
+ORDER BY created_at ASC;
+
 -- name: ListFindingsByRun :many
 SELECT * FROM review_findings
 WHERE review_run_id = ?

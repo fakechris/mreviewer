@@ -53,6 +53,7 @@ type Querier interface {
 	ListAuditLogsByEntity(ctx context.Context, arg ListAuditLogsByEntityParams) ([]AuditLog, error)
 	ListCommentActionsByRun(ctx context.Context, reviewRunID int64) ([]CommentAction, error)
 	ListFailureCountsByErrorCode(ctx context.Context, updatedAt time.Time) ([]ListFailureCountsByErrorCodeRow, error)
+	ListFindingsByMergeRequest(ctx context.Context, mergeRequestID int64) ([]ReviewFinding, error)
 	ListFindingsByRun(ctx context.Context, reviewRunID int64) ([]ReviewFinding, error)
 	ListHookEventsByProjectMR(ctx context.Context, arg ListHookEventsByProjectMRParams) ([]HookEvent, error)
 	ListPendingRuns(ctx context.Context, limit int32) ([]ReviewRun, error)

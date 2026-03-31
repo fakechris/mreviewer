@@ -20,6 +20,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/hooks"
 	apphttp "github.com/mreviewer/mreviewer/internal/http"
 	"github.com/mreviewer/mreviewer/internal/logging"
+	"github.com/mreviewer/mreviewer/internal/reviewrun"
 	"github.com/mreviewer/mreviewer/internal/runs"
 	"github.com/mreviewer/mreviewer/internal/server"
 )
@@ -60,8 +61,9 @@ func run() int {
 
 	// Webhook ingress handler.
 	newStore := database.StoreFactory(dialect)
-	runProcessor := runs.NewService(logger, db, runs.WithStoreFactory(newStore))
-	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runProcessor, hooks.WithHandlerStoreFactory(newStore))
+	eventProcessor := runs.NewService(logger, db, runs.WithStoreFactory(newStore))
+	runService := reviewrun.NewService(eventProcessor, nil)
+	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runService, hooks.WithHandlerStoreFactory(newStore))
 	commandProcessor := commands.NewProcessor(logger, db, commands.WithStoreFactory(newStore))
 	webhookHandler.SetCommandProcessor(commandProcessor)
 	mux.Handle("POST /webhook", webhookHandler)
