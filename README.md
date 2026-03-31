@@ -11,6 +11,7 @@ AI-powered Code Review for GitLab Merge Requests. Self-hosted, multi-model suppo
 - 🤖 **Multi-Model Support**: MiniMax, OpenAI, Anthropic, DeepSeek, and more
 - 🗄️ **Flexible Storage**: SQLite (single-machine) or MySQL (production)
 - 🌐 **GitLab Native**: Webhook integration, discussion comments, CI gate
+- 🧰 **Portable Review Council CLI**: Review GitHub/GitLab PRs from a single CLI entrypoint
 - 🔄 **Deduplication**: Fingerprint-based + LLM semantic matching
 - 📊 **Observability**: Grafana dashboards, audit logs, metrics
 
@@ -123,6 +124,44 @@ docker compose up -d --build
 ```
 
 This path builds `ingress` and `worker` from your local checkout, so code changes are reflected in the running containers.
+
+### Portable Review Council CLI
+
+The new `mreviewer` CLI runs the portable review council path directly against a GitHub or GitLab PR URL.
+
+Run from source:
+
+```bash
+go run ./cmd/mreviewer \
+  --target https://github.com/acme/repo/pull/17 \
+  --output both \
+  --publish full-review-comments \
+  --reviewer-packs security,architecture,database
+```
+
+Run inside the worker image:
+
+```bash
+docker compose exec worker /app/mreviewer \
+  --target https://github.com/acme/repo/pull/17 \
+  --output json \
+  --publish artifact-only
+```
+
+Key flags:
+
+- `--target`: GitHub PR or GitLab MR URL
+- `--targets`: comma-separated GitHub/GitLab PR or MR URLs for multi-target review and aggregate comparison
+- `--output`: `markdown`, `json`, or `both`
+- `--publish`: `full-review-comments`, `summary-only`, or `artifact-only`
+- `--reviewer-packs`: comma-separated reviewer packs
+- `--route`: provider route override
+- `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `codex,coderabbit`
+- `--compare-artifacts`: comma-separated JSON artifact paths to compare against the current review bundle
+
+The CLI emits the review bundle in JSON mode and, when comparison flags are provided, includes a comparison report with agreement rate, shared findings, and reviewer-unique findings.
+When `--targets` is provided, the JSON output also includes `aggregate_comparison` so you can compare reviewer agreement across multiple GitHub/GitLab changes in one run.
+For GitHub targets, the CLI also updates the commit status context `mreviewer/ai-review` while the review is running and after it completes.
 
 ### Configure GitLab Webhook
 

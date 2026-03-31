@@ -10,8 +10,19 @@
 - Review 队列采用 `latest-head-wins` 语义
 - 同一个 MR 出现更新 head 时，旧的 run 会被 superseded，而不是继续无限排队
 - 运维可以通过 `/admin/`、`/admin/api/queue`、`/admin/api/concurrency`、`/admin/api/failures` 观察当前状态
+- Webhook、`manual-trigger` 和新的 `mreviewer` CLI 现在共享同一条 review engine 主路径；Webhook 不再是独立实现
 
 这意味着 Webhook 不是同步调用大模型的黑盒链路，而是企业可观测的异步控制面。
+
+## 当前主路径
+
+当前有三条入口，但核心 review engine 已共享：
+
+- `ingress / webhook`: 自动接收 GitLab Merge Request 事件
+- `manual-trigger`: 由容器内命令手动触发同一条 review pipeline
+- `mreviewer` CLI: 直接对 GitHub / GitLab PR URL 运行 portable review council
+
+这三条入口最终都会进入同一套 reviewer packs、judge、canonical bundle 和 write-back 语义，因此 webhook 链路与 CLI 链路的行为差异已经大幅收敛。
 
 ## 方式 1: 项目级别配置（所有版本适用）
 

@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
@@ -272,6 +274,202 @@ func TestDefaultPublishSupportsGitHubTarget(t *testing.T) {
 	}
 	if reviewComments != 1 {
 		t.Fatalf("review comments = %d, want 1", reviewComments)
+	}
+}
+
+func TestDefaultCompareSupportsArtifactImports(t *testing.T) {
+	imported := core.ReviewerArtifact{
+		ReviewerID:   "imported-codex",
+		ReviewerKind: "codex",
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitHub,
+			URL:          "https://github.com/acme/repo/pull/17",
+			Repository:   "acme/repo",
+			ChangeNumber: 17,
+		},
+		Findings: []core.Finding{
+			{
+				Category: "security",
+				Identity: core.FindingIdentityInput{
+					Category:        "security",
+					NormalizedClaim: "user input is concatenated into sql.",
+					Location: core.CanonicalLocation{
+						Path:      "internal/db/query.go",
+						Side:      core.DiffSideNew,
+						StartLine: 42,
+						EndLine:   42,
+					},
+				},
+			},
+		},
+	}
+	artifactPath := filepath.Join(t.TempDir(), "codex.json")
+	payload, err := json.Marshal(imported)
+	if err != nil {
+		t.Fatalf("marshal artifact: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, payload, 0o600); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	target := imported.Target
+	bundle := core.ReviewBundle{
+		Target: target,
+		Artifacts: []core.ReviewerArtifact{
+			{
+				ReviewerID:   "security",
+				ReviewerKind: "security",
+				Target:       target,
+				Findings:     imported.Findings,
+			},
+		},
+	}
+
+	report, err := defaultCompare(context.Background(), "", target, bundle, cliOptions{
+		compareArtifactPaths: []string{artifactPath},
+	})
+	if err != nil {
+		t.Fatalf("defaultCompare: %v", err)
+	}
+	if report == nil {
+		t.Fatalf("report is nil")
+	}
+	if report.ReviewerCount != 2 {
+		t.Fatalf("reviewer count = %d, want 2", report.ReviewerCount)
+	}
+}
+
+func TestDefaultCompareSupportsGitHubLiveReviewers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/repo/issues/17/comments":
+			if page := r.URL.Query().Get("page"); page != "" && page != "1" {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{"id":1,"body":"Overall summary","user":{"login":"codex-bot"}}]`))
+		case "/repos/acme/repo/pulls/17/comments":
+			if page := r.URL.Query().Get("page"); page != "" && page != "1" {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{"id":2,"body":"SQL built with string concatenation.","path":"internal/db/query.go","line":42,"user":{"login":"codex-bot"}}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	configPath := writeRuntimeConfig(t, "github_base_url: "+server.URL+"\ngithub_token: test-token\n")
+	target := core.ReviewTarget{
+		Platform:     core.PlatformGitHub,
+		URL:          "https://github.com/acme/repo/pull/17",
+		BaseURL:      "https://github.com",
+		Repository:   "acme/repo",
+		ChangeNumber: 17,
+	}
+	bundle := core.ReviewBundle{Target: target}
+
+	report, err := defaultCompare(context.Background(), configPath, target, bundle, cliOptions{
+		compareLiveReviewers: []string{"codex-bot"},
+	})
+	if err != nil {
+		t.Fatalf("defaultCompare: %v", err)
+	}
+	if report == nil {
+		t.Fatalf("report is nil")
+	}
+	if report.ReviewerCount != 1 {
+		t.Fatalf("reviewer count = %d, want 1", report.ReviewerCount)
+	}
+}
+
+func TestDefaultCompareSupportsGitLabLiveReviewers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.RequestURI(), "/api/v4/projects/group%2Frepo/merge_requests/23/notes"):
+			_, _ = w.Write([]byte(`[{"id":1,"body":"Overall summary","author":{"username":"gemini-bot"}}]`))
+		case strings.HasPrefix(r.URL.RequestURI(), "/api/v4/projects/group%2Frepo/merge_requests/23/discussions"):
+			_, _ = w.Write([]byte(`[{
+				"id":"discussion-1",
+				"notes":[
+					{
+						"id":2,
+						"body":"Missing tenant scope.",
+						"author":{"username":"gemini-bot"},
+						"position":{"new_path":"internal/db/query.go","new_line":91}
+					}
+				]
+			}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	configPath := writeRuntimeConfig(t, "gitlab_base_url: "+server.URL+"\ngitlab_token: test-token\n")
+	target := core.ReviewTarget{
+		Platform:     core.PlatformGitLab,
+		URL:          "https://gitlab.example.com/group/repo/-/merge_requests/23",
+		BaseURL:      "https://gitlab.example.com",
+		Repository:   "group/repo",
+		ChangeNumber: 23,
+	}
+	bundle := core.ReviewBundle{Target: target}
+
+	report, err := defaultCompare(context.Background(), configPath, target, bundle, cliOptions{
+		compareLiveReviewers: []string{"gemini-bot"},
+	})
+	if err != nil {
+		t.Fatalf("defaultCompare: %v", err)
+	}
+	if report == nil {
+		t.Fatalf("report is nil")
+	}
+	if report.ReviewerCount != 1 {
+		t.Fatalf("reviewer count = %d, want 1", report.ReviewerCount)
+	}
+}
+
+func TestDefaultStatusPublishesGitHubCommitStatus(t *testing.T) {
+	var state string
+	var description string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/repo/statuses/head-sha" {
+			http.NotFound(w, r)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		state, _ = payload["state"].(string)
+		description, _ = payload["description"].(string)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer server.Close()
+
+	configPath := writeRuntimeConfig(t, "github_base_url: "+server.URL+"\ngithub_token: test-token\n")
+	target := core.ReviewTarget{
+		Platform:     core.PlatformGitHub,
+		URL:          "https://github.com/acme/repo/pull/17",
+		BaseURL:      "https://github.com",
+		Repository:   "acme/repo",
+		ChangeNumber: 17,
+	}
+	input := core.ReviewInput{Target: target}
+	input.Request.Project.FullPath = "acme/repo"
+	input.Request.Version.HeadSHA = "head-sha"
+
+	if err := defaultStatus(context.Background(), configPath, target, input, "running", 0); err != nil {
+		t.Fatalf("defaultStatus: %v", err)
+	}
+	if state != "pending" {
+		t.Fatalf("state = %q, want pending", state)
+	}
+	if description != "AI review is running" {
+		t.Fatalf("description = %q, want running description", description)
 	}
 }
 

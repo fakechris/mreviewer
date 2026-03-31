@@ -34,6 +34,7 @@ type Config struct {
 	GitLabWebhookSecret string `yaml:"gitlab_webhook_secret"`
 	GitHubBaseURL       string `yaml:"github_base_url"`
 	GitHubToken         string `yaml:"github_token"`
+	GitHubWebhookSecret string `yaml:"github_webhook_secret"`
 
 	AnthropicBaseURL string `yaml:"anthropic_base_url"`
 	AnthropicAPIKey  string `yaml:"anthropic_api_key"`
@@ -83,6 +84,7 @@ var envMapping = []struct {
 	{"GITLAB_WEBHOOK_SECRET", func(c *Config, v string) { c.GitLabWebhookSecret = v }},
 	{"GITHUB_BASE_URL", func(c *Config, v string) { c.GitHubBaseURL = v }},
 	{"GITHUB_TOKEN", func(c *Config, v string) { c.GitHubToken = v }},
+	{"GITHUB_WEBHOOK_SECRET", func(c *Config, v string) { c.GitHubWebhookSecret = v }},
 	{"ANTHROPIC_BASE_URL", func(c *Config, v string) { c.AnthropicBaseURL = v }},
 	{"ANTHROPIC_API_KEY", func(c *Config, v string) { c.AnthropicAPIKey = v }},
 	{"ANTHROPIC_MODEL", func(c *Config, v string) { c.AnthropicModel = v }},

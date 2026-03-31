@@ -20,6 +20,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/llm"
+	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/reviewpack"
 	"github.com/mreviewer/mreviewer/internal/rules"
@@ -803,7 +804,7 @@ func TestNewReviewRunProcessorProcessesRunViaNewEngine(t *testing.T) {
 	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
 	registry.Register("claude-opus-4-1", overrideProvider)
 
-	processor, err := newReviewRunProcessor(&config.Config{}, sqlDB, client, loader, registry)
+	processor, err := newReviewRunProcessor(&config.Config{}, sqlDB, client, nil, loader, registry)
 	if err != nil {
 		t.Fatalf("newReviewRunProcessor: %v", err)
 	}
@@ -953,7 +954,7 @@ func TestWorkerRuntimeProcessesNewEngineRunViaBundleWriteback(t *testing.T) {
 	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
 	registry.Register("claude-opus-4-1", overrideProvider)
 
-	processor, err := newReviewRunProcessor(&config.Config{}, sqlDB, client, loader, registry)
+	processor, err := newReviewRunProcessor(&config.Config{}, sqlDB, client, nil, loader, registry)
 	if err != nil {
 		t.Fatalf("newReviewRunProcessor: %v", err)
 	}
@@ -1001,6 +1002,266 @@ func TestWorkerRuntimeProcessesNewEngineRunViaBundleWriteback(t *testing.T) {
 	}
 }
 
+func TestWorkerRuntimeProcessesGitHubRunViaBundleWriteback(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	queries := db.New(sqlDB)
+
+	instRes, err := sqlDB.Exec(`INSERT INTO gitlab_instances (url, name) VALUES ('https://github.com', 'GitHub')`)
+	if err != nil {
+		t.Fatalf("insert gitlab_instances: %v", err)
+	}
+	instanceID, _ := instRes.LastInsertId()
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	if _, err := sqlDB.Exec(`UPDATE projects SET gitlab_project_id = ?, path_with_namespace = ? WHERE id = ?`, 202, "acme/repo", projectID); err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+	if _, err := queries.UpsertMergeRequest(ctx, db.UpsertMergeRequestParams{
+		ProjectID:    projectID,
+		MrIid:        19,
+		Title:        "GitHub runtime writeback",
+		State:        "opened",
+		SourceBranch: "feature",
+		TargetBranch: "main",
+		HeadSha:      "github-runtime-writeback-sha",
+		WebUrl:       "https://github.com/acme/repo/pull/19",
+		Author:       "octocat",
+	}); err != nil {
+		t.Fatalf("UpsertMergeRequest: %v", err)
+	}
+	mr, err := queries.GetMergeRequestByProjectMR(ctx, db.GetMergeRequestByProjectMRParams{
+		ProjectID: projectID,
+		MrIid:     19,
+	})
+	if err != nil {
+		t.Fatalf("GetMergeRequestByProjectMR: %v", err)
+	}
+	runID := insertTestRun(t, sqlDB, projectID, mr.ID, "pending", "github-runtime-writeback", "github-runtime-writeback-sha")
+	if _, err := sqlDB.Exec(`UPDATE review_runs SET scope_json = ? WHERE id = ?`, db.NullRawMessage([]byte(`{"provider_route":"claude-opus-4-1","platform":"github"}`)), runID); err != nil {
+		t.Fatalf("update scope_json: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/repo/pulls/19":
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"id":       602,
+				"number":   19,
+				"title":    "GitHub runtime writeback",
+				"body":     "body",
+				"state":    "open",
+				"draft":    false,
+				"html_url": "https://github.com/acme/repo/pull/19",
+				"user":     map[string]any{"login": "octocat"},
+				"base":     map[string]any{"ref": "main", "sha": "base-sha"},
+				"head":     map[string]any{"ref": "feature", "sha": "github-runtime-writeback-sha"},
+			})
+		case "/repos/acme/repo/pulls/19/files":
+			if r.URL.Query().Get("page") == "1" || r.URL.Query().Get("page") == "" {
+				writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
+					"filename": "internal/legacy.go",
+					"status":   "modified",
+					"patch":    "@@ -1 +1 @@\n-old\n+new\n",
+				}})
+				return
+			}
+			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	githubClient, err := platformgithub.NewClient(server.URL, "test-token", platformgithub.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	loader := &testWorkerRulesLoader{
+		result: rules.LoadResult{
+			EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "default"},
+		},
+	}
+	defaultProvider := &fakeWorkerDynamicProvider{}
+	overrideProvider := &fakeWorkerDynamicProvider{
+		response: llm.ProviderResponse{
+			Result: llm.ReviewResult{
+				SchemaVersion: "1.0",
+				ReviewRunID:   "github-runtime-writeback",
+				Summary:       "Found a GitHub runtime issue",
+				Status:        "requested_changes",
+				Findings: []llm.ReviewFinding{{
+					Category:     "bug",
+					Severity:     "high",
+					Confidence:   0.93,
+					Title:        "Unsafe mutation path",
+					BodyMarkdown: "The update path skips validation.",
+					Path:         "internal/legacy.go",
+					AnchorKind:   "new_line",
+					NewLine:      int32PtrRuntime(1),
+				}},
+			},
+		},
+	}
+	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
+	registry.Register("claude-opus-4-1", overrideProvider)
+
+	cfg := &config.Config{
+		GitHubBaseURL: server.URL,
+		GitHubToken:   "test-token",
+	}
+	processor, err := newReviewRunProcessor(cfg, sqlDB, nil, githubClient, loader, registry)
+	if err != nil {
+		t.Fatalf("newReviewRunProcessor: %v", err)
+	}
+	githubPublishClient := &fakeGitHubPublishClient{}
+	runtimeDeps := newRuntimeDepsWithPlatformWritebacksAndGatePublishers(testLogger(), sqlDB, processor, nil, githubPublishClient, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{}, defaultRuntimeNewStore)
+
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(githubPublishClient.issueComments) != 1 {
+		t.Fatalf("issue comments = %d, want 1", len(githubPublishClient.issueComments))
+	}
+	if len(githubPublishClient.reviewComments) != 1 {
+		t.Fatalf("review comments = %d, want 1", len(githubPublishClient.reviewComments))
+	}
+}
+
+func TestNewReviewRunProcessorProcessesGitHubRunViaNewEngine(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	queries := db.New(sqlDB)
+
+	instRes, err := sqlDB.Exec(`INSERT INTO gitlab_instances (url, name) VALUES ('https://github.com', 'GitHub')`)
+	if err != nil {
+		t.Fatalf("insert gitlab_instances: %v", err)
+	}
+	instanceID, _ := instRes.LastInsertId()
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	if _, err := sqlDB.Exec(`UPDATE projects SET gitlab_project_id = ?, path_with_namespace = ? WHERE id = ?`, 202, "acme/repo", projectID); err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+	if _, err := queries.UpsertMergeRequest(ctx, db.UpsertMergeRequestParams{
+		ProjectID:    projectID,
+		MrIid:        18,
+		Title:        "GitHub automatic review",
+		State:        "opened",
+		SourceBranch: "feature",
+		TargetBranch: "main",
+		HeadSha:      "github-head-sha",
+		WebUrl:       "https://github.com/acme/repo/pull/18",
+		Author:       "octocat",
+	}); err != nil {
+		t.Fatalf("UpsertMergeRequest: %v", err)
+	}
+	mr, err := queries.GetMergeRequestByProjectMR(ctx, db.GetMergeRequestByProjectMRParams{
+		ProjectID: projectID,
+		MrIid:     18,
+	})
+	if err != nil {
+		t.Fatalf("GetMergeRequestByProjectMR: %v", err)
+	}
+	runID := insertTestRun(t, sqlDB, projectID, mr.ID, "pending", "github-runtime-new-engine", "github-head-sha")
+	if _, err := sqlDB.Exec(`UPDATE review_runs SET scope_json = ? WHERE id = ?`, db.NullRawMessage([]byte(`{"provider_route":"claude-opus-4-1","platform":"github"}`)), runID); err != nil {
+		t.Fatalf("update scope_json: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/repo/pulls/18":
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"id":       601,
+				"number":   18,
+				"title":    "GitHub automatic review",
+				"body":     "body",
+				"state":    "open",
+				"draft":    false,
+				"html_url": "https://github.com/acme/repo/pull/18",
+				"user":     map[string]any{"login": "octocat"},
+				"base":     map[string]any{"ref": "main", "sha": "base-sha"},
+				"head":     map[string]any{"ref": "feature", "sha": "github-head-sha"},
+			})
+		case "/repos/acme/repo/pulls/18/files":
+			if r.URL.Query().Get("page") == "1" || r.URL.Query().Get("page") == "" {
+				writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
+					"filename": "internal/legacy.go",
+					"status":   "modified",
+					"patch":    "@@ -1 +1 @@\n-old\n+new\n",
+				}})
+				return
+			}
+			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	githubClient, err := platformgithub.NewClient(server.URL, "test-token", platformgithub.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	loader := &testWorkerRulesLoader{
+		result: rules.LoadResult{
+			EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "default"},
+		},
+	}
+	defaultProvider := &fakeWorkerDynamicProvider{}
+	overrideProvider := &fakeWorkerDynamicProvider{
+		response: llm.ProviderResponse{
+			Result: llm.ReviewResult{
+				SchemaVersion: "1.0",
+				ReviewRunID:   "github-runtime-new-engine",
+				Summary:       "Found a GitHub issue",
+				Status:        "requested_changes",
+				Findings: []llm.ReviewFinding{{
+					Category:     "bug",
+					Severity:     "high",
+					Confidence:   0.93,
+					Title:        "Unsafe mutation path",
+					BodyMarkdown: "The update path skips validation.",
+					Path:         "internal/legacy.go",
+					AnchorKind:   "new_line",
+					NewLine:      int32PtrRuntime(1),
+				}},
+			},
+		},
+	}
+	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
+	registry.Register("claude-opus-4-1", overrideProvider)
+
+	cfg := &config.Config{
+		GitHubBaseURL: server.URL,
+		GitHubToken:   "test-token",
+	}
+	processor, err := newReviewRunProcessor(cfg, sqlDB, nil, githubClient, loader, registry)
+	if err != nil {
+		t.Fatalf("newReviewRunProcessor: %v", err)
+	}
+	run, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.Status != "requested_changes" {
+		t.Fatalf("outcome.Status = %q, want requested_changes", outcome.Status)
+	}
+	if loader.input.RepositoryRef != "acme/repo" {
+		t.Fatalf("rules loader repository_ref = %q, want acme/repo", loader.input.RepositoryRef)
+	}
+	if overrideProvider.calls != len(reviewpack.DefaultPacks()) {
+		t.Fatalf("override provider calls = %d, want %d", overrideProvider.calls, len(reviewpack.DefaultPacks()))
+	}
+}
+
 type fakeStatusPublisher struct{ results []gate.Result }
 
 func (f *fakeStatusPublisher) PublishStatus(_ context.Context, result gate.Result) error {
@@ -1043,6 +1304,32 @@ func (f *fakeDiscussionClient) CreateNote(_ context.Context, req writer.CreateNo
 func (f *fakeDiscussionClient) ResolveDiscussion(_ context.Context, req writer.ResolveDiscussionRequest) error {
 	f.resolveRequest = append(f.resolveRequest, req)
 	return f.resolveErr
+}
+
+type fakeGitHubPublishClient struct {
+	issueComments  []platformgithub.CreateIssueCommentRequest
+	reviewComments []platformgithub.CreateReviewCommentRequest
+}
+
+func (f *fakeGitHubPublishClient) GetPullRequestSnapshotByRepositoryRef(_ context.Context, repositoryRef string, pullNumber int64) (platformgithub.PullRequestSnapshot, error) {
+	return platformgithub.PullRequestSnapshot{
+		PullRequest: platformgithub.PullRequest{
+			ID:      602,
+			Number:  pullNumber,
+			HTMLURL: "https://github.com/" + repositoryRef + "/pull/19",
+			HeadSHA: "github-runtime-writeback-sha",
+		},
+	}, nil
+}
+
+func (f *fakeGitHubPublishClient) CreateIssueComment(_ context.Context, req platformgithub.CreateIssueCommentRequest) error {
+	f.issueComments = append(f.issueComments, req)
+	return nil
+}
+
+func (f *fakeGitHubPublishClient) CreateReviewComment(_ context.Context, req platformgithub.CreateReviewCommentRequest) error {
+	f.reviewComments = append(f.reviewComments, req)
+	return nil
 }
 
 type testWorkerRulesLoader struct {

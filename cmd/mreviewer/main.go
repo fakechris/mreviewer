@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	comparepkg "github.com/mreviewer/mreviewer/internal/compare"
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
@@ -39,17 +40,22 @@ type runtimeDeps struct {
 	loadInput     func(context.Context, string, core.ReviewTarget) (core.ReviewInput, error)
 	newEngine     func(string) reviewEngine
 	publish       func(context.Context, string, core.ReviewTarget, core.ReviewBundle) error
+	compare       func(context.Context, string, core.ReviewTarget, core.ReviewBundle, cliOptions) (*comparepkg.Report, error)
+	status        func(context.Context, string, core.ReviewTarget, core.ReviewInput, string, int) error
 	stdout        io.Writer
 	stderr        io.Writer
 }
 
 type cliOptions struct {
 	target        string
+	targets       []string
 	configPath    string
 	outputMode    OutputMode
 	publishMode   PublishMode
 	reviewerPacks []string
 	routeOverride string
+	compareLiveReviewers []string
+	compareArtifactPaths []string
 }
 
 func main() {
@@ -58,6 +64,8 @@ func main() {
 		loadInput:     defaultLoadInput,
 		newEngine:     defaultReviewEngine,
 		publish:       defaultPublish,
+		compare:       defaultCompare,
+		status:        defaultStatus,
 		stdout:        os.Stdout,
 		stderr:        os.Stderr,
 	}))
@@ -86,59 +94,217 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 	if err != nil {
 		return 2
 	}
-	target, err := deps.resolveTarget(opts.target)
-	if err != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "resolve target failed: %v\n", err)
-		return 1
-	}
-	input, err := deps.loadInput(context.Background(), opts.configPath, target)
-	if err != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "build input failed: %v\n", err)
-		return 1
-	}
-
-	bundle, err := deps.newEngine(opts.configPath).Run(context.Background(), input, core.RunOptions{
-		OutputMode:    string(opts.outputMode),
-		PublishMode:   string(opts.publishMode),
-		ReviewerPacks: opts.reviewerPacks,
-		RouteOverride: opts.routeOverride,
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "review failed: %v\n", err)
-		return 1
-	}
-	if deps.publish != nil && opts.publishMode != PublishModeArtifactOnly {
-		publishBundle := bundle
-		if opts.publishMode == PublishModeSummaryOnly {
-			publishBundle = summaryOnlyBundle(bundle)
-		}
-		if err := deps.publish(context.Background(), opts.configPath, target, publishBundle); err != nil {
-			_, _ = fmt.Fprintf(deps.stderr, "publish failed: %v\n", err)
+	var bundles []core.ReviewBundle
+	var comparisons []comparepkg.Report
+	for _, rawTarget := range opts.targets {
+		target, err := deps.resolveTarget(rawTarget)
+		if err != nil {
+			_, _ = fmt.Fprintf(deps.stderr, "resolve target failed: %v\n", err)
 			return 1
 		}
+		input, err := deps.loadInput(context.Background(), opts.configPath, target)
+		if err != nil {
+			_, _ = fmt.Fprintf(deps.stderr, "build input failed: %v\n", err)
+			return 1
+		}
+		if deps.status != nil {
+			if err := deps.status(context.Background(), opts.configPath, target, input, "running", 0); err != nil {
+				_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", err)
+				return 1
+			}
+		}
+
+		bundle, err := deps.newEngine(opts.configPath).Run(context.Background(), input, core.RunOptions{
+			OutputMode:    string(opts.outputMode),
+			PublishMode:   string(opts.publishMode),
+			ReviewerPacks: opts.reviewerPacks,
+			RouteOverride: opts.routeOverride,
+		})
+		if err != nil {
+			if deps.status != nil {
+				_ = deps.status(context.Background(), opts.configPath, target, input, "failed", 0)
+			}
+			_, _ = fmt.Fprintf(deps.stderr, "review failed: %v\n", err)
+			return 1
+		}
+		bundles = append(bundles, bundle)
+
+		if deps.compare != nil && (len(opts.compareLiveReviewers) > 0 || len(opts.compareArtifactPaths) > 0) {
+			comparison, err := deps.compare(context.Background(), opts.configPath, target, bundle, opts)
+			if err != nil {
+				_, _ = fmt.Fprintf(deps.stderr, "compare failed: %v\n", err)
+				return 1
+			}
+			if comparison != nil {
+				comparisons = append(comparisons, *comparison)
+			}
+		}
+		if deps.publish != nil && opts.publishMode != PublishModeArtifactOnly {
+			publishBundle := bundle
+			if opts.publishMode == PublishModeSummaryOnly {
+				publishBundle = summaryOnlyBundle(bundle)
+			}
+			if err := deps.publish(context.Background(), opts.configPath, target, publishBundle); err != nil {
+				if deps.status != nil {
+					_ = deps.status(context.Background(), opts.configPath, target, input, "failed", 0)
+				}
+				_, _ = fmt.Fprintf(deps.stderr, "publish failed: %v\n", err)
+				return 1
+			}
+		}
+		if deps.status != nil {
+			if err := deps.status(context.Background(), opts.configPath, target, input, finalStatusState(bundle), blockingFindings(bundle)); err != nil {
+				_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", err)
+				return 1
+			}
+		}
 	}
 
+	if len(bundles) == 1 {
+		bundle := bundles[0]
+		var comparison *comparepkg.Report
+		if len(comparisons) == 1 {
+			comparison = &comparisons[0]
+		}
+		switch opts.outputMode {
+		case OutputModeJSON:
+			enc := json.NewEncoder(deps.stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(outputPayload(bundle, comparison)); err != nil {
+				_, _ = fmt.Fprintf(deps.stderr, "encode json failed: %v\n", err)
+				return 1
+			}
+		case OutputModeMarkdown:
+			_, _ = fmt.Fprint(deps.stdout, renderMarkdownOutput(bundle, comparison))
+		case OutputModeBoth:
+			_, _ = fmt.Fprint(deps.stdout, renderMarkdownOutput(bundle, comparison))
+			enc := json.NewEncoder(deps.stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(outputPayload(bundle, comparison)); err != nil {
+				_, _ = fmt.Fprintf(deps.stderr, "encode json failed: %v\n", err)
+				return 1
+			}
+		}
+		return 0
+	}
+
+	var aggregate *comparepkg.AggregateReport
+	if len(comparisons) > 0 {
+		summary := comparepkg.AggregateReports(comparisons)
+		aggregate = &summary
+	}
 	switch opts.outputMode {
 	case OutputModeJSON:
 		enc := json.NewEncoder(deps.stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(bundle); err != nil {
+		if err := enc.Encode(outputMultiTargetPayload(bundles, comparisons, aggregate)); err != nil {
 			_, _ = fmt.Fprintf(deps.stderr, "encode json failed: %v\n", err)
 			return 1
 		}
 	case OutputModeMarkdown:
-		_, _ = fmt.Fprintln(deps.stdout, bundle.MarkdownSummary)
+		_, _ = fmt.Fprint(deps.stdout, renderMultiTargetMarkdownOutput(bundles, comparisons, aggregate))
 	case OutputModeBoth:
-		_, _ = fmt.Fprintln(deps.stdout, bundle.MarkdownSummary)
+		_, _ = fmt.Fprint(deps.stdout, renderMultiTargetMarkdownOutput(bundles, comparisons, aggregate))
 		enc := json.NewEncoder(deps.stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(bundle); err != nil {
+		if err := enc.Encode(outputMultiTargetPayload(bundles, comparisons, aggregate)); err != nil {
 			_, _ = fmt.Fprintf(deps.stderr, "encode json failed: %v\n", err)
 			return 1
 		}
 	}
 
 	return 0
+}
+
+func finalStatusState(bundle core.ReviewBundle) string {
+	switch strings.ToLower(strings.TrimSpace(bundle.Verdict)) {
+	case "failed", "request_changes", "requested_changes":
+		return "failed"
+	default:
+		if blockingFindings(bundle) > 0 {
+			return "failed"
+		}
+		return "success"
+	}
+}
+
+func blockingFindings(bundle core.ReviewBundle) int {
+	count := 0
+	for _, candidate := range bundle.PublishCandidates {
+		if candidate.Kind == "finding" {
+			count++
+		}
+	}
+	return count
+}
+
+type runOutput struct {
+	Review     core.ReviewBundle    `json:"review"`
+	Comparison *comparepkg.Report   `json:"comparison,omitempty"`
+}
+
+type multiRunOutput struct {
+	Reviews             []core.ReviewBundle           `json:"reviews"`
+	Comparisons         []comparepkg.Report           `json:"comparisons,omitempty"`
+	AggregateComparison *comparepkg.AggregateReport   `json:"aggregate_comparison,omitempty"`
+}
+
+func outputPayload(bundle core.ReviewBundle, comparison *comparepkg.Report) any {
+	if comparison == nil {
+		return bundle
+	}
+	return runOutput{
+		Review:     bundle,
+		Comparison: comparison,
+	}
+}
+
+func renderMarkdownOutput(bundle core.ReviewBundle, comparison *comparepkg.Report) string {
+	var out strings.Builder
+	out.WriteString(bundle.MarkdownSummary)
+	out.WriteString("\n")
+	if comparison != nil {
+		if summary := comparepkg.RenderMarkdown(*comparison); summary != "" {
+			out.WriteString("\n")
+			out.WriteString(summary)
+			out.WriteString("\n")
+		}
+	}
+	return out.String()
+}
+
+func outputMultiTargetPayload(bundles []core.ReviewBundle, comparisons []comparepkg.Report, aggregate *comparepkg.AggregateReport) any {
+	return multiRunOutput{
+		Reviews:             bundles,
+		Comparisons:         comparisons,
+		AggregateComparison: aggregate,
+	}
+}
+
+func renderMultiTargetMarkdownOutput(bundles []core.ReviewBundle, comparisons []comparepkg.Report, aggregate *comparepkg.AggregateReport) string {
+	var out strings.Builder
+	for i, bundle := range bundles {
+		if i > 0 {
+			out.WriteString("\n\n")
+		}
+		out.WriteString(bundle.MarkdownSummary)
+		out.WriteString("\n")
+		if i < len(comparisons) {
+			if summary := comparepkg.RenderMarkdown(comparisons[i]); summary != "" {
+				out.WriteString("\n")
+				out.WriteString(summary)
+				out.WriteString("\n")
+			}
+		}
+	}
+	if aggregate != nil {
+		if summary := comparepkg.RenderAggregateMarkdown(*aggregate); summary != "" {
+			out.WriteString("\n")
+			out.WriteString(summary)
+			out.WriteString("\n")
+		}
+	}
+	return out.String()
 }
 
 func summaryOnlyBundle(bundle core.ReviewBundle) core.ReviewBundle {
@@ -157,19 +323,36 @@ func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	fs.SetOutput(stderr)
 	opts := cliOptions{configPath: "config.yaml"}
 	var packs string
+	var compareLive string
+	var compareArtifacts string
+	var targets string
 	output := string(OutputModeBoth)
 	publish := string(PublishModeFullReviewComments)
 	fs.StringVar(&opts.target, "target", "", "GitHub/GitLab PR URL")
+	fs.StringVar(&targets, "targets", "", "comma separated GitHub/GitLab PR URLs")
 	fs.StringVar(&opts.configPath, "config", "config.yaml", "Path to config file")
 	fs.StringVar(&output, "output", output, "markdown|json|both")
 	fs.StringVar(&publish, "publish", publish, "full-review-comments|summary-only|artifact-only")
 	fs.StringVar(&packs, "reviewer-packs", "", "comma separated reviewer packs")
 	fs.StringVar(&opts.routeOverride, "route", "", "provider route override")
+	fs.StringVar(&compareLive, "compare-live", "", "comma separated live reviewers to compare")
+	fs.StringVar(&compareArtifacts, "compare-artifacts", "", "comma separated external artifact json paths")
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, err
 	}
-	if strings.TrimSpace(opts.target) == "" {
-		return cliOptions{}, fmt.Errorf("--target is required")
+	if targets != "" {
+		for _, part := range strings.Split(targets, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				opts.targets = append(opts.targets, part)
+			}
+		}
+	}
+	if strings.TrimSpace(opts.target) != "" {
+		opts.targets = append([]string{strings.TrimSpace(opts.target)}, opts.targets...)
+	}
+	if len(opts.targets) == 0 {
+		return cliOptions{}, fmt.Errorf("--target or --targets is required")
 	}
 	opts.outputMode = OutputMode(strings.TrimSpace(output))
 	switch opts.outputMode {
@@ -188,6 +371,22 @@ func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 			part = strings.TrimSpace(part)
 			if part != "" {
 				opts.reviewerPacks = append(opts.reviewerPacks, part)
+			}
+		}
+	}
+	if compareLive != "" {
+		for _, part := range strings.Split(compareLive, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				opts.compareLiveReviewers = append(opts.compareLiveReviewers, part)
+			}
+		}
+	}
+	if compareArtifacts != "" {
+		for _, part := range strings.Split(compareArtifacts, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				opts.compareArtifactPaths = append(opts.compareArtifactPaths, part)
 			}
 		}
 	}

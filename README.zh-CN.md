@@ -11,6 +11,7 @@ GitLab Merge Request AI 代码审查工具。支持自托管、多模型、SQLit
 - 🤖 **多模型支持**: MiniMax、OpenAI、Anthropic、DeepSeek 等
 - 🗄️ **灵活存储**: SQLite（单机）或 MySQL（生产）
 - 🌐 **GitLab 原生**: Webhook 集成、讨论评论、CI 门禁
+- 🧰 **Portable Review Council CLI**: 通过统一 CLI 直接审查 GitHub / GitLab PR
 - 🔄 **智能去重**: 指纹匹配 + LLM 语义去重
 - 📊 **可观测性**: Grafana 仪表板、审计日志、指标
 
@@ -123,6 +124,44 @@ docker compose up -d --build
 ```
 
 这条路径会从你当前 checkout 本地构建 `ingress` 和 `worker`，所以修改代码后重新构建即可验证。
+
+### Portable Review Council CLI
+
+新的 `mreviewer` CLI 可以直接对 GitHub 或 GitLab 的 PR / MR URL 运行 portable review council。
+
+本地源码运行方式：
+
+```bash
+go run ./cmd/mreviewer \
+  --target https://github.com/acme/repo/pull/17 \
+  --output both \
+  --publish full-review-comments \
+  --reviewer-packs security,architecture,database
+```
+
+容器内运行方式：
+
+```bash
+docker compose exec worker /app/mreviewer \
+  --target https://github.com/acme/repo/pull/17 \
+  --output json \
+  --publish artifact-only
+```
+
+关键参数：
+
+- `--target`: GitHub PR 或 GitLab MR URL
+- `--targets`: 逗号分隔的 GitHub/GitLab PR 或 MR URL，用于多目标 review 和聚合 comparison
+- `--output`: `markdown`、`json` 或 `both`
+- `--publish`: `full-review-comments`、`summary-only` 或 `artifact-only`
+- `--reviewer-packs`: 逗号分隔的 reviewer pack 列表
+- `--route`: provider route override
+- `--compare-live`: 逗号分隔的目标 PR/MR 上已有 reviewer 标识，例如 `codex,coderabbit`
+- `--compare-artifacts`: 逗号分隔的外部 JSON artifact 路径
+
+当提供 compare 参数时，CLI 会在 JSON 输出里附带 comparison report，包括 agreement rate、shared findings 和各 reviewer 的 unique findings。
+当提供 `--targets` 时，JSON 输出还会包含 `aggregate_comparison`，用于在一次运行里比较多个 GitHub/GitLab 变更上的 reviewer 一致性。
+当目标是 GitHub PR 时，CLI 还会在 review 运行中和结束后更新 `mreviewer/ai-review` 这个 commit status。
 
 ### 配置 GitLab Webhook
 

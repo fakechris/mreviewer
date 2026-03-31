@@ -111,6 +111,10 @@ require_pattern "docker-compose.prod.config.yaml" "/app/config.yaml" "docker-com
 require_pattern "docker-compose.yaml" "build:" "docker-compose.yaml must build local images for developer workflow"
 require_pattern "Dockerfile" "/out/manual-trigger" "Dockerfile must build and package the manual-trigger binary"
 require_pattern "Dockerfile" "cmd/manual-trigger" "Dockerfile must compile cmd/manual-trigger for the documented in-container CLI"
+require_pattern "Dockerfile" "/out/mreviewer" "Dockerfile must build and package the mreviewer CLI binary"
+require_pattern "Dockerfile" "cmd/mreviewer" "Dockerfile must compile cmd/mreviewer for the documented portable review council CLI"
+require_pattern "README.md" "/app/mreviewer" "README.md must document the in-container mreviewer CLI"
+require_pattern "README.zh-CN.md" "/app/mreviewer" "README.zh-CN.md must document the in-container mreviewer CLI"
 if pattern_matches "container_name:" docker-compose.yaml || pattern_matches "container_name:" docker-compose.prod.yaml; then
   fail "compose files must not hard-code container_name values"
 fi

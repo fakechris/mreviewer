@@ -251,10 +251,10 @@ func TestShouldLogHeartbeatStop(t *testing.T) {
 func TestNewReviewRunProcessorRequiresDependencies(t *testing.T) {
 	cfg := &config.Config{}
 
-	if _, err := newReviewRunProcessor(nil, nil, nil, nil, nil); err == nil {
+	if _, err := newReviewRunProcessor(nil, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("newReviewRunProcessor(nil, ...) error = nil, want non-nil")
 	}
-	if _, err := newReviewRunProcessor(cfg, nil, nil, nil, nil); err == nil {
+	if _, err := newReviewRunProcessor(cfg, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("newReviewRunProcessor missing db error = nil, want non-nil")
 	}
 }

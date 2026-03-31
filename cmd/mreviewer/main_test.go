@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	comparepkg "github.com/mreviewer/mreviewer/internal/compare"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 )
 
@@ -22,9 +23,22 @@ func (f *fakeEngine) Run(_ context.Context, input core.ReviewInput, opts core.Ru
 	return f.bundle, f.err
 }
 
+type reviewEngineFunc func(context.Context, core.ReviewInput, core.RunOptions) (core.ReviewBundle, error)
+
+func (f reviewEngineFunc) Run(ctx context.Context, input core.ReviewInput, opts core.RunOptions) (core.ReviewBundle, error) {
+	return f(ctx, input, opts)
+}
+
 type publishCall struct {
 	target core.ReviewTarget
 	bundle core.ReviewBundle
+}
+
+type statusCall struct {
+	target          core.ReviewTarget
+	input           core.ReviewInput
+	state           string
+	blockingFindings int
 }
 
 func TestRunWithDepsJSONOutputArtifactOnly(t *testing.T) {
@@ -233,5 +247,303 @@ func TestResolveReviewTargetSupportsGitHubPRURL(t *testing.T) {
 	}
 	if target.ChangeNumber != 17 {
 		t.Fatalf("change number = %d, want 17", target.ChangeNumber)
+	}
+}
+
+func TestRunWithDepsJSONOutputIncludesComparisonReport(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform:     core.PlatformGitHub,
+				URL:          "https://github.com/acme/repo/pull/17",
+				Repository:   "acme/repo",
+				ChangeNumber: 17,
+			},
+			MarkdownSummary:   "# Review\n\nLooks risky.",
+			JSONSchemaVersion: "v1alpha1",
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runWithDeps([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--output", "json",
+		"--compare-live", "codex,coderabbit",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		compare: func(_ context.Context, _ string, target core.ReviewTarget, bundle core.ReviewBundle, opts cliOptions) (*comparepkg.Report, error) {
+			if target.Platform != core.PlatformGitHub {
+				t.Fatalf("compare target platform = %q, want github", target.Platform)
+			}
+			if len(opts.compareLiveReviewers) != 2 {
+				t.Fatalf("compare live reviewers = %#v, want 2", opts.compareLiveReviewers)
+			}
+			report := comparepkg.Report{
+				Target:             target,
+				ReviewerCount:      3,
+				UniqueFindingCount: 4,
+				AgreementRate:      0.5,
+			}
+			return &report, nil
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json output: %v", err)
+	}
+	if payload["comparison"] == nil {
+		t.Fatalf("comparison payload missing: %s", stdout.String())
+	}
+}
+
+func TestRunWithDepsMarkdownOutputIncludesComparisonSection(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform:     core.PlatformGitHub,
+				URL:          "https://github.com/acme/repo/pull/17",
+				Repository:   "acme/repo",
+				ChangeNumber: 17,
+			},
+			MarkdownSummary: "# Review\n\nLooks risky.",
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runWithDeps([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--output", "markdown",
+		"--compare-artifacts", "artifacts/codex.json",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		compare: func(_ context.Context, _ string, target core.ReviewTarget, bundle core.ReviewBundle, opts cliOptions) (*comparepkg.Report, error) {
+			if len(opts.compareArtifactPaths) != 1 {
+				t.Fatalf("compare artifact paths = %#v, want 1", opts.compareArtifactPaths)
+			}
+			report := comparepkg.Report{
+				Target:             target,
+				ReviewerCount:      2,
+				UniqueFindingCount: 3,
+				AgreementRate:      1.0 / 3.0,
+			}
+			return &report, nil
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("## Comparison")) {
+		t.Fatalf("markdown output missing comparison section: %s", stdout.String())
+	}
+}
+
+func TestParseOptionsSupportsComparisonFlags(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, err := parseOptions([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--compare-live", "codex,coderabbit",
+		"--compare-artifacts", "artifacts/codex.json,artifacts/coderabbit.json",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseOptions: %v", err)
+	}
+	if len(opts.compareLiveReviewers) != 2 {
+		t.Fatalf("compare live reviewers = %#v, want 2", opts.compareLiveReviewers)
+	}
+	if len(opts.compareArtifactPaths) != 2 {
+		t.Fatalf("compare artifact paths = %#v, want 2", opts.compareArtifactPaths)
+	}
+}
+
+func TestParseOptionsSupportsMultipleTargets(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, err := parseOptions([]string{
+		"--targets", "https://github.com/acme/repo/pull/17,https://gitlab.example.com/group/repo/-/merge_requests/23",
+		"--compare-live", "codex",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseOptions: %v", err)
+	}
+	if len(opts.targets) != 2 {
+		t.Fatalf("targets = %#v, want 2", opts.targets)
+	}
+	if opts.targets[0] != "https://github.com/acme/repo/pull/17" {
+		t.Fatalf("first target = %q", opts.targets[0])
+	}
+}
+
+func TestRunWithDepsJSONOutputSupportsMultiTargetCompare(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runWithDeps([]string{
+		"--targets", "https://github.com/acme/repo/pull/17,https://gitlab.example.com/group/repo/-/merge_requests/23",
+		"--output", "json",
+		"--compare-live", "codex",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine {
+			return reviewEngineFunc(func(_ context.Context, input core.ReviewInput, _ core.RunOptions) (core.ReviewBundle, error) {
+				return core.ReviewBundle{
+					Target:          input.Target,
+					MarkdownSummary: "# Review",
+				}, nil
+			})
+		},
+		compare: func(_ context.Context, _ string, target core.ReviewTarget, _ core.ReviewBundle, _ cliOptions) (*comparepkg.Report, error) {
+			if target.Platform == core.PlatformGitHub {
+				report := comparepkg.Report{
+					Target:             target,
+					ReviewerCount:      2,
+					UniqueFindingCount: 2,
+					AgreementRate:      0.5,
+				}
+				return &report, nil
+			}
+			report := comparepkg.Report{
+				Target:             target,
+				ReviewerCount:      3,
+				UniqueFindingCount: 4,
+				AgreementRate:      1.0,
+			}
+			return &report, nil
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json output: %v", err)
+	}
+	aggregate, ok := payload["aggregate_comparison"].(map[string]any)
+	if !ok {
+		t.Fatalf("aggregate_comparison missing: %s", stdout.String())
+	}
+	if aggregate["target_count"] != float64(2) {
+		t.Fatalf("target_count = %#v, want 2", aggregate["target_count"])
+	}
+	if aggregate["total_reviewer_count"] != float64(5) {
+		t.Fatalf("total_reviewer_count = %#v, want 5", aggregate["total_reviewer_count"])
+	}
+}
+
+func TestRunWithDepsPublishesGitHubStatusTransitions(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform:     core.PlatformGitHub,
+				URL:          "https://github.com/acme/repo/pull/17",
+				Repository:   "acme/repo",
+				ChangeNumber: 17,
+			},
+		},
+	}
+	input := core.ReviewInput{
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitHub,
+			URL:          "https://github.com/acme/repo/pull/17",
+			Repository:   "acme/repo",
+			ChangeNumber: 17,
+		},
+		Request: core.ReviewInput{}.Request,
+	}
+	input.Request.Project.FullPath = "acme/repo"
+	input.Request.Version.HeadSHA = "head-sha"
+
+	var calls []statusCall
+	exitCode := runWithDeps([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, _ core.ReviewTarget) (core.ReviewInput, error) {
+			return input, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		status: func(_ context.Context, _ string, target core.ReviewTarget, in core.ReviewInput, state string, blockingFindings int) error {
+			calls = append(calls, statusCall{target: target, input: in, state: state, blockingFindings: blockingFindings})
+			return nil
+		},
+		stdout: &bytes.Buffer{},
+		stderr: &bytes.Buffer{},
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("status calls = %d, want 2", len(calls))
+	}
+	if calls[0].state != "running" {
+		t.Fatalf("first status state = %q, want running", calls[0].state)
+	}
+	if calls[1].state != "success" {
+		t.Fatalf("second status state = %q, want success", calls[1].state)
+	}
+}
+
+func TestRunWithDepsPublishesFailedGitHubStatusOnReviewError(t *testing.T) {
+	engine := &fakeEngine{err: context.DeadlineExceeded}
+	input := core.ReviewInput{
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitHub,
+			URL:          "https://github.com/acme/repo/pull/17",
+			Repository:   "acme/repo",
+			ChangeNumber: 17,
+		},
+	}
+	input.Request.Project.FullPath = "acme/repo"
+	input.Request.Version.HeadSHA = "head-sha"
+
+	var calls []statusCall
+	var stderr bytes.Buffer
+	exitCode := runWithDeps([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, _ core.ReviewTarget) (core.ReviewInput, error) {
+			return input, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		status: func(_ context.Context, _ string, target core.ReviewTarget, in core.ReviewInput, state string, blockingFindings int) error {
+			calls = append(calls, statusCall{target: target, input: in, state: state, blockingFindings: blockingFindings})
+			return nil
+		},
+		stdout: &bytes.Buffer{},
+		stderr: &stderr,
+	})
+	if exitCode != 1 {
+		t.Fatalf("exitCode = %d, want 1", exitCode)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("status calls = %d, want 2", len(calls))
+	}
+	if calls[0].state != "running" {
+		t.Fatalf("first status state = %q, want running", calls[0].state)
+	}
+	if calls[1].state != "failed" {
+		t.Fatalf("second status state = %q, want failed", calls[1].state)
 	}
 }

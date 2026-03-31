@@ -114,6 +114,35 @@ type MergeRequestSnapshot struct {
 	Diffs        []MergeRequestDiff
 }
 
+type MergeRequestNote struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+	Author struct {
+		Username string `json:"username"`
+	} `json:"author"`
+}
+
+type MergeRequestDiscussionPosition struct {
+	OldPath string `json:"old_path"`
+	NewPath string `json:"new_path"`
+	OldLine int    `json:"old_line"`
+	NewLine int    `json:"new_line"`
+}
+
+type MergeRequestDiscussionNote struct {
+	ID       int64                          `json:"id"`
+	Body     string                         `json:"body"`
+	Position *MergeRequestDiscussionPosition `json:"position"`
+	Author   struct {
+		Username string `json:"username"`
+	} `json:"author"`
+}
+
+type MergeRequestDiscussion struct {
+	ID    string                      `json:"id"`
+	Notes []MergeRequestDiscussionNote `json:"notes"`
+}
+
 type mergeRequestChangesResponse struct {
 	Changes []MergeRequestDiff `json:"changes"`
 }
@@ -480,6 +509,66 @@ func (c *Client) GetRepositoryFileByRepositoryRef(ctx context.Context, repositor
 		return "", fmt.Errorf("gitlab: read GET %s response: %w", requestURL, err)
 	}
 	return string(data), nil
+}
+
+func (c *Client) ListMergeRequestNotesByProjectRef(ctx context.Context, projectRef string, mergeRequestIID int64) ([]MergeRequestNote, error) {
+	return c.listMergeRequestNotes(ctx, mergeRequestPathByProjectRef(projectRef, mergeRequestIID, "/notes"))
+}
+
+func (c *Client) ListMergeRequestDiscussionsByProjectRef(ctx context.Context, projectRef string, mergeRequestIID int64) ([]MergeRequestDiscussion, error) {
+	return c.listMergeRequestDiscussions(ctx, mergeRequestPathByProjectRef(projectRef, mergeRequestIID, "/discussions"))
+}
+
+func (c *Client) listMergeRequestNotes(ctx context.Context, path string) ([]MergeRequestNote, error) {
+	page := 1
+	var notes []MergeRequestNote
+	for {
+		query := url.Values{}
+		query.Set("page", strconv.Itoa(page))
+		query.Set("per_page", strconv.Itoa(defaultPerPage))
+
+		var batch []MergeRequestNote
+		headers, err := c.doJSON(ctx, http.MethodGet, path, query, &batch)
+		if err != nil {
+			return nil, err
+		}
+		notes = append(notes, batch...)
+		nextPage := strings.TrimSpace(headers.Get("X-Next-Page"))
+		if nextPage == "" {
+			return notes, nil
+		}
+		next, err := strconv.Atoi(nextPage)
+		if err != nil || next <= page {
+			return nil, fmt.Errorf("gitlab: invalid next page %q for %s", nextPage, path)
+		}
+		page = next
+	}
+}
+
+func (c *Client) listMergeRequestDiscussions(ctx context.Context, path string) ([]MergeRequestDiscussion, error) {
+	page := 1
+	var discussions []MergeRequestDiscussion
+	for {
+		query := url.Values{}
+		query.Set("page", strconv.Itoa(page))
+		query.Set("per_page", strconv.Itoa(defaultPerPage))
+
+		var batch []MergeRequestDiscussion
+		headers, err := c.doJSON(ctx, http.MethodGet, path, query, &batch)
+		if err != nil {
+			return nil, err
+		}
+		discussions = append(discussions, batch...)
+		nextPage := strings.TrimSpace(headers.Get("X-Next-Page"))
+		if nextPage == "" {
+			return discussions, nil
+		}
+		next, err := strconv.Atoi(nextPage)
+		if err != nil || next <= page {
+			return nil, fmt.Errorf("gitlab: invalid next page %q for %s", nextPage, path)
+		}
+		page = next
+	}
 }
 
 func (c *Client) doJSON(ctx context.Context, method, apiPath string, query url.Values, dest any) (http.Header, error) {

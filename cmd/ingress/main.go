@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/commands"
 	"github.com/mreviewer/mreviewer/internal/config"
 	"github.com/mreviewer/mreviewer/internal/database"
+	"github.com/mreviewer/mreviewer/internal/githubhooks"
 	"github.com/mreviewer/mreviewer/internal/hooks"
 	apphttp "github.com/mreviewer/mreviewer/internal/http"
 	"github.com/mreviewer/mreviewer/internal/logging"
@@ -55,22 +58,11 @@ func run() int {
 
 	logger.Info("database connection pool initialized", "dialect", dialect)
 
-	// Build HTTP routes.
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", apphttp.NewHealthHandler(logger, db))
-
-	// Webhook ingress handler.
-	newStore := database.StoreFactory(dialect)
-	eventProcessor := runs.NewService(logger, db, runs.WithStoreFactory(newStore))
-	runService := reviewrun.NewService(eventProcessor, nil)
-	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runService, hooks.WithHandlerStoreFactory(newStore))
-	commandProcessor := commands.NewProcessor(logger, db, commands.WithStoreFactory(newStore))
-	webhookHandler.SetCommandProcessor(commandProcessor)
-	mux.Handle("POST /webhook", webhookHandler)
-
-	adminSvc := adminapi.NewService(newStore(db))
-	mux.Handle("/admin/api/", adminapi.NewHandler(adminSvc, cfg.AdminToken))
-	mux.Handle("/admin/", adminui.NewHandler(cfg.AdminToken))
+	mux, err := newMux(logger, cfg, db, dialect)
+	if err != nil {
+		logger.Error("failed to build http routes", "error", err)
+		return 1
+	}
 
 	// Wrap with request-id middleware.
 	handler := apphttp.RequestIDMiddleware(logger, mux)
@@ -88,4 +80,37 @@ func run() int {
 
 	logger.Info("shutdown complete")
 	return 0
+}
+
+func newMux(logger *slog.Logger, cfg *config.Config, db *sql.DB, dialect database.Dialect) (http.Handler, error) {
+	if logger == nil {
+		logger = logging.NewLogger(slog.LevelInfo)
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("ingress: configuration is required")
+	}
+	if db == nil {
+		return nil, fmt.Errorf("ingress: database is required")
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", apphttp.NewHealthHandler(logger, db))
+
+	newStore := database.StoreFactory(dialect)
+	eventProcessor := runs.NewService(logger, db, runs.WithStoreFactory(newStore))
+	runService := reviewrun.NewService(eventProcessor, nil)
+
+	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runService, hooks.WithHandlerStoreFactory(newStore))
+	commandProcessor := commands.NewProcessor(logger, db, commands.WithStoreFactory(newStore))
+	webhookHandler.SetCommandProcessor(commandProcessor)
+	mux.Handle("POST /webhook", webhookHandler)
+
+	githubWebhookHandler := githubhooks.NewHandler(logger, db, cfg.GitHubWebhookSecret, runService)
+	mux.Handle("POST /github/webhook", githubWebhookHandler)
+
+	adminSvc := adminapi.NewService(newStore(db))
+	mux.Handle("/admin/api/", adminapi.NewHandler(adminSvc, cfg.AdminToken))
+	mux.Handle("/admin/", adminui.NewHandler(cfg.AdminToken))
+
+	return mux, nil
 }
