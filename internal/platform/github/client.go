@@ -112,10 +112,8 @@ func (c *Client) GetPullRequestSnapshotByRepositoryRef(ctx context.Context, repo
 		return PullRequestSnapshot{}, err
 	}
 
-	var files []PullRequestFile
-	if err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d/files", repositoryRef, pullNumber), url.Values{
-		"per_page": []string{"100"},
-	}, &files); err != nil {
+	files, err := c.listPullRequestFiles(ctx, repositoryRef, pullNumber)
+	if err != nil {
 		return PullRequestSnapshot{}, err
 	}
 
@@ -138,6 +136,23 @@ func (c *Client) GetPullRequestSnapshotByRepositoryRef(ctx context.Context, repo
 		},
 		Files: files,
 	}, nil
+}
+
+func (c *Client) listPullRequestFiles(ctx context.Context, repositoryRef string, pullNumber int64) ([]PullRequestFile, error) {
+	var files []PullRequestFile
+	for page := 1; ; page++ {
+		var batch []PullRequestFile
+		if err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d/files", repositoryRef, pullNumber), url.Values{
+			"per_page": []string{"100"},
+			"page":     []string{fmt.Sprintf("%d", page)},
+		}, &batch); err != nil {
+			return nil, err
+		}
+		files = append(files, batch...)
+		if len(batch) == 0 {
+			return files, nil
+		}
+	}
 }
 
 func (c *Client) GetRepositoryFileByRepositoryRef(ctx context.Context, repositoryRef, filePath, ref string) (string, error) {

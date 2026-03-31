@@ -136,8 +136,15 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 				}
 				continue
 			}
-			cfg, yamlWarnings, _ := ParseAIReviewConfig(aiBody)
+			cfg, yamlWarnings, parseErr := ParseAIReviewConfig(aiBody)
 			warnings = append(warnings, yamlWarnings...)
+			if parseErr != nil {
+				warnings = append(warnings, fmt.Sprintf("rules: parse %s: %v", configPath, parseErr))
+				continue
+			}
+			if cfg == nil {
+				continue
+			}
 			applyAIReviewConfig(&effective, cfg)
 			break
 		}

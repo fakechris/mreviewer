@@ -24,6 +24,10 @@ func TestClientGetPullRequestSnapshotByRepositoryRef(t *testing.T) {
 				"head": {"ref": "feat/parser", "sha": "head"}
 			}`))
 		case "/repos/acme/repo/pulls/17/files":
+			if page := r.URL.Query().Get("page"); page != "" && page != "1" {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
 			_, _ = w.Write([]byte(`[{
 				"filename": "internal/new.go",
 				"previous_filename": "internal/old.go",
@@ -83,5 +87,61 @@ func TestClientGetRepositoryFileByRepositoryRef(t *testing.T) {
 	}
 	if body != "# Review\nFocus on trust boundaries.\n" {
 		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestClientGetPullRequestSnapshotByRepositoryRefPaginatesFiles(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/repo/pulls/17":
+			_, _ = w.Write([]byte(`{
+				"id": 101,
+				"number": 17,
+				"title": "Refactor parser",
+				"body": "Makes parser deterministic",
+				"state": "open",
+				"draft": false,
+				"html_url": "https://github.com/acme/repo/pull/17",
+				"user": {"login": "chris"},
+				"base": {"ref": "main", "sha": "base"},
+				"head": {"ref": "feat/parser", "sha": "head"}
+			}`))
+		case "/repos/acme/repo/pulls/17/files":
+			switch r.URL.Query().Get("page") {
+			case "", "1":
+				_, _ = w.Write([]byte(`[{
+					"filename": "internal/first.go",
+					"status": "modified",
+					"patch": "@@ -1 +1 @@\n-old\n+new\n"
+				}]`))
+			case "2":
+				_, _ = w.Write([]byte(`[{
+					"filename": "internal/second.go",
+					"status": "modified",
+					"patch": "@@ -1 +1 @@\n-old\n+new\n"
+				}]`))
+			default:
+				_, _ = w.Write([]byte(`[]`))
+			}
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "test-token", WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	snapshot, err := client.GetPullRequestSnapshotByRepositoryRef(context.Background(), "acme/repo", 17)
+	if err != nil {
+		t.Fatalf("GetPullRequestSnapshotByRepositoryRef: %v", err)
+	}
+	if len(snapshot.Files) != 2 {
+		t.Fatalf("files len = %d, want 2", len(snapshot.Files))
+	}
+	if snapshot.Files[1].Filename != "internal/second.go" {
+		t.Fatalf("second filename = %q", snapshot.Files[1].Filename)
 	}
 }

@@ -86,3 +86,39 @@ func TestPublisherPublishesSummaryAndFindingComments(t *testing.T) {
 		t.Fatalf("line/side = %d/%q", comment.Line, comment.Side)
 	}
 }
+
+func TestPublisherFallsBackToTitleForTitleOnlyFindingComment(t *testing.T) {
+	client := &fakePublishClient{
+		snapshot: PullRequestSnapshot{
+			PullRequest: PullRequest{HeadSHA: "head-sha"},
+		},
+	}
+	bundle := core.ReviewBundle{
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitHub,
+			URL:          "https://github.com/acme/repo/pull/17",
+			Repository:   "acme/repo",
+			ChangeNumber: 17,
+		},
+		PublishCandidates: []core.PublishCandidate{{
+			Kind:  "finding",
+			Title: "Unsafe SQL",
+			Location: core.CanonicalLocation{
+				Path:      "internal/db/query.go",
+				Side:      core.DiffSideNew,
+				StartLine: 44,
+				EndLine:   44,
+			},
+		}},
+	}
+
+	if err := NewPublisher(client).Publish(context.Background(), bundle); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if len(client.reviewComments) != 1 {
+		t.Fatalf("review comments = %d, want 1", len(client.reviewComments))
+	}
+	if client.reviewComments[0].Body != "Unsafe SQL" {
+		t.Fatalf("review comment body = %q, want title fallback", client.reviewComments[0].Body)
+	}
+}

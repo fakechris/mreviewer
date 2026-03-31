@@ -35,6 +35,9 @@ func (e *Engine) Decide(artifacts []core.ReviewerArtifact) Decision {
 				byIdentity[key] = aggregate{finding: finding, reviewers: []string{artifact.ReviewerID}}
 				continue
 			}
+			if severityRank(finding.Severity) > severityRank(current.finding.Severity) {
+				current.finding = finding
+			}
 			current.reviewers = appendUnique(current.reviewers, artifact.ReviewerID)
 			byIdentity[key] = current
 		}
@@ -86,4 +89,19 @@ func intToString(v int) string {
 		return ""
 	}
 	return strconv.Itoa(v)
+}
+
+func severityRank(v string) int {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }

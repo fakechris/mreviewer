@@ -5,7 +5,7 @@ type PublishCandidate struct {
 	Body     string            `json:"body"`
 	Title    string            `json:"title,omitempty"`
 	Severity string            `json:"severity,omitempty"`
-	Location CanonicalLocation `json:"location,omitempty"`
+	Location CanonicalLocation `json:"location,omitempty,omitzero"`
 }
 
 type ReviewBundle struct {

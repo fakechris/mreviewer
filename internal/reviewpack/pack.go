@@ -96,6 +96,9 @@ func reviewWithCapabilityPrompt(ctx context.Context, provider llm.Provider, requ
 	if dynamic, ok := provider.(llm.DynamicPromptProvider); ok {
 		return dynamic.ReviewWithSystemPrompt(ctx, request, systemPrompt)
 	}
+	if strings.TrimSpace(systemPrompt) != "" {
+		return llm.ProviderResponse{}, fmt.Errorf("reviewpack: provider does not support dynamic system prompts")
+	}
 	return provider.Review(ctx, request)
 }
 

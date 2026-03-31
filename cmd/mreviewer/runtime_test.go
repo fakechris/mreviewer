@@ -154,6 +154,10 @@ func TestDefaultLoadInputSupportsGitHubTarget(t *testing.T) {
 				"head": {"ref": "feat/parser", "sha": "head"}
 			}`))
 		case "/repos/acme/repo/pulls/17/files":
+			if page := r.URL.Query().Get("page"); page != "" && page != "1" {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
 			_, _ = w.Write([]byte(`[{
 				"filename": "internal/new.go",
 				"status": "modified",
@@ -216,6 +220,10 @@ func TestDefaultPublishSupportsGitHubTarget(t *testing.T) {
 				"head": {"ref": "feat/parser", "sha": "head-sha"}
 			}`))
 		case "/repos/acme/repo/pulls/17/files":
+			if page := r.URL.Query().Get("page"); page != "" && page != "1" {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
 			_, _ = w.Write([]byte(`[]`))
 		case "/repos/acme/repo/issues/17/comments":
 			issueComments++

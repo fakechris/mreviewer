@@ -187,6 +187,40 @@ func TestLegacyProviderRunnerSkipsWhenPackNotSelected(t *testing.T) {
 	}
 }
 
+type fakeStaticProvider struct {
+	response llm.ProviderResponse
+	request  ctxpkg.ReviewRequest
+}
+
+func (f *fakeStaticProvider) Review(_ context.Context, request ctxpkg.ReviewRequest) (llm.ProviderResponse, error) {
+	f.request = request
+	return f.response, nil
+}
+
+func (f *fakeStaticProvider) RequestPayload(request ctxpkg.ReviewRequest) map[string]any {
+	f.request = request
+	return map[string]any{"review_run_id": request.ReviewRunID}
+}
+
+func TestLegacyProviderRunnerFailsWhenProviderCannotAcceptCapabilityPrompt(t *testing.T) {
+	provider := &fakeStaticProvider{}
+	runner := NewLegacyProviderRunner(DefaultPacks()[0].Contract(), provider)
+
+	_, err := runner.Run(context.Background(), core.ReviewInput{
+		Target:  core.ReviewTarget{Platform: core.PlatformGitLab},
+		Request: ctxpkg.ReviewRequest{ReviewRunID: "run-23"},
+	}, core.RunOptions{})
+	if err == nil {
+		t.Fatal("Run error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "dynamic system prompts") {
+		t.Fatalf("Run error = %v, want dynamic system prompt failure", err)
+	}
+	if provider.request.ReviewRunID != "" {
+		t.Fatalf("provider should not be called when system prompt is unsupported")
+	}
+}
+
 func rulesEffectivePolicy(route string) coreRunEffectivePolicy {
 	return rules.EffectivePolicy{ProviderRoute: route}
 }

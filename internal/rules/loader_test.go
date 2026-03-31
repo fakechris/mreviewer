@@ -99,6 +99,30 @@ func TestLoadUsesRepositoryRefReaderWhenProjectIDMissing(t *testing.T) {
 	}
 }
 
+func TestLoadFallsBackToNextInstructionConfigPathWhenFirstConfigIsInvalid(t *testing.T) {
+	loader := NewLoader(stubRepositoryRefReader{
+		content: map[string]string{
+			"acme/repo:.github/ai-review.yaml@head-sha": "{{broken yaml[[[",
+			"acme/repo:.gitlab/ai-review.yaml@head-sha": "output_language: en-US\n",
+		},
+	}, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{
+		RepositoryRef:          "acme/repo",
+		HeadSHA:                "head-sha",
+		InstructionConfigPaths: []string{".github/ai-review.yaml", ".gitlab/ai-review.yaml"},
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := result.EffectivePolicy.OutputLanguage; got != "en-US" {
+		t.Fatalf("OutputLanguage = %q, want en-US", got)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("warnings should include parse failure for the invalid first config")
+	}
+}
+
 func TestPlatformProjectMerge(t *testing.T) {
 	loader := NewLoader(stubFileReader{}, defaultPlatformDefaults())
 

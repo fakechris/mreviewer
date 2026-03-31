@@ -81,6 +81,13 @@ func reviewCommentRequest(target core.ReviewTarget, commitID string, candidate c
 	if strings.TrimSpace(commitID) == "" || strings.TrimSpace(candidate.Location.Path) == "" || candidate.Location.StartLine <= 0 {
 		return CreateReviewCommentRequest{}, false
 	}
+	body := strings.TrimSpace(candidate.Body)
+	if body == "" {
+		body = strings.TrimSpace(candidate.Title)
+	}
+	if body == "" {
+		return CreateReviewCommentRequest{}, false
+	}
 	side := "RIGHT"
 	if candidate.Location.Side == core.DiffSideOld {
 		side = "LEFT"
@@ -89,7 +96,7 @@ func reviewCommentRequest(target core.ReviewTarget, commitID string, candidate c
 		Repository: target.Repository,
 		PullNumber: target.ChangeNumber,
 		CommitID:   commitID,
-		Body:       candidate.Body,
+		Body:       body,
 		Path:       candidate.Location.Path,
 		Line:       candidate.Location.EndLine,
 		Side:       side,

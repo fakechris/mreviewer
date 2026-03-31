@@ -153,3 +153,16 @@ func TestReviewerArtifactAndReviewBundleRoundTripJSON(t *testing.T) {
 		t.Fatalf("publish candidates len = %d, want 1", len(decoded.PublishCandidates))
 	}
 }
+
+func TestPublishCandidateOmitsZeroValueLocationFromJSON(t *testing.T) {
+	data, err := json.Marshal(PublishCandidate{
+		Kind: "summary",
+		Body: "judge summary",
+	})
+	if err != nil {
+		t.Fatalf("marshal candidate: %v", err)
+	}
+	if string(data) != `{"kind":"summary","body":"judge summary"}` {
+		t.Fatalf("json = %s, want location omitted", data)
+	}
+}
