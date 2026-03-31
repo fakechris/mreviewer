@@ -353,7 +353,7 @@ func TestDefaultCompareSupportsGitHubLiveReviewers(t *testing.T) {
 				_, _ = w.Write([]byte(`[]`))
 				return
 			}
-			_, _ = w.Write([]byte(`[{"id":2,"body":"SQL built with string concatenation.","path":"internal/db/query.go","line":42,"user":{"login":"codex-bot"}}]`))
+			_, _ = w.Write([]byte(`[{"id":2,"body":"SQL built with string concatenation.","path":"internal/db/query.go","line":42,"side":"LEFT","user":{"login":"codex-bot"}}]`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -381,6 +381,12 @@ func TestDefaultCompareSupportsGitHubLiveReviewers(t *testing.T) {
 	}
 	if report.ReviewerCount != 1 {
 		t.Fatalf("reviewer count = %d, want 1", report.ReviewerCount)
+	}
+	if len(report.UniqueByReviewer["codex-bot"]) != 1 {
+		t.Fatalf("unique findings = %#v, want one codex-bot finding", report.UniqueByReviewer)
+	}
+	if got := report.UniqueByReviewer["codex-bot"][0].Identity.Location.Side; got != core.DiffSideOld {
+		t.Fatalf("github compare side = %q, want old", got)
 	}
 }
 

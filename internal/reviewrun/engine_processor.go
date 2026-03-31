@@ -84,7 +84,7 @@ func (p *EngineProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (sch
 	}
 
 	scope := runScopeFromJSON(run.ScopeJson)
-	platform := scope.Platform
+	platform := normalizePlatform(scope.Platform)
 	if platform == "" {
 		platform = inferPlatformFromWebURL(mr.WebUrl)
 	}
@@ -217,6 +217,18 @@ func inferPlatformFromWebURL(webURL string) core.Platform {
 	case strings.Contains(lower, "/pull/"):
 		return core.PlatformGitHub
 	case strings.Contains(lower, "/-/merge_requests/"):
+		return core.PlatformGitLab
+	default:
+		return ""
+	}
+}
+
+func normalizePlatform(platform core.Platform) core.Platform {
+	value := strings.ToLower(strings.TrimSpace(string(platform)))
+	switch value {
+	case "github", "git hub":
+		return core.PlatformGitHub
+	case "gitlab", "git lab":
 		return core.PlatformGitLab
 	default:
 		return ""

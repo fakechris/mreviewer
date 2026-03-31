@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -135,12 +136,12 @@ func (w *platformRuntimeWriteback) Write(ctx context.Context, run db.ReviewRun, 
 	}
 	if isGitHubRuntimeRun(run) {
 		if w.github == nil {
-			return nil
+			return fmt.Errorf("no github writer configured for runtime writeback")
 		}
 		return w.github.Write(ctx, run, findings)
 	}
 	if w.gitlab == nil {
-		return nil
+		return fmt.Errorf("no gitlab writer configured for runtime writeback")
 	}
 	return w.gitlab.Write(ctx, run, findings)
 }
@@ -151,12 +152,12 @@ func (w *platformRuntimeWriteback) WriteBundle(ctx context.Context, run db.Revie
 	}
 	if bundle.Target.Platform == core.PlatformGitHub || isGitHubRuntimeRun(run) {
 		if w.github == nil {
-			return nil
+			return fmt.Errorf("no github writer configured for runtime writeback")
 		}
 		return w.github.WriteBundle(ctx, run, bundle)
 	}
 	if w.gitlab == nil {
-		return nil
+		return fmt.Errorf("no gitlab writer configured for runtime writeback")
 	}
 	return w.gitlab.WriteBundle(ctx, run, bundle)
 }

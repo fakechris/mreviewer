@@ -199,15 +199,16 @@ func (p *workerStatusPublisher) PublishStatus(ctx context.Context, result gate.R
 	if p == nil {
 		return nil
 	}
+	var errs []error
 	for _, publisher := range p.publishers {
 		if publisher == nil {
 			continue
 		}
 		if err := publisher.PublishStatus(ctx, result); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 type githubStatusClient struct {

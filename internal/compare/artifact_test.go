@@ -1,6 +1,7 @@
 package compare
 
 import (
+	"math"
 	"testing"
 
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
@@ -129,7 +130,7 @@ func TestCompareArtifactsComputesAgreementAndUniqueFindings(t *testing.T) {
 	if report.UniqueFindingCount != 3 {
 		t.Fatalf("unique finding count = %d, want 3", report.UniqueFindingCount)
 	}
-	if report.AgreementRate != 1.0/3.0 {
+	if math.Abs(report.AgreementRate-1.0/3.0) > 1e-9 {
 		t.Fatalf("agreement rate = %v, want %v", report.AgreementRate, 1.0/3.0)
 	}
 	if len(report.SharedFindings) != 1 {
@@ -140,6 +141,85 @@ func TestCompareArtifactsComputesAgreementAndUniqueFindings(t *testing.T) {
 	}
 	if len(report.UniqueByReviewer["coderabbit"]) != 1 {
 		t.Fatalf("coderabbit unique findings = %d, want 1", len(report.UniqueByReviewer["coderabbit"]))
+	}
+}
+
+func TestCompareArtifactsKeepsAnonymousReviewersDistinct(t *testing.T) {
+	target := core.ReviewTarget{
+		Platform:     core.PlatformGitHub,
+		URL:          "https://github.com/acme/repo/pull/17",
+		Repository:   "acme/repo",
+		ChangeNumber: 17,
+	}
+
+	report := CompareArtifacts([]core.ReviewerArtifact{
+		NormalizeExternalArtifact(ExternalArtifactInput{
+			Target: target,
+			Comments: []ExternalComment{{
+				Category:  "security",
+				Body:      "SQL built with string concatenation.",
+				Path:      "internal/db/query.go",
+				Side:      core.DiffSideNew,
+				StartLine: 42,
+				EndLine:   42,
+			}},
+		}),
+		NormalizeExternalArtifact(ExternalArtifactInput{
+			Target: target,
+			Comments: []ExternalComment{{
+				Category:  "database",
+				Body:      "Query scans all rows without a limit.",
+				Path:      "internal/db/query.go",
+				Side:      core.DiffSideNew,
+				StartLine: 91,
+				EndLine:   91,
+			}},
+		}),
+	})
+
+	if report.ReviewerCount != 2 {
+		t.Fatalf("reviewer count = %d, want 2", report.ReviewerCount)
+	}
+	if len(report.UniqueByReviewer) != 2 {
+		t.Fatalf("unique_by_reviewer len = %d, want 2", len(report.UniqueByReviewer))
+	}
+}
+
+func TestCompareArtifactsSkipsFindingsWithoutStableIdentity(t *testing.T) {
+	target := core.ReviewTarget{
+		Platform:     core.PlatformGitHub,
+		URL:          "https://github.com/acme/repo/pull/17",
+		Repository:   "acme/repo",
+		ChangeNumber: 17,
+	}
+	report := CompareArtifacts([]core.ReviewerArtifact{
+		{
+			ReviewerID:   "reviewer-a",
+			ReviewerKind: "external",
+			Target:       target,
+			Findings: []core.Finding{
+				{Body: "general concern"},
+				{Title: "no stable identity either"},
+			},
+		},
+		{
+			ReviewerID:   "reviewer-b",
+			ReviewerKind: "external",
+			Target:       target,
+			Findings: []core.Finding{
+				{Body: "another general concern"},
+			},
+		},
+	})
+
+	if report.UniqueFindingCount != 0 {
+		t.Fatalf("unique finding count = %d, want 0", report.UniqueFindingCount)
+	}
+	if len(report.SharedFindings) != 0 {
+		t.Fatalf("shared findings = %#v, want none", report.SharedFindings)
+	}
+	if len(report.UniqueByReviewer) != 0 {
+		t.Fatalf("unique_by_reviewer = %#v, want none", report.UniqueByReviewer)
 	}
 }
 

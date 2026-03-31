@@ -10,9 +10,9 @@ import (
 )
 
 type webhookPayload struct {
-	Action      string `json:"action"`
-	Number      int64  `json:"number"`
-	Repository   struct {
+	Action     string `json:"action"`
+	Number     int64  `json:"number"`
+	Repository struct {
 		ID       int64  `json:"id"`
 		FullName string `json:"full_name"`
 		HTMLURL  string `json:"html_url"`
@@ -71,11 +71,19 @@ func NormalizeWebhook(payload json.RawMessage, eventType string) (hooks.Normaliz
 		TargetBranch:      strings.TrimSpace(raw.PullRequest.Base.Ref),
 		Author:            strings.TrimSpace(raw.PullRequest.User.Login),
 		WebURL:            strings.TrimSpace(raw.PullRequest.HTMLURL),
-		State:             strings.TrimSpace(raw.PullRequest.State),
+		State:             normalizeState(raw.PullRequest.State, raw.PullRequest.Merged),
 		ScopeJSON:         scopeJSON,
 	}
 	ev.IdempotencyKey = computeIdempotencyKey(instanceURL, ev.ProjectID, ev.MRIID, ev.HeadSHA, ev.HeadSHADeferred, ev.TriggerType)
 	return ev, nil
+}
+
+func normalizeState(state string, merged bool) string {
+	normalized := strings.ToLower(strings.TrimSpace(state))
+	if normalized == "closed" && merged {
+		return "merged"
+	}
+	return normalized
 }
 
 func normalizeAction(action string, merged bool) string {

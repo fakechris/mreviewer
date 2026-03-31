@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"log/slog"
+	"os"
 	"strings"
 
 	comparepkg "github.com/mreviewer/mreviewer/internal/compare"
@@ -334,14 +334,13 @@ func loadLiveComparisonArtifacts(ctx context.Context, configPath string, target 
 			})
 		}
 		for _, comment := range reviewComments {
-			side := core.DiffSide(strings.ToLower(strings.TrimSpace(comment.Side)))
 			commentSet.ReviewComments = append(commentSet.ReviewComments, comparepkg.GitHubReviewComment{
 				Author:    comment.User.Login,
 				Body:      comment.Body,
 				Path:      comment.Path,
 				Line:      comment.Line,
 				StartLine: comment.StartLine,
-				Side:      side,
+				Side:      githubCommentSide(comment.Side),
 			})
 		}
 		return filterReviewerArtifacts(comparepkg.IngestGitHubComments(target, commentSet), requested), nil
@@ -398,6 +397,17 @@ func loadLiveComparisonArtifacts(ctx context.Context, configPath string, target 
 		return filterReviewerArtifacts(comparepkg.IngestGitLabComments(target, commentSet), requested), nil
 	default:
 		return nil, fmt.Errorf("compare is not implemented for platform %q", target.Platform)
+	}
+}
+
+func githubCommentSide(side string) core.DiffSide {
+	switch strings.ToLower(strings.TrimSpace(side)) {
+	case "left":
+		return core.DiffSideOld
+	case "right":
+		return core.DiffSideNew
+	default:
+		return ""
 	}
 }
 

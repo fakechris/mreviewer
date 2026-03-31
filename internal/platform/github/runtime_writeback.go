@@ -23,7 +23,7 @@ func (w *RuntimeWriteback) Write(_ context.Context, _ db.ReviewRun, _ []db.Revie
 	if w == nil || w.publisher == nil {
 		return fmt.Errorf("github runtime writeback: publisher is required")
 	}
-	return nil
+	return fmt.Errorf("github runtime writeback: legacy findings write is unsupported; bundle writeback is required")
 }
 
 func (w *RuntimeWriteback) WriteBundle(ctx context.Context, _ db.ReviewRun, bundle core.ReviewBundle) error {

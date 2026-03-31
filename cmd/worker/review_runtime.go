@@ -76,11 +76,13 @@ func buildWorkerReviewInput(ctx context.Context, target core.ReviewTarget, gitla
 			return core.ReviewInput{}, fmt.Errorf("build review input: github client is required")
 		}
 		snapshot, err = platformgithub.NewAdapter(githubClient).FetchSnapshot(ctx, target)
-	default:
+	case core.PlatformGitLab:
 		if gitlabClient == nil {
 			return core.ReviewInput{}, fmt.Errorf("build review input: gitlab client is required")
 		}
 		snapshot, err = platformgitlab.NewAdapter(gitlabClient).FetchSnapshot(ctx, target)
+	default:
+		return core.ReviewInput{}, fmt.Errorf("build review input: unsupported platform: %s", target.Platform)
 	}
 	if err != nil {
 		return core.ReviewInput{}, fmt.Errorf("fetch snapshot: %w", err)

@@ -41,4 +41,25 @@ func TestRuntimeWritebackPublishesBundle(t *testing.T) {
 	if len(client.reviewComments) != 1 {
 		t.Fatalf("review comments = %d, want 1", len(client.reviewComments))
 	}
+	if got := client.issueComments[0].Body; got != "judge summary" {
+		t.Fatalf("issue comment body = %q, want judge summary", got)
+	}
+	if got := client.reviewComments[0].Body; got != "The update path skips validation." {
+		t.Fatalf("review comment body = %q, want finding body", got)
+	}
+	if got := client.reviewComments[0].Path; got != "internal/legacy.go" {
+		t.Fatalf("review comment path = %q, want internal/legacy.go", got)
+	}
+	if got := client.reviewComments[0].Line; got != 12 {
+		t.Fatalf("review comment line = %d, want 12", got)
+	}
+}
+
+func TestRuntimeWritebackRejectsLegacyFindingWrites(t *testing.T) {
+	writeback := NewRuntimeWriteback(&fakePublishClient{})
+
+	err := writeback.Write(context.Background(), db.ReviewRun{}, nil)
+	if err == nil || err.Error() != "github runtime writeback: legacy findings write is unsupported; bundle writeback is required" {
+		t.Fatalf("Write error = %v, want unsupported legacy write", err)
+	}
 }

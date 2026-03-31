@@ -192,3 +192,43 @@ func TestClientSetCommitStatus(t *testing.T) {
 		t.Fatalf("SetCommitStatus: %v", err)
 	}
 }
+
+func TestClientListIssueCommentsStopsAtMaxPages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/repo/issues/17/comments" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"id":1,"body":"still paging","user":{"login":"codex-bot"}}]`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "test-token", WithHTTPClient(server.Client()), WithMaxListPages(3))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = client.ListIssueComments(context.Background(), "acme/repo", 17)
+	if err == nil || err.Error() != "github: pagination exceeded max pages 3" {
+		t.Fatalf("ListIssueComments error = %v, want pagination exceeded", err)
+	}
+}
+
+func TestClientListReviewCommentsStopsAtMaxPages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/repo/pulls/17/comments" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"id":2,"body":"still paging","path":"internal/db/query.go","line":42,"user":{"login":"codex-bot"}}]`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "test-token", WithHTTPClient(server.Client()), WithMaxListPages(2))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = client.ListReviewComments(context.Background(), "acme/repo", 17)
+	if err == nil || err.Error() != "github: pagination exceeded max pages 2" {
+		t.Fatalf("ListReviewComments error = %v, want pagination exceeded", err)
+	}
+}

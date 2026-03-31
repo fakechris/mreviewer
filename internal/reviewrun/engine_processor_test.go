@@ -42,9 +42,9 @@ func (f *fakeReviewEngine) Run(_ context.Context, input core.ReviewInput, opts c
 }
 
 type fakeBundleWriteback struct {
-	run     db.ReviewRun
-	bundle  core.ReviewBundle
-	calls   int
+	run      db.ReviewRun
+	bundle   core.ReviewBundle
+	calls    int
 	writeErr error
 }
 
@@ -222,6 +222,25 @@ func TestEngineProcessorProcessRunPersistsBundleAsRequestedChanges(t *testing.T)
 	}
 }
 
+func TestNormalizePlatformAcceptsCommonGitHubVariants(t *testing.T) {
+	tests := map[core.Platform]core.Platform{
+		"github":  core.PlatformGitHub,
+		"GitHub":  core.PlatformGitHub,
+		"git hub": core.PlatformGitHub,
+		"gitlab":  core.PlatformGitLab,
+		"GitLab":  core.PlatformGitLab,
+		"git lab": core.PlatformGitLab,
+	}
+	for input, want := range tests {
+		if got := normalizePlatform(input); got != want {
+			t.Fatalf("normalizePlatform(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if got := normalizePlatform("bitbucket"); got != "" {
+		t.Fatalf("normalizePlatform(bitbucket) = %q, want empty", got)
+	}
+}
+
 func TestEngineProcessorProcessRunRejectsMissingDependencies(t *testing.T) {
 	processor := NewEngineProcessor(nil, nil, nil)
 	_, err := processor.ProcessRun(context.Background(), db.ReviewRun{})
@@ -367,8 +386,8 @@ func TestEngineProcessorLoadsGitHubTargetFromScope(t *testing.T) {
 	}
 	engine := &fakeReviewEngine{
 		bundle: core.ReviewBundle{
-			Target:   inputLoader.input.Target,
-			Verdict:  "approved",
+			Target:          inputLoader.input.Target,
+			Verdict:         "approved",
 			MarkdownSummary: "Verdict: approved",
 		},
 	}

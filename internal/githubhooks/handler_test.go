@@ -5,8 +5,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -84,10 +84,10 @@ func TestGitHubWebhookCreatesPendingRun(t *testing.T) {
 	handler := newGitHubTestHandler(sqlDB)
 	payload := githubPullRequestPayload("opened", false, "github-head-sha")
 	rec := postGitHubWebhook(handler, payload, map[string]string{
-		"X-GitHub-Event":     "pull_request",
-		"X-GitHub-Delivery":  "delivery-1",
+		"X-GitHub-Event":      "pull_request",
+		"X-GitHub-Delivery":   "delivery-1",
 		"X-Hub-Signature-256": githubSignature(payload),
-		"Content-Type":       "application/json",
+		"Content-Type":        "application/json",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -145,12 +145,32 @@ func TestGitHubWebhookRejectsInvalidSignature(t *testing.T) {
 	handler := newGitHubTestHandler(sqlDB)
 	payload := githubPullRequestPayload("opened", false, "github-head-sha")
 	rec := postGitHubWebhook(handler, payload, map[string]string{
-		"X-GitHub-Event":     "pull_request",
-		"X-GitHub-Delivery":  "delivery-invalid",
+		"X-GitHub-Event":      "pull_request",
+		"X-GitHub-Delivery":   "delivery-invalid",
 		"X-Hub-Signature-256": "sha256=deadbeef",
-		"Content-Type":       "application/json",
+		"Content-Type":        "application/json",
 	})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestNormalizeWebhookMarksMergedPullRequestsAsMergedState(t *testing.T) {
+	payload := json.RawMessage(strings.Replace(
+		githubPullRequestPayload("closed", true, "github-head-sha"),
+		`"state": "open"`,
+		`"state": "closed"`,
+		1,
+	))
+
+	normalized, err := NormalizeWebhook(payload, "pull_request")
+	if err != nil {
+		t.Fatalf("NormalizeWebhook: %v", err)
+	}
+	if normalized.Action != "merge" {
+		t.Fatalf("action = %q, want merge", normalized.Action)
+	}
+	if normalized.State != "merged" {
+		t.Fatalf("state = %q, want merged", normalized.State)
 	}
 }

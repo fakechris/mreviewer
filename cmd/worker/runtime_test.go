@@ -10,18 +10,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
 	"github.com/mreviewer/mreviewer/internal/config"
+	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/llm"
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
+	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
+	"github.com/mreviewer/mreviewer/internal/reviewinput"
 	"github.com/mreviewer/mreviewer/internal/reviewpack"
 	"github.com/mreviewer/mreviewer/internal/rules"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
@@ -706,6 +709,38 @@ func TestWrapProcessorWithWritebackPrefersBundleWritebackFromOutcome(t *testing.
 	}
 	if writeback.lastRun.Status != "requested_changes" {
 		t.Fatalf("run status = %q, want requested_changes", writeback.lastRun.Status)
+	}
+}
+
+func TestPlatformRuntimeWritebackErrorsWhenPlatformWriterMissing(t *testing.T) {
+	ctx := context.Background()
+	githubOnly := &platformRuntimeWriteback{
+		github: platformgithub.NewRuntimeWriteback(&fakeGitHubPublishClient{}),
+	}
+	err := githubOnly.Write(ctx, db.ReviewRun{
+		ScopeJson: []byte(`{"platform":"gitlab"}`),
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "gitlab writer") {
+		t.Fatalf("gitlab missing writer error = %v, want gitlab writer error", err)
+	}
+
+	gitlabOnly := &platformRuntimeWriteback{
+		gitlab: platformgitlab.NewRuntimeWriteback(&fakeDiscussionClient{}, writer.NewSQLStore(setupTestDB(t))),
+	}
+	err = gitlabOnly.WriteBundle(ctx, db.ReviewRun{}, core.ReviewBundle{
+		Target: core.ReviewTarget{Platform: core.PlatformGitHub},
+	})
+	if err == nil || !strings.Contains(err.Error(), "github writer") {
+		t.Fatalf("github missing writer error = %v, want github writer error", err)
+	}
+}
+
+func TestBuildWorkerReviewInputRejectsUnsupportedPlatform(t *testing.T) {
+	_, err := buildWorkerReviewInput(context.Background(), core.ReviewTarget{
+		Platform: core.Platform("bitbucket"),
+	}, nil, nil, reviewinput.NewBuilder(&testWorkerRulesLoader{}, ctxpkg.NewAssembler(), nil))
+	if err == nil || !strings.Contains(err.Error(), "unsupported platform") {
+		t.Fatalf("buildWorkerReviewInput error = %v, want unsupported platform", err)
 	}
 }
 

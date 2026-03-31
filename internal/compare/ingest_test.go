@@ -1,6 +1,7 @@
 package compare
 
 import (
+	"slices"
 	"testing"
 
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
@@ -28,8 +29,11 @@ func TestIngestGitHubCommentsGroupsArtifactsByReviewer(t *testing.T) {
 	if len(artifacts) != 2 {
 		t.Fatalf("artifacts len = %d, want 2", len(artifacts))
 	}
-	if artifacts[0].ReviewerID == artifacts[1].ReviewerID {
-		t.Fatalf("reviewers were not grouped separately: %#v", artifacts)
+	got := []string{artifacts[0].ReviewerID, artifacts[1].ReviewerID}
+	slices.Sort(got)
+	want := []string{"coderabbitai", "codex-bot"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("reviewer ids = %#v, want %#v", got, want)
 	}
 }
 
@@ -53,5 +57,11 @@ func TestIngestGitLabCommentsGroupsArtifactsByReviewer(t *testing.T) {
 
 	if len(artifacts) != 2 {
 		t.Fatalf("artifacts len = %d, want 2", len(artifacts))
+	}
+	got := []string{artifacts[0].ReviewerID, artifacts[1].ReviewerID}
+	slices.Sort(got)
+	want := []string{"devin-ai", "gemini-bot"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("reviewer ids = %#v, want %#v", got, want)
 	}
 }

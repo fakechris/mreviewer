@@ -32,19 +32,19 @@ type ExternalArtifactInput struct {
 }
 
 type SharedFinding struct {
-	IdentityKey string         `json:"identity_key"`
-	Finding     core.Finding   `json:"finding"`
-	Reviewers   []string       `json:"reviewers"`
+	IdentityKey string            `json:"identity_key"`
+	Finding     core.Finding      `json:"finding"`
+	Reviewers   []string          `json:"reviewers"`
 	Target      core.ReviewTarget `json:"target"`
 }
 
 type Report struct {
-	Target             core.ReviewTarget          `json:"target"`
-	ReviewerCount      int                        `json:"reviewer_count"`
-	UniqueFindingCount int                        `json:"unique_finding_count"`
-	AgreementRate      float64                    `json:"agreement_rate"`
-	SharedFindings     []SharedFinding            `json:"shared_findings,omitempty"`
-	UniqueByReviewer   map[string][]core.Finding  `json:"unique_by_reviewer,omitempty"`
+	Target             core.ReviewTarget         `json:"target"`
+	ReviewerCount      int                       `json:"reviewer_count"`
+	UniqueFindingCount int                       `json:"unique_finding_count"`
+	AgreementRate      float64                   `json:"agreement_rate"`
+	SharedFindings     []SharedFinding           `json:"shared_findings,omitempty"`
+	UniqueByReviewer   map[string][]core.Finding `json:"unique_by_reviewer,omitempty"`
 }
 
 type AggregateReport struct {
@@ -110,17 +110,17 @@ func CompareArtifacts(artifacts []core.ReviewerArtifact) Report {
 	}
 	seen := make(map[string]*seenFinding)
 
-	for _, artifact := range artifacts {
+	for idx, artifact := range artifacts {
 		reviewer := strings.TrimSpace(artifact.ReviewerID)
 		if reviewer == "" {
-			reviewer = "unknown"
+			reviewer = fmt.Sprintf("unknown-%d", idx+1)
 		}
 		localSeen := make(map[string]struct{})
 		for _, finding := range artifact.Findings {
-			key := identityKey(finding.Identity)
-			if key == "" {
+			if !hasStableIdentity(finding.Identity) {
 				continue
 			}
+			key := identityKey(finding.Identity)
 			entry, ok := seen[key]
 			if !ok {
 				entry = &seenFinding{finding: finding, reviewers: make(map[string]struct{})}
@@ -163,6 +163,13 @@ func CompareArtifacts(artifacts []core.ReviewerArtifact) Report {
 	})
 	report.AgreementRate = float64(sharedCount) / float64(report.UniqueFindingCount)
 	return report
+}
+
+func hasStableIdentity(identity core.FindingIdentityInput) bool {
+	if strings.TrimSpace(identity.NormalizedClaim) != "" || strings.TrimSpace(identity.Location.Path) != "" {
+		return true
+	}
+	return identity.Location.StartLine > 0 || identity.Location.EndLine > 0
 }
 
 func AggregateReports(reports []Report) AggregateReport {

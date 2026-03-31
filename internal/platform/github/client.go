@@ -28,9 +28,10 @@ type HTTPClient interface {
 type Option func(*Client)
 
 type Client struct {
-	baseURL    string
-	token      string
-	httpClient HTTPClient
+	baseURL      string
+	token        string
+	httpClient   HTTPClient
+	maxListPages int
 }
 
 type CommitStatusRequest struct {
@@ -75,9 +76,10 @@ func NewClient(baseURL, token string, opts ...Option) (*Client, error) {
 		return nil, fmt.Errorf("github: parse base URL: %w", err)
 	}
 	client := &Client{
-		baseURL:    strings.TrimRight(parsed.String(), "/"),
-		token:      strings.TrimSpace(token),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		baseURL:      strings.TrimRight(parsed.String(), "/"),
+		token:        strings.TrimSpace(token),
+		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		maxListPages: 100,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -93,6 +95,14 @@ func NewClient(baseURL, token string, opts ...Option) (*Client, error) {
 func WithHTTPClient(httpClient HTTPClient) Option {
 	return func(c *Client) {
 		c.httpClient = httpClient
+	}
+}
+
+func WithMaxListPages(maxPages int) Option {
+	return func(c *Client) {
+		if maxPages > 0 {
+			c.maxListPages = maxPages
+		}
 	}
 }
 
@@ -228,6 +238,9 @@ func (c *Client) SetCommitStatus(ctx context.Context, req CommitStatusRequest) e
 func (c *Client) ListIssueComments(ctx context.Context, repositoryRef string, pullNumber int64) ([]IssueComment, error) {
 	var comments []IssueComment
 	for page := 1; ; page++ {
+		if c.maxListPages > 0 && page > c.maxListPages {
+			return nil, fmt.Errorf("github: pagination exceeded max pages %d", c.maxListPages)
+		}
 		var batch []IssueComment
 		if err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/issues/%d/comments", repositoryRef, pullNumber), url.Values{
 			"per_page": []string{"100"},
@@ -245,6 +258,9 @@ func (c *Client) ListIssueComments(ctx context.Context, repositoryRef string, pu
 func (c *Client) ListReviewComments(ctx context.Context, repositoryRef string, pullNumber int64) ([]ReviewComment, error) {
 	var comments []ReviewComment
 	for page := 1; ; page++ {
+		if c.maxListPages > 0 && page > c.maxListPages {
+			return nil, fmt.Errorf("github: pagination exceeded max pages %d", c.maxListPages)
+		}
 		var batch []ReviewComment
 		if err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d/comments", repositoryRef, pullNumber), url.Values{
 			"per_page": []string{"100"},

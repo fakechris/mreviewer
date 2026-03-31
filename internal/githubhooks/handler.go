@@ -34,14 +34,30 @@ type Handler struct {
 	newStore     func(db.DBTX) db.Store
 }
 
-func NewHandler(logger *slog.Logger, database *sql.DB, secret string, runProcessor RunProcessor) *Handler {
-	return &Handler{
+type HandlerOption func(*Handler)
+
+func WithHandlerStoreFactory(fn func(db.DBTX) db.Store) HandlerOption {
+	return func(h *Handler) {
+		if fn != nil {
+			h.newStore = fn
+		}
+	}
+}
+
+func NewHandler(logger *slog.Logger, database *sql.DB, secret string, runProcessor RunProcessor, opts ...HandlerOption) *Handler {
+	h := &Handler{
 		logger:       logger,
 		db:           database,
 		secret:       secret,
 		runProcessor: runProcessor,
 		newStore:     func(conn db.DBTX) db.Store { return db.New(conn) },
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
