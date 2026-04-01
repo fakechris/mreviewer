@@ -389,11 +389,11 @@ func syntheticAcceptanceCorpus() []syntheticScenario {
 			Changes: []ctxpkg.Change{syntheticChange(
 				"internal/api/debug.go",
 				`@@
- return map[string]any{
-   "provider": cfg.Provider,
-   "api_key": cfg.APIKey,
-   "region": cfg.Region,
- }, nil
++ return map[string]any{
++   "provider": cfg.Provider,
++   "api_key": cfg.APIKey,
++   "region": cfg.Region,
++ }, nil
 `,
 			)},
 		},
@@ -427,6 +427,7 @@ func syntheticAcceptanceCorpus() []syntheticScenario {
 + ALTER TABLE invoices DROP COLUMN status;
 + ALTER TABLE invoices ADD COLUMN state VARCHAR(32) NOT NULL;
 `,
+				"added",
 			)},
 		},
 		{
@@ -441,15 +442,20 @@ func syntheticAcceptanceCorpus() []syntheticScenario {
 + ALTER TABLE customers
 +   ADD COLUMN account_manager_id BIGINT NOT NULL;
 `,
+				"added",
 			)},
 		},
 	}
 }
 
-func syntheticChange(path, patch string) ctxpkg.Change {
+func syntheticChange(path, patch string, status ...string) ctxpkg.Change {
+	changeStatus := "modified"
+	if len(status) > 0 && strings.TrimSpace(status[0]) != "" {
+		changeStatus = strings.TrimSpace(status[0])
+	}
 	return ctxpkg.Change{
 		Path:         path,
-		Status:       "modified",
+		Status:       changeStatus,
 		ChangedLines: strings.Count(patch, "\n"),
 		Hunks: []ctxpkg.Hunk{{
 			OldStart:     1,
