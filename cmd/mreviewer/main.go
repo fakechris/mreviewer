@@ -112,7 +112,6 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 		if deps.status != nil {
 			if err := deps.status(context.Background(), opts.configPath, target, input, "running", 0); err != nil {
 				_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", err)
-				return 1
 			}
 		}
 
@@ -125,7 +124,9 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 		})
 		if err != nil {
 			if deps.status != nil {
-				_ = deps.status(context.Background(), opts.configPath, target, input, "failed", 0)
+				if statusErr := deps.status(context.Background(), opts.configPath, target, input, "failed", 0); statusErr != nil {
+					_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", statusErr)
+				}
 			}
 			_, _ = fmt.Fprintf(deps.stderr, "review failed: %v\n", err)
 			return 1
@@ -149,7 +150,9 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 			}
 			if err := deps.publish(context.Background(), opts.configPath, target, publishBundle); err != nil {
 				if deps.status != nil {
-					_ = deps.status(context.Background(), opts.configPath, target, input, "failed", 0)
+					if statusErr := deps.status(context.Background(), opts.configPath, target, input, "failed", 0); statusErr != nil {
+						_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", statusErr)
+					}
 				}
 				_, _ = fmt.Fprintf(deps.stderr, "publish failed: %v\n", err)
 				return 1
@@ -158,7 +161,6 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 		if deps.status != nil {
 			if err := deps.status(context.Background(), opts.configPath, target, input, finalStatusState(bundle), blockingFindings(bundle)); err != nil {
 				_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", err)
-				return 1
 			}
 		}
 	}
@@ -333,7 +335,7 @@ func summaryOnlyBundle(bundle core.ReviewBundle) core.ReviewBundle {
 	filtered := bundle
 	filtered.PublishCandidates = nil
 	for _, candidate := range bundle.PublishCandidates {
-		if candidate.Kind == "summary" {
+		if candidate.Kind == "summary" || candidate.PublishAsSummary {
 			filtered.PublishCandidates = append(filtered.PublishCandidates, candidate)
 		}
 	}

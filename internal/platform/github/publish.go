@@ -65,6 +65,23 @@ func (p *Publisher) Publish(ctx context.Context, bundle core.ReviewBundle) error
 				return fmt.Errorf("github publisher: create issue comment: %w", err)
 			}
 		case "finding":
+			if candidate.PublishAsSummary {
+				body := strings.TrimSpace(candidate.Body)
+				if body == "" {
+					body = strings.TrimSpace(candidate.Title)
+				}
+				if body == "" {
+					continue
+				}
+				if err := p.client.CreateIssueComment(ctx, CreateIssueCommentRequest{
+					Repository: bundle.Target.Repository,
+					PullNumber: bundle.Target.ChangeNumber,
+					Body:       body,
+				}); err != nil {
+					return fmt.Errorf("github publisher: create issue comment for unanchored finding: %w", err)
+				}
+				continue
+			}
 			req, ok := reviewCommentRequest(bundle.Target, snapshot.PullRequest.HeadSHA, candidate)
 			if !ok {
 				continue

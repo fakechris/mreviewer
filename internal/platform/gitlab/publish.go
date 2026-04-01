@@ -3,6 +3,7 @@ package gitlab
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mreviewer/mreviewer/internal/reviewcomment"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
@@ -43,8 +44,29 @@ func (p *Publisher) Publish(ctx context.Context, bundle core.ReviewBundle) error
 	}
 	for _, req := range requests.Discussions {
 		if _, err := p.client.CreateDiscussion(ctx, req); err != nil {
+			if isPublishPositionFailure(err) {
+				if _, noteErr := p.client.CreateNote(ctx, reviewcomment.CreateNoteRequest{
+					ProjectID:       req.ProjectID,
+					MergeRequestIID: req.MergeRequestIID,
+					Body:            req.Body,
+				}); noteErr != nil {
+					return fmt.Errorf("gitlab publisher: create fallback note after discussion failure: %w", noteErr)
+				}
+				continue
+			}
 			return fmt.Errorf("gitlab publisher: create discussion: %w", err)
 		}
 	}
 	return nil
+}
+
+func isPublishPositionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "400") &&
+		(strings.Contains(message, "position") ||
+			strings.Contains(message, "line_code") ||
+			strings.Contains(message, "invalid line"))
 }

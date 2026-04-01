@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	comparepkg "github.com/mreviewer/mreviewer/internal/compare"
@@ -155,6 +157,7 @@ func TestRunWithDepsPublishesSummaryOnlyBundle(t *testing.T) {
 			PublishCandidates: []core.PublishCandidate{
 				{Kind: "summary", Body: "judge summary"},
 				{Kind: "finding", Title: "Unsafe query", Body: "body"},
+				{Kind: "finding", Title: "MR title mismatch", Body: "### MR title mismatch\n\nbody", PublishAsSummary: true},
 			},
 		},
 	}
@@ -181,11 +184,14 @@ func TestRunWithDepsPublishesSummaryOnlyBundle(t *testing.T) {
 	if len(published) != 1 {
 		t.Fatalf("publish calls = %d, want 1", len(published))
 	}
-	if len(published[0].bundle.PublishCandidates) != 1 {
-		t.Fatalf("published candidates = %d, want 1", len(published[0].bundle.PublishCandidates))
+	if len(published[0].bundle.PublishCandidates) != 2 {
+		t.Fatalf("published candidates = %d, want 2", len(published[0].bundle.PublishCandidates))
 	}
 	if published[0].bundle.PublishCandidates[0].Kind != "summary" {
 		t.Fatalf("published candidate kind = %q, want summary", published[0].bundle.PublishCandidates[0].Kind)
+	}
+	if !published[0].bundle.PublishCandidates[1].PublishAsSummary {
+		t.Fatal("expected summary-only publish to retain summary-styled finding")
 	}
 }
 
@@ -653,5 +659,80 @@ func TestRunWithDepsPublishesFailedGitHubStatusOnReviewError(t *testing.T) {
 	}
 	if calls[1].state != "failed" {
 		t.Fatalf("second status state = %q, want failed", calls[1].state)
+	}
+}
+
+func TestRunWithDepsDoesNotFailWhenStatusPublishingFails(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform:     core.PlatformGitHub,
+				URL:          "https://github.com/acme/repo/pull/17",
+				Repository:   "acme/repo",
+				ChangeNumber: 17,
+			},
+			Verdict:         "requested_changes",
+			MarkdownSummary: "judge summary",
+			PublishCandidates: []core.PublishCandidate{
+				{Kind: "finding", Body: "finding"},
+			},
+		},
+	}
+	input := core.ReviewInput{
+		Target: engine.bundle.Target,
+	}
+	input.Request.Project.FullPath = "acme/repo"
+	input.Request.Version.HeadSHA = "head-sha"
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runWithDeps([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--output", "json",
+		"--publish", "artifact-only",
+		"--exit-mode", "requested_changes",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, _ core.ReviewTarget) (core.ReviewInput, error) {
+			return input, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		status: func(_ context.Context, _ string, _ core.ReviewTarget, _ core.ReviewInput, _ string, _ int) error {
+			return errors.New("status timeout")
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+	if exitCode != 3 {
+		t.Fatalf("exitCode = %d, want 3 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "status failed") {
+		t.Fatalf("stderr = %q, want status warning", stderr.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json output: %v", err)
+	}
+	if payload["verdict"] != "requested_changes" {
+		t.Fatalf("verdict = %#v, want requested_changes (output=%s)", payload["verdict"], stdout.String())
+	}
+	if payload["target"] == nil {
+		t.Fatalf("target missing from output: %s", stdout.String())
+	}
+}
+
+func TestFinalStatusStateTreatsSummaryStyledFindingAsBlocking(t *testing.T) {
+	bundle := core.ReviewBundle{
+		PublishCandidates: []core.PublishCandidate{{
+			Kind:             "finding",
+			Body:             "### MR title mismatch\n\nbody",
+			PublishAsSummary: true,
+		}},
+	}
+	if got := finalStatusState(bundle); got != "failed" {
+		t.Fatalf("finalStatusState = %q, want failed", got)
+	}
+	if got := blockingFindings(bundle); got != 1 {
+		t.Fatalf("blockingFindings = %d, want 1", got)
 	}
 }

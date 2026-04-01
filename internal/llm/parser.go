@@ -65,6 +65,7 @@ func ParseReviewResult(raw string) (ReviewResult, string, error) {
 		fn   func(string) (string, bool)
 	}{
 		{name: "direct", fn: func(input string) (string, bool) { return input, strings.TrimSpace(input) != "" }},
+		{name: "quoted_json_string", fn: unquoteJSONString},
 		{name: "marker_extraction", fn: extractMarkedJSON},
 		{name: "tolerant_repair", fn: tolerantRepairJSON},
 	}
@@ -315,11 +316,27 @@ func validateReviewResult(result ReviewResult) error {
 		return nil
 	}
 	for i, finding := range result.Findings {
-		if strings.TrimSpace(finding.Category) == "" || strings.TrimSpace(finding.Severity) == "" || strings.TrimSpace(finding.Title) == "" || strings.TrimSpace(finding.Path) == "" || strings.TrimSpace(finding.AnchorKind) == "" {
+		if strings.TrimSpace(finding.Category) == "" || strings.TrimSpace(finding.Severity) == "" || strings.TrimSpace(finding.Title) == "" || strings.TrimSpace(finding.AnchorKind) == "" {
+			return fmt.Errorf("finding %d missing required fields", i)
+		}
+		if strings.TrimSpace(finding.Path) == "" && !findingAllowsEmptyPath(finding) {
 			return fmt.Errorf("finding %d missing required fields", i)
 		}
 	}
 	return nil
+}
+
+func findingAllowsEmptyPath(finding ReviewFinding) bool {
+	if strings.TrimSpace(finding.Path) != "" {
+		return false
+	}
+	if finding.OldLine != nil || finding.NewLine != nil {
+		return false
+	}
+	if finding.RangeStartOldLine != nil || finding.RangeStartNewLine != nil || finding.RangeEndOldLine != nil || finding.RangeEndNewLine != nil {
+		return false
+	}
+	return true
 }
 
 func summaryResultSchema() map[string]any {
@@ -619,6 +636,25 @@ func extractMarkedJSON(raw string) (string, bool) {
 		return strings.TrimSpace(trimmed[start : end+1]), true
 	}
 	return "", false
+}
+
+func unquoteJSONString(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", false
+	}
+	var decoded string
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return "", false
+	}
+	decoded = strings.TrimSpace(decoded)
+	if decoded == "" {
+		return "", false
+	}
+	if !strings.HasPrefix(decoded, "{") && !strings.HasPrefix(decoded, "[") {
+		return "", false
+	}
+	return decoded, true
 }
 
 func tolerantRepairJSON(raw string) (string, bool) {

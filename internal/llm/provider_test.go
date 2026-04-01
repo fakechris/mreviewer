@@ -518,6 +518,40 @@ func TestMiniMaxToolCallSalvagesRepairOutputMissingBodyMarkdown(t *testing.T) {
 	}
 }
 
+func TestMiniMaxToolCallRepairsMissingToolUseFromPlainTextResponse(t *testing.T) {
+	transport := &captureTransport{responseBodies: []string{
+		`{"id":"msg_1","content":[{"type":"text","text":"Looking at this MR, I found one likely issue around database consistency. Please convert this into the required structured review output."}],"usage":{"input_tokens":8,"output_tokens":42}}`,
+		`{"id":"msg_2","content":[{"type":"tool_use","id":"toolu_2","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"category":"database","severity":"medium","confidence":0.83,"title":"Transaction boundary is unclear","body_markdown":"The change updates persistence logic without making the transactional boundary explicit.","path":"db/repo.go","anchor_kind":"new","new_line":27}]}}],"usage":{"output_tokens":21}}`,
+	}}
+	provider, err := NewMiniMaxProvider(ProviderConfig{
+		BaseURL:    "https://api.minimaxi.com/anthropic",
+		APIKey:     "secret-token",
+		Model:      "MiniMax-M2.7",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewMiniMaxProvider: %v", err)
+	}
+
+	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if transport.calls != 2 {
+		t.Fatalf("calls = %d, want 2", transport.calls)
+	}
+	if response.FallbackStage != "repair_retry" {
+		t.Fatalf("fallback stage = %q, want repair_retry", response.FallbackStage)
+	}
+	if len(response.Result.Findings) != 1 {
+		t.Fatalf("findings = %#v, want one finding", response.Result.Findings)
+	}
+	if response.Result.Findings[0].Category != "database" {
+		t.Fatalf("category = %q, want database", response.Result.Findings[0].Category)
+	}
+}
+
 func TestMiniMaxToolCallFailsAfterInvalidRepairRetry(t *testing.T) {
 	transport := &captureTransport{responseBodies: []string{
 		`{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[{"severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new","new_line":5}]}}],"usage":{"output_tokens":42}}`,
@@ -785,6 +819,38 @@ func TestParseReviewResultNewFieldsOptional(t *testing.T) {
 	}
 }
 
+func TestParseReviewResultAllowsMergeRequestScopedFindingWithoutPath(t *testing.T) {
+	raw := `{
+		"schema_version":"1.0",
+		"review_run_id":"rr-mr-scope",
+		"summary":"Metadata issue found",
+		"findings":[{
+			"category":"correctness.spec-mismatch",
+			"severity":"medium",
+			"confidence":0.88,
+			"title":"MR title does not match the actual change",
+			"body_markdown":"The merge request title describes SLA monitoring changes, but the diff only simplifies billing amount calculation.",
+			"path":"",
+			"anchor_kind":"file",
+			"symbol":"merge-request"
+		}]
+	}`
+
+	result, _, err := ParseReviewResult(raw)
+	if err != nil {
+		t.Fatalf("ParseReviewResult: %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(result.Findings))
+	}
+	if result.Findings[0].Path != "" {
+		t.Fatalf("path = %q, want empty for MR-scoped finding", result.Findings[0].Path)
+	}
+	if result.Findings[0].AnchorKind != "file" {
+		t.Fatalf("anchor_kind = %q, want file", result.Findings[0].AnchorKind)
+	}
+}
+
 func TestParserFallbackChain(t *testing.T) {
 	t.Run("marker extraction", func(t *testing.T) {
 		raw := "Here is the result:\n```json\n{\"schema_version\":\"1.0\",\"review_run_id\":\"rr-1\",\"summary\":\"ok\",\"findings\":[]}\n```"
@@ -804,6 +870,16 @@ func TestParserFallbackChain(t *testing.T) {
 		}
 		if stage != "tolerant_repair" {
 			t.Fatalf("stage = %q, want tolerant_repair", stage)
+		}
+	})
+	t.Run("quoted json string", func(t *testing.T) {
+		raw := `"{\"schema_version\":\"1.0\",\"review_run_id\":\"rr-1\",\"summary\":\"ok\",\"findings\":[]}"`
+		_, stage, err := ParseReviewResult(raw)
+		if err != nil {
+			t.Fatalf("ParseReviewResult: %v", err)
+		}
+		if stage != "quoted_json_string" {
+			t.Fatalf("stage = %q, want quoted_json_string", stage)
 		}
 	})
 	t.Run("parser error", func(t *testing.T) {

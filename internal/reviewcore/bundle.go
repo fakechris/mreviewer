@@ -1,11 +1,12 @@
 package reviewcore
 
 type PublishCandidate struct {
-	Kind     string            `json:"kind"`
-	Body     string            `json:"body"`
-	Title    string            `json:"title,omitempty"`
-	Severity string            `json:"severity,omitempty"`
-	Location CanonicalLocation `json:"location,omitempty,omitzero"`
+	Kind            string            `json:"kind"`
+	Body            string            `json:"body"`
+	Title           string            `json:"title,omitempty"`
+	Severity        string            `json:"severity,omitempty"`
+	PublishAsSummary bool             `json:"publish_as_summary,omitempty"`
+	Location        CanonicalLocation `json:"location,omitempty,omitzero"`
 }
 
 type ReviewBundle struct {

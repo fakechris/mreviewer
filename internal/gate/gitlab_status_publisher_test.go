@@ -89,6 +89,50 @@ func TestGitLabStatusPublisherPublishesFailureForBlockingFindings(t *testing.T) 
 	}
 }
 
+func TestGitLabStatusPublisherSkipsGitHubMergeRequestURLs(t *testing.T) {
+	client := &fakeCommitStatusClient{}
+	publisher := NewGitLabStatusPublisher(client, fakeStatusStore{
+		project: db.Project{ID: 10, GitlabProjectID: 101},
+		mr:      db.MergeRequest{ID: 20, MrIid: 7, SourceBranch: "feature/status", WebUrl: "https://github.com/acme/repo/pull/7"},
+	})
+
+	err := publisher.PublishStatus(context.Background(), Result{
+		RunID:          1,
+		ProjectID:      10,
+		MergeRequestID: 20,
+		HeadSHA:        "head-sha",
+		State:          "running",
+	})
+	if err != nil {
+		t.Fatalf("PublishStatus: %v", err)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("request count = %d, want 0", len(client.requests))
+	}
+}
+
+func TestGitLabStatusPublisherSkipsGitHubMergeRequestWithoutGitLabProjectID(t *testing.T) {
+	client := &fakeCommitStatusClient{}
+	publisher := NewGitLabStatusPublisher(client, fakeStatusStore{
+		project: db.Project{ID: 10, GitlabProjectID: 0},
+		mr:      db.MergeRequest{ID: 20, MrIid: 7, SourceBranch: "feature/status", WebUrl: "https://github.com/acme/repo/pull/7"},
+	})
+
+	err := publisher.PublishStatus(context.Background(), Result{
+		RunID:          1,
+		ProjectID:      10,
+		MergeRequestID: 20,
+		HeadSHA:        "head-sha",
+		State:          "running",
+	})
+	if err != nil {
+		t.Fatalf("PublishStatus: %v", err)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("request count = %d, want 0", len(client.requests))
+	}
+}
+
 type fakeStatusStore struct {
 	project db.Project
 	mr      db.MergeRequest

@@ -27,14 +27,26 @@ func (w *Writer) BuildRequests(bundle core.ReviewBundle) (WriteRequests, error) 
 	}
 	reqs := WriteRequests{}
 	for _, candidate := range bundle.PublishCandidates {
+		body := candidateRequestBody(candidate)
+		if body == "" {
+			continue
+		}
 		switch candidate.Kind {
 		case "summary":
 			reqs.Notes = append(reqs.Notes, reviewcomment.CreateNoteRequest{
 				ProjectID:       bundle.Target.ProjectID,
 				MergeRequestIID: bundle.Target.ChangeNumber,
-				Body:            candidate.Body,
+				Body:            body,
 			})
 		case "finding":
+			if candidate.PublishAsSummary {
+				reqs.Notes = append(reqs.Notes, reviewcomment.CreateNoteRequest{
+					ProjectID:       bundle.Target.ProjectID,
+					MergeRequestIID: bundle.Target.ChangeNumber,
+					Body:            body,
+				})
+				continue
+			}
 			position, err := buildPosition(candidate.Location)
 			if err != nil {
 				return WriteRequests{}, err
@@ -42,12 +54,27 @@ func (w *Writer) BuildRequests(bundle core.ReviewBundle) (WriteRequests, error) 
 			reqs.Discussions = append(reqs.Discussions, reviewcomment.CreateDiscussionRequest{
 				ProjectID:       bundle.Target.ProjectID,
 				MergeRequestIID: bundle.Target.ChangeNumber,
-				Body:            candidate.Body,
+				Body:            body,
 				Position:        position,
 			})
 		}
 	}
 	return reqs, nil
+}
+
+func candidateRequestBody(candidate core.PublishCandidate) string {
+	body := strings.TrimSpace(candidate.Body)
+	if body != "" {
+		return body
+	}
+	title := strings.TrimSpace(candidate.Title)
+	if title == "" {
+		return ""
+	}
+	if candidate.Kind == "summary" {
+		return title
+	}
+	return "### " + title
 }
 
 type gitlabPositionMetadata struct {
@@ -68,13 +95,17 @@ func buildPosition(location core.CanonicalLocation) (reviewcomment.Position, err
 		NewPath:      strings.TrimSpace(location.Path),
 	}
 
-	switch location.Side {
-	case core.DiffSideOld:
-		position.OldLine = int32Ptr(location.StartLine)
-	case core.DiffSideNew:
-		position.NewLine = int32Ptr(location.StartLine)
-	default:
-		position.NewLine = int32Ptr(location.StartLine)
+	if location.StartLine > 0 || location.EndLine > 0 {
+		switch location.Side {
+		case core.DiffSideOld:
+			position.OldLine = int32Ptr(location.StartLine)
+		case core.DiffSideNew:
+			position.NewLine = int32Ptr(location.StartLine)
+		default:
+			position.NewLine = int32Ptr(location.StartLine)
+		}
+	} else {
+		position.PositionType = "file"
 	}
 
 	if len(location.PlatformMetadata) == 0 {
@@ -111,6 +142,7 @@ func buildPosition(location core.CanonicalLocation) (reviewcomment.Position, err
 		position.LineRange = metadata.LineRange
 		position.OldLine = metadata.LineRange.End.OldLine
 		position.NewLine = metadata.LineRange.End.NewLine
+		position.PositionType = "text"
 	}
 
 	return position, nil

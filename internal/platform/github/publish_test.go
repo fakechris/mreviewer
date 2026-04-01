@@ -122,3 +122,38 @@ func TestPublisherFallsBackToTitleForTitleOnlyFindingComment(t *testing.T) {
 		t.Fatalf("review comment body = %q, want title fallback", client.reviewComments[0].Body)
 	}
 }
+
+func TestPublisherPublishesUnanchoredFindingAsIssueComment(t *testing.T) {
+	client := &fakePublishClient{
+		snapshot: PullRequestSnapshot{
+			PullRequest: PullRequest{HeadSHA: "head-sha"},
+		},
+	}
+	bundle := core.ReviewBundle{
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitHub,
+			URL:          "https://github.com/acme/repo/pull/17",
+			Repository:   "acme/repo",
+			ChangeNumber: 17,
+		},
+		PublishCandidates: []core.PublishCandidate{{
+			Kind:             "finding",
+			Title:            "PR title does not match the actual change",
+			Body:             "### PR title does not match the actual change\n\nThe diff only updates billing.",
+			PublishAsSummary: true,
+		}},
+	}
+
+	if err := NewPublisher(client).Publish(context.Background(), bundle); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if len(client.issueComments) != 1 {
+		t.Fatalf("issue comments = %d, want 1", len(client.issueComments))
+	}
+	if len(client.reviewComments) != 0 {
+		t.Fatalf("review comments = %d, want 0", len(client.reviewComments))
+	}
+	if client.issueComments[0].Body == "" {
+		t.Fatal("issue comment body = empty")
+	}
+}

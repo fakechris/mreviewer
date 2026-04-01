@@ -172,3 +172,43 @@ func TestPublishCandidatesFromLegacyResultCarriesGitLabAnchorMetadata(t *testing
 		t.Fatalf("line_range end = %+v", metadata.LineRange.End)
 	}
 }
+
+func TestPublishCandidatesFromLegacyResultKeepsUnanchoredFindingBlocking(t *testing.T) {
+	result := llm.ReviewResult{
+		SchemaVersion: "1.0",
+		ReviewRunID:   "run-57",
+		Summary:       "Review found one metadata issue.",
+		Findings: []llm.ReviewFinding{{
+			Category:     "correctness.spec-mismatch",
+			Severity:     "medium",
+			Title:        "MR title does not match the actual change",
+			BodyMarkdown: "The merge request title describes SLA monitoring changes, but the diff only simplifies billing amount calculation.",
+			Path:         "",
+			AnchorKind:   "file",
+			Symbol:       "merge-request",
+		}},
+	}
+
+	candidates := PublishCandidatesFromLegacyResult(result)
+	if len(candidates) != 2 {
+		t.Fatalf("publish candidates len = %d, want 2", len(candidates))
+	}
+	if candidates[0].Kind != "summary" {
+		t.Fatalf("first candidate kind = %q, want summary", candidates[0].Kind)
+	}
+	if candidates[1].Kind != "finding" {
+		t.Fatalf("second candidate kind = %q, want finding", candidates[1].Kind)
+	}
+	if !candidates[1].PublishAsSummary {
+		t.Fatal("PublishAsSummary = false, want true")
+	}
+	if candidates[1].Title != "MR title does not match the actual change" {
+		t.Fatalf("summary downgrade title = %q", candidates[1].Title)
+	}
+	if candidates[1].Location.Path != "" {
+		t.Fatalf("summary downgrade path = %q, want empty", candidates[1].Location.Path)
+	}
+	if got := candidates[1].Body; got != "### MR title does not match the actual change\n\nThe merge request title describes SLA monitoring changes, but the diff only simplifies billing amount calculation." {
+		t.Fatalf("summary downgrade body = %q", got)
+	}
+}

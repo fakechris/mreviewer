@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -95,6 +96,27 @@ func TestLoadUsesRepositoryRefReaderWhenProjectIDMissing(t *testing.T) {
 		t.Fatal("ReviewMarkdown should be loaded from repository ref reader")
 	}
 	if !strings.Contains(result.Trusted.ReviewMarkdown, "GitHub Review") {
+		t.Fatalf("ReviewMarkdown = %q", result.Trusted.ReviewMarkdown)
+	}
+}
+
+func TestLoadPrefersProjectReaderWhenProjectIDPresent(t *testing.T) {
+	loader := NewLoader(stubMixedRepositoryReader{
+		projectContent: map[string]string{
+			"123:REVIEW.md@head-sha": "# GitLab Review\n- Focus on merge request scope\n",
+		},
+		repoRefErr: ErrNoRepositoryReader,
+	}, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{
+		ProjectID:     123,
+		RepositoryRef: "group/repo",
+		HeadSHA:       "head-sha",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !strings.Contains(result.Trusted.ReviewMarkdown, "GitLab Review") {
 		t.Fatalf("ReviewMarkdown = %q", result.Trusted.ReviewMarkdown)
 	}
 }
@@ -496,6 +518,31 @@ func (s stubRepositoryRefReader) GetRepositoryFileByRepositoryRef(_ context.Cont
 }
 
 var _ RepositoryRefFileReader = stubRepositoryRefReader{}
+
+type stubMixedRepositoryReader struct {
+	projectContent map[string]string
+	repoRefErr     error
+}
+
+func (s stubMixedRepositoryReader) GetRepositoryFile(_ context.Context, projectID int64, filePath, ref string) (string, error) {
+	if s.projectContent == nil {
+		return "", gitlab.ErrFileNotFound
+	}
+	if body, ok := s.projectContent[fmt.Sprintf("%d:%s@%s", projectID, filePath, ref)]; ok {
+		return body, nil
+	}
+	return "", gitlab.ErrFileNotFound
+}
+
+func (s stubMixedRepositoryReader) GetRepositoryFileByRepositoryRef(_ context.Context, repositoryRef, filePath, ref string) (string, error) {
+	if s.repoRefErr != nil {
+		return "", s.repoRefErr
+	}
+	return "", gitlab.ErrFileNotFound
+}
+
+var _ RepositoryFileReader = stubMixedRepositoryReader{}
+var _ RepositoryRefFileReader = stubMixedRepositoryReader{}
 
 func TestLoadPropagatesUnexpectedFileErrors(t *testing.T) {
 	loader := NewLoader(stubFileReader{err: errors.New("boom")}, defaultPlatformDefaults())
