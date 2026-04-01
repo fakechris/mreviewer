@@ -2,12 +2,15 @@ package adminapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 )
+
+const maxListLimit int32 = 1000
 
 type SnapshotService interface {
 	Queue(ctx context.Context) (QueueSnapshot, error)
@@ -77,6 +80,10 @@ func NewHandler(service SnapshotService, token string) http.Handler {
 		}
 		snapshot, err := service.RunDetail(r.Context(), runID)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+				return
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
 		}
@@ -165,9 +172,15 @@ func parseOptionalInt32(raw string) (int32, error) {
 	if raw == "" {
 		return 0, nil
 	}
-	value, err := strconv.ParseInt(raw, 10, 32)
+	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, err
+	}
+	if value < 0 {
+		return 0, strconv.ErrSyntax
+	}
+	if value > int64(maxListLimit) {
+		return maxListLimit, nil
 	}
 	return int32(value), nil
 }

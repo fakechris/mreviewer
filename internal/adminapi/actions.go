@@ -14,11 +14,13 @@ import (
 type ActionStore interface {
 	GetReviewRun(ctx context.Context, id int64) (db.ReviewRun, error)
 	GetRunDetail(ctx context.Context, id int64) (db.GetRunDetailRow, error)
+	GetIdentityMapping(ctx context.Context, id int64) (db.IdentityMapping, error)
 	InsertReviewRun(ctx context.Context, arg db.InsertReviewRunParams) (sql.Result, error)
 	InsertAuditLog(ctx context.Context, arg db.InsertAuditLogParams) (sql.Result, error)
 	RetryReviewRunNow(ctx context.Context, id int64) error
 	CancelReviewRun(ctx context.Context, id int64, errorCode, errorDetail string) error
 	RequeueReviewRun(ctx context.Context, id int64) error
+	ResolveIdentityMapping(ctx context.Context, arg db.ResolveIdentityMappingParams) error
 }
 
 type ActionTxFunc func(ctx context.Context, store ActionStore) error
@@ -211,6 +213,15 @@ func mustMarshalActionDetail(sourceRunID, targetRunID int64) json.RawMessage {
 	payload, _ := json.Marshal(map[string]int64{
 		"source_run_id": sourceRunID,
 		"target_run_id": targetRunID,
+	})
+	return payload
+}
+
+func mustMarshalIdentityResolutionDetail(mappingID int64, platformUsername, platformUserID string) json.RawMessage {
+	payload, _ := json.Marshal(map[string]string{
+		"mapping_id":         fmt.Sprintf("%d", mappingID),
+		"platform_username":  strings.TrimSpace(platformUsername),
+		"platform_user_id":   strings.TrimSpace(platformUserID),
 	})
 	return payload
 }

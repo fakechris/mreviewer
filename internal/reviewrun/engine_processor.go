@@ -197,9 +197,17 @@ func persistIdentityMappingsFromInput(ctx context.Context, store db.Store, run d
 		if identityKey == "" {
 			continue
 		}
+		observationUsername := strings.TrimSpace(observation.author.Username)
+		observationUserID := strings.TrimSpace(observation.author.UserID)
+		if observationUsername == "" {
+			observationUsername = platformUsername
+		}
+		if observationUserID == "" {
+			observationUserID = platformUserID
+		}
 		status := "auto"
 		confidence := 0.72
-		if platformUsername == "" {
+		if observationUsername == "" {
 			status = "unresolved"
 			confidence = 0.55
 		} else if strings.TrimSpace(observation.author.Email) != "" {
@@ -212,8 +220,8 @@ func persistIdentityMappingsFromInput(ctx context.Context, store db.Store, run d
 			GitEmail:         strings.TrimSpace(observation.author.Email),
 			GitName:          strings.TrimSpace(observation.author.Name),
 			ObservedRole:     observation.role,
-			PlatformUsername: platformUsername,
-			PlatformUserID:   platformUserID,
+			PlatformUsername: observationUsername,
+			PlatformUserID:   observationUserID,
 			HeadSha:          headSHA,
 			Confidence:       confidence,
 			Source:           "observed",
@@ -230,11 +238,11 @@ func gitIdentityKey(author core.PlatformAuthor) string {
 	if email := strings.ToLower(strings.TrimSpace(author.Email)); email != "" {
 		return "email:" + email
 	}
-	if name := strings.ToLower(strings.TrimSpace(author.Name)); name != "" {
-		return "name:" + name
-	}
 	if username := strings.ToLower(strings.TrimSpace(author.Username)); username != "" {
 		return "username:" + username
+	}
+	if name := strings.ToLower(strings.TrimSpace(author.Name)); name != "" {
+		return "name:" + name
 	}
 	return ""
 }

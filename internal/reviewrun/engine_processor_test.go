@@ -47,7 +47,7 @@ func TestPersistIdentityMappingsFromInputUpsertsCommitAuthorAndCommitter(t *test
 
 	input := core.ReviewInput{
 		Target: core.ReviewTarget{
-			Platform:     core.PlatformGitLab,
+			Platform:     core.PlatformGitHub,
 			Repository:   "group/repo",
 			ProjectID:    301,
 			ChangeNumber: 11,
@@ -56,19 +56,23 @@ func TestPersistIdentityMappingsFromInputUpsertsCommitAuthorAndCommitter(t *test
 			Change: core.PlatformChange{
 				HeadSHA: "head-sha-engine-processor",
 				Author: core.PlatformAuthor{
-					Username: "chris",
+					Username: "mr-author",
 					UserID:   "77",
 				},
 			},
 			HeadCommit: core.PlatformCommit{
 				SHA: "head-sha-engine-processor",
 				Author: core.PlatformAuthor{
-					Name:  "Chris Dev",
-					Email: "chris@example.com",
+					Username: "commit-author",
+					UserID:   "88",
+					Name:     "Chris Dev",
+					Email:    "chris@example.com",
 				},
 				Committer: core.PlatformAuthor{
-					Name:  "Merge Bot",
-					Email: "bot@example.com",
+					Username: "merge-bot",
+					UserID:   "99",
+					Name:     "Merge Bot",
+					Email:    "bot@example.com",
 				},
 			},
 		},
@@ -89,11 +93,17 @@ func TestPersistIdentityMappingsFromInputUpsertsCommitAuthorAndCommitter(t *test
 	for _, item := range mappings {
 		found[item.GitIdentityKey] = item
 	}
-	if found["email:chris@example.com"].PlatformUsername != "chris" {
-		t.Fatalf("author mapping username = %q, want chris", found["email:chris@example.com"].PlatformUsername)
+	if found["email:chris@example.com"].PlatformUsername != "commit-author" {
+		t.Fatalf("author mapping username = %q, want commit-author", found["email:chris@example.com"].PlatformUsername)
 	}
 	if found["email:bot@example.com"].ObservedRole != "commit_committer" {
 		t.Fatalf("committer observed role = %q, want commit_committer", found["email:bot@example.com"].ObservedRole)
+	}
+	if found["email:bot@example.com"].PlatformUsername != "merge-bot" {
+		t.Fatalf("committer mapping username = %q, want merge-bot", found["email:bot@example.com"].PlatformUsername)
+	}
+	if found["email:bot@example.com"].PlatformUserID != "99" {
+		t.Fatalf("committer mapping user id = %q, want 99", found["email:bot@example.com"].PlatformUserID)
 	}
 }
 
@@ -181,6 +191,16 @@ INSERT INTO identity_mappings (
 	}
 	if mapping.Status != "manual" {
 		t.Fatalf("status = %q, want manual", mapping.Status)
+	}
+}
+
+func TestGitIdentityKeyPrefersUsernameOverNameWhenEmailMissing(t *testing.T) {
+	key := gitIdentityKey(core.PlatformAuthor{
+		Username: "stable-login",
+		Name:     "Display Name",
+	})
+	if key != "username:stable-login" {
+		t.Fatalf("gitIdentityKey = %q, want username:stable-login", key)
 	}
 }
 

@@ -62,6 +62,9 @@ func (f *fakeActionStore) GetRunDetail(_ context.Context, id int64) (db.GetRunDe
 func (f *fakeActionStore) GetIdentityMapping(context.Context, int64) (db.IdentityMapping, error) {
 	return db.IdentityMapping{}, nil
 }
+func (f *fakeActionStore) ResolveIdentityMapping(context.Context, db.ResolveIdentityMappingParams) error {
+	return nil
+}
 func (f *fakeActionStore) GetReviewRun(context.Context, int64) (db.ReviewRun, error) {
 	if f.getRunErr != nil {
 		return db.ReviewRun{}, f.getRunErr

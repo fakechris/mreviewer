@@ -3,6 +3,7 @@ package adminapi
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,6 +33,7 @@ type Store interface {
 	GetRunDetail(ctx context.Context, id int64) (db.GetRunDetailRow, error)
 	ListIdentityMappings(ctx context.Context, arg db.ListIdentityMappingsParams) ([]db.ListIdentityMappingsRow, error)
 	GetIdentityMapping(ctx context.Context, id int64) (db.IdentityMapping, error)
+	ResolveIdentityMapping(ctx context.Context, arg db.ResolveIdentityMappingParams) error
 }
 
 type Option func(*Service)
@@ -449,29 +451,53 @@ func (s *Service) IdentityMappings(ctx context.Context, filters IdentityFilters)
 }
 
 func (s *Service) ResolveIdentityMapping(ctx context.Context, mappingID int64, platformUsername, platformUserID, actor string) (IdentityMapping, error) {
-	if s == nil || s.store == nil {
-		return IdentityMapping{}, fmt.Errorf("adminapi: service store is not configured")
+	if s == nil || s.actionTx == nil {
+		return IdentityMapping{}, fmt.Errorf("adminapi: action transactions are not configured")
 	}
 	platformUsername = strings.TrimSpace(platformUsername)
 	if mappingID <= 0 || platformUsername == "" {
 		return IdentityMapping{}, &ActionError{StatusCode: 400, Message: "identity mapping and platform username are required"}
 	}
-	if actionStore, ok := s.store.(interface {
-		ResolveIdentityMapping(ctx context.Context, arg db.ResolveIdentityMappingParams) error
-	}); ok {
-		if err := actionStore.ResolveIdentityMapping(ctx, db.ResolveIdentityMappingParams{
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		actor = "admin"
+	}
+	var snapshot IdentityMapping
+	err := s.actionTx(ctx, func(ctx context.Context, store ActionStore) error {
+		if err := store.ResolveIdentityMapping(ctx, db.ResolveIdentityMappingParams{
 			ID:               mappingID,
 			PlatformUsername: platformUsername,
 			PlatformUserID:   strings.TrimSpace(platformUserID),
-			ResolvedBy:       strings.TrimSpace(actor),
+			ResolvedBy:       actor,
 		}); err != nil {
-			return IdentityMapping{}, err
+			if errors.Is(err, sql.ErrNoRows) {
+				return &ActionError{StatusCode: 404, Message: "identity mapping not found"}
+			}
+			return err
 		}
-	}
-	mapping, err := s.store.GetIdentityMapping(ctx, mappingID)
-	if err != nil {
-		return IdentityMapping{}, err
-	}
+		mapping, err := store.GetIdentityMapping(ctx, mappingID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return &ActionError{StatusCode: 404, Message: "identity mapping not found"}
+			}
+			return err
+		}
+		if _, err := store.InsertAuditLog(ctx, db.InsertAuditLogParams{
+			EntityType: "identity_mapping",
+			EntityID:   mappingID,
+			Action:     "resolve_identity_mapping",
+			Actor:      actor,
+			Detail:     mustMarshalIdentityResolutionDetail(mappingID, platformUsername, platformUserID),
+		}); err != nil {
+			return err
+		}
+		snapshot = buildIdentityMapping(mapping)
+		return nil
+	})
+	return snapshot, err
+}
+
+func buildIdentityMapping(mapping db.IdentityMapping) IdentityMapping {
 	return IdentityMapping{
 		ID:               mapping.ID,
 		Platform:         mapping.Platform,
@@ -492,7 +518,7 @@ func (s *Service) ResolveIdentityMapping(ctx context.Context, mappingID int64, p
 		ResolutionDetail: mapping.ResolutionDetail,
 		CreatedAt:        mapping.CreatedAt,
 		UpdatedAt:        mapping.UpdatedAt,
-	}, nil
+	}
 }
 
 func buildRunListItem(now time.Time, row db.ListRecentRunsRow) RunListItem {

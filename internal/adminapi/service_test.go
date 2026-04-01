@@ -23,6 +23,8 @@ type fakeStore struct {
 	runDetail                 db.GetRunDetailRow
 	identityMappings          []db.ListIdentityMappingsRow
 	resolvedIdentityMapping   db.IdentityMapping
+	resolvedIdentityParams    db.ResolveIdentityMappingParams
+	insertedAudit             db.InsertAuditLogParams
 }
 
 func (f fakeStore) CountPendingQueue(context.Context) (int64, error) {
@@ -77,9 +79,39 @@ func (f fakeStore) GetIdentityMapping(context.Context, int64) (db.IdentityMappin
 	return f.resolvedIdentityMapping, nil
 }
 
+func (f *fakeStore) ResolveIdentityMapping(_ context.Context, arg db.ResolveIdentityMappingParams) error {
+	f.resolvedIdentityParams = arg
+	return nil
+}
+
+func (f *fakeStore) InsertAuditLog(_ context.Context, arg db.InsertAuditLogParams) (sql.Result, error) {
+	f.insertedAudit = arg
+	return fakeSQLResult(1), nil
+}
+
+func (f *fakeStore) GetReviewRun(context.Context, int64) (db.ReviewRun, error) {
+	return db.ReviewRun{}, nil
+}
+
+func (f *fakeStore) InsertReviewRun(context.Context, db.InsertReviewRunParams) (sql.Result, error) {
+	return fakeSQLResult(1), nil
+}
+
+func (f *fakeStore) RetryReviewRunNow(context.Context, int64) error {
+	return nil
+}
+
+func (f *fakeStore) CancelReviewRun(context.Context, int64, string, string) error {
+	return nil
+}
+
+func (f *fakeStore) RequeueReviewRun(context.Context, int64) error {
+	return nil
+}
+
 func TestServiceQueueSummary(t *testing.T) {
 	now := time.Date(2026, time.March, 29, 19, 0, 0, 0, time.UTC)
-	svc := NewService(fakeStore{
+	svc := NewService(&fakeStore{
 		pendingCount:           3,
 		retryScheduledCount:    2,
 		oldestWaitingCreatedAt: sql.NullTime{Time: now.Add(-5 * time.Minute), Valid: true},
@@ -113,7 +145,7 @@ func TestServiceQueueSummary(t *testing.T) {
 
 func TestServiceConcurrencySummary(t *testing.T) {
 	now := time.Date(2026, time.March, 29, 19, 5, 0, 0, time.UTC)
-	svc := NewService(fakeStore{
+	svc := NewService(&fakeStore{
 		activeWorkers: []db.ListActiveWorkersWithCapacityRow{
 			{WorkerID: "worker-1", Hostname: "host-a", Version: "dev", ConfiguredConcurrency: 4, RunningRuns: 3},
 			{WorkerID: "worker-2", Hostname: "host-b", Version: "dev", ConfiguredConcurrency: 2, RunningRuns: 1},
@@ -137,7 +169,7 @@ func TestServiceConcurrencySummary(t *testing.T) {
 
 func TestServiceFailuresSummary(t *testing.T) {
 	now := time.Date(2026, time.March, 29, 19, 10, 0, 0, time.UTC)
-	svc := NewService(fakeStore{
+	svc := NewService(&fakeStore{
 		recentFailedRuns: []db.ListRecentFailedRunsRow{
 			{ID: 11, ErrorCode: "provider_failed", TriggerType: "mr_open"},
 		},
@@ -171,7 +203,7 @@ func TestServiceFailuresSummary(t *testing.T) {
 
 func TestServiceListRuns(t *testing.T) {
 	now := time.Date(2026, time.March, 29, 19, 15, 0, 0, time.UTC)
-	svc := NewService(fakeStore{
+	svc := NewService(&fakeStore{
 		recentRuns: []db.ListRecentRunsRow{
 			{
 				ID:                 41,
@@ -208,7 +240,7 @@ func TestServiceListRuns(t *testing.T) {
 
 func TestServiceGetRunDetail(t *testing.T) {
 	now := time.Date(2026, time.March, 29, 19, 20, 0, 0, time.UTC)
-	svc := NewService(fakeStore{
+	svc := NewService(&fakeStore{
 		runDetail: db.GetRunDetailRow{
 			ID:                  44,
 			Platform:            "gitlab",
@@ -246,7 +278,7 @@ func TestServiceGetRunDetail(t *testing.T) {
 }
 
 func TestServiceListIdentityMappings(t *testing.T) {
-	svc := NewService(fakeStore{
+	svc := NewService(&fakeStore{
 		identityMappings: []db.ListIdentityMappingsRow{{
 			ID:               71,
 			Platform:         "gitlab",
@@ -266,5 +298,35 @@ func TestServiceListIdentityMappings(t *testing.T) {
 	}
 	if len(snapshot.Items) != 1 || snapshot.Items[0].ID != 71 {
 		t.Fatalf("identity mappings = %+v, want mapping 71", snapshot.Items)
+	}
+}
+
+func TestServiceResolveIdentityMappingUsesActionTxAndWritesAudit(t *testing.T) {
+	store := &fakeStore{
+		resolvedIdentityMapping: db.IdentityMapping{
+			ID:               71,
+			PlatformUsername: "resolved-user",
+			Status:           "manual",
+		},
+	}
+	svc := NewService(store, WithActionTxRunner(func(ctx context.Context, fn ActionTxFunc) error {
+		return fn(ctx, store)
+	}))
+
+	mapping, err := svc.ResolveIdentityMapping(context.Background(), 71, "resolved-user", "99", "admin")
+	if err != nil {
+		t.Fatalf("ResolveIdentityMapping: %v", err)
+	}
+	if mapping.PlatformUsername != "resolved-user" {
+		t.Fatalf("platform username = %q, want resolved-user", mapping.PlatformUsername)
+	}
+	if store.resolvedIdentityParams.ID != 71 {
+		t.Fatalf("resolved mapping id = %d, want 71", store.resolvedIdentityParams.ID)
+	}
+	if store.insertedAudit.Action != "resolve_identity_mapping" {
+		t.Fatalf("audit action = %q, want resolve_identity_mapping", store.insertedAudit.Action)
+	}
+	if store.insertedAudit.EntityType != "identity_mapping" {
+		t.Fatalf("audit entity type = %q, want identity_mapping", store.insertedAudit.EntityType)
 	}
 }

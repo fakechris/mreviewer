@@ -2,6 +2,7 @@ package adminapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,13 +11,16 @@ import (
 )
 
 type fakeSnapshotService struct {
-	queue       QueueSnapshot
-	concurrency ConcurrencySnapshot
-	failures    FailuresSnapshot
-	runs        RunsSnapshot
-	runDetail   RunDetail
-	identities  IdentityMappingsSnapshot
-	identity    IdentityMapping
+	queue          QueueSnapshot
+	concurrency    ConcurrencySnapshot
+	failures       FailuresSnapshot
+	runs           RunsSnapshot
+	runDetail      RunDetail
+	identities     IdentityMappingsSnapshot
+	identity       IdentityMapping
+	runDetailErr   error
+	lastRunFilters RunFilters
+	lastIDFilters  IdentityFilters
 }
 
 func (f fakeSnapshotService) Queue(_ context.Context) (QueueSnapshot, error) {
@@ -31,12 +35,13 @@ func (f fakeSnapshotService) Failures(_ context.Context) (FailuresSnapshot, erro
 	return f.failures, nil
 }
 
-func (f fakeSnapshotService) Runs(_ context.Context, _ RunFilters) (RunsSnapshot, error) {
+func (f *fakeSnapshotService) Runs(_ context.Context, filters RunFilters) (RunsSnapshot, error) {
+	f.lastRunFilters = filters
 	return f.runs, nil
 }
 
-func (f fakeSnapshotService) RunDetail(_ context.Context, _ int64) (RunDetail, error) {
-	return f.runDetail, nil
+func (f *fakeSnapshotService) RunDetail(_ context.Context, _ int64) (RunDetail, error) {
+	return f.runDetail, f.runDetailErr
 }
 
 func (f fakeSnapshotService) RetryRun(_ context.Context, _ int64, _ string) (RunDetail, error) {
@@ -55,7 +60,8 @@ func (f fakeSnapshotService) RequeueRun(_ context.Context, _ int64, _ string) (R
 	return f.runDetail, nil
 }
 
-func (f fakeSnapshotService) IdentityMappings(_ context.Context, _ IdentityFilters) (IdentityMappingsSnapshot, error) {
+func (f *fakeSnapshotService) IdentityMappings(_ context.Context, filters IdentityFilters) (IdentityMappingsSnapshot, error) {
+	f.lastIDFilters = filters
 	return f.identities, nil
 }
 
@@ -64,7 +70,7 @@ func (f fakeSnapshotService) ResolveIdentityMapping(_ context.Context, _ int64, 
 }
 
 func TestHandlerRejectsUnauthorizedWhenTokenConfigured(t *testing.T) {
-	handler := NewHandler(fakeSnapshotService{}, "secret-token")
+	handler := NewHandler(&fakeSnapshotService{}, "secret-token")
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/queue", nil)
 	rec := httptest.NewRecorder()
 
@@ -76,7 +82,7 @@ func TestHandlerRejectsUnauthorizedWhenTokenConfigured(t *testing.T) {
 }
 
 func TestHandlerServesQueueWithBearerAuth(t *testing.T) {
-	handler := NewHandler(fakeSnapshotService{
+	handler := NewHandler(&fakeSnapshotService{
 		queue: QueueSnapshot{PendingCount: 2},
 	}, "secret-token")
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/queue", nil)
@@ -94,7 +100,7 @@ func TestHandlerServesQueueWithBearerAuth(t *testing.T) {
 }
 
 func TestHandlerServesRunsList(t *testing.T) {
-	handler := NewHandler(fakeSnapshotService{
+	handler := NewHandler(&fakeSnapshotService{
 		runs: RunsSnapshot{
 			Items: []RunListItem{{ID: 12, Platform: "gitlab", ProjectPath: "group/repo", Status: "running"}},
 		},
@@ -118,7 +124,7 @@ func TestHandlerServesRunsList(t *testing.T) {
 }
 
 func TestHandlerServesRunDetail(t *testing.T) {
-	handler := NewHandler(fakeSnapshotService{
+	handler := NewHandler(&fakeSnapshotService{
 		runDetail: RunDetail{RunListItem: RunListItem{ID: 42, Platform: "github", ProjectPath: "acme/repo"}},
 	}, "secret-token")
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/runs/42", nil)
@@ -139,8 +145,23 @@ func TestHandlerServesRunDetail(t *testing.T) {
 	}
 }
 
+func TestHandlerReturnsNotFoundForUnknownRun(t *testing.T) {
+	handler := NewHandler(&fakeSnapshotService{
+		runDetailErr: sql.ErrNoRows,
+	}, "secret-token")
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/runs/404", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
 func TestHandlerRejectsInvalidRunAction(t *testing.T) {
-	handler := NewHandler(fakeSnapshotService{}, "secret-token")
+	handler := NewHandler(&fakeSnapshotService{}, "secret-token")
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/runs/0/retry", nil)
 	req.Header.Set("Authorization", "Bearer secret-token")
 	rec := httptest.NewRecorder()
@@ -153,7 +174,7 @@ func TestHandlerRejectsInvalidRunAction(t *testing.T) {
 }
 
 func TestHandlerServesIdentityMappings(t *testing.T) {
-	handler := NewHandler(fakeSnapshotService{
+	handler := NewHandler(&fakeSnapshotService{
 		identities: IdentityMappingsSnapshot{
 			Items: []IdentityMapping{{ID: 91, Platform: "gitlab", ProjectPath: "group/repo", GitEmail: "chris@example.com"}},
 		},
@@ -177,7 +198,7 @@ func TestHandlerServesIdentityMappings(t *testing.T) {
 }
 
 func TestHandlerResolvesIdentityMapping(t *testing.T) {
-	handler := NewHandler(fakeSnapshotService{
+	handler := NewHandler(&fakeSnapshotService{
 		identity: IdentityMapping{ID: 91, PlatformUsername: "reviewer-manual", Status: "manual"},
 	}, "secret-token")
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/identities/91/resolve", strings.NewReader(`{"platform_username":"reviewer-manual","platform_user_id":"99"}`))
@@ -196,5 +217,32 @@ func TestHandlerResolvesIdentityMapping(t *testing.T) {
 	}
 	if payload.PlatformUsername != "reviewer-manual" || payload.Status != "manual" {
 		t.Fatalf("payload = %+v, want resolved manual mapping", payload)
+	}
+}
+
+func TestHandlerClampsLargeRunsLimit(t *testing.T) {
+	service := &fakeSnapshotService{
+		runs: RunsSnapshot{
+			Items: []RunListItem{{ID: 12}},
+		},
+	}
+	handler := NewHandler(service, "secret-token")
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/runs?limit=5000", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if service.lastRunFilters.Limit != maxListLimit {
+		t.Fatalf("limit = %d, want %d", service.lastRunFilters.Limit, maxListLimit)
+	}
+}
+
+func TestParseOptionalInt32RejectsNegativeValues(t *testing.T) {
+	if _, err := parseOptionalInt32("-1"); err == nil {
+		t.Fatal("parseOptionalInt32(-1) error = nil, want non-nil")
 	}
 }
