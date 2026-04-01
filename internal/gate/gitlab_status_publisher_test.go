@@ -6,6 +6,7 @@ import (
 
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
+	"github.com/mreviewer/mreviewer/internal/reviewstatus"
 )
 
 type fakeCommitStatusClient struct {
@@ -31,6 +32,7 @@ func TestGitLabStatusPublisherPublishesRunningStatus(t *testing.T) {
 		MergeRequestID: 20,
 		HeadSHA:        "head-sha",
 		State:          "running",
+		Stage:          reviewstatus.StageRunningPacks,
 	})
 	if err != nil {
 		t.Fatalf("PublishStatus: %v", err)
@@ -53,6 +55,9 @@ func TestGitLabStatusPublisherPublishesRunningStatus(t *testing.T) {
 	}
 	if req.Ref != "feature/status" {
 		t.Fatalf("ref = %q, want feature/status", req.Ref)
+	}
+	if req.Description != "AI review is running specialist reviewers" {
+		t.Fatalf("description = %q, want running packs description", req.Description)
 	}
 	if req.TargetURL != "https://gitlab.example.com/group/project/-/merge_requests/7" {
 		t.Fatalf("target_url = %q, want MR URL", req.TargetURL)

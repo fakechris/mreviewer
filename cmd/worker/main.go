@@ -17,7 +17,8 @@ import (
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/llm"
 	"github.com/mreviewer/mreviewer/internal/logging"
-	"github.com/mreviewer/mreviewer/internal/rules"
+	githubplatform "github.com/mreviewer/mreviewer/internal/platform/github"
+	"github.com/mreviewer/mreviewer/internal/scheduler"
 )
 
 func main() {
@@ -47,34 +48,12 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	gitlabClient, err := gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken)
-	if err != nil {
-		logger.Error("failed to configure gitlab client", "error", err)
-		return 1
-	}
-
 	defaultRoute, configuredFallbackRoute, providerConfigs, err := providerConfigsFromConfig(cfg)
 	if err != nil {
 		logger.Error("failed to resolve llm route configuration", "error", err)
 		return 1
 	}
 
-	rulesLoader := rules.NewLoader(gitlabClient, rules.PlatformDefaults{
-		Instructions:        "Platform defaults: prioritize correctness, security, and least-privilege behavior.",
-		ConfidenceThreshold: 0.72,
-		SeverityThreshold:   "medium",
-		IncludePaths:        []string{"src/**"},
-		ExcludePaths:        []string{"vendor/**"},
-		GateMode:            "threads_resolved",
-		ProviderRoute:       defaultRoute,
-	})
-	gitLabLimiter := gitlab.NewInMemoryRateLimiter(gitlab.RateLimitConfig{Requests: 5, Window: time.Second}, time.Now, nil)
-	gitLabLimiter.SetLimit("global", gitlab.RateLimitConfig{Requests: 5, Window: time.Second})
-	gitlabClient, err = gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken, gitlab.WithRateLimiter(gitLabLimiter))
-	if err != nil {
-		logger.Error("failed to configure gitlab client with rate limiting", "error", err)
-		return 1
-	}
 	llmLimiter := llm.NewInMemoryRateLimiter(llm.RateLimitConfig{Requests: 2, Window: time.Second}, time.Now, nil)
 	for route, providerCfg := range providerConfigs {
 		llmLimiter.SetLimit(route, llm.RateLimitConfig{Requests: 2, Window: time.Second})
@@ -91,12 +70,37 @@ func run() int {
 	} else {
 		logger.Info("redis coordination configured", "redis_addr", cfg.RedisAddr)
 	}
-	// The processor uses the registry for policy-driven provider selection.
-	// At runtime, ProcessRun calls registry.ResolveWithFallback(effectivePolicy.ProviderRoute)
-	// to pick the provider for each run, instead of always using a static default.
-	processor := llm.NewProcessor(logger, sqlDB, gitlabClient, rulesLoader, nil, llm.NewDBAuditLogger(sqlDB)).WithRegistry(providerRegistry)
-	statusPublisher := gate.NewGitLabStatusPublisher(gitlabClient, db.New(sqlDB))
-	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(logger, sqlDB, processor, gitlabClient, statusPublisher, gate.NoopCIGatePublisher{})
+	var (
+		gitlabClient        *gitlab.Client
+		gitlabProcessor     scheduler.Processor
+		gitHubProcessor     scheduler.Processor
+		gitHubPublishClient githubplatform.PublishClient
+		statusPublisher     gate.StatusPublisher = gate.NoopStatusPublisher{}
+	)
+	gitlabProcessor, gitlabClient, err = newGitLabEngineProcessor(sqlDB, cfg, defaultRoute, providerRegistry.ResolveWithFallback)
+	if err != nil {
+		logger.Error("failed to configure gitlab runtime processor", "error", err)
+		return 1
+	}
+	if gitlabClient != nil {
+		statusPublisher = gate.NewGitLabStatusPublisher(gitlabClient, db.New(sqlDB))
+	}
+	gitHubProcessor, gitHubClient, err := newGitHubEngineProcessor(sqlDB, cfg, defaultRoute, providerRegistry.ResolveWithFallback)
+	if err != nil {
+		logger.Error("failed to configure github runtime processor", "error", err)
+		return 1
+	}
+	if gitHubClient != nil {
+		gitHubPublishClient = gitHubClient
+		githubStatusPublisher := gate.NewGitHubStatusPublisher(gitHubStatusClientAdapter{client: gitHubClient}, db.New(sqlDB))
+		statusPublisher = newPlatformStatusPublisher(sqlDB, statusPublisher, githubStatusPublisher)
+	}
+	processor := newPlatformDispatchProcessor(sqlDB, gitlabProcessor, gitHubProcessor)
+	if processor == nil {
+		logger.Error("invalid worker configuration", "error", fmt.Errorf("worker: at least one complete GitLab or GitHub configuration is required"))
+		return 1
+	}
+	runtimeDeps := newRuntimeDepsWithPlatformClientsAndGatePublishers(logger, sqlDB, processor, gitlabClient, gitHubPublishClient, statusPublisher, gate.NoopCIGatePublisher{})
 	worker := runtimeDeps.Scheduler
 	logger.Info("worker starting", "platform_default_route", defaultRoute, "fallback_route", configuredFallbackRoute, "registry_routes", providerRegistry.Routes())
 	if err := worker.Run(ctx); err != nil {
@@ -112,8 +116,10 @@ func validateWorkerConfig(cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("worker: configuration is required")
 	}
-	if strings.TrimSpace(cfg.GitLabToken) == "" {
-		return fmt.Errorf("worker: GITLAB_TOKEN is required")
+	gitlabReady := strings.TrimSpace(cfg.GitLabBaseURL) != "" && strings.TrimSpace(cfg.GitLabToken) != ""
+	githubReady := strings.TrimSpace(cfg.GitHubBaseURL) != "" && strings.TrimSpace(cfg.GitHubToken) != ""
+	if !gitlabReady && !githubReady {
+		return fmt.Errorf("worker: either GITLAB_BASE_URL/GITLAB_TOKEN or GITHUB_BASE_URL/GITHUB_TOKEN is required")
 	}
 	return nil
 }
@@ -170,4 +176,23 @@ func providerConfigsFromConfig(cfg *config.Config) (string, string, map[string]l
 	routes[legacyDefaultRoute] = defaultProvider
 	routes[legacyFallbackRoute] = secondaryProvider
 	return legacyDefaultRoute, legacyFallbackRoute, routes, nil
+}
+
+type gitHubStatusClientAdapter struct {
+	client *githubplatform.Client
+}
+
+func (a gitHubStatusClientAdapter) SetCommitStatus(ctx context.Context, req gate.GitHubCommitStatusRequest) error {
+	if a.client == nil {
+		return fmt.Errorf("worker: github status client is required")
+	}
+	return a.client.SetCommitStatus(ctx, githubplatform.CommitStatusRequest{
+		Owner:       req.Owner,
+		Repo:        req.Repo,
+		SHA:         req.SHA,
+		State:       req.State,
+		Context:     req.Context,
+		Description: req.Description,
+		TargetURL:   req.TargetURL,
+	})
 }

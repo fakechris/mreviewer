@@ -16,6 +16,8 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
+	"github.com/mreviewer/mreviewer/internal/hooks"
+	"github.com/mreviewer/mreviewer/internal/reviewrun"
 )
 
 const migrationsDir = "../../migrations"
@@ -193,6 +195,80 @@ func TestTriggerCreatesPendingManualRun(t *testing.T) {
 	}
 	if mr.WebUrl != server.URL+"/group/subgroup/repo/-/merge_requests/7" {
 		t.Fatalf("mr web_url = %q, want %q", mr.WebUrl, server.URL+"/group/subgroup/repo/-/merge_requests/7")
+	}
+}
+
+type recordingEventProcessor struct {
+	calls int
+	last  hooks.NormalizedEvent
+	err   error
+	next  func(context.Context, hooks.NormalizedEvent, int64) error
+}
+
+func (p *recordingEventProcessor) ProcessEvent(ctx context.Context, ev hooks.NormalizedEvent, hookEventID int64) error {
+	p.calls++
+	p.last = ev
+	if p.err != nil {
+		return p.err
+	}
+	if p.next != nil {
+		return p.next(ctx, ev, hookEventID)
+	}
+	return nil
+}
+
+func TestTriggerUsesInjectedEventProcessor(t *testing.T) {
+	sqlDB := setupTestDB(t)
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{
+			"id": 9001,
+			"iid": 7,
+			"project_id": 123,
+			"title": "Manual trigger test",
+			"description": "test mr",
+			"state": "opened",
+			"draft": false,
+			"source_branch": "feature/manual",
+			"target_branch": "main",
+			"sha": "head-sha-123",
+			"web_url": %q,
+			"author": {"username": "alice"}
+		}`, server.URL+"/group/subgroup/repo/-/merge_requests/7")
+	}))
+	defer server.Close()
+
+	client, err := gitlab.NewClient(server.URL, "test-token", gitlab.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	delegate := reviewrun.NewService(testLogger(), sqlDB)
+	processor := &recordingEventProcessor{
+		next: func(ctx context.Context, ev hooks.NormalizedEvent, hookEventID int64) error {
+			return delegate.ProcessEvent(ctx, ev, hookEventID)
+		},
+	}
+	svc := NewService(testLogger(), sqlDB, client, server.URL, WithEventProcessor(processor))
+
+	result, err := svc.Trigger(context.Background(), TriggerInput{ProjectID: 123, MRIID: 7})
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if processor.calls != 1 {
+		t.Fatalf("processor calls = %d, want 1", processor.calls)
+	}
+	if processor.last.Action != "manual_trigger" {
+		t.Fatalf("processor action = %q, want manual_trigger", processor.last.Action)
+	}
+	run, err := db.New(sqlDB).GetReviewRun(context.Background(), result.RunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	if run.Status != "pending" {
+		t.Fatalf("run status = %q, want pending", run.Status)
 	}
 }
 

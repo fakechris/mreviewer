@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,10 +16,11 @@ import (
 	"github.com/mreviewer/mreviewer/internal/commands"
 	"github.com/mreviewer/mreviewer/internal/config"
 	"github.com/mreviewer/mreviewer/internal/database"
+	"github.com/mreviewer/mreviewer/internal/githubhooks"
 	"github.com/mreviewer/mreviewer/internal/hooks"
 	apphttp "github.com/mreviewer/mreviewer/internal/http"
 	"github.com/mreviewer/mreviewer/internal/logging"
-	"github.com/mreviewer/mreviewer/internal/runs"
+	"github.com/mreviewer/mreviewer/internal/reviewrun"
 	"github.com/mreviewer/mreviewer/internal/server"
 )
 
@@ -53,15 +55,7 @@ func run() int {
 	logger.Info("database connection pool initialized")
 
 	// Build HTTP routes.
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", apphttp.NewHealthHandler(logger, db))
-
-	// Webhook ingress handler.
-	runProcessor := runs.NewService(logger, db)
-	webhookHandler := hooks.NewHandler(logger, db, cfg.GitLabWebhookSecret, runProcessor)
-	commandProcessor := commands.NewProcessor(logger, db)
-	webhookHandler.SetCommandProcessor(commandProcessor)
-	mux.Handle("POST /webhook", webhookHandler)
+	mux := newMux(logger, db, cfg)
 
 	// Wrap with request-id middleware.
 	handler := apphttp.RequestIDMiddleware(logger, mux)
@@ -79,4 +73,21 @@ func run() int {
 
 	logger.Info("shutdown complete")
 	return 0
+}
+
+func newMux(logger *slog.Logger, sqlDB *sql.DB, cfg *config.Config) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", apphttp.NewHealthHandler(logger, sqlDB))
+
+	runProcessor := reviewrun.NewService(logger, sqlDB)
+
+	gitlabWebhookHandler := hooks.NewHandler(logger, sqlDB, cfg.GitLabWebhookSecret, runProcessor)
+	commandProcessor := commands.NewProcessor(logger, sqlDB)
+	gitlabWebhookHandler.SetCommandProcessor(commandProcessor)
+	mux.Handle("POST /webhook", gitlabWebhookHandler)
+
+	githubWebhookHandler := githubhooks.NewHandler(logger, sqlDB, cfg.GitHubWebhookSecret, runProcessor)
+	mux.Handle("POST /github/webhook", githubWebhookHandler)
+
+	return mux
 }

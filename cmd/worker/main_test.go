@@ -24,6 +24,13 @@ func TestValidateWorkerConfigAllowsConfiguredToken(t *testing.T) {
 	}
 }
 
+func TestValidateWorkerConfigAllowsGitHubOnlyToken(t *testing.T) {
+	err := validateWorkerConfig(&config.Config{GitHubBaseURL: "https://github.com", GitHubToken: "secret-token"})
+	if err != nil {
+		t.Fatalf("validateWorkerConfig: %v", err)
+	}
+}
+
 func TestProviderConfigsFromLegacyAnthropicSettings(t *testing.T) {
 	cfg := &config.Config{
 		AnthropicBaseURL: "https://api.minimaxi.com/anthropic",

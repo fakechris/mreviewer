@@ -114,8 +114,54 @@ type MergeRequestSnapshot struct {
 	Diffs        []MergeRequestDiff
 }
 
+type Project struct {
+	ID                int64  `json:"id"`
+	PathWithNamespace string `json:"path_with_namespace"`
+	WebURL            string `json:"web_url"`
+	DefaultBranch     string `json:"default_branch"`
+}
+
 type mergeRequestChangesResponse struct {
 	Changes []MergeRequestDiff `json:"changes"`
+}
+
+type NoteAuthor struct {
+	Username string `json:"username"`
+}
+
+type NotePosition struct {
+	OldPath  string `json:"old_path"`
+	NewPath  string `json:"new_path"`
+	OldLine  int    `json:"old_line"`
+	NewLine  int    `json:"new_line"`
+	BaseSHA  string `json:"base_sha"`
+	StartSHA string `json:"start_sha"`
+	HeadSHA  string `json:"head_sha"`
+}
+
+type MergeRequestNote struct {
+	ID       int64      `json:"id"`
+	Body     string     `json:"body"`
+	System   bool       `json:"system"`
+	Resolvable bool     `json:"resolvable"`
+	Resolved bool       `json:"resolved"`
+	Author   NoteAuthor `json:"author"`
+	Position *NotePosition `json:"position"`
+}
+
+type MergeRequestDiscussionNote struct {
+	ID       int64      `json:"id"`
+	Body     string     `json:"body"`
+	System   bool       `json:"system"`
+	Resolvable bool     `json:"resolvable"`
+	Resolved bool       `json:"resolved"`
+	Author   NoteAuthor `json:"author"`
+	Position *NotePosition `json:"position"`
+}
+
+type MergeRequestDiscussion struct {
+	ID    string                       `json:"id"`
+	Notes []MergeRequestDiscussionNote `json:"notes"`
 }
 
 type HTTPStatusError struct {
@@ -274,6 +320,15 @@ func (c *Client) GetMergeRequest(ctx context.Context, projectID, mergeRequestIID
 	return mr, nil
 }
 
+func (c *Client) GetProjectByPath(ctx context.Context, projectPath string) (Project, error) {
+	var project Project
+	_, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/api/v4/projects/%s", url.PathEscape(strings.TrimSpace(projectPath))), nil, &project)
+	if err != nil {
+		return Project{}, err
+	}
+	return project, nil
+}
+
 func (c *Client) GetMergeRequestVersions(ctx context.Context, projectID, mergeRequestIID int64) (MergeRequestVersion, error) {
 	var versions []MergeRequestVersion
 	_, err := c.doJSON(ctx, http.MethodGet, mergeRequestPath(projectID, mergeRequestIID, "/versions"), nil, &versions)
@@ -421,6 +476,40 @@ func (c *Client) GetMergeRequestSnapshot(ctx context.Context, projectID, mergeRe
 			return MergeRequestSnapshot{}, err
 		}
 	}
+}
+
+func (c *Client) GetMergeRequestSnapshotByProjectRef(ctx context.Context, projectRef string, mergeRequestIID int64) (MergeRequestSnapshot, error) {
+	project, err := c.GetProjectByPath(ctx, projectRef)
+	if err != nil {
+		return MergeRequestSnapshot{}, err
+	}
+	return c.GetMergeRequestSnapshot(ctx, project.ID, mergeRequestIID)
+}
+
+func (c *Client) ListMergeRequestNotesByProjectRef(ctx context.Context, projectRef string, mergeRequestIID int64) ([]MergeRequestNote, error) {
+	project, err := c.GetProjectByPath(ctx, projectRef)
+	if err != nil {
+		return nil, err
+	}
+	var notes []MergeRequestNote
+	_, err = c.doJSON(ctx, http.MethodGet, mergeRequestPath(project.ID, mergeRequestIID, "/notes"), nil, &notes)
+	if err != nil {
+		return nil, err
+	}
+	return notes, nil
+}
+
+func (c *Client) ListMergeRequestDiscussionsByProjectRef(ctx context.Context, projectRef string, mergeRequestIID int64) ([]MergeRequestDiscussion, error) {
+	project, err := c.GetProjectByPath(ctx, projectRef)
+	if err != nil {
+		return nil, err
+	}
+	var discussions []MergeRequestDiscussion
+	_, err = c.doJSON(ctx, http.MethodGet, mergeRequestPath(project.ID, mergeRequestIID, "/discussions"), nil, &discussions)
+	if err != nil {
+		return nil, err
+	}
+	return discussions, nil
 }
 
 func (c *Client) GetRepositoryFile(ctx context.Context, projectID int64, filePath, ref string) (string, error) {

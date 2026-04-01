@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mreviewer/mreviewer/internal/db"
+	"github.com/mreviewer/mreviewer/internal/reviewstatus"
 )
 
 type StatusPublisher interface {
@@ -43,6 +44,7 @@ type Result struct {
 	ProjectID            int64
 	HeadSHA              string
 	State                string
+	Stage                reviewstatus.Stage
 	Mode                 string
 	BlockingFindings     int
 	QualifyingFindingIDs []int64
@@ -74,7 +76,7 @@ func ComputeResultWithDiscussionState(run db.ReviewRun, policy *db.ProjectPolicy
 	if len(qualifyingIDs) > 0 {
 		state = "failed"
 	}
-	return Result{RunID: run.ID, MergeRequestID: run.MergeRequestID, ProjectID: run.ProjectID, HeadSHA: run.HeadSha, State: state, Mode: mode, BlockingFindings: len(qualifyingIDs), QualifyingFindingIDs: qualifyingIDs, Summary: fmt.Sprintf("gate %s with %d qualifying findings", state, len(qualifyingIDs)), Source: "review_run", TraceID: traceID}
+	return Result{RunID: run.ID, MergeRequestID: run.MergeRequestID, ProjectID: run.ProjectID, HeadSHA: run.HeadSha, State: state, Stage: reviewstatus.StageCompleted, Mode: mode, BlockingFindings: len(qualifyingIDs), QualifyingFindingIDs: qualifyingIDs, Summary: fmt.Sprintf("gate %s with %d qualifying findings", state, len(qualifyingIDs)), Source: "review_run", TraceID: traceID}
 }
 
 func (s *Service) Publish(ctx context.Context, result Result) error {

@@ -78,8 +78,14 @@ func mapCommitStatusState(state string) string {
 func commitStatusDescription(result Result) string {
 	switch mapCommitStatusState(result.State) {
 	case "pending":
+		if description := result.Stage.Description(); description != "" {
+			return description
+		}
 		return "AI review is pending"
 	case "running":
+		if description := result.Stage.Description(); description != "" {
+			return description
+		}
 		return "AI review is running"
 	case "success":
 		return "AI review passed"

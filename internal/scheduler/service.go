@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/metrics"
+	"github.com/mreviewer/mreviewer/internal/reviewstatus"
 	"github.com/mreviewer/mreviewer/internal/timeutil"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 )
@@ -43,6 +45,7 @@ type ProcessOutcome struct {
 	ProviderLatencyMs   int64
 	ProviderTokensTotal int64
 	ReviewFindings      []db.ReviewFinding
+	ReviewBundle        any
 }
 
 type FuncProcessor func(ctx context.Context, run db.ReviewRun) (ProcessOutcome, error)
@@ -637,6 +640,28 @@ func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outco
 	if err == nil {
 		policyPtr = &policy
 	}
+	if platform, verdict, findingCount, ok := gateInfoFromBundle(outcome.ReviewBundle); ok && platform == "github" {
+		state := "passed"
+		if verdict == "requested_changes" || verdict == "failed" {
+			state = "failed"
+		}
+		result := gate.Result{
+			RunID:            run.ID,
+			MergeRequestID:   run.MergeRequestID,
+			ProjectID:        run.ProjectID,
+			HeadSHA:          run.HeadSha,
+			State:            state,
+			Mode:             "external_status",
+			BlockingFindings: findingCount,
+			Summary:          fmt.Sprintf("gate %s with %d canonical findings", state, findingCount),
+			Source:           "review_bundle",
+			TraceID:          tracing.CurrentTraceID(ctx),
+		}
+		if err := s.gateService.Publish(ctx, result); err != nil {
+			return nil, fmt.Errorf("scheduler: publish gate result for run %d: %w", run.ID, err)
+		}
+		return &result, nil
+	}
 	findings := outcome.ReviewFindings
 	if findings == nil {
 		findings, err = queries.ListFindingsByRun(ctx, run.ID)
@@ -668,6 +693,57 @@ func (s *Service) publishGateResult(ctx context.Context, run db.ReviewRun, outco
 	return &result, nil
 }
 
+func gateInfoFromBundle(raw any) (platform string, verdict string, findingCount int, ok bool) {
+	if raw == nil {
+		return "", "", 0, false
+	}
+	value := reflect.ValueOf(raw)
+	if value.Kind() == reflect.Ptr {
+		if value.IsNil() {
+			return "", "", 0, false
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return "", "", 0, false
+	}
+
+	targetField := value.FieldByName("Target")
+	if targetField.IsValid() && targetField.Kind() == reflect.Struct {
+		platformField := targetField.FieldByName("Platform")
+		if platformField.IsValid() && platformField.Kind() == reflect.String {
+			platform = strings.ToLower(strings.TrimSpace(platformField.String()))
+		}
+	}
+	verdictField := value.FieldByName("JudgeVerdict")
+	if verdictField.IsValid() && verdictField.Kind() == reflect.String {
+		verdict = strings.ToLower(strings.TrimSpace(verdictField.String()))
+	}
+	candidatesField := value.FieldByName("PublishCandidates")
+	if candidatesField.IsValid() && candidatesField.Kind() == reflect.Slice {
+		for i := 0; i < candidatesField.Len(); i++ {
+			candidate := candidatesField.Index(i)
+			if candidate.Kind() == reflect.Ptr {
+				if candidate.IsNil() {
+					continue
+				}
+				candidate = candidate.Elem()
+			}
+			if candidate.Kind() != reflect.Struct {
+				continue
+			}
+			typeField := candidate.FieldByName("Type")
+			if typeField.IsValid() && typeField.Kind() == reflect.String && strings.EqualFold(typeField.String(), "finding") {
+				findingCount++
+			}
+		}
+	}
+	if platform == "" {
+		return "", "", 0, false
+	}
+	return platform, verdict, findingCount, true
+}
+
 func (s *Service) publishInProgressStatus(ctx context.Context, run db.ReviewRun) {
 	s.publishDirectStatus(ctx, gate.Result{
 		RunID:          run.ID,
@@ -675,6 +751,7 @@ func (s *Service) publishInProgressStatus(ctx context.Context, run db.ReviewRun)
 		ProjectID:      run.ProjectID,
 		HeadSHA:        run.HeadSha,
 		State:          "running",
+		Stage:          reviewstatus.StageLoadingTarget,
 		Source:         "review_run",
 		TraceID:        tracing.CurrentTraceID(ctx),
 	})

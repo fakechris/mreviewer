@@ -26,10 +26,17 @@ type Config struct {
 	GitLabBaseURL       string `yaml:"gitlab_base_url"`
 	GitLabToken         string `yaml:"gitlab_token"`
 	GitLabWebhookSecret string `yaml:"gitlab_webhook_secret"`
+	GitHubBaseURL       string `yaml:"github_base_url"`
+	GitHubToken         string `yaml:"github_token"`
+	GitHubWebhookSecret string `yaml:"github_webhook_secret"`
 
 	AnthropicBaseURL string `yaml:"anthropic_base_url"`
 	AnthropicAPIKey  string `yaml:"anthropic_api_key"`
 	AnthropicModel   string `yaml:"anthropic_model"`
+
+	ReviewPacks            []string `yaml:"review_packs"`
+	ReviewAdvisorRoute     string   `yaml:"review_advisor_route"`
+	ReviewCompareReviewers []string `yaml:"review_compare_reviewers"`
 
 	LLM LLMConfig `yaml:"llm"`
 }
@@ -65,9 +72,15 @@ var envMapping = []struct {
 	{"GITLAB_BASE_URL", func(c *Config, v string) { c.GitLabBaseURL = v }},
 	{"GITLAB_TOKEN", func(c *Config, v string) { c.GitLabToken = v }},
 	{"GITLAB_WEBHOOK_SECRET", func(c *Config, v string) { c.GitLabWebhookSecret = v }},
+	{"GITHUB_BASE_URL", func(c *Config, v string) { c.GitHubBaseURL = v }},
+	{"GITHUB_TOKEN", func(c *Config, v string) { c.GitHubToken = v }},
+	{"GITHUB_WEBHOOK_SECRET", func(c *Config, v string) { c.GitHubWebhookSecret = v }},
 	{"ANTHROPIC_BASE_URL", func(c *Config, v string) { c.AnthropicBaseURL = v }},
 	{"ANTHROPIC_API_KEY", func(c *Config, v string) { c.AnthropicAPIKey = v }},
 	{"ANTHROPIC_MODEL", func(c *Config, v string) { c.AnthropicModel = v }},
+	{"REVIEW_PACKS", func(c *Config, v string) { c.ReviewPacks = splitCSV(v) }},
+	{"REVIEW_ADVISOR_ROUTE", func(c *Config, v string) { c.ReviewAdvisorRoute = v }},
+	{"REVIEW_COMPARE_REVIEWERS", func(c *Config, v string) { c.ReviewCompareReviewers = splitCSV(v) }},
 	{"LLM_DEFAULT_ROUTE", func(c *Config, v string) { c.LLM.DefaultRoute = v }},
 	{"LLM_FALLBACK_ROUTE", func(c *Config, v string) { c.LLM.FallbackRoute = v }},
 }
@@ -151,4 +164,16 @@ func applyMiniMaxFallback(cfg *Config) {
 			cfg.AnthropicModel = defaultMiniMaxModel
 		}
 	}
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }

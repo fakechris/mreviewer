@@ -14,7 +14,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/hooks"
-	runsvc "github.com/mreviewer/mreviewer/internal/runs"
+	"github.com/mreviewer/mreviewer/internal/reviewrun"
 )
 
 type MergeRequestReader interface {
@@ -24,9 +24,12 @@ type MergeRequestReader interface {
 type Option func(*Service)
 
 type Service struct {
-	logger  *slog.Logger
-	db      *sql.DB
-	gitlab  MergeRequestReader
+	logger         *slog.Logger
+	db             *sql.DB
+	gitlab         MergeRequestReader
+	eventProcessor interface {
+		ProcessEvent(ctx context.Context, ev hooks.NormalizedEvent, hookEventID int64) error
+	}
 	baseURL string
 	now     func() time.Time
 	poll    time.Duration
@@ -72,6 +75,9 @@ func NewService(logger *slog.Logger, sqlDB *sql.DB, client MergeRequestReader, b
 	if svc.poll <= 0 {
 		svc.poll = time.Second
 	}
+	if svc.eventProcessor == nil && sqlDB != nil {
+		svc.eventProcessor = reviewrun.NewService(logger, sqlDB)
+	}
 
 	return svc
 }
@@ -85,6 +91,14 @@ func WithNow(now func() time.Time) Option {
 func WithPollInterval(interval time.Duration) Option {
 	return func(s *Service) {
 		s.poll = interval
+	}
+}
+
+func WithEventProcessor(processor interface {
+	ProcessEvent(ctx context.Context, ev hooks.NormalizedEvent, hookEventID int64) error
+}) Option {
+	return func(s *Service) {
+		s.eventProcessor = processor
 	}
 }
 
@@ -155,7 +169,10 @@ func (s *Service) Trigger(ctx context.Context, input TriggerInput) (TriggerResul
 		ev.ScopeJSON = scopeJSON
 	}
 
-	if err := runsvc.NewService(s.logger, s.db).ProcessEvent(ctx, ev, 0); err != nil {
+	if s.eventProcessor == nil {
+		return TriggerResult{}, fmt.Errorf("manual trigger: event processor is required")
+	}
+	if err := s.eventProcessor.ProcessEvent(ctx, ev, 0); err != nil {
 		return TriggerResult{}, fmt.Errorf("manual trigger: create review run: %w", err)
 	}
 

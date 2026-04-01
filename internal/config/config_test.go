@@ -166,6 +166,9 @@ func TestConfigAllEnvVars(t *testing.T) {
 		"ANTHROPIC_BASE_URL":    "https://test-anthropic",
 		"ANTHROPIC_API_KEY":     "test-key",
 		"ANTHROPIC_MODEL":       "test-model",
+		"REVIEW_PACKS":          "security,database",
+		"REVIEW_ADVISOR_ROUTE":  "openai-gpt-5-4",
+		"REVIEW_COMPARE_REVIEWERS": "gitlab:coderabbit,github:gemini",
 	}
 
 	for k, v := range envVals {
@@ -206,6 +209,15 @@ func TestConfigAllEnvVars(t *testing.T) {
 	}
 	if cfg.AnthropicModel != "test-model" {
 		t.Errorf("AnthropicModel = %q, want %q", cfg.AnthropicModel, "test-model")
+	}
+	if len(cfg.ReviewPacks) != 2 || cfg.ReviewPacks[0] != "security" || cfg.ReviewPacks[1] != "database" {
+		t.Errorf("ReviewPacks = %#v, want [security database]", cfg.ReviewPacks)
+	}
+	if cfg.ReviewAdvisorRoute != "openai-gpt-5-4" {
+		t.Errorf("ReviewAdvisorRoute = %q, want %q", cfg.ReviewAdvisorRoute, "openai-gpt-5-4")
+	}
+	if len(cfg.ReviewCompareReviewers) != 2 || cfg.ReviewCompareReviewers[0] != "gitlab:coderabbit" || cfg.ReviewCompareReviewers[1] != "github:gemini" {
+		t.Errorf("ReviewCompareReviewers = %#v, want [gitlab:coderabbit github:gemini]", cfg.ReviewCompareReviewers)
 	}
 }
 

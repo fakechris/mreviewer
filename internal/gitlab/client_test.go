@@ -242,6 +242,104 @@ func TestGetMergeRequestDiffsPagination(t *testing.T) {
 	}
 }
 
+func TestGetProjectByPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RequestURI() != "/api/v4/projects/group%2Fproject" {
+			t.Fatalf("request uri = %q, want encoded project path", r.URL.RequestURI())
+		}
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"id":                  123,
+			"path_with_namespace": "group/project",
+			"web_url":             "https://gitlab.example.com/group/project",
+			"default_branch":      "main",
+		})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	project, err := client.GetProjectByPath(context.Background(), "group/project")
+	if err != nil {
+		t.Fatalf("GetProjectByPath: %v", err)
+	}
+
+	if project.ID != 123 {
+		t.Fatalf("project id = %d, want 123", project.ID)
+	}
+	if project.PathWithNamespace != "group/project" {
+		t.Fatalf("project path = %q, want group/project", project.PathWithNamespace)
+	}
+}
+
+func TestGetMergeRequestSnapshotByProjectRef(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.RequestURI())
+		switch r.URL.RequestURI() {
+		case "/api/v4/projects/group%2Fproject":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"id":                  123,
+				"path_with_namespace": "group/project",
+				"web_url":             "https://gitlab.example.com/group/project",
+				"default_branch":      "main",
+			})
+		case "/api/v4/projects/123/merge_requests/7":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"id":            101,
+				"iid":           7,
+				"project_id":    123,
+				"title":         "Add reader client",
+				"description":   "Fetch MR details",
+				"state":         "opened",
+				"source_branch": "feature/readers",
+				"target_branch": "main",
+				"sha":           "head-sha",
+				"web_url":       "https://gitlab.example.com/group/project/-/merge_requests/7",
+				"diff_refs": map[string]any{
+					"base_sha":  "base-sha",
+					"head_sha":  "head-sha",
+					"start_sha": "start-sha",
+				},
+				"author": map[string]any{"username": "reviewer-bot"},
+			})
+		case "/api/v4/projects/123/merge_requests/7/versions":
+			writeJSON(t, w, http.StatusOK, []map[string]any{{
+				"id":               22,
+				"head_commit_sha":  "head-sha",
+				"base_commit_sha":  "base-sha",
+				"start_commit_sha": "start-sha",
+				"patch_id_sha":     "patch-sha",
+				"created_at":       "2026-03-16T12:00:00Z",
+				"merge_request_id": 101,
+				"state":            "collected",
+				"real_size":        "3",
+			}})
+		case "/api/v4/projects/123/merge_requests/7/diffs?page=1&per_page=100":
+			writeJSON(t, w, http.StatusOK, []map[string]any{
+				{"old_path": "a.go", "new_path": "a.go", "diff": "@@ -1 +1 @@"},
+			})
+		default:
+			t.Fatalf("unexpected request uri %q", r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	snapshot, err := client.GetMergeRequestSnapshotByProjectRef(context.Background(), "group/project", 7)
+	if err != nil {
+		t.Fatalf("GetMergeRequestSnapshotByProjectRef: %v", err)
+	}
+
+	if snapshot.MergeRequest.ProjectID != 123 {
+		t.Fatalf("project id = %d, want 123", snapshot.MergeRequest.ProjectID)
+	}
+	if snapshot.Version.HeadSHA != "head-sha" {
+		t.Fatalf("head sha = %q, want head-sha", snapshot.Version.HeadSHA)
+	}
+	if len(paths) < 4 {
+		t.Fatalf("expected project lookup plus snapshot requests, got %#v", paths)
+	}
+}
+
 func TestGetMergeRequestDiffsFallbackToNonPaginatedAndChanges(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -715,6 +813,48 @@ func TestSetCommitStatus(t *testing.T) {
 	}
 	if requestBody["target_url"] != "https://gitlab.example.com/group/project/-/merge_requests/7" {
 		t.Fatalf("target_url = %#v, want merge request URL", requestBody["target_url"])
+	}
+}
+
+func TestListMergeRequestCommentsByProjectRef(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.RequestURI() {
+		case "/api/v4/projects/group%2Fproject":
+			writeJSON(t, w, http.StatusOK, map[string]any{"id": 123})
+		case "/api/v4/projects/123/merge_requests/7/notes":
+			writeJSON(t, w, http.StatusOK, []map[string]any{
+				{"id": 301, "body": "summary", "author": map[string]any{"username": "gemini"}},
+			})
+		case "/api/v4/projects/123/merge_requests/7/discussions":
+			writeJSON(t, w, http.StatusOK, []map[string]any{
+				{
+					"id": "discussion-1",
+					"notes": []map[string]any{
+						{"id": 302, "body": "inline", "author": map[string]any{"username": "gemini"}, "position": map[string]any{"new_path": "repo/query.go", "new_line": 18}},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request uri %q", r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	notes, err := client.ListMergeRequestNotesByProjectRef(context.Background(), "group/project", 7)
+	if err != nil {
+		t.Fatalf("ListMergeRequestNotesByProjectRef: %v", err)
+	}
+	if len(notes) != 1 || notes[0].Author.Username != "gemini" {
+		t.Fatalf("notes = %#v", notes)
+	}
+
+	discussions, err := client.ListMergeRequestDiscussionsByProjectRef(context.Background(), "group/project", 7)
+	if err != nil {
+		t.Fatalf("ListMergeRequestDiscussionsByProjectRef: %v", err)
+	}
+	if len(discussions) != 1 || discussions[0].ID != "discussion-1" {
+		t.Fatalf("discussions = %#v", discussions)
 	}
 }
 

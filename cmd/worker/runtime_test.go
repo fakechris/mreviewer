@@ -16,6 +16,8 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
+	"github.com/mreviewer/mreviewer/internal/reviewcore"
+	"github.com/mreviewer/mreviewer/internal/reviewstatus"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 	"github.com/mreviewer/mreviewer/internal/writer"
@@ -235,6 +237,9 @@ func TestGatePublishesFromRuntimePath(t *testing.T) {
 	if len(status.results) != 2 {
 		t.Fatalf("status publish count = %d, want 2", len(status.results))
 	}
+	if status.results[0].Stage != reviewstatus.StageLoadingTarget {
+		t.Fatalf("first status stage = %q, want %q", status.results[0].Stage, reviewstatus.StageLoadingTarget)
+	}
 	if len(ci.results) != 1 {
 		t.Fatalf("ci publish count = %d, want 1", len(ci.results))
 	}
@@ -243,6 +248,9 @@ func TestGatePublishesFromRuntimePath(t *testing.T) {
 	}
 	if status.results[1].RunID != runID || status.results[1].State != "failed" {
 		t.Fatalf("second status result = %+v, want failed result for run %d", status.results[1], runID)
+	}
+	if status.results[1].Stage != reviewstatus.StageCompleted {
+		t.Fatalf("second status stage = %q, want %q", status.results[1].Stage, reviewstatus.StageCompleted)
 	}
 	if status.results[1].TraceID == "" {
 		t.Fatal("expected trace id on gate result")
@@ -333,6 +341,117 @@ func TestWorkerRuntimeWritesBackFindings(t *testing.T) {
 	}
 }
 
+type fakeBundleWriter struct {
+	bundles []reviewcore.ReviewBundle
+	err     error
+}
+
+func (f *fakeBundleWriter) WriteBundle(_ context.Context, _ db.ReviewRun, bundle reviewcore.ReviewBundle) error {
+	f.bundles = append(f.bundles, bundle)
+	return f.err
+}
+
+func TestWrapProcessorWithWritebackPrefersBundleWriteback(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-bundle")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-bundle", "sha-bundle")
+
+	legacyClient := &fakeDiscussionClient{}
+	legacyWriter := writer.New(legacyClient, writer.NewSQLStore(sqlDB))
+	bundleWriter := &fakeBundleWriter{}
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		return scheduler.ProcessOutcome{
+			Status: "completed",
+			ReviewBundle: &reviewcore.ReviewBundle{
+				Target: reviewcore.ReviewTarget{Platform: reviewcore.PlatformGitLab, Repository: "group/project", Number: 1},
+				PublishCandidates: []reviewcore.PublishCandidate{{
+					Type:  "summary",
+					Title: "AI review summary",
+					Body:  "summary body",
+				}},
+			},
+		}, nil
+	})
+
+	wrapped := wrapProcessorWithWriteback(sqlDB, processor, legacyWriter, bundleWriter, gate.NoopStatusPublisher{})
+	run, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := wrapped.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.ReviewBundle == nil {
+		t.Fatal("expected outcome bundle to be preserved")
+	}
+	if len(bundleWriter.bundles) != 1 {
+		t.Fatalf("bundle write count = %d, want 1", len(bundleWriter.bundles))
+	}
+	if len(legacyClient.discussions) != 0 || len(legacyClient.notes) != 0 {
+		t.Fatalf("legacy writer should not be used when bundle is present, got %d discussions and %d notes", len(legacyClient.discussions), len(legacyClient.notes))
+	}
+}
+
+func TestWrapProcessorWithWritebackRoutesGitHubBundleToGitHubWriter(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	res, err := sqlDB.Exec("INSERT INTO gitlab_instances (url, name) VALUES ('https://github.com', 'GitHub')")
+	if err != nil {
+		t.Fatalf("insert instance: %v", err)
+	}
+	instanceID, _ := res.LastInsertId()
+	res, err = sqlDB.Exec(`INSERT INTO projects (gitlab_instance_id, gitlab_project_id, path_with_namespace, enabled)
+		VALUES (?, ?, ?, TRUE)`, instanceID, 987, "acme/service")
+	if err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	projectID, _ := res.LastInsertId()
+	res, err = sqlDB.Exec(`INSERT INTO merge_requests (project_id, mr_iid, title, state, target_branch, source_branch, head_sha, web_url)
+		VALUES (?, ?, ?, 'opened', 'main', 'feature/auth', ?, ?)`, projectID, 24, "Improve auth checks", "head-sha", "https://github.com/acme/service/pull/24")
+	if err != nil {
+		t.Fatalf("insert merge request: %v", err)
+	}
+	mrID, _ := res.LastInsertId()
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-github-bundle", "head-sha")
+
+	githubWriter := &fakeBundleWriter{}
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		return scheduler.ProcessOutcome{
+			Status: "requested_changes",
+			ReviewBundle: &reviewcore.ReviewBundle{
+				Target: reviewcore.ReviewTarget{Platform: reviewcore.PlatformGitHub, Repository: "acme/service", Number: 24},
+				PublishCandidates: []reviewcore.PublishCandidate{{
+					Type:  "summary",
+					Body:  "summary body",
+				}},
+			},
+		}, nil
+	})
+
+	wrapped := wrapProcessorWithWriteback(sqlDB, processor, nil, githubWriter, gate.NoopStatusPublisher{})
+	run, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+	outcome, err := wrapped.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	if outcome.ReviewBundle == nil {
+		t.Fatal("expected outcome bundle to be preserved")
+	}
+	if len(githubWriter.bundles) != 1 {
+		t.Fatalf("github bundle writes = %d, want 1", len(githubWriter.bundles))
+	}
+	if githubWriter.bundles[0].Target.Platform != reviewcore.PlatformGitHub {
+		t.Fatalf("bundle platform = %q, want github", githubWriter.bundles[0].Target.Platform)
+	}
+}
+
 func TestWorkerRuntimeWritesBackViaGitLabClient(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := setupTestDB(t)
@@ -418,6 +537,166 @@ func TestWorkerRuntimeWritesBackViaGitLabClient(t *testing.T) {
 	}
 	if len(discussions) != 2 {
 		t.Fatalf("comment action count = %d, want 2", len(discussions))
+	}
+}
+
+func TestWorkerRuntimePersistsCommentActionsForGitLabBundleWriteback(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-bundle-gitlab")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-bundle-gitlab", "sha-bundle-gitlab")
+	if _, err := sqlDB.Exec(`INSERT INTO mr_versions (merge_request_id, gitlab_version_id, base_sha, start_sha, head_sha, patch_id_sha)
+		VALUES (?, ?, ?, ?, ?, ?)`, mrID, 1, "base-sha", "start-sha", "sha-bundle-gitlab", "patch-sha"); err != nil {
+		t.Fatalf("insert mr version: %v", err)
+	}
+
+	client := &fakeDiscussionClient{}
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		return scheduler.ProcessOutcome{
+			Status: "requested_changes",
+			ReviewBundle: reviewcore.ReviewBundle{
+				Target: reviewcore.ReviewTarget{
+					Platform:   reviewcore.PlatformGitLab,
+					Repository: "group/project",
+					Number:     1,
+				},
+				JudgeVerdict: reviewcore.VerdictRequestedChanges,
+				PublishCandidates: []reviewcore.PublishCandidate{
+					{
+						Type:  "summary",
+						Title: "AI Review 摘要",
+						Body:  "summary body",
+					},
+					{
+						Type:     "finding",
+						Title:    "Runtime bundle issue",
+						Body:     "finding body",
+						Severity: "high",
+						Location: &reviewcore.CanonicalLocation{
+							Path: "src/main.go",
+							Side: reviewcore.LocationSideNew,
+							Line: 42,
+							PlatformMetadata: map[string]any{
+								"base_sha":  "base-sha",
+								"start_sha": "start-sha",
+								"head_sha":  "sha-bundle-gitlab",
+							},
+						},
+					},
+				},
+			},
+		}, nil
+	})
+
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, client, gate.NoopStatusPublisher{}, gate.NoopCIGatePublisher{})
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(client.discussions) != 1 {
+		t.Fatalf("discussion requests = %d, want 1", len(client.discussions))
+	}
+	if len(client.notes) != 1 {
+		t.Fatalf("note requests = %d, want 1", len(client.notes))
+	}
+	actions, err := db.New(sqlDB).ListCommentActionsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListCommentActionsByRun: %v", err)
+	}
+	if len(actions) != 2 {
+		t.Fatalf("comment action count = %d, want 2", len(actions))
+	}
+}
+
+func TestWorkerRuntimePersistsGitLabBundleFindingsForThreadsResolvedGate(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-bundle-gitlab-gate")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-bundle-gitlab-gate", "sha-bundle-gitlab-gate")
+	if _, err := sqlDB.Exec(`INSERT INTO mr_versions (merge_request_id, gitlab_version_id, base_sha, start_sha, head_sha, patch_id_sha)
+		VALUES (?, ?, ?, ?, ?, ?)`, mrID, 1, "base-sha", "start-sha", "sha-bundle-gitlab-gate", "patch-sha"); err != nil {
+		t.Fatalf("insert mr version: %v", err)
+	}
+	if _, err := sqlDB.Exec("INSERT INTO project_policies (project_id, confidence_threshold, severity_threshold, include_paths, exclude_paths, gate_mode, extra) VALUES (?, ?, ?, ?, ?, ?, ?)", projectID, 0.8, "medium", []byte("[]"), []byte("[]"), "threads_resolved", []byte("{}")); err != nil {
+		t.Fatalf("insert project policy: %v", err)
+	}
+
+	client := &fakeDiscussionClient{}
+	status := &fakeStatusPublisher{}
+	ci := &fakeCIPublisher{}
+	processor := scheduler.FuncProcessor(func(context.Context, db.ReviewRun) (scheduler.ProcessOutcome, error) {
+		return scheduler.ProcessOutcome{
+			Status: "requested_changes",
+			ReviewBundle: reviewcore.ReviewBundle{
+				Target: reviewcore.ReviewTarget{
+					Platform:   reviewcore.PlatformGitLab,
+					Repository: "group/project",
+					Number:     1,
+				},
+				JudgeVerdict: reviewcore.VerdictRequestedChanges,
+				PublishCandidates: []reviewcore.PublishCandidate{
+					{
+						Type:  "summary",
+						Title: "AI Review 摘要",
+						Body:  "summary body",
+					},
+					{
+						Type:     "finding",
+						Title:    "Runtime bundle gate issue",
+						Body:     "finding body",
+						Severity: "high",
+						Location: &reviewcore.CanonicalLocation{
+							Path: "src/main.go",
+							Side: reviewcore.LocationSideNew,
+							Line: 42,
+							PlatformMetadata: map[string]any{
+								"base_sha":  "base-sha",
+								"start_sha": "start-sha",
+								"head_sha":  "sha-bundle-gitlab-gate",
+							},
+						},
+					},
+				},
+			},
+		}, nil
+	})
+
+	runtimeDeps := newRuntimeDepsWithWritebackAndGatePublishers(testLogger(), sqlDB, processor, client, status, ci)
+	processed, err := runtimeDeps.Scheduler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	findings, err := db.New(sqlDB).ListFindingsByRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListFindingsByRun: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("finding count = %d, want 1", len(findings))
+	}
+	if findings[0].GitlabDiscussionID == "" {
+		t.Fatalf("gitlab discussion id = %q, want persisted discussion id", findings[0].GitlabDiscussionID)
+	}
+	if len(status.results) < 2 {
+		t.Fatalf("status publish count = %d, want at least 2", len(status.results))
+	}
+	if status.results[len(status.results)-1].State != "failed" {
+		t.Fatalf("final status state = %q, want failed", status.results[len(status.results)-1].State)
+	}
+	if len(ci.results) != 1 {
+		t.Fatalf("ci publish count = %d, want 1", len(ci.results))
+	}
+	if ci.results[0].State != "failed" {
+		t.Fatalf("ci result state = %q, want failed", ci.results[0].State)
 	}
 }
 
@@ -650,7 +929,11 @@ func (f *fakeDiscussionClient) CreateDiscussion(_ context.Context, req writer.Cr
 	if f.discussionErr != nil {
 		return writer.Discussion{}, f.discussionErr
 	}
-	return writer.Discussion{ID: req.IdempotencyKey}, nil
+	id := req.IdempotencyKey
+	if id == "" {
+		id = "discussion-generated"
+	}
+	return writer.Discussion{ID: id}, nil
 }
 
 func (f *fakeDiscussionClient) CreateNote(_ context.Context, req writer.CreateNoteRequest) (writer.Discussion, error) {
@@ -658,7 +941,11 @@ func (f *fakeDiscussionClient) CreateNote(_ context.Context, req writer.CreateNo
 	if f.noteErr != nil {
 		return writer.Discussion{}, f.noteErr
 	}
-	return writer.Discussion{ID: req.IdempotencyKey}, nil
+	id := req.IdempotencyKey
+	if id == "" {
+		id = "note-generated"
+	}
+	return writer.Discussion{ID: id}, nil
 }
 
 func (f *fakeDiscussionClient) ResolveDiscussion(_ context.Context, req writer.ResolveDiscussionRequest) error {

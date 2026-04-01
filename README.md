@@ -1,10 +1,16 @@
 # mreviewer
 
-GitLab Merge Request 自动 Code Review 服务，面向单机 Docker Compose 部署。
+面向 GitHub / GitLab 的 portable review council。
+
+当前既支持持续运行的 webhook / worker 服务，也支持直接对单个 PR / MR URL 执行 review 的 CLI：
+
+- `cmd/mreviewer`: 输入 GitHub / GitLab PR / MR URL，输出 Markdown / JSON，并可直接 publish 回平台
+- `cmd/manual-trigger`: 基于已注册项目的数据库记录，对单个 GitLab MR 手动触发一次 review
+- `ingress` + `worker`: 持续运行的 GitHub / GitLab webhook / async review 运行面
 
 ## 组件
 
-- `ingress`: 接收 GitLab webhook，请求入口，默认端口 `3100`
+- `ingress`: 接收 GitHub / GitLab webhook，请求入口，默认端口 `3100`
 - `worker`: 拉取 MR 上下文、调用模型、落库 review 结果
 - `mysql`: MySQL 8.4，业务主库
 - `redis`: Redis 7，限流/协调降级依赖
@@ -14,9 +20,10 @@ GitLab Merge Request 自动 Code Review 服务，面向单机 Docker Compose 部
 单机部署：
 
 - GitLab -> `ingress` `/webhook`
+- GitHub -> `ingress` `/github/webhook`
 - `ingress` -> MySQL
-- `worker` -> MySQL / Redis / GitLab API / LLM Provider
-- `worker` -> 持久化 findings / summary / gate 结果，并回写 GitLab discussion / note
+- `worker` -> MySQL / Redis / GitHub API / GitLab API / LLM Provider
+- `worker` -> 持久化 findings / summary / gate 结果，并回写 GitHub review comments / GitLab discussion / note
 
 ## 环境变量
 
@@ -39,6 +46,12 @@ scripts/init-local-env.sh
 - `GITLAB_BASE_URL`: 你的 GitLab 地址，例如 `https://gitlab.example.com`
 - `GITLAB_TOKEN`: GitLab API Token
 - `GITLAB_WEBHOOK_SECRET`: GitLab webhook secret
+- `GITHUB_BASE_URL`: 你的 GitHub / GitHub Enterprise API 地址，例如 `https://github.com`
+- `GITHUB_TOKEN`: GitHub token
+- `GITHUB_WEBHOOK_SECRET`: GitHub webhook secret
+- `REVIEW_PACKS`: runtime 默认 council packs，逗号分隔，例如 `security,architecture,database`
+- `REVIEW_ADVISOR_ROUTE`: 可选 stronger second opinion route
+- `REVIEW_COMPARE_REVIEWERS`: 可选外部 reviewer comparison 列表，逗号分隔，例如 `gitlab:coderabbit,github:gemini`
 - `ANTHROPIC_BASE_URL`: 默认 Anthropic-compatible 路由地址
 - `ANTHROPIC_API_KEY`: 默认 Anthropic-compatible 路由 API Key
 - `ANTHROPIC_MODEL`: 默认 Anthropic-compatible 路由模型名
@@ -96,6 +109,17 @@ context_lines_after: 15
    - Secret: 与 `GITLAB_WEBHOOK_SECRET` 一致
    - 事件：Merge Request events、Note events
 3. 确保 GitLab 可以访问部署主机的 `3100` 端口
+
+## GitHub 配置
+
+1. 创建一个可读取 PR / diff / comments，并可写 review comments / commit status 的 token
+2. 在目标仓库中配置 webhook：
+   - URL: `http(s)://<your-host>:3100/github/webhook`
+   - Secret: 与 `GITHUB_WEBHOOK_SECRET` 一致
+   - 事件：Pull requests
+3. 确保 GitHub 可以访问部署主机的 `3100` 端口
+
+更细的 webhook 配置、局域网联调说明和 GitLab 本地网络限制见 [WEBHOOK.md](WEBHOOK.md)。
 
 ## 模型供应商配置
 
@@ -175,6 +199,93 @@ go run ./cmd/manual-trigger \
 ```
 
 这个 override 只作用于当前 review run，不会改项目默认策略。
+
+## CLI：Review 单个 GitHub / GitLab PR
+
+直接 review 一个 GitHub PR：
+
+```bash
+go run ./cmd/mreviewer \
+  --target https://github.com/acme/service/pull/24 \
+  --output both \
+  --publish full-review-comments
+```
+
+直接 review 一个 GitLab MR：
+
+```bash
+go run ./cmd/mreviewer \
+  --target https://gitlab.example.com/group/service/-/merge_requests/17 \
+  --output both \
+  --publish full-review-comments
+```
+
+如果你在容器里运行，最终 runtime image 里也自带这些入口：
+
+- `/app/mreviewer`
+- `/app/manual-trigger`
+- `/app/app`
+
+例如：
+
+```bash
+docker compose exec worker /app/mreviewer \
+  --target https://github.com/acme/service/pull/24 \
+  --output json \
+  --publish artifact-only
+```
+
+也支持 compare 多个 reviewer / target：
+
+```bash
+go run ./cmd/mreviewer \
+  --target https://github.com/acme/service/pull/24 \
+  --advisor-route openai-gpt-5-4 \
+  --compare-reviewer coderabbit \
+  --compare-reviewer gemini \
+  --compare-target https://gitlab.example.com/group/service/-/merge_requests/17
+```
+
+如果你想一次对多个 PR / MR 生成 aggregate comparison，也可以直接传 `--targets`：
+
+```bash
+go run ./cmd/mreviewer \
+  --target https://github.com/acme/service/pull/24 \
+  --targets https://gitlab.example.com/group/service/-/merge_requests/17,https://github.com/acme/api/pull/42 \
+  --output json \
+  --publish artifact-only
+```
+
+如果你想在 council 之后再跑一次更强的 second opinion，可以显式指定 advisor route：
+
+```bash
+go run ./cmd/mreviewer \
+  --target https://github.com/acme/service/pull/24 \
+  --route minimax-review \
+  --advisor-route openai-gpt-5-4 \
+  --output both \
+  --publish full-review-comments
+```
+
+如果你要在 CI 里把 `requested_changes` 当成 gate 失败，可以打开非零退出码：
+
+```bash
+go run ./cmd/mreviewer \
+  --target https://github.com/acme/service/pull/24 \
+  --output json \
+  --publish full-review-comments \
+  --exit-mode requested_changes
+```
+
+当 judge verdict 是 `requested_changes` 或 `failed` 时，CLI 会返回退出码 `3`。
+
+GitHub Actions 示例模板见：
+
+- `.github/workflows/review.yml.example`
+- `docs/operations/reviewer-comparison.md`
+- `docs/operations/github-runtime.md`
+- `docs/operations/gitlab-runtime.md`
+- `docs/architecture/portable-review-council.md`
 
 ### MiniMax M2.7 输出模式
 

@@ -411,8 +411,9 @@ func suspiciousPaths(sources []SuspiciousSource) []string {
 }
 
 type stubFileReader struct {
-	content map[string]string
-	err     error
+	content      map[string]string
+	contentByRef map[string]string
+	err          error
 }
 
 func (s stubFileReader) GetRepositoryFile(_ context.Context, _ int64, filePath, ref string) (string, error) {
@@ -428,13 +429,47 @@ func (s stubFileReader) GetRepositoryFile(_ context.Context, _ int64, filePath, 
 	return "", gitlab.ErrFileNotFound
 }
 
+func (s stubFileReader) GetRepositoryFileByRef(_ context.Context, repositoryRef, filePath, ref string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	if s.contentByRef == nil {
+		return "", gitlab.ErrFileNotFound
+	}
+	if body, ok := s.contentByRef[repositoryRef+"|"+filePath+"@"+ref]; ok {
+		return body, nil
+	}
+	return "", gitlab.ErrFileNotFound
+}
+
 var _ RepositoryFileReader = (*gitlab.Client)(nil)
 var _ RepositoryFileReader = stubFileReader{}
+var _ RepositoryFileReaderByRef = stubFileReader{}
 
 func TestLoadPropagatesUnexpectedFileErrors(t *testing.T) {
 	loader := NewLoader(stubFileReader{err: errors.New("boom")}, defaultPlatformDefaults())
 	_, err := loader.Load(context.Background(), LoadInput{ProjectID: 123, HeadSHA: "head-sha"})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("Load error = %v, want boom", err)
+	}
+}
+
+func TestRootReviewLoadByRepositoryRef(t *testing.T) {
+	loader := NewLoader(stubFileReader{
+		contentByRef: map[string]string{
+			"acme/service|REVIEW.md@head-sha": "# GitHub Review Guidelines\n- Focus on auth boundaries\n",
+		},
+	}, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{
+		RepositoryRef: "acme/service",
+		HeadSHA:       "head-sha",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !strings.Contains(result.Trusted.ReviewMarkdown, "GitHub Review Guidelines") {
+		t.Fatalf("unexpected review markdown: %q", result.Trusted.ReviewMarkdown)
 	}
 }

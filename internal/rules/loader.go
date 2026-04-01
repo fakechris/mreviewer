@@ -23,6 +23,10 @@ type RepositoryFileReader interface {
 	GetRepositoryFile(ctx context.Context, projectID int64, filePath, ref string) (string, error)
 }
 
+type RepositoryFileReaderByRef interface {
+	GetRepositoryFileByRef(ctx context.Context, repositoryRef, filePath, ref string) (string, error)
+}
+
 type PlatformDefaults struct {
 	Instructions        string
 	ConfidenceThreshold float64
@@ -67,6 +71,7 @@ type GroupPolicy struct {
 
 type LoadInput struct {
 	ProjectID         int64
+	RepositoryRef     string
 	HeadSHA           string
 	GroupPolicy       *GroupPolicy
 	ProjectPolicy     *db.ProjectPolicy
@@ -114,13 +119,13 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 		ProjectPolicy:  summarizeProjectPolicy(input.ProjectPolicy),
 	}
 
-	canFetchFiles := l.files != nil && strings.TrimSpace(input.HeadSHA) != ""
+	canFetchFiles := l.files != nil && strings.TrimSpace(input.HeadSHA) != "" && (input.ProjectID > 0 || strings.TrimSpace(input.RepositoryRef) != "")
 
 	var warnings []string
 
 	// 2. Load and apply .gitlab/ai-review.yaml (above project policy, below REVIEW.md).
 	if canFetchFiles {
-		aiBody, err := l.files.GetRepositoryFile(ctx, input.ProjectID, aiReviewYAMLPath, input.HeadSHA)
+		aiBody, err := l.getRepositoryFile(ctx, input, aiReviewYAMLPath)
 		if err != nil && !isFileNotFound(err) {
 			return LoadResult{}, fmt.Errorf("rules: load %s: %w", aiReviewYAMLPath, err)
 		}
@@ -133,7 +138,7 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 
 	// 3. Load root REVIEW.md.
 	if canFetchFiles {
-		reviewBody, err := l.files.GetRepositoryFile(ctx, input.ProjectID, rootReviewPath, input.HeadSHA)
+		reviewBody, err := l.getRepositoryFile(ctx, input, rootReviewPath)
 		if err != nil {
 			if !isFileNotFound(err) {
 				return LoadResult{}, fmt.Errorf("rules: load %s: %w", rootReviewPath, err)
@@ -145,7 +150,7 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 
 	// 4. Load per-path directory-scoped REVIEW.md for changed files.
 	if canFetchFiles && len(input.ChangedPaths) > 0 {
-		dirReviews := loadDirectoryScopedReviews(ctx, l.files, input.ProjectID, input.HeadSHA, input.ChangedPaths)
+		dirReviews := loadDirectoryScopedReviews(ctx, l, input, input.ChangedPaths)
 		if len(dirReviews) > 0 {
 			trusted.DirectoryReviews = dirReviews
 		}
@@ -161,6 +166,15 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 		SuspiciousSources: suspicious,
 		Warnings:          warnings,
 	}, nil
+}
+
+func (l *Loader) getRepositoryFile(ctx context.Context, input LoadInput, filePath string) (string, error) {
+	if strings.TrimSpace(input.RepositoryRef) != "" {
+		if readerByRef, ok := l.files.(RepositoryFileReaderByRef); ok {
+			return readerByRef.GetRepositoryFileByRef(ctx, input.RepositoryRef, filePath, input.HeadSHA)
+		}
+	}
+	return l.files.GetRepositoryFile(ctx, input.ProjectID, filePath, input.HeadSHA)
 }
 
 func IsTrustedInstructionPath(path string) bool {
@@ -319,7 +333,7 @@ func applyGroupPolicyToEffective(effective *EffectivePolicy, group *GroupPolicy)
 // The map contains one entry per unique directory that has a REVIEW.md
 // applicable to at least one changed file, enabling per-path lookup at context
 // assembly time via TrustedRules.ReviewForPath.
-func loadDirectoryScopedReviews(ctx context.Context, files RepositoryFileReader, projectID int64, headSHA string, changedPaths []string) map[string]string {
+func loadDirectoryScopedReviews(ctx context.Context, loader *Loader, input LoadInput, changedPaths []string) map[string]string {
 	// Collect all unique parent directories from changed paths, sorted
 	// deepest-first so we can check the nearest ancestor first.
 	candidates := directoryReviewCandidates(changedPaths)
@@ -335,7 +349,7 @@ func loadDirectoryScopedReviews(ctx context.Context, files RepositoryFileReader,
 			continue
 		}
 		reviewPath := dir + "/REVIEW.md"
-		body, err := files.GetRepositoryFile(ctx, projectID, reviewPath, headSHA)
+		body, err := loader.getRepositoryFile(ctx, input, reviewPath)
 		fetched[dir] = true
 		if err == nil && strings.TrimSpace(body) != "" {
 			cache[dir] = body
