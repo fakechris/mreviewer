@@ -326,7 +326,7 @@ func TestFilterFindingsAppliesConfidenceGateAndHardExclusions(t *testing.T) {
 }
 
 func TestFilterFindingsExcludesSecurityReliabilityDrift(t *testing.T) {
-	contract := DefaultPacks()[0].Contract()
+	contract := securityContract(t)
 	findings := []core.Finding{
 		{
 			Category:   "reliability",
@@ -350,6 +350,22 @@ func TestFilterFindingsExcludesSecurityReliabilityDrift(t *testing.T) {
 	}
 }
 
+func TestFilterFindingsKeepsSecurityFindingWithReliabilityWordsWhenSecuritySignalsExist(t *testing.T) {
+	contract := securityContract(t)
+	findings := []core.Finding{
+		{
+			Category:   "authorization bypass",
+			Title:      "Auth bypass can trigger runtime crash across tenants",
+			Body:       "An attacker can call the endpoint without tenant checks and cause a runtime crash in another tenant's workflow.",
+			Confidence: 0.95,
+		},
+	}
+	filtered := filterFindings(contract, findings)
+	if len(filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1", len(filtered))
+	}
+}
+
 func rulesEffectivePolicy(route string) coreRunEffectivePolicy {
 	return rules.EffectivePolicy{ProviderRoute: route}
 }
@@ -357,3 +373,15 @@ func rulesEffectivePolicy(route string) coreRunEffectivePolicy {
 type coreRunEffectivePolicy = rules.EffectivePolicy
 
 func int32Ptr(v int32) *int32 { return &v }
+
+func securityContract(t *testing.T) Contract {
+	t.Helper()
+	for _, pack := range DefaultPacks() {
+		contract := pack.Contract()
+		if contract.ID == "security" {
+			return contract
+		}
+	}
+	t.Fatal("security pack not found")
+	return Contract{}
+}

@@ -306,6 +306,9 @@ func isExcludedFinding(contract Contract, finding core.Finding) bool {
 	if len(contract.HardExclusions) == 0 {
 		return false
 	}
+	if shouldBypassExclusions(contract, finding) {
+		return false
+	}
 	text := strings.ToLower(strings.Join([]string{
 		finding.Title,
 		finding.Category,
@@ -315,6 +318,40 @@ func isExcludedFinding(contract Contract, finding core.Finding) bool {
 	for _, exclusion := range contract.HardExclusions {
 		exclusion = strings.ToLower(strings.TrimSpace(exclusion))
 		if exclusion != "" && strings.Contains(text, exclusion) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldBypassExclusions(contract Contract, finding core.Finding) bool {
+	if contract.ID != "security" {
+		return false
+	}
+	text := strings.ToLower(strings.Join([]string{
+		finding.Category,
+		finding.Title,
+		finding.Claim,
+		finding.Body,
+	}, "\n"))
+	for _, anchor := range contract.CategoryAnchors {
+		anchor = strings.ToLower(strings.TrimSpace(anchor))
+		if anchor != "" && strings.Contains(text, anchor) {
+			return true
+		}
+	}
+	for _, marker := range []string{
+		"attacker",
+		"authorization",
+		"auth bypass",
+		"tenant check",
+		"privilege escalation",
+		"secret",
+		"injection",
+		"exploit",
+		"trust boundary",
+	} {
+		if strings.Contains(text, marker) {
 			return true
 		}
 	}

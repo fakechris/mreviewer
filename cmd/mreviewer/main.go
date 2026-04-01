@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
 	comparepkg "github.com/mreviewer/mreviewer/internal/compare"
@@ -546,9 +547,8 @@ func buildReviewBrief(bundle core.ReviewBundle, comparison *comparepkg.Report) r
 }
 
 func buildAggregateReviewBrief(bundles []core.ReviewBundle, aggregate *comparepkg.AggregateReport) aggregateReviewBrief {
-	brief := aggregateReviewBrief{}
+	brief := aggregateReviewBrief{TargetCount: len(bundles)}
 	if aggregate != nil {
-		brief.TargetCount = aggregate.TargetCount
 		brief.AverageAgreementRate = aggregate.AverageAgreementRate
 	}
 	for _, bundle := range bundles {
@@ -580,7 +580,7 @@ func renderDecisionBriefMarkdown(bundle core.ReviewBundle, comparison *comparepk
 			if item.Severity != "" {
 				line += "[" + item.Severity + "] "
 			}
-			line += firstNonEmpty(item.Title, item.Body)
+			line += sanitizeActionLabel(item.Title, item.Body)
 			out.WriteString(line)
 			out.WriteString("\n")
 		}
@@ -621,6 +621,24 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func sanitizeActionLabel(title, body string) string {
+	label := strings.TrimSpace(title)
+	if label == "" {
+		for _, line := range strings.Split(body, "\n") {
+			if strings.TrimSpace(line) != "" {
+				label = strings.TrimSpace(line)
+				break
+			}
+		}
+	}
+	if label == "" {
+		return ""
+	}
+	label = regexp.MustCompile(`^[#>\-\*\s` + "`" + `]+`).ReplaceAllString(label, "")
+	label = strings.Join(strings.Fields(label), " ")
+	return strings.TrimSpace(label)
 }
 
 func resolveReviewTarget(raw string) (core.ReviewTarget, error) {
