@@ -259,14 +259,25 @@ func TestLegacyProviderRunnerFailsWhenProviderCannotAcceptCapabilityPrompt(t *te
 
 func TestBuildCapabilityPromptIncludesArchitectureAndDatabaseDiscipline(t *testing.T) {
 	packs := DefaultPacks()
-	var architecturePrompt, databasePrompt string
+	var securityPrompt, architecturePrompt, databasePrompt string
 	for _, pack := range packs {
 		switch contract := pack.Contract(); contract.ID {
+		case "security":
+			securityPrompt = strings.ToLower(buildCapabilityPrompt(contract))
 		case "architecture":
 			architecturePrompt = strings.ToLower(buildCapabilityPrompt(contract))
 		case "database":
 			databasePrompt = strings.ToLower(buildCapabilityPrompt(contract))
 		}
+	}
+	if !strings.Contains(securityPrompt, "attacker leverage") {
+		t.Fatalf("security prompt = %q, want attacker leverage phrasing", securityPrompt)
+	}
+	if !strings.Contains(securityPrompt, "missing import") {
+		t.Fatalf("security prompt = %q, want non-security drift exclusion", securityPrompt)
+	}
+	if !strings.Contains(securityPrompt, "authorization bypass") {
+		t.Fatalf("security prompt = %q, want category anchors", securityPrompt)
 	}
 	if !strings.Contains(architecturePrompt, "staff-plus engineer") {
 		t.Fatalf("architecture prompt = %q, want staff-plus framing", architecturePrompt)
@@ -282,6 +293,12 @@ func TestBuildCapabilityPromptIncludesArchitectureAndDatabaseDiscipline(t *testi
 	}
 	if !strings.Contains(databasePrompt, "transaction boundary") {
 		t.Fatalf("database prompt = %q, want transaction boundary evidence", databasePrompt)
+	}
+	if !strings.Contains(databasePrompt, "partial write") {
+		t.Fatalf("database prompt = %q, want partial-write anchor", databasePrompt)
+	}
+	if !strings.Contains(databasePrompt, "read/write mismatch") {
+		t.Fatalf("database prompt = %q, want read/write mismatch anchor", databasePrompt)
 	}
 	if !strings.Contains(databasePrompt, "generic add an index") {
 		t.Fatalf("database prompt = %q, want hard exclusion guidance", databasePrompt)
@@ -304,6 +321,31 @@ func TestFilterFindingsAppliesConfidenceGateAndHardExclusions(t *testing.T) {
 		t.Fatalf("filtered len = %d, want 1", len(filtered))
 	}
 	if filtered[0].Title != "Query path causes duplicate writes" {
+		t.Fatalf("filtered[0].Title = %q", filtered[0].Title)
+	}
+}
+
+func TestFilterFindingsExcludesSecurityReliabilityDrift(t *testing.T) {
+	contract := DefaultPacks()[0].Contract()
+	findings := []core.Finding{
+		{
+			Category:   "reliability",
+			Title:      "Missing secureStorage import causes app startup crash",
+			Body:       "The app will fail to start because secureStorage dependency is missing.",
+			Confidence: 0.95,
+		},
+		{
+			Category:   "authz",
+			Title:      "Tenant check removed from assignment flow",
+			Body:       "Attacker can assign cross-tenant resources without authorization.",
+			Confidence: 0.95,
+		},
+	}
+	filtered := filterFindings(contract, findings)
+	if len(filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1", len(filtered))
+	}
+	if filtered[0].Title != "Tenant check removed from assignment flow" {
 		t.Fatalf("filtered[0].Title = %q", filtered[0].Title)
 	}
 }

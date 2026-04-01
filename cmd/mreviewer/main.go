@@ -264,22 +264,57 @@ type multiRunOutput struct {
 	AggregateComparison *comparepkg.AggregateReport   `json:"aggregate_comparison,omitempty"`
 }
 
+type reviewBrief struct {
+	Verdict          string           `json:"verdict,omitempty"`
+	ActionItems      []briefAction    `json:"action_items,omitempty"`
+	SpecialistSignals []briefSignal   `json:"specialist_signals,omitempty"`
+	Comparison       *briefComparison `json:"comparison,omitempty"`
+}
+
+type briefAction struct {
+	Title    string `json:"title,omitempty"`
+	Severity string `json:"severity,omitempty"`
+	Body     string `json:"body,omitempty"`
+}
+
+type briefSignal struct {
+	ReviewerID string `json:"reviewer_id,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+}
+
+type briefComparison struct {
+	ReviewerCount      int     `json:"reviewer_count,omitempty"`
+	UniqueFindingCount int     `json:"unique_finding_count,omitempty"`
+	AgreementRate      float64 `json:"agreement_rate,omitempty"`
+}
+
+type aggregateReviewBrief struct {
+	TargetCount          int     `json:"target_count,omitempty"`
+	RequestedChanges     int     `json:"requested_changes,omitempty"`
+	AverageAgreementRate float64 `json:"average_agreement_rate,omitempty"`
+}
+
 func outputPayload(bundle core.ReviewBundle, comparison *comparepkg.Report) any {
+	payload := bundlePayloadMap(bundle)
+	payload["review_brief"] = buildReviewBrief(bundle, comparison)
+	if strings.TrimSpace(bundle.Verdict) != "" {
+		payload["judge_verdict"] = bundle.Verdict
+	}
 	decisionBenchmark := comparepkg.BuildDecisionBenchmarkReportForBundle(bundle, bundle.AdvisorArtifact)
-	if comparison == nil && bundle.AdvisorArtifact == nil {
-		return bundle
+	payload["decision_benchmark"] = decisionBenchmark
+	if bundle.AdvisorArtifact != nil {
+		payload["advisor_artifact"] = bundle.AdvisorArtifact
 	}
-	return runOutput{
-		Review:            bundle,
-		JudgeVerdict:      bundle.Verdict,
-		AdvisorArtifact:   bundle.AdvisorArtifact,
-		Comparison:        comparison,
-		DecisionBenchmark: &decisionBenchmark,
+	if comparison != nil {
+		payload["comparison"] = comparison
 	}
+	return payload
 }
 
 func renderMarkdownOutput(bundle core.ReviewBundle, comparison *comparepkg.Report) string {
 	var out strings.Builder
+	out.WriteString(renderDecisionBriefMarkdown(bundle, comparison))
+	out.WriteString("\n")
 	out.WriteString(bundle.MarkdownSummary)
 	out.WriteString("\n")
 	if bundle.AdvisorArtifact != nil && strings.TrimSpace(bundle.AdvisorArtifact.Summary) != "" {
@@ -298,15 +333,39 @@ func renderMarkdownOutput(bundle core.ReviewBundle, comparison *comparepkg.Repor
 }
 
 func outputMultiTargetPayload(bundles []core.ReviewBundle, comparisons []comparepkg.Report, aggregate *comparepkg.AggregateReport) any {
-	return multiRunOutput{
+	payload := multiRunOutput{
 		Reviews:             bundles,
 		Comparisons:         comparisons,
 		AggregateComparison: aggregate,
 	}
+	out := bundlePayloadMap(core.ReviewBundle{})
+	delete(out, "target")
+	delete(out, "markdown_summary")
+	delete(out, "json_schema_version")
+	delete(out, "publish_candidates")
+	delete(out, "artifacts")
+	delete(out, "advisor_artifact")
+	delete(out, "verdict")
+	for k := range out {
+		delete(out, k)
+	}
+	out["reviews"] = payload.Reviews
+	if len(payload.Comparisons) > 0 {
+		out["comparisons"] = payload.Comparisons
+	}
+	if payload.AggregateComparison != nil {
+		out["aggregate_comparison"] = payload.AggregateComparison
+		out["aggregate_review_brief"] = buildAggregateReviewBrief(bundles, payload.AggregateComparison)
+	}
+	return out
 }
 
 func renderMultiTargetMarkdownOutput(bundles []core.ReviewBundle, comparisons []comparepkg.Report, aggregate *comparepkg.AggregateReport) string {
 	var out strings.Builder
+	if aggregate != nil {
+		out.WriteString(renderAggregateDecisionBriefMarkdown(bundles, aggregate))
+		out.WriteString("\n\n")
+	}
 	for i, bundle := range bundles {
 		if i > 0 {
 			out.WriteString("\n\n")
@@ -434,6 +493,134 @@ func exitCodeForResult(mode string, bundle core.ReviewBundle) int {
 		}
 	}
 	return 0
+}
+
+func bundlePayloadMap(bundle core.ReviewBundle) map[string]any {
+	data, _ := json.Marshal(bundle)
+	var payload map[string]any
+	_ = json.Unmarshal(data, &payload)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	return payload
+}
+
+func buildReviewBrief(bundle core.ReviewBundle, comparison *comparepkg.Report) reviewBrief {
+	brief := reviewBrief{Verdict: bundle.Verdict}
+	for _, candidate := range bundle.PublishCandidates {
+		if candidate.Kind != "finding" {
+			continue
+		}
+		brief.ActionItems = append(brief.ActionItems, briefAction{
+			Title:    strings.TrimSpace(candidate.Title),
+			Severity: strings.TrimSpace(candidate.Severity),
+			Body:     strings.TrimSpace(candidate.Body),
+		})
+		if len(brief.ActionItems) >= 5 {
+			break
+		}
+	}
+	for _, artifact := range bundle.Artifacts {
+		if strings.TrimSpace(artifact.Summary) == "" {
+			continue
+		}
+		brief.SpecialistSignals = append(brief.SpecialistSignals, briefSignal{
+			ReviewerID: strings.TrimSpace(artifact.ReviewerID),
+			Summary:    strings.TrimSpace(artifact.Summary),
+		})
+	}
+	if bundle.AdvisorArtifact != nil && strings.TrimSpace(bundle.AdvisorArtifact.Summary) != "" {
+		brief.SpecialistSignals = append(brief.SpecialistSignals, briefSignal{
+			ReviewerID: strings.TrimSpace(bundle.AdvisorArtifact.ReviewerID),
+			Summary:    strings.TrimSpace(bundle.AdvisorArtifact.Summary),
+		})
+	}
+	if comparison != nil {
+		brief.Comparison = &briefComparison{
+			ReviewerCount:      comparison.ReviewerCount,
+			UniqueFindingCount: comparison.UniqueFindingCount,
+			AgreementRate:      comparison.AgreementRate,
+		}
+	}
+	return brief
+}
+
+func buildAggregateReviewBrief(bundles []core.ReviewBundle, aggregate *comparepkg.AggregateReport) aggregateReviewBrief {
+	brief := aggregateReviewBrief{}
+	if aggregate != nil {
+		brief.TargetCount = aggregate.TargetCount
+		brief.AverageAgreementRate = aggregate.AverageAgreementRate
+	}
+	for _, bundle := range bundles {
+		switch strings.ToLower(strings.TrimSpace(bundle.Verdict)) {
+		case "requested_changes", "request_changes", "failed":
+			brief.RequestedChanges++
+		}
+	}
+	return brief
+}
+
+func renderDecisionBriefMarkdown(bundle core.ReviewBundle, comparison *comparepkg.Report) string {
+	brief := buildReviewBrief(bundle, comparison)
+	var out strings.Builder
+	out.WriteString("# Review Decision Brief\n\n")
+	out.WriteString("## Final Verdict\n\n")
+	if strings.TrimSpace(brief.Verdict) == "" {
+		out.WriteString("unknown\n")
+	} else {
+		out.WriteString(brief.Verdict)
+		out.WriteString("\n")
+	}
+	out.WriteString("\n## What To Fix First\n\n")
+	if len(brief.ActionItems) == 0 {
+		out.WriteString("- No actionable findings from the current council run.\n")
+	} else {
+		for _, item := range brief.ActionItems {
+			line := "- "
+			if item.Severity != "" {
+				line += "[" + item.Severity + "] "
+			}
+			line += firstNonEmpty(item.Title, item.Body)
+			out.WriteString(line)
+			out.WriteString("\n")
+		}
+	}
+	if len(brief.SpecialistSignals) > 0 {
+		out.WriteString("\n## Specialist Signals\n\n")
+		for _, signal := range brief.SpecialistSignals {
+			out.WriteString("- ")
+			out.WriteString(firstNonEmpty(signal.ReviewerID, "reviewer"))
+			out.WriteString(": ")
+			out.WriteString(signal.Summary)
+			out.WriteString("\n")
+		}
+	}
+	if brief.Comparison != nil {
+		out.WriteString("\n## Reviewer Overlap\n\n")
+		out.WriteString(fmt.Sprintf("- Reviewers: %d\n", brief.Comparison.ReviewerCount))
+		out.WriteString(fmt.Sprintf("- Unique findings: %d\n", brief.Comparison.UniqueFindingCount))
+		out.WriteString(fmt.Sprintf("- Agreement rate: %.2f\n", brief.Comparison.AgreementRate))
+	}
+	return strings.TrimSpace(out.String())
+}
+
+func renderAggregateDecisionBriefMarkdown(bundles []core.ReviewBundle, aggregate *comparepkg.AggregateReport) string {
+	brief := buildAggregateReviewBrief(bundles, aggregate)
+	var out strings.Builder
+	out.WriteString("# Portfolio Review Brief\n\n")
+	out.WriteString(fmt.Sprintf("- Targets: %d\n", brief.TargetCount))
+	out.WriteString(fmt.Sprintf("- Requested changes: %d\n", brief.RequestedChanges))
+	out.WriteString(fmt.Sprintf("- Average agreement rate: %.2f\n", brief.AverageAgreementRate))
+	return strings.TrimSpace(out.String())
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func resolveReviewTarget(raw string) (core.ReviewTarget, error) {

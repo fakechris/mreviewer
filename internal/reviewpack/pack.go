@@ -14,6 +14,7 @@ import (
 type Contract struct {
 	ID                   string   `json:"id"`
 	FocusAreas           []string `json:"focus_areas,omitempty"`
+	CategoryAnchors      []string `json:"category_anchors,omitempty"`
 	OutputSchema         string   `json:"output_schema,omitempty"`
 	Standards            []string `json:"standards,omitempty"`
 	HardExclusions       []string `json:"hard_exclusions,omitempty"`
@@ -46,6 +47,13 @@ func DefaultPacks() []Pack {
 				"unsafe data access and dangerous sinks",
 				"secret exposure and privilege escalation paths",
 			},
+			CategoryAnchors: []string{
+				"authorization bypass",
+				"injection",
+				"secret exposure",
+				"privilege escalation",
+				"unsafe deserialization",
+			},
 			OutputSchema: "review_finding_v1",
 			Standards:    []string{"owasp", "asvs"},
 			HardExclusions: []string{
@@ -57,11 +65,17 @@ func DefaultPacks() []Pack {
 				"theoretical race without a changed trust boundary",
 				"generic dependency age complaint",
 				"frontend framework default escaping concern without a concrete bypass path",
+				"reliability",
+				"missing import",
+				"missing dependency",
+				"startup crash",
+				"build break",
+				"runtime crash",
 			},
 			ConfidenceGate:      0.85,
 			NewIssuesOnly:       true,
-			ExploitabilityFocus: "Prioritize attacker-controlled input, reachable dangerous sinks, broken authorization decisions, exposed secrets, and concrete escalation paths.",
-			Prompt:              "Use OWASP and ASVS as your security review framing. First identify whether the diff introduces a new reachable vulnerability, then explain the exploit scenario, impact, and safest remediation. Report only newly introduced security issues with enough evidence to justify reviewer trust.",
+			ExploitabilityFocus: "Prioritize attacker-controlled input, reachable dangerous sinks, broken authorization decisions, exposed secrets, concrete escalation paths, and explicit attacker leverage.",
+			Prompt:              "Use OWASP and ASVS as your security review framing. First identify whether the diff introduces a new reachable vulnerability, then explain the exploit scenario, impact, and safest remediation. Do not report missing imports, missing dependencies, startup crashes, or generic reliability failures unless they create a concrete attacker leverage or trust-boundary break. Report only newly introduced security issues with enough evidence to justify reviewer trust.",
 			EvidenceRequirements: []string{
 				"Point to the exact changed path and line or hunk when possible.",
 				"Explain the attacker-controlled input, dangerous sink, or broken authorization decision.",
@@ -114,6 +128,15 @@ func DefaultPacks() []Pack {
 				"query correctness and lock behavior",
 				"index usage and access patterns",
 				"backfills, defaults, nullability, and destructive writes",
+				"application-layer data consistency and multi-step persistence flows",
+			},
+			CategoryAnchors: []string{
+				"destructive migration",
+				"partial write",
+				"read/write mismatch",
+				"transaction hole",
+				"nullability backfill",
+				"destructive update or delete",
 			},
 			OutputSchema: "review_finding_v1",
 			Standards:    []string{"migration-safety", "transactional-correctness"},
@@ -124,9 +147,9 @@ func DefaultPacks() []Pack {
 				"style-only sql comment",
 				"historical schema debt unrelated to the diff",
 			},
-			ConfidenceGate: 0.8,
+			ConfidenceGate: 0.72,
 			NewIssuesOnly:  true,
-			Prompt:         "Act like a database-focused reviewer. Prioritize data correctness, operational safety, and migration risk over stylistic SQL feedback. Report only issues that are grounded in the changed query path, migration step, transaction boundary, or locking behavior.",
+			Prompt:         "Act like a database-focused reviewer. Prioritize data correctness, operational safety, and migration risk over stylistic SQL feedback. Review both explicit database changes and application-layer changes that can create partial writes, read/write mismatches, stale persisted state, broken idempotency, or non-transactional multi-step persistence flows. Report only issues that are grounded in the changed query path, migration step, transaction boundary, locking behavior, or persistence semantics.",
 			EvidenceRequirements: []string{
 				"Point to the exact query, migration step, read/write path, or transaction boundary involved.",
 				"Explain the concrete failure mode: bad data, partial write, lock contention, deadlock risk, failed deploy, or backwards-incompatible migration.",
@@ -220,6 +243,9 @@ func buildCapabilityPrompt(contract Contract) string {
 	}
 	if len(contract.FocusAreas) > 0 {
 		parts = append(parts, fmt.Sprintf("Focus areas: %s.", strings.Join(contract.FocusAreas, ", ")))
+	}
+	if len(contract.CategoryAnchors) > 0 {
+		parts = append(parts, fmt.Sprintf("Category anchors: %s.", strings.Join(contract.CategoryAnchors, ", ")))
 	}
 	if len(contract.Standards) > 0 {
 		parts = append(parts, fmt.Sprintf("Standards: %s.", strings.Join(contract.Standards, ", ")))
