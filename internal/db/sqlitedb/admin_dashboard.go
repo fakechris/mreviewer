@@ -242,6 +242,177 @@ ORDER BY verification_outcome ASC
 	return items, rows.Err()
 }
 
+func (q *Queries) ListRunTrendBuckets(ctx context.Context, since time.Time) ([]db.ListRunTrendBucketsRow, error) {
+	rows, err := q.db.QueryContext(ctx, `
+SELECT
+	COALESCE(strftime('%Y-%m-%d %H:00:00', datetime(created_at)), substr(created_at, 1, 13) || ':00:00') AS bucket_start,
+	COUNT(*) AS run_count,
+	SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+	SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_count,
+	SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+	SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+	SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count
+FROM review_runs
+WHERE created_at >= ?
+GROUP BY bucket_start
+ORDER BY bucket_start DESC
+`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []db.ListRunTrendBucketsRow
+	for rows.Next() {
+		var item db.ListRunTrendBucketsRow
+		if err := rows.Scan(
+			&item.BucketStart,
+			&item.RunCount,
+			&item.PendingCount,
+			&item.RunningCount,
+			&item.CompletedCount,
+			&item.FailedCount,
+			&item.CancelledCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return items, rows.Err()
+}
+
+func (q *Queries) ListWebhookVerificationTrendBuckets(ctx context.Context, since time.Time) ([]db.ListWebhookVerificationTrendBucketsRow, error) {
+	rows, err := q.db.QueryContext(ctx, `
+SELECT
+	COALESCE(strftime('%Y-%m-%d %H:00:00', datetime(created_at)), substr(created_at, 1, 13) || ':00:00') AS bucket_start,
+	verification_outcome,
+	COUNT(*) AS count
+FROM audit_logs
+WHERE verification_outcome IN ('rejected', 'deduplicated')
+  AND created_at >= ?
+GROUP BY bucket_start, verification_outcome
+ORDER BY bucket_start DESC, verification_outcome ASC
+`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []db.ListWebhookVerificationTrendBucketsRow
+	for rows.Next() {
+		var item db.ListWebhookVerificationTrendBucketsRow
+		if err := rows.Scan(&item.BucketStart, &item.VerificationOutcome, &item.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return items, rows.Err()
+}
+
+func (q *Queries) ListPlatformRunRollups(ctx context.Context, since time.Time) ([]db.ListPlatformRunRollupsRow, error) {
+	rows, err := q.db.QueryContext(ctx, `
+SELECT
+	CASE
+		WHEN COALESCE(json_extract(scope_json, '$.platform'), '') = 'github' THEN 'github'
+		ELSE 'gitlab'
+	END AS platform,
+	COUNT(*) AS run_count,
+	SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+	SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_count,
+	SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+	SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+	SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count
+FROM review_runs
+WHERE created_at >= ?
+GROUP BY platform
+ORDER BY run_count DESC, platform ASC
+`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []db.ListPlatformRunRollupsRow
+	for rows.Next() {
+		var item db.ListPlatformRunRollupsRow
+		if err := rows.Scan(
+			&item.Platform,
+			&item.RunCount,
+			&item.PendingCount,
+			&item.RunningCount,
+			&item.CompletedCount,
+			&item.FailedCount,
+			&item.CancelledCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return items, rows.Err()
+}
+
+func (q *Queries) ListProjectRunRollups(ctx context.Context, arg db.ListProjectRunRollupsParams) ([]db.ListProjectRunRollupsRow, error) {
+	rows, err := q.db.QueryContext(ctx, `
+SELECT
+	CASE
+		WHEN COALESCE(json_extract(r.scope_json, '$.platform'), '') = 'github' THEN 'github'
+		ELSE 'gitlab'
+	END AS platform,
+	p.path_with_namespace AS project_path,
+	COUNT(*) AS run_count,
+	SUM(CASE WHEN r.status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+	SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running_count,
+	SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+	SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+	SUM(CASE WHEN r.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count
+FROM review_runs r
+JOIN projects p ON p.id = r.project_id
+WHERE r.created_at >= ?
+  AND (? = '' OR CASE
+		WHEN COALESCE(json_extract(r.scope_json, '$.platform'), '') = 'github' THEN 'github'
+		ELSE 'gitlab'
+	END = ?)
+GROUP BY platform, p.path_with_namespace
+ORDER BY run_count DESC, p.path_with_namespace ASC
+LIMIT ?
+`, arg.Since, arg.Platform, arg.Platform, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []db.ListProjectRunRollupsRow
+	for rows.Next() {
+		var item db.ListProjectRunRollupsRow
+		if err := rows.Scan(
+			&item.Platform,
+			&item.ProjectPath,
+			&item.RunCount,
+			&item.PendingCount,
+			&item.RunningCount,
+			&item.CompletedCount,
+			&item.FailedCount,
+			&item.CancelledCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return items, rows.Err()
+}
+
 func (q *Queries) ListRecentRuns(ctx context.Context, arg db.ListRecentRunsParams) ([]db.ListRecentRunsRow, error) {
 	rows, err := q.db.QueryContext(ctx, `
 SELECT

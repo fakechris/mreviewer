@@ -48,6 +48,18 @@ func (f *fakeActionStore) ListFailureCountsByErrorCode(context.Context, time.Tim
 func (f *fakeActionStore) ListWebhookVerificationCounts(context.Context, time.Time) ([]db.ListWebhookVerificationCountsRow, error) {
 	return nil, nil
 }
+func (f *fakeActionStore) ListRunTrendBuckets(context.Context, time.Time) ([]db.ListRunTrendBucketsRow, error) {
+	return nil, nil
+}
+func (f *fakeActionStore) ListWebhookVerificationTrendBuckets(context.Context, time.Time) ([]db.ListWebhookVerificationTrendBucketsRow, error) {
+	return nil, nil
+}
+func (f *fakeActionStore) ListPlatformRunRollups(context.Context, time.Time) ([]db.ListPlatformRunRollupsRow, error) {
+	return nil, nil
+}
+func (f *fakeActionStore) ListProjectRunRollups(context.Context, db.ListProjectRunRollupsParams) ([]db.ListProjectRunRollupsRow, error) {
+	return nil, nil
+}
 func (f *fakeActionStore) ListRecentRuns(context.Context, db.ListRecentRunsParams) ([]db.ListRecentRunsRow, error) {
 	return nil, nil
 }

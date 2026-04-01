@@ -14,10 +14,13 @@ type fakeSnapshotService struct {
 	queue          QueueSnapshot
 	concurrency    ConcurrencySnapshot
 	failures       FailuresSnapshot
+	trends         TrendsSnapshot
 	runs           RunsSnapshot
 	runDetail      RunDetail
 	identities     IdentityMappingsSnapshot
 	identity       IdentityMapping
+	ownership      OwnershipSnapshot
+	suggestions    IdentitySuggestionsSnapshot
 	runDetailErr   error
 	lastRunFilters RunFilters
 	lastIDFilters  IdentityFilters
@@ -33,6 +36,10 @@ func (f fakeSnapshotService) Concurrency(_ context.Context) (ConcurrencySnapshot
 
 func (f fakeSnapshotService) Failures(_ context.Context) (FailuresSnapshot, error) {
 	return f.failures, nil
+}
+
+func (f fakeSnapshotService) Trends(_ context.Context) (TrendsSnapshot, error) {
+	return f.trends, nil
 }
 
 func (f *fakeSnapshotService) Runs(_ context.Context, filters RunFilters) (RunsSnapshot, error) {
@@ -67,6 +74,14 @@ func (f *fakeSnapshotService) IdentityMappings(_ context.Context, filters Identi
 
 func (f fakeSnapshotService) ResolveIdentityMapping(_ context.Context, _ int64, _, _, _ string) (IdentityMapping, error) {
 	return f.identity, nil
+}
+
+func (f fakeSnapshotService) Ownership(_ context.Context, _ IdentityFilters) (OwnershipSnapshot, error) {
+	return f.ownership, nil
+}
+
+func (f fakeSnapshotService) IdentitySuggestions(_ context.Context, _ int64) (IdentitySuggestionsSnapshot, error) {
+	return f.suggestions, nil
 }
 
 func TestHandlerRejectsUnauthorizedWhenTokenConfigured(t *testing.T) {
@@ -120,6 +135,31 @@ func TestHandlerServesRunsList(t *testing.T) {
 	}
 	if len(payload.Items) != 1 || payload.Items[0].ID != 12 {
 		t.Fatalf("runs payload = %+v, want run 12", payload.Items)
+	}
+}
+
+func TestHandlerServesTrends(t *testing.T) {
+	handler := NewHandler(&fakeSnapshotService{
+		trends: TrendsSnapshot{
+			WindowHours: 24,
+			Buckets:     []TrendBucket{{RunCount: 2, WebhookRejectedCount: 1}},
+		},
+	}, "secret-token")
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/trends", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var payload TrendsSnapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode trends: %v", err)
+	}
+	if payload.WindowHours != 24 || len(payload.Buckets) != 1 {
+		t.Fatalf("payload = %+v, want 24h with 1 bucket", payload)
 	}
 }
 
@@ -197,6 +237,31 @@ func TestHandlerServesIdentityMappings(t *testing.T) {
 	}
 }
 
+func TestHandlerServesIdentitySuggestions(t *testing.T) {
+	handler := NewHandler(&fakeSnapshotService{
+		suggestions: IdentitySuggestionsSnapshot{
+			Mapping:     IdentityMapping{ID: 91},
+			Suggestions: []IdentitySuggestion{{PlatformUsername: "chris", MatchScore: 95}},
+		},
+	}, "secret-token")
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/identities/91/suggestions", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var payload IdentitySuggestionsSnapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode suggestions: %v", err)
+	}
+	if len(payload.Suggestions) != 1 || payload.Suggestions[0].PlatformUsername != "chris" {
+		t.Fatalf("suggestions payload = %+v, want chris suggestion", payload)
+	}
+}
+
 func TestHandlerResolvesIdentityMapping(t *testing.T) {
 	handler := NewHandler(&fakeSnapshotService{
 		identity: IdentityMapping{ID: 91, PlatformUsername: "reviewer-manual", Status: "manual"},
@@ -217,6 +282,30 @@ func TestHandlerResolvesIdentityMapping(t *testing.T) {
 	}
 	if payload.PlatformUsername != "reviewer-manual" || payload.Status != "manual" {
 		t.Fatalf("payload = %+v, want resolved manual mapping", payload)
+	}
+}
+
+func TestHandlerServesOwnership(t *testing.T) {
+	handler := NewHandler(&fakeSnapshotService{
+		ownership: OwnershipSnapshot{
+			Items: []OwnershipSummary{{PlatformUsername: "chris", IdentityCount: 2}},
+		},
+	}, "secret-token")
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/ownership?platform=gitlab&project=group/repo", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var payload OwnershipSnapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode ownership: %v", err)
+	}
+	if len(payload.Items) != 1 || payload.Items[0].PlatformUsername != "chris" {
+		t.Fatalf("ownership payload = %+v, want chris owner", payload)
 	}
 }
 

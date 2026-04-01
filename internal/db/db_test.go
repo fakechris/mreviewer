@@ -403,6 +403,109 @@ func TestAdminDashboardRunListAndDetail(t *testing.T) {
 	}
 }
 
+func TestAdminDashboardTrendAndAggregateQueries(t *testing.T) {
+	sqlDB := dbtest.New(t)
+	dbtest.MigrateUp(t, sqlDB, migrationsDir)
+
+	ctx := context.Background()
+	q := db.New(sqlDB)
+
+	instanceID := insertTestInstance(t, sqlDB)
+	projectA := insertTestProject(t, sqlDB, instanceID)
+	res, err := sqlDB.Exec("INSERT INTO projects (gitlab_instance_id, gitlab_project_id, path_with_namespace) VALUES (?, 101, 'test/repo-b')", instanceID)
+	if err != nil {
+		t.Fatalf("insert projectB: %v", err)
+	}
+	projectB, _ := res.LastInsertId()
+	mrA := insertTestMR(t, sqlDB, projectA)
+	res, err = sqlDB.Exec("INSERT INTO merge_requests (project_id, mr_iid, title, source_branch, target_branch, author, state, head_sha) VALUES (?, 2, 'Test MR B', 'feature-b', 'main', 'dev', 'opened', 'abc124')", projectB)
+	if err != nil {
+		t.Fatalf("insert mrB: %v", err)
+	}
+	mrB, _ := res.LastInsertId()
+	if _, err := sqlDB.ExecContext(ctx, `UPDATE projects SET path_with_namespace = 'acme/repo-a' WHERE id = ?`, projectA); err != nil {
+		t.Fatalf("update projectA path: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, `UPDATE projects SET path_with_namespace = 'acme/repo-b' WHERE id = ?`, projectB); err != nil {
+		t.Fatalf("update projectB path: %v", err)
+	}
+
+	runA := insertTestRun(t, sqlDB, projectA, mrA, "trend-a")
+	runB := insertTestRun(t, sqlDB, projectB, mrB, "trend-b")
+	now := time.Now().UTC().Truncate(time.Second)
+	bucket := now.Add(-1 * time.Hour).Truncate(time.Hour)
+
+	if _, err := sqlDB.ExecContext(ctx, `
+		UPDATE review_runs
+		SET scope_json = ?, status = 'completed', created_at = ?, updated_at = ?, completed_at = ?
+		WHERE id = ?`,
+		[]byte(`{"platform":"github"}`), bucket.Add(10*time.Minute), bucket.Add(20*time.Minute), bucket.Add(20*time.Minute), runA,
+	); err != nil {
+		t.Fatalf("update github run: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, `
+		UPDATE review_runs
+		SET scope_json = ?, status = 'failed', error_code = 'publish_failed', created_at = ?, updated_at = ?
+		WHERE id = ?`,
+		[]byte(`{"platform":"gitlab"}`), bucket.Add(15*time.Minute), bucket.Add(25*time.Minute), runB,
+	); err != nil {
+		t.Fatalf("update gitlab run: %v", err)
+	}
+	if _, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+		EntityType:          "hook_event",
+		EntityID:            1,
+		Action:              "webhook_verification",
+		Actor:               "system",
+		VerificationOutcome: "rejected",
+	}); err != nil {
+		t.Fatalf("InsertAuditLog rejected: %v", err)
+	}
+	if _, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+		EntityType:          "hook_event",
+		EntityID:            2,
+		Action:              "webhook_verification",
+		Actor:               "system",
+		VerificationOutcome: "deduplicated",
+	}); err != nil {
+		t.Fatalf("InsertAuditLog deduplicated: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, `UPDATE audit_logs SET created_at = ? WHERE entity_id IN (1,2)`, bucket.Add(5*time.Minute)); err != nil {
+		t.Fatalf("update audit log times: %v", err)
+	}
+
+	trends, err := q.ListRunTrendBuckets(ctx, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("ListRunTrendBuckets: %v", err)
+	}
+	if len(trends) == 0 || trends[0].RunCount != 2 {
+		t.Fatalf("trend rows = %+v, want run_count 2", trends)
+	}
+
+	webhookTrends, err := q.ListWebhookVerificationTrendBuckets(ctx, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("ListWebhookVerificationTrendBuckets: %v", err)
+	}
+	if len(webhookTrends) != 2 {
+		t.Fatalf("webhook trend rows = %d, want 2", len(webhookTrends))
+	}
+
+	platforms, err := q.ListPlatformRunRollups(ctx, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("ListPlatformRunRollups: %v", err)
+	}
+	if len(platforms) != 2 {
+		t.Fatalf("platform rollups = %d, want 2", len(platforms))
+	}
+
+	projects, err := q.ListProjectRunRollups(ctx, db.ListProjectRunRollupsParams{Since: now.Add(-24 * time.Hour), LimitCount: 10})
+	if err != nil {
+		t.Fatalf("ListProjectRunRollups: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("project rollups = %d, want 2", len(projects))
+	}
+}
+
 func TestOperatorRunActions(t *testing.T) {
 	sqlDB := dbtest.New(t)
 	dbtest.MigrateUp(t, sqlDB, migrationsDir)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,10 +14,12 @@ import (
 
 const (
 	defaultActiveWorkerWindow = 90 * time.Second
+	defaultVisibleWorkerWindow = 24 * time.Hour
 	defaultLookbackWindow     = 24 * time.Hour
 	defaultTopProjectsLimit   = 5
 	defaultRecentFailures     = 10
 	defaultRecentRuns         = 50
+	defaultOwnershipLimit     = 200
 )
 
 type Store interface {
@@ -29,6 +32,10 @@ type Store interface {
 	ListRecentFailedRuns(ctx context.Context, limit int32) ([]db.ListRecentFailedRunsRow, error)
 	ListFailureCountsByErrorCode(ctx context.Context, updatedAt time.Time) ([]db.ListFailureCountsByErrorCodeRow, error)
 	ListWebhookVerificationCounts(ctx context.Context, createdAt time.Time) ([]db.ListWebhookVerificationCountsRow, error)
+	ListRunTrendBuckets(ctx context.Context, since time.Time) ([]db.ListRunTrendBucketsRow, error)
+	ListWebhookVerificationTrendBuckets(ctx context.Context, since time.Time) ([]db.ListWebhookVerificationTrendBucketsRow, error)
+	ListPlatformRunRollups(ctx context.Context, since time.Time) ([]db.ListPlatformRunRollupsRow, error)
+	ListProjectRunRollups(ctx context.Context, arg db.ListProjectRunRollupsParams) ([]db.ListProjectRunRollupsRow, error)
 	ListRecentRuns(ctx context.Context, arg db.ListRecentRunsParams) ([]db.ListRecentRunsRow, error)
 	GetRunDetail(ctx context.Context, id int64) (db.GetRunDetailRow, error)
 	ListIdentityMappings(ctx context.Context, arg db.ListIdentityMappingsParams) ([]db.ListIdentityMappingsRow, error)
@@ -61,6 +68,7 @@ type ConcurrencySnapshot struct {
 	ActiveWorkers              []ActiveWorker `json:"active_workers"`
 	TotalConfiguredConcurrency int64          `json:"total_configured_concurrency"`
 	TotalRunningRuns           int64          `json:"total_running_runs"`
+	StaleWorkerCount           int64          `json:"stale_worker_count"`
 }
 
 type ActiveWorker struct {
@@ -71,6 +79,8 @@ type ActiveWorker struct {
 	StartedAt             time.Time `json:"started_at"`
 	LastSeenAt            time.Time `json:"last_seen_at"`
 	RunningRuns           int64     `json:"running_runs"`
+	HeartbeatAgeSeconds   int64     `json:"heartbeat_age_seconds"`
+	Stale                 bool      `json:"stale"`
 }
 
 type FailuresSnapshot struct {
@@ -78,6 +88,46 @@ type FailuresSnapshot struct {
 	ErrorBuckets               []ErrorBucket     `json:"error_buckets"`
 	WebhookRejectedLast24h     int64             `json:"webhook_rejected_last_24h"`
 	WebhookDeduplicatedLast24h int64             `json:"webhook_deduplicated_last_24h"`
+}
+
+type TrendsSnapshot struct {
+	WindowHours int              `json:"window_hours"`
+	Buckets     []TrendBucket    `json:"buckets"`
+	Platforms   []PlatformRollup `json:"platforms"`
+	Projects    []ProjectRollup  `json:"projects"`
+}
+
+type TrendBucket struct {
+	BucketStart              time.Time `json:"bucket_start"`
+	RunCount                 int64     `json:"run_count"`
+	PendingCount             int64     `json:"pending_count"`
+	RunningCount             int64     `json:"running_count"`
+	CompletedCount           int64     `json:"completed_count"`
+	FailedCount              int64     `json:"failed_count"`
+	CancelledCount           int64     `json:"cancelled_count"`
+	WebhookRejectedCount     int64     `json:"webhook_rejected_count"`
+	WebhookDeduplicatedCount int64     `json:"webhook_deduplicated_count"`
+}
+
+type PlatformRollup struct {
+	Platform       string `json:"platform"`
+	RunCount       int64  `json:"run_count"`
+	PendingCount   int64  `json:"pending_count"`
+	RunningCount   int64  `json:"running_count"`
+	CompletedCount int64  `json:"completed_count"`
+	FailedCount    int64  `json:"failed_count"`
+	CancelledCount int64  `json:"cancelled_count"`
+}
+
+type ProjectRollup struct {
+	Platform       string `json:"platform"`
+	ProjectPath    string `json:"project_path"`
+	RunCount       int64  `json:"run_count"`
+	PendingCount   int64  `json:"pending_count"`
+	RunningCount   int64  `json:"running_count"`
+	CompletedCount int64  `json:"completed_count"`
+	FailedCount    int64  `json:"failed_count"`
+	CancelledCount int64  `json:"cancelled_count"`
 }
 
 type RunFilters struct {
@@ -102,6 +152,37 @@ type IdentityFilters struct {
 
 type IdentityMappingsSnapshot struct {
 	Items []IdentityMapping `json:"items"`
+}
+
+type OwnershipSnapshot struct {
+	Items           []OwnershipSummary `json:"items"`
+	UnresolvedCount int64              `json:"unresolved_count"`
+}
+
+type OwnershipSummary struct {
+	Platform         string   `json:"platform"`
+	ProjectPath      string   `json:"project_path"`
+	PlatformUsername string   `json:"platform_username"`
+	PlatformUserID   string   `json:"platform_user_id"`
+	IdentityCount    int64    `json:"identity_count"`
+	ObservedRoles    []string `json:"observed_roles"`
+	Statuses         []string `json:"statuses"`
+	LastSeenRunID    int64    `json:"last_seen_run_id"`
+}
+
+type IdentitySuggestionsSnapshot struct {
+	Mapping     IdentityMapping      `json:"mapping"`
+	Suggestions []IdentitySuggestion `json:"suggestions"`
+}
+
+type IdentitySuggestion struct {
+	PlatformUsername string   `json:"platform_username"`
+	PlatformUserID   string   `json:"platform_user_id"`
+	ProjectPath      string   `json:"project_path"`
+	SourceStatus     string   `json:"source_status"`
+	IdentityCount    int64    `json:"identity_count"`
+	MatchScore       int64    `json:"match_score"`
+	Reasons          []string `json:"reasons"`
 }
 
 type IdentityMapping struct {
@@ -279,13 +360,15 @@ func parseTimeString(value string) (time.Time, error) {
 }
 
 func (s *Service) Concurrency(ctx context.Context) (ConcurrencySnapshot, error) {
-	rows, err := s.store.ListActiveWorkersWithCapacity(ctx, s.now().UTC().Add(-defaultActiveWorkerWindow))
+	rows, err := s.store.ListActiveWorkersWithCapacity(ctx, s.now().UTC().Add(-defaultVisibleWorkerWindow))
 	if err != nil {
 		return ConcurrencySnapshot{}, err
 	}
 
 	snapshot := ConcurrencySnapshot{ActiveWorkers: make([]ActiveWorker, 0, len(rows))}
 	for _, row := range rows {
+		heartbeatAgeSeconds := int64(s.now().UTC().Sub(row.LastSeenAt.UTC()).Seconds())
+		stale := row.LastSeenAt.UTC().Before(s.now().UTC().Add(-defaultActiveWorkerWindow))
 		snapshot.ActiveWorkers = append(snapshot.ActiveWorkers, ActiveWorker{
 			WorkerID:              row.WorkerID,
 			Hostname:              row.Hostname,
@@ -294,9 +377,14 @@ func (s *Service) Concurrency(ctx context.Context) (ConcurrencySnapshot, error) 
 			StartedAt:             row.StartedAt,
 			LastSeenAt:            row.LastSeenAt,
 			RunningRuns:           row.RunningRuns,
+			HeartbeatAgeSeconds:   heartbeatAgeSeconds,
+			Stale:                 stale,
 		})
 		snapshot.TotalConfiguredConcurrency += int64(row.ConfiguredConcurrency)
 		snapshot.TotalRunningRuns += row.RunningRuns
+		if stale {
+			snapshot.StaleWorkerCount++
+		}
 	}
 	return snapshot, nil
 }
@@ -343,6 +431,95 @@ func (s *Service) Failures(ctx context.Context) (FailuresSnapshot, error) {
 		case "deduplicated":
 			snapshot.WebhookDeduplicatedLast24h = item.Count
 		}
+	}
+	return snapshot, nil
+}
+
+func (s *Service) Trends(ctx context.Context) (TrendsSnapshot, error) {
+	since := s.now().UTC().Add(-defaultLookbackWindow)
+	runBuckets, err := s.store.ListRunTrendBuckets(ctx, since)
+	if err != nil {
+		return TrendsSnapshot{}, err
+	}
+	webhookBuckets, err := s.store.ListWebhookVerificationTrendBuckets(ctx, since)
+	if err != nil {
+		return TrendsSnapshot{}, err
+	}
+	platformRows, err := s.store.ListPlatformRunRollups(ctx, since)
+	if err != nil {
+		return TrendsSnapshot{}, err
+	}
+	projectRows, err := s.store.ListProjectRunRollups(ctx, db.ListProjectRunRollupsParams{
+		Since:      since,
+		LimitCount: defaultTopProjectsLimit,
+	})
+	if err != nil {
+		return TrendsSnapshot{}, err
+	}
+
+	bucketsByKey := make(map[string]*TrendBucket, len(runBuckets))
+	snapshot := TrendsSnapshot{
+		WindowHours: int(defaultLookbackWindow / time.Hour),
+		Buckets:     make([]TrendBucket, 0, len(runBuckets)),
+		Platforms:   make([]PlatformRollup, 0, len(platformRows)),
+		Projects:    make([]ProjectRollup, 0, len(projectRows)),
+	}
+	for _, row := range runBuckets {
+		bucketStart, err := parseTimeString(row.BucketStart)
+		if err != nil {
+			return TrendsSnapshot{}, err
+		}
+		snapshot.Buckets = append(snapshot.Buckets, TrendBucket{
+			BucketStart:    bucketStart,
+			RunCount:       row.RunCount,
+			PendingCount:   row.PendingCount,
+			RunningCount:   row.RunningCount,
+			CompletedCount: row.CompletedCount,
+			FailedCount:    row.FailedCount,
+			CancelledCount: row.CancelledCount,
+		})
+		bucketsByKey[row.BucketStart] = &snapshot.Buckets[len(snapshot.Buckets)-1]
+	}
+	for _, row := range webhookBuckets {
+		bucket, ok := bucketsByKey[row.BucketStart]
+		if !ok {
+			bucketStart, err := parseTimeString(row.BucketStart)
+			if err != nil {
+				return TrendsSnapshot{}, err
+			}
+			snapshot.Buckets = append(snapshot.Buckets, TrendBucket{BucketStart: bucketStart})
+			bucket = &snapshot.Buckets[len(snapshot.Buckets)-1]
+			bucketsByKey[row.BucketStart] = bucket
+		}
+		switch row.VerificationOutcome {
+		case "rejected":
+			bucket.WebhookRejectedCount = row.Count
+		case "deduplicated":
+			bucket.WebhookDeduplicatedCount = row.Count
+		}
+	}
+	for _, row := range platformRows {
+		snapshot.Platforms = append(snapshot.Platforms, PlatformRollup{
+			Platform:       row.Platform,
+			RunCount:       row.RunCount,
+			PendingCount:   row.PendingCount,
+			RunningCount:   row.RunningCount,
+			CompletedCount: row.CompletedCount,
+			FailedCount:    row.FailedCount,
+			CancelledCount: row.CancelledCount,
+		})
+	}
+	for _, row := range projectRows {
+		snapshot.Projects = append(snapshot.Projects, ProjectRollup{
+			Platform:       row.Platform,
+			ProjectPath:    row.ProjectPath,
+			RunCount:       row.RunCount,
+			PendingCount:   row.PendingCount,
+			RunningCount:   row.RunningCount,
+			CompletedCount: row.CompletedCount,
+			FailedCount:    row.FailedCount,
+			CancelledCount: row.CancelledCount,
+		})
 	}
 	return snapshot, nil
 }
@@ -450,6 +627,123 @@ func (s *Service) IdentityMappings(ctx context.Context, filters IdentityFilters)
 	return snapshot, nil
 }
 
+func (s *Service) Ownership(ctx context.Context, filters IdentityFilters) (OwnershipSnapshot, error) {
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = defaultOwnershipLimit
+	}
+	rows, err := s.store.ListIdentityMappings(ctx, db.ListIdentityMappingsParams{
+		Platform:    filters.Platform,
+		Status:      filters.Status,
+		ProjectPath: filters.ProjectPath,
+		LimitCount:  limit,
+	})
+	if err != nil {
+		return OwnershipSnapshot{}, err
+	}
+	type ownershipKey struct {
+		platform         string
+		projectPath      string
+		platformUsername string
+		platformUserID   string
+	}
+	grouped := map[ownershipKey]*OwnershipSummary{}
+	snapshot := OwnershipSnapshot{Items: []OwnershipSummary{}}
+	for _, row := range rows {
+		if strings.TrimSpace(row.PlatformUsername) == "" {
+			snapshot.UnresolvedCount++
+			continue
+		}
+		key := ownershipKey{
+			platform:         row.Platform,
+			projectPath:      row.ProjectPath,
+			platformUsername: row.PlatformUsername,
+			platformUserID:   row.PlatformUserID,
+		}
+		item, ok := grouped[key]
+		if !ok {
+			snapshot.Items = append(snapshot.Items, OwnershipSummary{
+				Platform:         row.Platform,
+				ProjectPath:      row.ProjectPath,
+				PlatformUsername: row.PlatformUsername,
+				PlatformUserID:   row.PlatformUserID,
+			})
+			item = &snapshot.Items[len(snapshot.Items)-1]
+			grouped[key] = item
+		}
+		item.IdentityCount++
+		if row.LastSeenRunID.Valid && row.LastSeenRunID.Int64 > item.LastSeenRunID {
+			item.LastSeenRunID = row.LastSeenRunID.Int64
+		}
+		item.ObservedRoles = appendUnique(item.ObservedRoles, row.ObservedRole)
+		item.Statuses = appendUnique(item.Statuses, row.Status)
+	}
+	return snapshot, nil
+}
+
+func (s *Service) IdentitySuggestions(ctx context.Context, mappingID int64) (IdentitySuggestionsSnapshot, error) {
+	if mappingID <= 0 {
+		return IdentitySuggestionsSnapshot{}, &ActionError{StatusCode: 400, Message: "identity mapping id is required"}
+	}
+	target, err := s.store.GetIdentityMapping(ctx, mappingID)
+	if err != nil {
+		return IdentitySuggestionsSnapshot{}, err
+	}
+	rows, err := s.store.ListIdentityMappings(ctx, db.ListIdentityMappingsParams{
+		Platform:   target.Platform,
+		LimitCount: defaultOwnershipLimit,
+	})
+	if err != nil {
+		return IdentitySuggestionsSnapshot{}, err
+	}
+	type suggestionKey struct {
+		username string
+		userID   string
+		project  string
+		status   string
+	}
+	grouped := map[suggestionKey]*IdentitySuggestion{}
+	result := IdentitySuggestionsSnapshot{
+		Mapping:     buildIdentityMapping(target),
+		Suggestions: []IdentitySuggestion{},
+	}
+	for _, row := range rows {
+		if row.ID == mappingID || strings.TrimSpace(row.PlatformUsername) == "" {
+			continue
+		}
+		score, reasons := scoreIdentitySuggestion(target, row)
+		if score <= 0 {
+			continue
+		}
+		key := suggestionKey{
+			username: row.PlatformUsername,
+			userID:   row.PlatformUserID,
+			project:  row.ProjectPath,
+			status:   row.Status,
+		}
+		item, ok := grouped[key]
+		if !ok {
+			result.Suggestions = append(result.Suggestions, IdentitySuggestion{
+				PlatformUsername: row.PlatformUsername,
+				PlatformUserID:   row.PlatformUserID,
+				ProjectPath:      row.ProjectPath,
+				SourceStatus:     row.Status,
+				MatchScore:       score,
+				Reasons:          reasons,
+			})
+			item = &result.Suggestions[len(result.Suggestions)-1]
+			grouped[key] = item
+		}
+		item.IdentityCount++
+		if score > item.MatchScore {
+			item.MatchScore = score
+			item.Reasons = reasons
+		}
+	}
+	sortIdentitySuggestions(result.Suggestions)
+	return result, nil
+}
+
 func (s *Service) ResolveIdentityMapping(ctx context.Context, mappingID int64, platformUsername, platformUserID, actor string) (IdentityMapping, error) {
 	if s == nil || s.actionTx == nil {
 		return IdentityMapping{}, fmt.Errorf("adminapi: action transactions are not configured")
@@ -519,6 +813,60 @@ func buildIdentityMapping(mapping db.IdentityMapping) IdentityMapping {
 		CreatedAt:        mapping.CreatedAt,
 		UpdatedAt:        mapping.UpdatedAt,
 	}
+}
+
+func appendUnique(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func scoreIdentitySuggestion(target db.IdentityMapping, candidate db.ListIdentityMappingsRow) (int64, []string) {
+	var score int64
+	reasons := make([]string, 0, 4)
+	if target.GitIdentityKey != "" && candidate.GitIdentityKey == target.GitIdentityKey {
+		score += 90
+		reasons = append(reasons, "same git identity")
+	}
+	if target.GitEmail != "" && strings.EqualFold(candidate.GitEmail, target.GitEmail) {
+		score += 75
+		reasons = append(reasons, "same email")
+	}
+	if target.GitName != "" && strings.EqualFold(candidate.GitName, target.GitName) {
+		score += 35
+		reasons = append(reasons, "same git name")
+	}
+	if target.ProjectPath != "" && candidate.ProjectPath == target.ProjectPath {
+		score += 20
+		reasons = append(reasons, "same project")
+	}
+	if candidate.Status == "manual" {
+		score += 10
+		reasons = append(reasons, "manual mapping")
+	}
+	return score, reasons
+}
+
+func sortIdentitySuggestions(items []IdentitySuggestion) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].MatchScore == items[j].MatchScore {
+			if items[i].IdentityCount == items[j].IdentityCount {
+				if items[i].PlatformUsername == items[j].PlatformUsername {
+					return items[i].ProjectPath < items[j].ProjectPath
+				}
+				return items[i].PlatformUsername < items[j].PlatformUsername
+			}
+			return items[i].IdentityCount > items[j].IdentityCount
+		}
+		return items[i].MatchScore > items[j].MatchScore
+	})
 }
 
 func buildRunListItem(now time.Time, row db.ListRecentRunsRow) RunListItem {

@@ -19,6 +19,10 @@ type fakeStore struct {
 	recentFailedRuns          []db.ListRecentFailedRunsRow
 	failureCounts             []db.ListFailureCountsByErrorCodeRow
 	webhookVerificationCounts []db.ListWebhookVerificationCountsRow
+	runTrendBuckets           []db.ListRunTrendBucketsRow
+	webhookTrendBuckets       []db.ListWebhookVerificationTrendBucketsRow
+	platformRollups           []db.ListPlatformRunRollupsRow
+	projectRollups            []db.ListProjectRunRollupsRow
 	recentRuns                []db.ListRecentRunsRow
 	runDetail                 db.GetRunDetailRow
 	identityMappings          []db.ListIdentityMappingsRow
@@ -61,6 +65,22 @@ func (f fakeStore) ListFailureCountsByErrorCode(context.Context, time.Time) ([]d
 
 func (f fakeStore) ListWebhookVerificationCounts(context.Context, time.Time) ([]db.ListWebhookVerificationCountsRow, error) {
 	return f.webhookVerificationCounts, nil
+}
+
+func (f fakeStore) ListRunTrendBuckets(context.Context, time.Time) ([]db.ListRunTrendBucketsRow, error) {
+	return f.runTrendBuckets, nil
+}
+
+func (f fakeStore) ListWebhookVerificationTrendBuckets(context.Context, time.Time) ([]db.ListWebhookVerificationTrendBucketsRow, error) {
+	return f.webhookTrendBuckets, nil
+}
+
+func (f fakeStore) ListPlatformRunRollups(context.Context, time.Time) ([]db.ListPlatformRunRollupsRow, error) {
+	return f.platformRollups, nil
+}
+
+func (f fakeStore) ListProjectRunRollups(context.Context, db.ListProjectRunRollupsParams) ([]db.ListProjectRunRollupsRow, error) {
+	return f.projectRollups, nil
 }
 
 func (f fakeStore) ListRecentRuns(context.Context, db.ListRecentRunsParams) ([]db.ListRecentRunsRow, error) {
@@ -147,8 +167,8 @@ func TestServiceConcurrencySummary(t *testing.T) {
 	now := time.Date(2026, time.March, 29, 19, 5, 0, 0, time.UTC)
 	svc := NewService(&fakeStore{
 		activeWorkers: []db.ListActiveWorkersWithCapacityRow{
-			{WorkerID: "worker-1", Hostname: "host-a", Version: "dev", ConfiguredConcurrency: 4, RunningRuns: 3},
-			{WorkerID: "worker-2", Hostname: "host-b", Version: "dev", ConfiguredConcurrency: 2, RunningRuns: 1},
+			{WorkerID: "worker-1", Hostname: "host-a", Version: "dev", ConfiguredConcurrency: 4, RunningRuns: 3, LastSeenAt: now.Add(-30 * time.Second)},
+			{WorkerID: "worker-2", Hostname: "host-b", Version: "dev", ConfiguredConcurrency: 2, RunningRuns: 1, LastSeenAt: now.Add(-3 * time.Minute)},
 		},
 	}, WithNow(func() time.Time { return now }))
 
@@ -164,6 +184,15 @@ func TestServiceConcurrencySummary(t *testing.T) {
 	}
 	if snapshot.TotalRunningRuns != 4 {
 		t.Fatalf("total_running_runs = %d, want 4", snapshot.TotalRunningRuns)
+	}
+	if snapshot.StaleWorkerCount != 1 {
+		t.Fatalf("stale_worker_count = %d, want 1", snapshot.StaleWorkerCount)
+	}
+	if snapshot.ActiveWorkers[1].HeartbeatAgeSeconds != 180 {
+		t.Fatalf("heartbeat_age_seconds = %d, want 180", snapshot.ActiveWorkers[1].HeartbeatAgeSeconds)
+	}
+	if !snapshot.ActiveWorkers[1].Stale {
+		t.Fatal("worker-2 stale = false, want true")
 	}
 }
 
@@ -198,6 +227,54 @@ func TestServiceFailuresSummary(t *testing.T) {
 	}
 	if snapshot.WebhookDeduplicatedLast24h != 5 {
 		t.Fatalf("webhook_deduplicated_last_24h = %d, want 5", snapshot.WebhookDeduplicatedLast24h)
+	}
+}
+
+func TestServiceTrendsSummary(t *testing.T) {
+	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
+	svc := NewService(&fakeStore{
+		runTrendBuckets: []db.ListRunTrendBucketsRow{
+			{
+				BucketStart:    "2026-04-01 11:00:00",
+				RunCount:       3,
+				PendingCount:   1,
+				RunningCount:   0,
+				CompletedCount: 1,
+				FailedCount:    1,
+				CancelledCount: 0,
+			},
+		},
+		webhookTrendBuckets: []db.ListWebhookVerificationTrendBucketsRow{
+			{BucketStart: "2026-04-01 11:00:00", VerificationOutcome: "rejected", Count: 2},
+			{BucketStart: "2026-04-01 11:00:00", VerificationOutcome: "deduplicated", Count: 1},
+		},
+		platformRollups: []db.ListPlatformRunRollupsRow{
+			{Platform: "github", RunCount: 2, CompletedCount: 1, FailedCount: 1},
+			{Platform: "gitlab", RunCount: 1, PendingCount: 1},
+		},
+		projectRollups: []db.ListProjectRunRollupsRow{
+			{Platform: "github", ProjectPath: "acme/repo", RunCount: 2, CompletedCount: 1, FailedCount: 1},
+		},
+	}, WithNow(func() time.Time { return now }))
+
+	snapshot, err := svc.Trends(context.Background())
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+	if snapshot.WindowHours != 24 {
+		t.Fatalf("window_hours = %d, want 24", snapshot.WindowHours)
+	}
+	if len(snapshot.Buckets) != 1 {
+		t.Fatalf("buckets len = %d, want 1", len(snapshot.Buckets))
+	}
+	if snapshot.Buckets[0].WebhookRejectedCount != 2 || snapshot.Buckets[0].WebhookDeduplicatedCount != 1 {
+		t.Fatalf("bucket webhook counts = %+v, want rejected=2 deduplicated=1", snapshot.Buckets[0])
+	}
+	if len(snapshot.Platforms) != 2 {
+		t.Fatalf("platforms len = %d, want 2", len(snapshot.Platforms))
+	}
+	if len(snapshot.Projects) != 1 || snapshot.Projects[0].ProjectPath != "acme/repo" {
+		t.Fatalf("projects = %+v, want acme/repo", snapshot.Projects)
 	}
 }
 
@@ -298,6 +375,112 @@ func TestServiceListIdentityMappings(t *testing.T) {
 	}
 	if len(snapshot.Items) != 1 || snapshot.Items[0].ID != 71 {
 		t.Fatalf("identity mappings = %+v, want mapping 71", snapshot.Items)
+	}
+}
+
+func TestServiceIdentitySuggestions(t *testing.T) {
+	svc := NewService(&fakeStore{
+		resolvedIdentityMapping: db.IdentityMapping{
+			ID:             71,
+			Platform:       "gitlab",
+			ProjectPath:    "group/repo",
+			GitIdentityKey: "email:chris@example.com",
+			GitEmail:       "chris@example.com",
+			GitName:        "Chris Dev",
+			Status:         "unresolved",
+		},
+		identityMappings: []db.ListIdentityMappingsRow{
+			{
+				ID:               72,
+				Platform:         "gitlab",
+				ProjectPath:      "group/repo",
+				GitIdentityKey:   "email:chris@example.com",
+				GitEmail:         "chris@example.com",
+				GitName:          "Chris Dev",
+				PlatformUsername: "chris",
+				PlatformUserID:   "99",
+				Status:           "manual",
+			},
+			{
+				ID:               73,
+				Platform:         "gitlab",
+				ProjectPath:      "group/other",
+				GitIdentityKey:   "name:Chris Dev",
+				GitName:          "Chris Dev",
+				PlatformUsername: "christopher",
+				Status:           "auto",
+			},
+		},
+	})
+
+	snapshot, err := svc.IdentitySuggestions(context.Background(), 71)
+	if err != nil {
+		t.Fatalf("IdentitySuggestions: %v", err)
+	}
+	if snapshot.Mapping.ID != 71 {
+		t.Fatalf("mapping id = %d, want 71", snapshot.Mapping.ID)
+	}
+	if len(snapshot.Suggestions) == 0 {
+		t.Fatal("suggestions len = 0, want > 0")
+	}
+	if snapshot.Suggestions[0].PlatformUsername != "chris" {
+		t.Fatalf("top suggestion = %+v, want chris", snapshot.Suggestions[0])
+	}
+	if snapshot.Suggestions[0].MatchScore <= snapshot.Suggestions[len(snapshot.Suggestions)-1].MatchScore {
+		t.Fatalf("suggestions not ranked descending: %+v", snapshot.Suggestions)
+	}
+}
+
+func TestServiceOwnershipSummary(t *testing.T) {
+	svc := NewService(&fakeStore{
+		identityMappings: []db.ListIdentityMappingsRow{
+			{
+				ID:               71,
+				Platform:         "gitlab",
+				ProjectPath:      "group/repo",
+				ObservedRole:     "commit_author",
+				PlatformUsername: "chris",
+				PlatformUserID:   "99",
+				Status:           "manual",
+				LastSeenRunID:    sql.NullInt64{Int64: 31, Valid: true},
+			},
+			{
+				ID:               72,
+				Platform:         "gitlab",
+				ProjectPath:      "group/repo",
+				ObservedRole:     "commit_committer",
+				PlatformUsername: "chris",
+				PlatformUserID:   "99",
+				Status:           "auto",
+				LastSeenRunID:    sql.NullInt64{Int64: 32, Valid: true},
+			},
+			{
+				ID:             73,
+				Platform:       "gitlab",
+				ProjectPath:    "group/repo",
+				ObservedRole:   "commit_author",
+				Status:         "unresolved",
+				LastSeenRunID:  sql.NullInt64{Int64: 33, Valid: true},
+				GitIdentityKey: "email:other@example.com",
+			},
+		},
+	})
+
+	snapshot, err := svc.Ownership(context.Background(), IdentityFilters{Platform: "gitlab", ProjectPath: "group/repo"})
+	if err != nil {
+		t.Fatalf("Ownership: %v", err)
+	}
+	if snapshot.UnresolvedCount != 1 {
+		t.Fatalf("unresolved_count = %d, want 1", snapshot.UnresolvedCount)
+	}
+	if len(snapshot.Items) != 1 {
+		t.Fatalf("ownership items = %d, want 1", len(snapshot.Items))
+	}
+	if snapshot.Items[0].IdentityCount != 2 {
+		t.Fatalf("identity_count = %d, want 2", snapshot.Items[0].IdentityCount)
+	}
+	if len(snapshot.Items[0].ObservedRoles) != 2 {
+		t.Fatalf("observed_roles = %+v, want 2 roles", snapshot.Items[0].ObservedRoles)
 	}
 }
 

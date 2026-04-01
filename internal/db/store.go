@@ -1,6 +1,9 @@
 package db
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Store extends the sqlc-generated Querier interface with custom methods
 // that both MySQL and SQLite backends must implement. This is the primary
@@ -23,6 +26,10 @@ type Store interface {
 	GetIdentityMapping(ctx context.Context, id int64) (IdentityMapping, error)
 	GetIdentityMappingByIdentityKey(ctx context.Context, arg GetIdentityMappingByIdentityKeyParams) (IdentityMapping, error)
 	ResolveIdentityMapping(ctx context.Context, arg ResolveIdentityMappingParams) error
+	ListRunTrendBuckets(ctx context.Context, since time.Time) ([]ListRunTrendBucketsRow, error)
+	ListWebhookVerificationTrendBuckets(ctx context.Context, since time.Time) ([]ListWebhookVerificationTrendBucketsRow, error)
+	ListPlatformRunRollups(ctx context.Context, since time.Time) ([]ListPlatformRunRollupsRow, error)
+	ListProjectRunRollups(ctx context.Context, arg ListProjectRunRollupsParams) ([]ListProjectRunRollupsRow, error)
 }
 
 // Verify that *Queries satisfies Store at compile time.
