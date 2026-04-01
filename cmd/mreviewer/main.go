@@ -217,7 +217,11 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 	}
 
 	if len(bundles) > 0 {
-		return exitCodeForResult(opts.exitMode, bundles[0])
+		for _, bundle := range bundles {
+			if code := exitCodeForResult(opts.exitMode, bundle); code != 0 {
+				return code
+			}
+		}
 	}
 	return 0
 }

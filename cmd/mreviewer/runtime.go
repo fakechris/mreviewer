@@ -284,10 +284,7 @@ func githubStatusDescription(state string, blockingFindings int) string {
 }
 
 func defaultCompare(ctx context.Context, configPath string, target core.ReviewTarget, bundle core.ReviewBundle, opts cliOptions) (*comparepkg.Report, error) {
-	artifacts := append([]core.ReviewerArtifact(nil), bundle.Artifacts...)
-	if bundle.AdvisorArtifact != nil {
-		artifacts = append(artifacts, *bundle.AdvisorArtifact)
-	}
+	artifacts := comparepkg.BuildArtifactsForBundle(bundle, bundle.AdvisorArtifact)
 
 	imported, err := loadImportedArtifacts(opts.compareArtifactPaths)
 	if err != nil {

@@ -3,6 +3,7 @@ package reviewadvisor
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
@@ -67,8 +68,8 @@ func TestAdvisorUsesRouteResolvedProviderAndReturnsAdvisorArtifact(t *testing.T)
 	if artifact.ReviewerKind != "advisor" {
 		t.Fatalf("expected advisor reviewer kind, got %q", artifact.ReviewerKind)
 	}
-	if provider.systemPrompt == "" {
-		t.Fatal("expected advisor to build dynamic prompt")
+	if !strings.Contains(provider.systemPrompt, "requested_changes") && !strings.Contains(provider.systemPrompt, "Found auth bypass") {
+		t.Fatalf("advisor prompt missing council context: %q", provider.systemPrompt)
 	}
 }
 

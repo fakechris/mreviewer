@@ -20,9 +20,11 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
+	"github.com/mreviewer/mreviewer/internal/judge"
 	"github.com/mreviewer/mreviewer/internal/llm"
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
+	"github.com/mreviewer/mreviewer/internal/reviewadvisor"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/reviewinput"
 	"github.com/mreviewer/mreviewer/internal/reviewpack"
@@ -1182,6 +1184,42 @@ func TestNewReviewRunProcessorHonorsConfiguredReviewPacksAndAdvisorRoute(t *test
 	}
 }
 
+func TestWorkerAdvisorAwareEngineDegradesAdvisorFailures(t *testing.T) {
+	engine := workerAdvisorAwareEngine{
+		base: core.NewEngine([]core.PackRunner{
+			fakePackRunner(func(context.Context, core.ReviewInput, core.RunOptions) (core.ReviewerArtifact, error) {
+				return core.ReviewerArtifact{
+					ReviewerID:   "security",
+					ReviewerKind: "pack",
+					Summary:      "council summary",
+				}, nil
+			}),
+		}, workerJudgeAdapter{inner: judge.New()}),
+		advisor: reviewadvisor.New(func(route string) llm.Provider {
+			if route != "openai-gpt-5-4" {
+				return nil
+			}
+			return &fakeWorkerDynamicProvider{err: errors.New("advisor unavailable")}
+		}),
+		defaultAdvisorRoute: "openai-gpt-5-4",
+	}
+
+	bundle, err := engine.Run(context.Background(), core.ReviewInput{
+		Target:        core.ReviewTarget{Platform: core.PlatformGitHub},
+		SystemPrompt:  "base",
+		RequestPayload: mustJSONRuntime(ctxpkg.ReviewRequest{ReviewRunID: "rr_1"}),
+	}, core.RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(bundle.Artifacts) != 1 {
+		t.Fatalf("bundle artifacts = %d, want 1", len(bundle.Artifacts))
+	}
+	if bundle.AdvisorArtifact != nil {
+		t.Fatalf("advisor artifact = %#v, want nil on degraded advisor path", bundle.AdvisorArtifact)
+	}
+}
+
 func TestWorkerRuntimeProcessesGitHubRunViaBundleWriteback(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := setupTestDB(t)
@@ -1554,6 +1592,20 @@ func (f *fakeWorkerDynamicProvider) RequestPayloadWithSystemPrompt(_ ctxpkg.Revi
 
 func int32PtrRuntime(v int32) *int32 {
 	return &v
+}
+
+type fakePackRunner func(context.Context, core.ReviewInput, core.RunOptions) (core.ReviewerArtifact, error)
+
+func (f fakePackRunner) Run(ctx context.Context, input core.ReviewInput, opts core.RunOptions) (core.ReviewerArtifact, error) {
+	return f(ctx, input, opts)
+}
+
+func mustJSONRuntime(value any) []byte {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
 
 func writeRuntimeJSON(t *testing.T, w http.ResponseWriter, status int, payload any) {

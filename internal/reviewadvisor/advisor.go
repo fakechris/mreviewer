@@ -41,7 +41,7 @@ func (a *Advisor) Advise(ctx context.Context, input reviewcore.ReviewInput, bund
 
 	systemPrompt := strings.TrimSpace(strings.Join([]string{
 		strings.TrimSpace(input.SystemPrompt),
-		buildAdvisorPrompt(bundle),
+		mustAdvisorPrompt(bundle),
 	}, "\n\n"))
 
 	dynamic, ok := provider.(llm.DynamicPromptProvider)
@@ -55,14 +55,11 @@ func (a *Advisor) Advise(ctx context.Context, input reviewcore.ReviewInput, bund
 
 	artifact := reviewcore.ArtifactFromLegacyResult(input.Target, "advisor", response.Result)
 	artifact.ReviewerKind = "advisor"
-	if artifact.Summary == "" {
-		artifact.Summary = response.Result.Summary
-	}
 	return &artifact, nil
 }
 
-func buildAdvisorPrompt(bundle reviewcore.ReviewBundle) string {
-	payload, _ := json.Marshal(struct {
+func mustAdvisorPrompt(bundle reviewcore.ReviewBundle) string {
+	payload, err := json.Marshal(struct {
 		JudgeVerdict string                        `json:"judge_verdict"`
 		JudgeSummary string                        `json:"judge_summary,omitempty"`
 		Artifacts    []reviewcore.ReviewerArtifact `json:"artifacts,omitempty"`
@@ -71,6 +68,9 @@ func buildAdvisorPrompt(bundle reviewcore.ReviewBundle) string {
 		JudgeSummary: bundle.MarkdownSummary,
 		Artifacts:    bundle.Artifacts,
 	})
+	if err != nil {
+		payload = []byte(`{"judge_verdict":"unknown","judge_summary":"advisor_context_encoding_failed"}`)
+	}
 	return strings.TrimSpace(strings.Join([]string{
 		"You are the stronger second-opinion reviewer.",
 		"Review the existing council artifacts and judge result. Only add omitted high-confidence findings, or explicitly affirm the current decision if it is sound.",

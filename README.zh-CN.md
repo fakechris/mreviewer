@@ -156,7 +156,7 @@ docker compose exec worker /app/mreviewer \
 - `--publish`: `full-review-comments`、`summary-only` 或 `artifact-only`
 - `--reviewer-packs`: 逗号分隔的 reviewer pack 列表
 - `--route`: provider route override
-- `--advisor-route`: 可选的更强 second opinion provider route
+- `--advisor-route`: 可选的更强的 second opinion provider route
 - `--exit-mode`: `never` 或 `requested_changes`；当最终 verdict 为需要修改时返回退出码 `3`
 - `--compare-live`: 逗号分隔的目标 PR/MR 上已有 reviewer 标识，例如 `codex,coderabbit`
 - `--compare-artifacts`: 逗号分隔的外部 JSON artifact 路径
@@ -169,7 +169,7 @@ docker compose exec worker /app/mreviewer \
 运行时环境变量覆盖：
 
 - `REVIEW_PACKS`: worker/runtime 默认启用的 reviewer packs
-- `REVIEW_ADVISOR_ROUTE`: CLI/runtime 默认使用的更强 second opinion route
+- `REVIEW_ADVISOR_ROUTE`: CLI/runtime 默认使用的更强的 second opinion route
 - `REVIEW_COMPARE_REVIEWERS`: runtime 自动 comparison 时要拉取的外部 reviewer 列表
 
 ### 配置 GitLab Webhook

@@ -30,8 +30,8 @@ func (s Stage) Description() string {
 	case StageComparingTargets:
 		return "AI review is comparing multiple review targets"
 	case StageCompleted:
-		return "AI review is completing"
+		return "AI review is complete"
 	default:
-		return ""
+		return "Unknown review stage"
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/mreviewer/mreviewer/internal/config"
@@ -50,7 +51,11 @@ func (e workerAdvisorAwareEngine) Run(ctx context.Context, input core.ReviewInpu
 	}
 	artifact, err := e.advisor.Advise(ctx, input, bundle, route)
 	if err != nil {
-		return core.ReviewBundle{}, err
+		slog.Default().WarnContext(ctx, "worker runtime advisor failed; continuing with council result",
+			"route", route,
+			"error", err,
+		)
+		return bundle, nil
 	}
 	bundle.AdvisorArtifact = artifact
 	return bundle, nil

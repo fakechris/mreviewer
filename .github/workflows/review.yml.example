@@ -23,7 +23,7 @@ jobs:
 
       - name: Run review
         env:
-          GITHUB_BASE_URL: https://github.com
+          GITHUB_BASE_URL: https://api.github.com
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

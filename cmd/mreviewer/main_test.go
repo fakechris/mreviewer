@@ -579,6 +579,39 @@ func TestRunWithDepsJSONOutputIncludesAdvisorAndDecisionBenchmark(t *testing.T) 
 	}
 }
 
+func TestRunWithDepsMultiTargetExitModeUsesAnyBlockingBundle(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runWithDeps([]string{
+		"--targets", "https://github.com/acme/repo/pull/17,https://github.com/acme/repo/pull/18",
+		"--output", "json",
+		"--exit-mode", "requested_changes",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine {
+			return reviewEngineFunc(func(_ context.Context, input core.ReviewInput, _ core.RunOptions) (core.ReviewBundle, error) {
+				verdict := "comment_only"
+				if input.Target.ChangeNumber == 18 {
+					verdict = "requested_changes"
+				}
+				return core.ReviewBundle{
+					Target:          input.Target,
+					Verdict:         verdict,
+					MarkdownSummary: "# Review",
+				}, nil
+			})
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+	if exitCode != 3 {
+		t.Fatalf("exitCode = %d, want 3 (stderr=%s)", exitCode, stderr.String())
+	}
+}
+
 func TestRunWithDepsPublishesFailedGitHubStatusOnReviewError(t *testing.T) {
 	engine := &fakeEngine{err: context.DeadlineExceeded}
 	input := core.ReviewInput{

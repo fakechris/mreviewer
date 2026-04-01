@@ -15,6 +15,9 @@ GitHub webhook 入口：
 - 可选：`REVIEW_ADVISOR_ROUTE`
 - 可选：`REVIEW_COMPARE_REVIEWERS`
 
+GitHub.com 默认填 `https://api.github.com`。
+如果是 GitHub Enterprise Server，则填实例根地址，运行时会自动转成 `<base>/api/v3`。
+
 建议 webhook 事件：
 
 - `Pull requests`
