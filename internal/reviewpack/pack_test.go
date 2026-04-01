@@ -17,7 +17,7 @@ func TestDefaultPacksExposeCapabilityContracts(t *testing.T) {
 		t.Fatalf("DefaultPacks len = %d, want 3", len(packs))
 	}
 
-	var securityFound bool
+	found := map[string]Contract{}
 	for _, pack := range packs {
 		contract := pack.Contract()
 		if contract.ID == "" {
@@ -29,16 +29,49 @@ func TestDefaultPacksExposeCapabilityContracts(t *testing.T) {
 		if contract.OutputSchema == "" {
 			t.Fatalf("pack %q missing output schema", contract.ID)
 		}
-		if contract.ID == "security" {
-			securityFound = true
-			if len(contract.Standards) == 0 {
-				t.Fatalf("security standards should not be empty")
-			}
+		if len(contract.Rubric) == 0 {
+			t.Fatalf("pack %q missing rubric", contract.ID)
 		}
+		if len(contract.EvidenceRequirements) == 0 {
+			t.Fatalf("pack %q missing evidence requirements", contract.ID)
+		}
+		if !contract.NewIssuesOnly {
+			t.Fatalf("pack %q should review only new issues", contract.ID)
+		}
+		found[contract.ID] = contract
 	}
 
-	if !securityFound {
+	security, ok := found["security"]
+	if !ok {
 		t.Fatal("security pack not found")
+	}
+	if len(security.Standards) == 0 {
+		t.Fatalf("security standards should not be empty")
+	}
+	if security.ConfidenceGate < 0.8 {
+		t.Fatalf("security confidence gate = %v, want >= 0.8", security.ConfidenceGate)
+	}
+
+	architecture, ok := found["architecture"]
+	if !ok {
+		t.Fatal("architecture pack not found")
+	}
+	if architecture.ConfidenceGate == 0 {
+		t.Fatalf("architecture confidence gate should not be empty")
+	}
+	if len(architecture.HardExclusions) == 0 {
+		t.Fatalf("architecture hard exclusions should not be empty")
+	}
+
+	database, ok := found["database"]
+	if !ok {
+		t.Fatal("database pack not found")
+	}
+	if len(database.Standards) == 0 {
+		t.Fatalf("database standards should not be empty")
+	}
+	if len(database.HardExclusions) == 0 {
+		t.Fatalf("database hard exclusions should not be empty")
 	}
 }
 
@@ -121,6 +154,9 @@ func TestLegacyProviderRunnerUsesCapabilityPromptAndBridgesArtifact(t *testing.T
 	}
 	if !strings.Contains(strings.ToLower(provider.systemPrompt), "trust boundaries") {
 		t.Fatalf("system prompt = %q, want focus area", provider.systemPrompt)
+	}
+	if !strings.Contains(strings.ToLower(provider.systemPrompt), "exploit scenario") {
+		t.Fatalf("system prompt = %q, want exploit scenario guidance", provider.systemPrompt)
 	}
 	if artifact.ReviewerID != "security" {
 		t.Fatalf("reviewer id = %q", artifact.ReviewerID)
@@ -218,6 +254,57 @@ func TestLegacyProviderRunnerFailsWhenProviderCannotAcceptCapabilityPrompt(t *te
 	}
 	if provider.request.ReviewRunID != "" {
 		t.Fatalf("provider should not be called when system prompt is unsupported")
+	}
+}
+
+func TestBuildCapabilityPromptIncludesArchitectureAndDatabaseDiscipline(t *testing.T) {
+	packs := DefaultPacks()
+	var architecturePrompt, databasePrompt string
+	for _, pack := range packs {
+		switch contract := pack.Contract(); contract.ID {
+		case "architecture":
+			architecturePrompt = strings.ToLower(buildCapabilityPrompt(contract))
+		case "database":
+			databasePrompt = strings.ToLower(buildCapabilityPrompt(contract))
+		}
+	}
+	if !strings.Contains(architecturePrompt, "staff-plus engineer") {
+		t.Fatalf("architecture prompt = %q, want staff-plus framing", architecturePrompt)
+	}
+	if !strings.Contains(architecturePrompt, "two passes") {
+		t.Fatalf("architecture prompt = %q, want two-pass review guidance", architecturePrompt)
+	}
+	if !strings.Contains(architecturePrompt, "state flow") {
+		t.Fatalf("architecture prompt = %q, want state-flow evidence requirement", architecturePrompt)
+	}
+	if !strings.Contains(databasePrompt, "migration safety") {
+		t.Fatalf("database prompt = %q, want migration safety focus", databasePrompt)
+	}
+	if !strings.Contains(databasePrompt, "transaction boundary") {
+		t.Fatalf("database prompt = %q, want transaction boundary evidence", databasePrompt)
+	}
+	if !strings.Contains(databasePrompt, "generic add an index") {
+		t.Fatalf("database prompt = %q, want hard exclusion guidance", databasePrompt)
+	}
+}
+
+func TestFilterFindingsAppliesConfidenceGateAndHardExclusions(t *testing.T) {
+	contract := Contract{
+		ID:             "database",
+		ConfidenceGate: 0.8,
+		HardExclusions: []string{"generic add an index"},
+	}
+	findings := []core.Finding{
+		{Title: "Query path causes duplicate writes", Confidence: 0.92},
+		{Title: "Generic add an index recommendation", Confidence: 0.95},
+		{Title: "Weak evidence", Confidence: 0.5},
+	}
+	filtered := filterFindings(contract, findings)
+	if len(filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1", len(filtered))
+	}
+	if filtered[0].Title != "Query path causes duplicate writes" {
+		t.Fatalf("filtered[0].Title = %q", filtered[0].Title)
 	}
 }
 
