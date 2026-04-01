@@ -158,7 +158,7 @@ Key flags:
 - `--route`: provider route override
 - `--advisor-route`: optional stronger second-opinion provider route
 - `--exit-mode`: `never` or `requested_changes`; returns exit code `3` when the final verdict requests changes
-- `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `codex,coderabbit`
+- `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `reviewer-a,reviewer-b`
 - `--compare-artifacts`: comma-separated JSON artifact paths to compare against the current review bundle
 
 The CLI emits the review bundle in JSON mode and, when comparison flags are provided, includes a comparison report with agreement rate, shared findings, and reviewer-unique findings.

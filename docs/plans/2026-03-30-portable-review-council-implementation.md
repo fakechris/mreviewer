@@ -491,7 +491,7 @@ Cover:
 - agreement/unique finding computation
 
 Use fixtures for:
-- Codex-like comments
+- external reviewer comments
 - CodeRabbit-like comments
 - generic bot comments
 

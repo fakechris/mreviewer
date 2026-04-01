@@ -158,7 +158,7 @@ docker compose exec worker /app/mreviewer \
 - `--route`: provider route override
 - `--advisor-route`: 可选的更强的 second opinion provider route
 - `--exit-mode`: `never` 或 `requested_changes`；当最终 verdict 为需要修改时返回退出码 `3`
-- `--compare-live`: 逗号分隔的目标 PR/MR 上已有 reviewer 标识，例如 `codex,coderabbit`
+- `--compare-live`: 逗号分隔的目标 PR/MR 上已有 reviewer 标识，例如 `reviewer-a,reviewer-b`
 - `--compare-artifacts`: 逗号分隔的外部 JSON artifact 路径
 
 当提供 compare 参数时，CLI 会在 JSON 输出里附带 comparison report，包括 agreement rate、shared findings 和各 reviewer 的 unique findings。
