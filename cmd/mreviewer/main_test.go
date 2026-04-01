@@ -390,6 +390,24 @@ func TestParseOptionsSupportsMultipleTargets(t *testing.T) {
 	}
 }
 
+func TestParseOptionsSupportsAdvisorAndExitMode(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, err := parseOptions([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--advisor-route", "openai-gpt-5-4",
+		"--exit-mode", "requested_changes",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseOptions: %v", err)
+	}
+	if opts.advisorRoute != "openai-gpt-5-4" {
+		t.Fatalf("advisor route = %q, want openai-gpt-5-4", opts.advisorRoute)
+	}
+	if opts.exitMode != "requested_changes" {
+		t.Fatalf("exit mode = %q, want requested_changes", opts.exitMode)
+	}
+}
+
 func TestRunWithDepsJSONOutputSupportsMultiTargetCompare(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -501,6 +519,63 @@ func TestRunWithDepsPublishesGitHubStatusTransitions(t *testing.T) {
 	}
 	if calls[1].state != "success" {
 		t.Fatalf("second status state = %q, want success", calls[1].state)
+	}
+}
+
+func TestRunWithDepsJSONOutputIncludesAdvisorAndDecisionBenchmark(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform:     core.PlatformGitHub,
+				URL:          "https://github.com/acme/repo/pull/17",
+				Repository:   "acme/repo",
+				ChangeNumber: 17,
+			},
+			Verdict:         "requested_changes",
+			MarkdownSummary: "judge summary",
+			Artifacts: []core.ReviewerArtifact{
+				{ReviewerID: "council:security", ReviewerKind: "pack"},
+			},
+			AdvisorArtifact: &core.ReviewerArtifact{
+				ReviewerID:   "advisor:openai-gpt-5-4",
+				ReviewerKind: "advisor",
+				Summary:      "advisor summary",
+			},
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runWithDeps([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--output", "json",
+		"--advisor-route", "openai-gpt-5-4",
+		"--exit-mode", "requested_changes",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		stdout:    &stdout,
+		stderr:    &stderr,
+	})
+	if exitCode != 3 {
+		t.Fatalf("exitCode = %d, want 3", exitCode)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json output: %v", err)
+	}
+	if payload["advisor_artifact"] == nil {
+		t.Fatalf("advisor_artifact missing: %s", stdout.String())
+	}
+	if payload["decision_benchmark"] == nil {
+		t.Fatalf("decision_benchmark missing: %s", stdout.String())
+	}
+	if payload["judge_verdict"] != "requested_changes" {
+		t.Fatalf("judge_verdict = %#v, want requested_changes", payload["judge_verdict"])
 	}
 }
 

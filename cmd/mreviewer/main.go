@@ -52,8 +52,10 @@ type cliOptions struct {
 	configPath    string
 	outputMode    OutputMode
 	publishMode   PublishMode
+	exitMode      string
 	reviewerPacks []string
 	routeOverride string
+	advisorRoute  string
 	compareLiveReviewers []string
 	compareArtifactPaths []string
 }
@@ -119,6 +121,7 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 			PublishMode:   string(opts.publishMode),
 			ReviewerPacks: opts.reviewerPacks,
 			RouteOverride: opts.routeOverride,
+			AdvisorRoute:  opts.advisorRoute,
 		})
 		if err != nil {
 			if deps.status != nil {
@@ -185,7 +188,7 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 				return 1
 			}
 		}
-		return 0
+		return exitCodeForResult(opts.exitMode, bundle)
 	}
 
 	var aggregate *comparepkg.AggregateReport
@@ -213,6 +216,9 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 		}
 	}
 
+	if len(bundles) > 0 {
+		return exitCodeForResult(opts.exitMode, bundles[0])
+	}
 	return 0
 }
 
@@ -239,8 +245,11 @@ func blockingFindings(bundle core.ReviewBundle) int {
 }
 
 type runOutput struct {
-	Review     core.ReviewBundle    `json:"review"`
-	Comparison *comparepkg.Report   `json:"comparison,omitempty"`
+	Review            core.ReviewBundle                   `json:"review"`
+	JudgeVerdict      string                              `json:"judge_verdict,omitempty"`
+	AdvisorArtifact   *core.ReviewerArtifact              `json:"advisor_artifact,omitempty"`
+	Comparison        *comparepkg.Report                  `json:"comparison,omitempty"`
+	DecisionBenchmark *comparepkg.DecisionBenchmarkReport `json:"decision_benchmark,omitempty"`
 }
 
 type multiRunOutput struct {
@@ -250,12 +259,16 @@ type multiRunOutput struct {
 }
 
 func outputPayload(bundle core.ReviewBundle, comparison *comparepkg.Report) any {
-	if comparison == nil {
+	decisionBenchmark := comparepkg.BuildDecisionBenchmarkReportForBundle(bundle, bundle.AdvisorArtifact)
+	if comparison == nil && bundle.AdvisorArtifact == nil {
 		return bundle
 	}
 	return runOutput{
-		Review:     bundle,
-		Comparison: comparison,
+		Review:            bundle,
+		JudgeVerdict:      bundle.Verdict,
+		AdvisorArtifact:   bundle.AdvisorArtifact,
+		Comparison:        comparison,
+		DecisionBenchmark: &decisionBenchmark,
 	}
 }
 
@@ -263,6 +276,11 @@ func renderMarkdownOutput(bundle core.ReviewBundle, comparison *comparepkg.Repor
 	var out strings.Builder
 	out.WriteString(bundle.MarkdownSummary)
 	out.WriteString("\n")
+	if bundle.AdvisorArtifact != nil && strings.TrimSpace(bundle.AdvisorArtifact.Summary) != "" {
+		out.WriteString("\n## Advisor\n\n")
+		out.WriteString(bundle.AdvisorArtifact.Summary)
+		out.WriteString("\n")
+	}
 	if comparison != nil {
 		if summary := comparepkg.RenderMarkdown(*comparison); summary != "" {
 			out.WriteString("\n")
@@ -321,7 +339,7 @@ func summaryOnlyBundle(bundle core.ReviewBundle) core.ReviewBundle {
 func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	fs := flag.NewFlagSet("mreviewer", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	opts := cliOptions{configPath: "config.yaml"}
+	opts := cliOptions{configPath: "config.yaml", exitMode: "never"}
 	var packs string
 	var compareLive string
 	var compareArtifacts string
@@ -333,8 +351,10 @@ func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	fs.StringVar(&opts.configPath, "config", "config.yaml", "Path to config file")
 	fs.StringVar(&output, "output", output, "markdown|json|both")
 	fs.StringVar(&publish, "publish", publish, "full-review-comments|summary-only|artifact-only")
+	fs.StringVar(&opts.exitMode, "exit-mode", "never", "never|requested_changes")
 	fs.StringVar(&packs, "reviewer-packs", "", "comma separated reviewer packs")
 	fs.StringVar(&opts.routeOverride, "route", "", "provider route override")
+	fs.StringVar(&opts.advisorRoute, "advisor-route", "", "optional stronger second-opinion provider route")
 	fs.StringVar(&compareLive, "compare-live", "", "comma separated live reviewers to compare")
 	fs.StringVar(&compareArtifacts, "compare-artifacts", "", "comma separated external artifact json paths")
 	if err := fs.Parse(args); err != nil {
@@ -366,6 +386,11 @@ func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	default:
 		return cliOptions{}, fmt.Errorf("--publish must be one of full-review-comments, summary-only, artifact-only")
 	}
+	switch strings.TrimSpace(opts.exitMode) {
+	case "never", "requested_changes":
+	default:
+		return cliOptions{}, fmt.Errorf("--exit-mode must be one of never, requested_changes")
+	}
 	if packs != "" {
 		for _, part := range strings.Split(packs, ",") {
 			part = strings.TrimSpace(part)
@@ -374,6 +399,7 @@ func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 			}
 		}
 	}
+	opts.advisorRoute = strings.TrimSpace(opts.advisorRoute)
 	if compareLive != "" {
 		for _, part := range strings.Split(compareLive, ",") {
 			part = strings.TrimSpace(part)
@@ -391,6 +417,17 @@ func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 		}
 	}
 	return opts, nil
+}
+
+func exitCodeForResult(mode string, bundle core.ReviewBundle) int {
+	switch strings.TrimSpace(mode) {
+	case "requested_changes":
+		switch strings.ToLower(strings.TrimSpace(bundle.Verdict)) {
+		case "requested_changes", "request_changes", "failed":
+			return 3
+		}
+	}
+	return 0
 }
 
 func resolveReviewTarget(raw string) (core.ReviewTarget, error) {

@@ -156,12 +156,21 @@ Key flags:
 - `--publish`: `full-review-comments`, `summary-only`, or `artifact-only`
 - `--reviewer-packs`: comma-separated reviewer packs
 - `--route`: provider route override
+- `--advisor-route`: optional stronger second-opinion provider route
+- `--exit-mode`: `never` or `requested_changes`; returns exit code `3` when the final verdict requests changes
 - `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `codex,coderabbit`
 - `--compare-artifacts`: comma-separated JSON artifact paths to compare against the current review bundle
 
 The CLI emits the review bundle in JSON mode and, when comparison flags are provided, includes a comparison report with agreement rate, shared findings, and reviewer-unique findings.
 When `--targets` is provided, the JSON output also includes `aggregate_comparison` so you can compare reviewer agreement across multiple GitHub/GitLab changes in one run.
+When advisor or benchmark output is present, the JSON payload also includes `advisor_artifact`, `judge_verdict`, and `decision_benchmark`.
 For GitHub targets, the CLI also updates the commit status context `mreviewer/ai-review` while the review is running and after it completes.
+
+Runtime environment overrides:
+
+- `REVIEW_PACKS`: default reviewer packs for worker/runtime processing
+- `REVIEW_ADVISOR_ROUTE`: default stronger second-opinion route for CLI/runtime processing
+- `REVIEW_COMPARE_REVIEWERS`: comma-separated external reviewer IDs to compare during runtime processing
 
 ### Configure GitLab Webhook
 

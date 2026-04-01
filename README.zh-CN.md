@@ -156,12 +156,21 @@ docker compose exec worker /app/mreviewer \
 - `--publish`: `full-review-comments`、`summary-only` 或 `artifact-only`
 - `--reviewer-packs`: 逗号分隔的 reviewer pack 列表
 - `--route`: provider route override
+- `--advisor-route`: 可选的更强 second opinion provider route
+- `--exit-mode`: `never` 或 `requested_changes`；当最终 verdict 为需要修改时返回退出码 `3`
 - `--compare-live`: 逗号分隔的目标 PR/MR 上已有 reviewer 标识，例如 `codex,coderabbit`
 - `--compare-artifacts`: 逗号分隔的外部 JSON artifact 路径
 
 当提供 compare 参数时，CLI 会在 JSON 输出里附带 comparison report，包括 agreement rate、shared findings 和各 reviewer 的 unique findings。
 当提供 `--targets` 时，JSON 输出还会包含 `aggregate_comparison`，用于在一次运行里比较多个 GitHub/GitLab 变更上的 reviewer 一致性。
+当启用 advisor 或 benchmark 时，JSON 输出还会包含 `advisor_artifact`、`judge_verdict` 和 `decision_benchmark`。
 当目标是 GitHub PR 时，CLI 还会在 review 运行中和结束后更新 `mreviewer/ai-review` 这个 commit status。
+
+运行时环境变量覆盖：
+
+- `REVIEW_PACKS`: worker/runtime 默认启用的 reviewer packs
+- `REVIEW_ADVISOR_ROUTE`: CLI/runtime 默认使用的更强 second opinion route
+- `REVIEW_COMPARE_REVIEWERS`: runtime 自动 comparison 时要拉取的外部 reviewer 列表
 
 ### 配置 GitLab Webhook
 

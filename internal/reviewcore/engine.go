@@ -7,6 +7,7 @@ type RunOptions struct {
 	PublishMode   string
 	ReviewerPacks []string
 	RouteOverride string
+	AdvisorRoute  string
 }
 
 type PackRunner interface {
@@ -38,6 +39,9 @@ func (e *Engine) Run(ctx context.Context, input ReviewInput, opts RunOptions) (R
 		artifact, err := pack.Run(ctx, input, opts)
 		if err != nil {
 			return ReviewBundle{}, err
+		}
+		if artifact.ReviewerID == "" && artifact.Summary == "" && len(artifact.Findings) == 0 {
+			continue
 		}
 		artifacts = append(artifacts, artifact)
 	}

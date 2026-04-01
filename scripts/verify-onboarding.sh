@@ -13,10 +13,10 @@ pattern_matches() {
   local pattern="$1"
   local file="$2"
   if command -v rg >/dev/null 2>&1; then
-    rg -q --multiline "$pattern" "$file"
+    rg -q --multiline -- "$pattern" "$file"
     return
   fi
-  grep -Eq "$pattern" "$file"
+  grep -Eq -- "$pattern" "$file"
 }
 
 require_pattern() {
@@ -114,7 +114,26 @@ require_pattern "Dockerfile" "cmd/manual-trigger" "Dockerfile must compile cmd/m
 require_pattern "Dockerfile" "/out/mreviewer" "Dockerfile must build and package the mreviewer CLI binary"
 require_pattern "Dockerfile" "cmd/mreviewer" "Dockerfile must compile cmd/mreviewer for the documented portable review council CLI"
 require_pattern "README.md" "/app/mreviewer" "README.md must document the in-container mreviewer CLI"
+require_pattern "README.md" "--advisor-route" "README.md must document the advisor route flag"
+require_pattern "README.md" "--exit-mode" "README.md must document the exit-mode flag"
+require_pattern "README.md" "decision_benchmark" "README.md must document decision benchmark JSON output"
+require_pattern "README.md" "REVIEW_PACKS" "README.md must document REVIEW_PACKS"
+require_pattern "README.md" "REVIEW_ADVISOR_ROUTE" "README.md must document REVIEW_ADVISOR_ROUTE"
+require_pattern "README.md" "REVIEW_COMPARE_REVIEWERS" "README.md must document REVIEW_COMPARE_REVIEWERS"
 require_pattern "README.zh-CN.md" "/app/mreviewer" "README.zh-CN.md must document the in-container mreviewer CLI"
+require_pattern "README.zh-CN.md" "--advisor-route" "README.zh-CN.md must document the advisor route flag"
+require_pattern "README.zh-CN.md" "--exit-mode" "README.zh-CN.md must document the exit-mode flag"
+require_pattern "README.zh-CN.md" "decision_benchmark" "README.zh-CN.md must document decision benchmark JSON output"
+require_pattern "README.zh-CN.md" "REVIEW_PACKS" "README.zh-CN.md must document REVIEW_PACKS"
+require_pattern "README.zh-CN.md" "REVIEW_ADVISOR_ROUTE" "README.zh-CN.md must document REVIEW_ADVISOR_ROUTE"
+require_pattern "README.zh-CN.md" "REVIEW_COMPARE_REVIEWERS" "README.zh-CN.md must document REVIEW_COMPARE_REVIEWERS"
+require_pattern "docs/operations/github-runtime.md" "REVIEW_PACKS" "GitHub runtime doc must document REVIEW_PACKS"
+require_pattern "docs/operations/github-runtime.md" "REVIEW_ADVISOR_ROUTE" "GitHub runtime doc must document REVIEW_ADVISOR_ROUTE"
+require_pattern "docs/operations/github-runtime.md" "REVIEW_COMPARE_REVIEWERS" "GitHub runtime doc must document REVIEW_COMPARE_REVIEWERS"
+require_pattern "docs/operations/gitlab-runtime.md" "REVIEW_PACKS" "GitLab runtime doc must document REVIEW_PACKS"
+require_pattern "docs/operations/gitlab-runtime.md" "REVIEW_ADVISOR_ROUTE" "GitLab runtime doc must document REVIEW_ADVISOR_ROUTE"
+require_pattern "docs/operations/gitlab-runtime.md" "REVIEW_COMPARE_REVIEWERS" "GitLab runtime doc must document REVIEW_COMPARE_REVIEWERS"
+require_pattern ".github/workflows/review.yml.example" "--exit-mode requested_changes" "example GitHub workflow must fail the job when review requests changes"
 if pattern_matches "container_name:" docker-compose.yaml || pattern_matches "container_name:" docker-compose.prod.yaml; then
   fail "compose files must not hard-code container_name values"
 fi

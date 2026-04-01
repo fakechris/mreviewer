@@ -28,6 +28,16 @@ anthropic_base_url: "https://api.minimaxi.com/anthropic"
 anthropic_api_key: ""
 anthropic_model: "MiniMax-M2.7-highspeed"
 
+# Optional runtime defaults for the portable review council:
+# review_packs:
+#   - security
+#   - architecture
+#   - database
+# review_advisor_route: "openai-gpt-5-4"
+# review_compare_reviewers:
+#   - github:gemini
+#   - gitlab:coderabbit
+
 # Advanced multi-provider example:
 # - Environment variables inside this file are expanded at startup.
 # - Uncomment the block below, or copy `config.example.yaml` to start from a fuller template.

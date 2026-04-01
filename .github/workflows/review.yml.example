@@ -1,0 +1,43 @@
+name: mreviewer-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build mreviewer image
+        run: docker build --build-arg TARGET_CMD=./cmd/worker -t mreviewer-review .
+
+      - name: Run review
+        env:
+          GITHUB_BASE_URL: https://github.com
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL }}
+        run: |
+          docker run --rm \
+            -e GITHUB_BASE_URL \
+            -e GITHUB_TOKEN \
+            -e ANTHROPIC_BASE_URL \
+            -e ANTHROPIC_API_KEY \
+            -e ANTHROPIC_MODEL \
+            mreviewer-review \
+            /app/mreviewer \
+            --target "${{ github.event.pull_request.html_url }}" \
+            --output json \
+            --publish full-review-comments \
+            --exit-mode requested_changes

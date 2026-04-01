@@ -11,6 +11,7 @@ type PublishCandidate struct {
 type ReviewBundle struct {
 	Target            ReviewTarget       `json:"target"`
 	Artifacts         []ReviewerArtifact `json:"artifacts,omitempty"`
+	AdvisorArtifact   *ReviewerArtifact  `json:"advisor_artifact,omitempty"`
 	Verdict           string             `json:"verdict,omitempty"`
 	MarkdownSummary   string             `json:"markdown_summary,omitempty"`
 	JSONSchemaVersion string             `json:"json_schema_version,omitempty"`
