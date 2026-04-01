@@ -664,7 +664,7 @@ type CommentWriter interface {
 ### 17.3 Provider SDK
 
 - OpenAI Responses / structured outputs
-- Anthropic Messages / Claude Code 相关 CLI or API wrapper
+- Anthropic Messages / provider-specific CLI or API wrapper
 - Azure OpenAI
 - Bedrock
 - Vertex AI

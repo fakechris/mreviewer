@@ -93,7 +93,7 @@ Severity 在数据库中保持英文存储，中文标签仅在 GitLab comment/s
 
 ### #3 轻量部署 — 分阶段实现
 
-**CC = Claude Code 实现时间（单开发者 wall-clock）**
+**CC = 单开发者实现时间（wall-clock）**
 
 **Phase 1: Demo / CI pipeline 模式**（~8h CC）
 - **架构选择：** 不复用现有 `Processor`（它深度耦合 `db.Queries`）。新建一个 `cmd/review-cli/main.go` 轻量管线：
