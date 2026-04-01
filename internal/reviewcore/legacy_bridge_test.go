@@ -173,7 +173,7 @@ func TestPublishCandidatesFromLegacyResultCarriesGitLabAnchorMetadata(t *testing
 	}
 }
 
-func TestPublishCandidatesFromLegacyResultDowngradesUnanchoredFindingToSummary(t *testing.T) {
+func TestPublishCandidatesFromLegacyResultKeepsUnanchoredFindingBlocking(t *testing.T) {
 	result := llm.ReviewResult{
 		SchemaVersion: "1.0",
 		ReviewRunID:   "run-57",
@@ -196,8 +196,11 @@ func TestPublishCandidatesFromLegacyResultDowngradesUnanchoredFindingToSummary(t
 	if candidates[0].Kind != "summary" {
 		t.Fatalf("first candidate kind = %q, want summary", candidates[0].Kind)
 	}
-	if candidates[1].Kind != "summary" {
-		t.Fatalf("second candidate kind = %q, want summary downgrade", candidates[1].Kind)
+	if candidates[1].Kind != "finding" {
+		t.Fatalf("second candidate kind = %q, want finding", candidates[1].Kind)
+	}
+	if !candidates[1].PublishAsSummary {
+		t.Fatal("PublishAsSummary = false, want true")
 	}
 	if candidates[1].Title != "MR title does not match the actual change" {
 		t.Fatalf("summary downgrade title = %q", candidates[1].Title)

@@ -272,6 +272,7 @@ func persistMRVersionFromInput(ctx context.Context, store db.Store, mergeRequest
 	if strings.TrimSpace(version.HeadSHA) == "" {
 		return nil
 	}
+	latest, latestErr := store.GetLatestMRVersion(ctx, mergeRequestID)
 	versionID := int64(0)
 	if raw := strings.TrimSpace(snapshotVersion.PlatformVersionID); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
@@ -279,8 +280,10 @@ func persistMRVersionFromInput(ctx context.Context, store db.Store, mergeRequest
 			versionID = parsed
 		}
 	}
-	latest, err := store.GetLatestMRVersion(ctx, mergeRequestID)
-	if err == nil &&
+	if versionID <= 0 && latestErr == nil && latest.GitlabVersionID > 0 {
+		versionID = latest.GitlabVersionID
+	}
+	if latestErr == nil &&
 		latest.GitlabVersionID == versionID &&
 		strings.TrimSpace(latest.HeadSha) == strings.TrimSpace(version.HeadSHA) &&
 		strings.TrimSpace(latest.BaseSha) == strings.TrimSpace(version.BaseSHA) &&
@@ -288,7 +291,7 @@ func persistMRVersionFromInput(ctx context.Context, store db.Store, mergeRequest
 		strings.TrimSpace(latest.PatchIDSha) == strings.TrimSpace(version.PatchIDSHA) {
 		return nil
 	}
-	_, err = store.InsertMRVersion(ctx, db.InsertMRVersionParams{
+	_, err := store.InsertMRVersion(ctx, db.InsertMRVersionParams{
 		MergeRequestID:  mergeRequestID,
 		GitlabVersionID: versionID,
 		BaseSha:         strings.TrimSpace(version.BaseSHA),

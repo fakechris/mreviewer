@@ -39,6 +39,14 @@ func (w *Writer) BuildRequests(bundle core.ReviewBundle) (WriteRequests, error) 
 				Body:            body,
 			})
 		case "finding":
+			if candidate.PublishAsSummary {
+				reqs.Notes = append(reqs.Notes, reviewcomment.CreateNoteRequest{
+					ProjectID:       bundle.Target.ProjectID,
+					MergeRequestIID: bundle.Target.ChangeNumber,
+					Body:            body,
+				})
+				continue
+			}
 			position, err := buildPosition(candidate.Location)
 			if err != nil {
 				return WriteRequests{}, err

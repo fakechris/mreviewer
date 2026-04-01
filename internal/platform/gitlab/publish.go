@@ -65,5 +65,8 @@ func isPublishPositionFailure(err error) bool {
 		return false
 	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "400") || strings.Contains(message, "position") || strings.Contains(message, "line_code") || strings.Contains(message, "invalid line")
+	return strings.Contains(message, "400") &&
+		(strings.Contains(message, "position") ||
+			strings.Contains(message, "line_code") ||
+			strings.Contains(message, "invalid line"))
 }

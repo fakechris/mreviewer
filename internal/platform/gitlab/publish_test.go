@@ -117,3 +117,15 @@ func TestPublisherFallsBackToNoteOnPositionFailure(t *testing.T) {
 		t.Fatalf("fallback note body = %q", client.notes[0].Body)
 	}
 }
+
+func TestIsPublishPositionFailureRequiresHTTP400AndPositionSignal(t *testing.T) {
+	if isPublishPositionFailure(errors.New("gitlab: 500 upstream exploded while validating position")) {
+		t.Fatal("500 error with position text should not trigger fallback")
+	}
+	if isPublishPositionFailure(errors.New("gitlab: POST failed with status 400 but no anchor details")) {
+		t.Fatal("plain 400 without position markers should not trigger fallback")
+	}
+	if !isPublishPositionFailure(errors.New(`gitlab: POST /discussions returned status 400: {"message":"invalid line_code for position"}`)) {
+		t.Fatal("400 position error should trigger fallback")
+	}
+}

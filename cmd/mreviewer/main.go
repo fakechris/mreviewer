@@ -335,7 +335,7 @@ func summaryOnlyBundle(bundle core.ReviewBundle) core.ReviewBundle {
 	filtered := bundle
 	filtered.PublishCandidates = nil
 	for _, candidate := range bundle.PublishCandidates {
-		if candidate.Kind == "summary" {
+		if candidate.Kind == "summary" || candidate.PublishAsSummary {
 			filtered.PublishCandidates = append(filtered.PublishCandidates, candidate)
 		}
 	}

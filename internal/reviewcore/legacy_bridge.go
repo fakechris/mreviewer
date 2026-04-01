@@ -40,11 +40,12 @@ func PublishCandidatesFromLegacyResult(result llm.ReviewResult) []PublishCandida
 		location := locationFromLegacyFinding(finding)
 		if strings.TrimSpace(location.Path) == "" {
 			candidates = append(candidates, PublishCandidate{
-				Kind:     "summary",
-				Title:    strings.TrimSpace(finding.Title),
-				Body:     summaryBodyFromLegacyFinding(finding),
-				Severity: strings.TrimSpace(finding.Severity),
-				Location: location,
+				Kind:             "finding",
+				Title:            strings.TrimSpace(finding.Title),
+				Body:             summaryBodyFromLegacyFinding(finding),
+				Severity:         strings.TrimSpace(finding.Severity),
+				PublishAsSummary: true,
+				Location:         location,
 			})
 			continue
 		}

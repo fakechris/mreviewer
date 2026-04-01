@@ -78,11 +78,12 @@ func publishCandidateForFinding(input ReviewInput, finding Finding) PublishCandi
 	location := locationWithGitLabVersionMetadata(input, finding.Identity.Location)
 	if !locationSupportsInlineDiscussion(location) {
 		return PublishCandidate{
-			Kind:     "summary",
-			Title:    finding.Title,
-			Body:     summaryBodyFromFinding(finding.Title, finding.Body),
-			Severity: finding.Severity,
-			Location: location,
+			Kind:             "finding",
+			Title:            finding.Title,
+			Body:             summaryBodyFromFinding(finding.Title, finding.Body),
+			Severity:         finding.Severity,
+			PublishAsSummary: true,
+			Location:         location,
 		}
 	}
 	return PublishCandidate{

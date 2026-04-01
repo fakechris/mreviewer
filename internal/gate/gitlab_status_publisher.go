@@ -34,20 +34,20 @@ func (p *GitLabStatusPublisher) PublishStatus(ctx context.Context, result Result
 		return nil
 	}
 
-	project, err := p.store.GetProject(ctx, result.ProjectID)
-	if err != nil {
-		return fmt.Errorf("gate: load project %d: %w", result.ProjectID, err)
-	}
-	if project.GitlabProjectID == 0 {
-		return fmt.Errorf("gate: project %d missing gitlab_project_id", result.ProjectID)
-	}
-
 	mergeRequest, err := p.store.GetMergeRequest(ctx, result.MergeRequestID)
 	if err != nil {
 		return fmt.Errorf("gate: load merge request %d: %w", result.MergeRequestID, err)
 	}
 	if looksLikeGitHubURL(mergeRequest.WebUrl) {
 		return nil
+	}
+
+	project, err := p.store.GetProject(ctx, result.ProjectID)
+	if err != nil {
+		return fmt.Errorf("gate: load project %d: %w", result.ProjectID, err)
+	}
+	if project.GitlabProjectID == 0 {
+		return fmt.Errorf("gate: project %d missing gitlab_project_id", result.ProjectID)
 	}
 
 	req := gitlab.CommitStatusRequest{

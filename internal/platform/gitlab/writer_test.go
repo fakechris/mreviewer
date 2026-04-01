@@ -261,3 +261,37 @@ func TestWriterBuildRequestsFallsBackToTitleWhenFindingBodyMissing(t *testing.T)
 		t.Fatalf("discussion body = %q, want title fallback", reqs.Discussions[0].Body)
 	}
 }
+
+func TestWriterBuildRequestsPublishesSummaryStyledFindingsAsNotes(t *testing.T) {
+	writer := NewWriter()
+	bundle := core.ReviewBundle{
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitLab,
+			URL:          "https://gitlab.example.com/group/repo/-/merge_requests/23",
+			Repository:   "group/repo",
+			ProjectID:    77,
+			ChangeNumber: 23,
+		},
+		PublishCandidates: []core.PublishCandidate{{
+			Kind:             "finding",
+			Title:            "MR title does not match the actual change",
+			Body:             "### MR title does not match the actual change\n\nThe diff does not modify billing logic.",
+			Severity:         "medium",
+			PublishAsSummary: true,
+		}},
+	}
+
+	reqs, err := writer.BuildRequests(bundle)
+	if err != nil {
+		t.Fatalf("BuildRequests: %v", err)
+	}
+	if len(reqs.Discussions) != 0 {
+		t.Fatalf("discussions = %d, want 0", len(reqs.Discussions))
+	}
+	if len(reqs.Notes) != 1 {
+		t.Fatalf("notes = %d, want 1", len(reqs.Notes))
+	}
+	if reqs.Notes[0].Body == "" {
+		t.Fatal("summary-styled finding note body = empty")
+	}
+}

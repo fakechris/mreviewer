@@ -214,7 +214,7 @@ func TestEngineAddsGitLabVersionMetadataToFindingPublishCandidates(t *testing.T)
 	}
 }
 
-func TestEngineDowngradesUnanchoredFindingPublishCandidatesToSummary(t *testing.T) {
+func TestEnginePublishesUnanchoredFindingAsBlockingSummaryCandidate(t *testing.T) {
 	engine := NewEngine(nil, judgeFunc(func(_ []ReviewerArtifact) JudgeDecision {
 		return JudgeDecision{
 			Verdict: "requested_changes",
@@ -243,8 +243,11 @@ func TestEngineDowngradesUnanchoredFindingPublishCandidatesToSummary(t *testing.
 	if len(bundle.PublishCandidates) != 2 {
 		t.Fatalf("publish candidates len = %d, want 2", len(bundle.PublishCandidates))
 	}
-	if bundle.PublishCandidates[1].Kind != "summary" {
-		t.Fatalf("candidate kind = %q, want summary downgrade", bundle.PublishCandidates[1].Kind)
+	if bundle.PublishCandidates[1].Kind != "finding" {
+		t.Fatalf("candidate kind = %q, want finding", bundle.PublishCandidates[1].Kind)
+	}
+	if !bundle.PublishCandidates[1].PublishAsSummary {
+		t.Fatal("PublishAsSummary = false, want true")
 	}
 	if bundle.PublishCandidates[1].Body != "### MR title does not match the actual change\n\nThe change set does not contain any billing logic updates." {
 		t.Fatalf("candidate body = %q", bundle.PublishCandidates[1].Body)

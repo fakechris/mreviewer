@@ -157,6 +157,7 @@ func TestRunWithDepsPublishesSummaryOnlyBundle(t *testing.T) {
 			PublishCandidates: []core.PublishCandidate{
 				{Kind: "summary", Body: "judge summary"},
 				{Kind: "finding", Title: "Unsafe query", Body: "body"},
+				{Kind: "finding", Title: "MR title mismatch", Body: "### MR title mismatch\n\nbody", PublishAsSummary: true},
 			},
 		},
 	}
@@ -183,11 +184,14 @@ func TestRunWithDepsPublishesSummaryOnlyBundle(t *testing.T) {
 	if len(published) != 1 {
 		t.Fatalf("publish calls = %d, want 1", len(published))
 	}
-	if len(published[0].bundle.PublishCandidates) != 1 {
-		t.Fatalf("published candidates = %d, want 1", len(published[0].bundle.PublishCandidates))
+	if len(published[0].bundle.PublishCandidates) != 2 {
+		t.Fatalf("published candidates = %d, want 2", len(published[0].bundle.PublishCandidates))
 	}
 	if published[0].bundle.PublishCandidates[0].Kind != "summary" {
 		t.Fatalf("published candidate kind = %q, want summary", published[0].bundle.PublishCandidates[0].Kind)
+	}
+	if !published[0].bundle.PublishCandidates[1].PublishAsSummary {
+		t.Fatal("expected summary-only publish to retain summary-styled finding")
 	}
 }
 
@@ -714,5 +718,21 @@ func TestRunWithDepsDoesNotFailWhenStatusPublishingFails(t *testing.T) {
 	}
 	if payload["target"] == nil {
 		t.Fatalf("target missing from output: %s", stdout.String())
+	}
+}
+
+func TestFinalStatusStateTreatsSummaryStyledFindingAsBlocking(t *testing.T) {
+	bundle := core.ReviewBundle{
+		PublishCandidates: []core.PublishCandidate{{
+			Kind:             "finding",
+			Body:             "### MR title mismatch\n\nbody",
+			PublishAsSummary: true,
+		}},
+	}
+	if got := finalStatusState(bundle); got != "failed" {
+		t.Fatalf("finalStatusState = %q, want failed", got)
+	}
+	if got := blockingFindings(bundle); got != 1 {
+		t.Fatalf("blockingFindings = %d, want 1", got)
 	}
 }
