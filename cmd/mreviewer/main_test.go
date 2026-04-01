@@ -52,11 +52,12 @@ func TestRunWithDepsJSONOutputArtifactOnly(t *testing.T) {
 				Repository:   "group/repo",
 				ChangeNumber: 23,
 				ProjectID:    77,
+				},
+				MarkdownSummary:   "# Review\n\nLooks good.",
+				JSONSchemaVersion: "v1alpha1",
+				Verdict:           "pass",
 			},
-			MarkdownSummary:   "# Review\n\nLooks good.",
-			JSONSchemaVersion: "v1alpha1",
-		},
-	}
+		}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -98,6 +99,65 @@ func TestRunWithDepsJSONOutputArtifactOnly(t *testing.T) {
 	}
 	if payload["markdown_summary"] != "# Review\n\nLooks good." {
 		t.Fatalf("markdown_summary = %#v", payload["markdown_summary"])
+	}
+	if payload["review_brief"] == nil {
+		t.Fatalf("review_brief missing: %s", stdout.String())
+	}
+}
+
+func TestRenderMarkdownOutputIncludesDecisionBriefSections(t *testing.T) {
+	bundle := core.ReviewBundle{
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitHub,
+			URL:          "https://github.com/acme/repo/pull/17",
+			Repository:   "acme/repo",
+			ChangeNumber: 17,
+		},
+		Verdict: "requested_changes",
+		Artifacts: []core.ReviewerArtifact{
+			{ReviewerID: "security", ReviewerKind: "pack", Summary: "security summary"},
+			{ReviewerID: "database", ReviewerKind: "pack", Summary: "database summary"},
+		},
+		PublishCandidates: []core.PublishCandidate{
+			{Kind: "finding", Severity: "high", Title: "Unsafe query path", Body: "User input reaches raw SQL."},
+			{Kind: "summary", Body: "judge summary"},
+		},
+		MarkdownSummary: "# Review\n\njudge summary",
+	}
+
+	rendered := renderMarkdownOutput(bundle, nil)
+	if !strings.Contains(rendered, "# Review Decision Brief") {
+		t.Fatalf("markdown output missing decision brief header: %s", rendered)
+	}
+	if !strings.Contains(rendered, "## Final Verdict") {
+		t.Fatalf("markdown output missing final verdict section: %s", rendered)
+	}
+	if !strings.Contains(rendered, "## What To Fix First") {
+		t.Fatalf("markdown output missing action section: %s", rendered)
+	}
+	if !strings.Contains(rendered, "Unsafe query path") {
+		t.Fatalf("markdown output missing finding title: %s", rendered)
+	}
+}
+
+func TestRenderMarkdownOutputSanitizesActionLabels(t *testing.T) {
+	bundle := core.ReviewBundle{
+		Verdict: "requested_changes",
+		PublishCandidates: []core.PublishCandidate{
+			{
+				Kind:     "finding",
+				Severity: "high",
+				Body:     "### Header style title\n\nMore details on later lines.",
+			},
+		},
+	}
+
+	rendered := renderMarkdownOutput(bundle, nil)
+	if strings.Contains(rendered, "### Header style title") {
+		t.Fatalf("markdown output should not keep markdown heading markers: %s", rendered)
+	}
+	if !strings.Contains(rendered, "[high] Header style title") {
+		t.Fatalf("markdown output missing sanitized action label: %s", rendered)
 	}
 }
 
@@ -472,6 +532,25 @@ func TestRunWithDepsJSONOutputSupportsMultiTargetCompare(t *testing.T) {
 	}
 	if aggregate["total_reviewer_count"] != float64(5) {
 		t.Fatalf("total_reviewer_count = %#v, want 5", aggregate["total_reviewer_count"])
+	}
+}
+
+func TestBuildAggregateReviewBriefCountsBundlesEvenWhenSomeComparisonsMissing(t *testing.T) {
+	bundles := []core.ReviewBundle{
+		{Verdict: "requested_changes"},
+		{Verdict: "pass"},
+	}
+	aggregate := &comparepkg.AggregateReport{
+		TargetCount:          1,
+		AverageAgreementRate: 0.5,
+	}
+
+	brief := buildAggregateReviewBrief(bundles, aggregate)
+	if brief.TargetCount != 2 {
+		t.Fatalf("TargetCount = %d, want 2", brief.TargetCount)
+	}
+	if brief.RequestedChanges != 1 {
+		t.Fatalf("RequestedChanges = %d, want 1", brief.RequestedChanges)
 	}
 }
 
