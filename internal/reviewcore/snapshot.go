@@ -3,7 +3,10 @@ package reviewcore
 import "encoding/json"
 
 type PlatformAuthor struct {
+	UserID   string `json:"user_id,omitempty"`
 	Username string `json:"username,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Email    string `json:"email,omitempty"`
 }
 
 type PlatformChange struct {
@@ -48,8 +51,17 @@ type PlatformDiff struct {
 }
 
 type PlatformSnapshot struct {
-	Target  ReviewTarget    `json:"target"`
-	Change  PlatformChange  `json:"change"`
-	Version PlatformVersion `json:"version"`
-	Diffs   []PlatformDiff  `json:"diffs,omitempty"`
+	Target     ReviewTarget    `json:"target"`
+	Change     PlatformChange  `json:"change"`
+	Version    PlatformVersion `json:"version"`
+	HeadCommit PlatformCommit  `json:"head_commit,omitempty"`
+	Diffs      []PlatformDiff  `json:"diffs,omitempty"`
+}
+
+type PlatformCommit struct {
+	SHA       string         `json:"sha,omitempty"`
+	Title     string         `json:"title,omitempty"`
+	Message   string         `json:"message,omitempty"`
+	Author    PlatformAuthor `json:"author,omitempty"`
+	Committer PlatformAuthor `json:"committer,omitempty"`
 }

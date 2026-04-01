@@ -39,6 +39,44 @@ SET provider_latency_ms = ?, provider_tokens_total = ?, updated_at = CURRENT_TIM
 WHERE id = ?
 `
 
+const retryReviewRunNow = `
+UPDATE review_runs
+SET status = 'failed',
+    next_retry_at = CURRENT_TIMESTAMP,
+    claimed_by = '',
+    claimed_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+const cancelReviewRun = `
+UPDATE review_runs
+SET status = 'cancelled',
+    error_code = ?,
+    error_detail = ?,
+    superseded_by_run_id = NULL,
+    next_retry_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+const requeueReviewRun = `
+UPDATE review_runs
+SET status = 'pending',
+    error_code = '',
+    error_detail = NULL,
+    superseded_by_run_id = NULL,
+    next_retry_at = NULL,
+    claimed_by = '',
+    claimed_at = NULL,
+    started_at = NULL,
+    completed_at = NULL,
+    provider_latency_ms = 0,
+    provider_tokens_total = 0,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
 func (q *Queries) MarkReviewRunRetryableFailureIfRunning(ctx context.Context, arg MarkReviewRunRetryableFailureParams) (bool, error) {
 	result, err := q.db.ExecContext(ctx, markReviewRunRetryableFailureIfRunning,
 		arg.ErrorCode,
@@ -93,6 +131,21 @@ func (q *Queries) UpdateReviewRunProviderMetrics(ctx context.Context, arg Update
 		arg.ProviderTokensTotal,
 		arg.ID,
 	)
+	return err
+}
+
+func (q *Queries) RetryReviewRunNow(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, retryReviewRunNow, id)
+	return err
+}
+
+func (q *Queries) CancelReviewRun(ctx context.Context, id int64, errorCode, errorDetail string) error {
+	_, err := q.db.ExecContext(ctx, cancelReviewRun, errorCode, errorDetail, id)
+	return err
+}
+
+func (q *Queries) RequeueReviewRun(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, requeueReviewRun, id)
 	return err
 }
 

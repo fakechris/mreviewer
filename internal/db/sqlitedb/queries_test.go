@@ -339,6 +339,150 @@ func TestAdminDashboardQueriesUseRetryEligibilityAndExcludeSupersedes(t *testing
 	}
 }
 
+func TestAdminDashboardRunListAndDetail(t *testing.T) {
+	conn := setupDB(t)
+	q := sqlitedb.New(conn)
+	ctx := context.Background()
+	_, projID := seedProject(t, q, ctx)
+	mrID := seedMR(t, q, ctx, projID)
+	runID := seedRun(t, q, ctx, projID, mrID)
+
+	hookRes, err := q.InsertHookEvent(ctx, db.InsertHookEventParams{
+		DeliveryKey:         "sqlite-run-list-detail",
+		HookSource:          "project",
+		EventType:           "merge_request",
+		Action:              "update",
+		HeadSha:             "head-123",
+		VerificationOutcome: "verified",
+	})
+	if err != nil {
+		t.Fatalf("InsertHookEvent: %v", err)
+	}
+	hookID, _ := hookRes.LastInsertId()
+
+	if _, err := conn.ExecContext(ctx, `
+		UPDATE review_runs
+		SET hook_event_id = ?, scope_json = ?, status = 'failed', error_code = 'publish_failed',
+		    claimed_by = 'worker-1', retry_count = 2, provider_latency_ms = 810, provider_tokens_total = 4200
+		WHERE id = ?`,
+		hookID,
+		[]byte(`{"platform":"github"}`),
+		runID,
+	); err != nil {
+		t.Fatalf("update review run: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE merge_requests SET web_url = 'https://github.com/acme/repo/pull/17' WHERE id = ?`, mrID); err != nil {
+		t.Fatalf("update merge request web_url: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE projects SET path_with_namespace = 'acme/repo' WHERE id = ?`, projID); err != nil {
+		t.Fatalf("update project path: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+		INSERT INTO review_findings (review_run_id, merge_request_id, category, severity, confidence, title, path, anchor_kind, canonical_key, anchor_fingerprint, semantic_fingerprint, state)
+		VALUES (?, ?, 'db', 'high', 0.9, 'finding one', 'db.go', 'new_line', 'k1', 'a1', 's1', 'active'),
+		       (?, ?, 'security', 'medium', 0.8, 'finding two', 'sec.go', 'new_line', 'k2', 'a2', 's2', 'active')`,
+		runID, mrID, runID, mrID,
+	); err != nil {
+		t.Fatalf("insert findings: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+		INSERT INTO comment_actions (review_run_id, action_type, idempotency_key, status)
+		VALUES (?, 'create_summary', 'action-1', 'completed')`,
+		runID,
+	); err != nil {
+		t.Fatalf("insert comment action: %v", err)
+	}
+
+	runs, err := q.ListRecentRuns(ctx, db.ListRecentRunsParams{
+		Platform:    "github",
+		Status:      "failed",
+		ErrorCode:   "publish_failed",
+		ProjectPath: "acme",
+		HeadSha:     "abc",
+		LimitCount:  10,
+	})
+	if err != nil {
+		t.Fatalf("ListRecentRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs len = %d, want 1", len(runs))
+	}
+	if runs[0].FindingCount != 2 {
+		t.Fatalf("finding_count = %d, want 2", runs[0].FindingCount)
+	}
+	if runs[0].CommentActionCount != 1 {
+		t.Fatalf("comment_action_count = %d, want 1", runs[0].CommentActionCount)
+	}
+
+	detail, err := q.GetRunDetail(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetRunDetail: %v", err)
+	}
+	if detail.Platform != "github" {
+		t.Fatalf("detail platform = %q, want github", detail.Platform)
+	}
+	if detail.HookAction != "update" {
+		t.Fatalf("detail hook_action = %q, want update", detail.HookAction)
+	}
+	if detail.ProviderTokensTotal != 4200 {
+		t.Fatalf("detail provider_tokens_total = %d, want 4200", detail.ProviderTokensTotal)
+	}
+}
+
+func TestOperatorRunActions(t *testing.T) {
+	q := newQueries(t)
+	ctx := context.Background()
+	_, projID := seedProject(t, q, ctx)
+	mrID := seedMR(t, q, ctx, projID)
+
+	retryRunID := seedRun(t, q, ctx, projID, mrID)
+	if err := q.MarkReviewRunFailed(ctx, db.MarkReviewRunFailedParams{
+		ID:         retryRunID,
+		ErrorCode:  "provider_failed",
+		ErrorDetail: sql.NullString{String: "provider failed", Valid: true},
+		RetryCount: 1,
+	}); err != nil {
+		t.Fatalf("prepare retry run: %v", err)
+	}
+	if err := q.RetryReviewRunNow(ctx, retryRunID); err != nil {
+		t.Fatalf("RetryReviewRunNow: %v", err)
+	}
+	retryRun, err := q.GetReviewRun(ctx, retryRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun(retry): %v", err)
+	}
+	if !retryRun.NextRetryAt.Valid {
+		t.Fatal("retry run next_retry_at invalid, want valid")
+	}
+
+	cancelRunID := seedRun(t, q, ctx, projID, mrID)
+	if err := q.CancelReviewRun(ctx, cancelRunID, "cancelled_by_operator", "Cancelled by admin operator"); err != nil {
+		t.Fatalf("CancelReviewRun: %v", err)
+	}
+	cancelRun, err := q.GetReviewRun(ctx, cancelRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun(cancel): %v", err)
+	}
+	if cancelRun.Status != "cancelled" || cancelRun.ErrorCode != "cancelled_by_operator" {
+		t.Fatalf("cancelled run = %+v", cancelRun)
+	}
+
+	requeueRunID := seedRun(t, q, ctx, projID, mrID)
+	if err := q.CancelReviewRun(ctx, requeueRunID, "cancelled_by_operator", "Cancelled by admin operator"); err != nil {
+		t.Fatalf("prepare requeue run: %v", err)
+	}
+	if err := q.RequeueReviewRun(ctx, requeueRunID); err != nil {
+		t.Fatalf("RequeueReviewRun: %v", err)
+	}
+	requeuedRun, err := q.GetReviewRun(ctx, requeueRunID)
+	if err != nil {
+		t.Fatalf("GetReviewRun(requeue): %v", err)
+	}
+	if requeuedRun.Status != "pending" || requeuedRun.ClaimedBy != "" {
+		t.Fatalf("requeued run = %+v", requeuedRun)
+	}
+}
+
 func TestReviewRunRetryableFailure(t *testing.T) {
 	q := newQueries(t)
 	ctx := context.Background()

@@ -111,12 +111,27 @@ type MergeRequestDiff struct {
 type MergeRequestSnapshot struct {
 	MergeRequest MergeRequest
 	Version      MergeRequestVersion
+	HeadCommit   MergeRequestCommit
 	Diffs        []MergeRequestDiff
 }
 
+type MergeRequestCommit struct {
+	SHA     string `json:"id"`
+	Title   string `json:"title"`
+	Message string `json:"message"`
+	Author  struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	Committer struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+}
+
 type MergeRequestNote struct {
-	ID   int64  `json:"id"`
-	Body string `json:"body"`
+	ID     int64  `json:"id"`
+	Body   string `json:"body"`
 	Author struct {
 		Username string `json:"username"`
 	} `json:"author"`
@@ -130,8 +145,8 @@ type MergeRequestDiscussionPosition struct {
 }
 
 type MergeRequestDiscussionNote struct {
-	ID       int64                          `json:"id"`
-	Body     string                         `json:"body"`
+	ID       int64                           `json:"id"`
+	Body     string                          `json:"body"`
 	Position *MergeRequestDiscussionPosition `json:"position"`
 	Author   struct {
 		Username string `json:"username"`
@@ -139,7 +154,7 @@ type MergeRequestDiscussionNote struct {
 }
 
 type MergeRequestDiscussion struct {
-	ID    string                      `json:"id"`
+	ID    string                       `json:"id"`
 	Notes []MergeRequestDiscussionNote `json:"notes"`
 }
 
@@ -441,9 +456,14 @@ func (c *Client) GetMergeRequestSnapshotByProjectRef(ctx context.Context, projec
 			if err != nil {
 				return MergeRequestSnapshot{}, err
 			}
+			headCommit, err := c.GetCommitByProjectRef(ctx, projectRef, mr.HeadSHA)
+			if err != nil {
+				headCommit = MergeRequestCommit{}
+			}
 			return MergeRequestSnapshot{
 				MergeRequest: mr,
 				Version:      version,
+				HeadCommit:   headCommit,
 				Diffs:        diffs,
 			}, nil
 		}
@@ -466,6 +486,31 @@ func (c *Client) GetMergeRequestSnapshotByProjectRef(ctx context.Context, projec
 			return MergeRequestSnapshot{}, err
 		}
 	}
+}
+
+func (c *Client) GetCommitByProjectRef(ctx context.Context, projectRef, sha string) (MergeRequestCommit, error) {
+	var commit struct {
+		ID             string `json:"id"`
+		Title          string `json:"title"`
+		Message        string `json:"message"`
+		AuthorName     string `json:"author_name"`
+		AuthorEmail    string `json:"author_email"`
+		CommitterName  string `json:"committer_name"`
+		CommitterEmail string `json:"committer_email"`
+	}
+	if _, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/api/v4/projects/%s/repository/commits/%s", url.PathEscape(projectRef), url.PathEscape(sha)), nil, &commit); err != nil {
+		return MergeRequestCommit{}, err
+	}
+	result := MergeRequestCommit{
+		SHA:     commit.ID,
+		Title:   commit.Title,
+		Message: commit.Message,
+	}
+	result.Author.Name = commit.AuthorName
+	result.Author.Email = commit.AuthorEmail
+	result.Committer.Name = commit.CommitterName
+	result.Committer.Email = commit.CommitterEmail
+	return result, nil
 }
 
 func (c *Client) GetRepositoryFile(ctx context.Context, projectID int64, filePath, ref string) (string, error) {

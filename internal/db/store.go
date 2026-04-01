@@ -13,6 +13,16 @@ type Store interface {
 	MarkReviewRunFailedIfRunning(ctx context.Context, arg MarkReviewRunFailedParams) (bool, error)
 	UpdateReviewRunCompletedIfRunning(ctx context.Context, arg UpdateReviewRunCompletedParams) (bool, error)
 	UpdateReviewRunProviderMetrics(ctx context.Context, arg UpdateReviewRunProviderMetricsParams) error
+	ListRecentRuns(ctx context.Context, arg ListRecentRunsParams) ([]ListRecentRunsRow, error)
+	GetRunDetail(ctx context.Context, id int64) (GetRunDetailRow, error)
+	RetryReviewRunNow(ctx context.Context, id int64) error
+	CancelReviewRun(ctx context.Context, id int64, errorCode, errorDetail string) error
+	RequeueReviewRun(ctx context.Context, id int64) error
+	UpsertIdentityMapping(ctx context.Context, arg UpsertIdentityMappingParams) error
+	ListIdentityMappings(ctx context.Context, arg ListIdentityMappingsParams) ([]ListIdentityMappingsRow, error)
+	GetIdentityMapping(ctx context.Context, id int64) (IdentityMapping, error)
+	GetIdentityMappingByIdentityKey(ctx context.Context, arg GetIdentityMappingByIdentityKeyParams) (IdentityMapping, error)
+	ResolveIdentityMapping(ctx context.Context, arg ResolveIdentityMappingParams) error
 }
 
 // Verify that *Queries satisfies Store at compile time.

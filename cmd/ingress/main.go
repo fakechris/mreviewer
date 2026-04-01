@@ -108,7 +108,7 @@ func newMux(logger *slog.Logger, cfg *config.Config, db *sql.DB, dialect databas
 	githubWebhookHandler := githubhooks.NewHandler(logger, db, cfg.GitHubWebhookSecret, runService, githubhooks.WithHandlerStoreFactory(newStore))
 	mux.Handle("POST /github/webhook", githubWebhookHandler)
 
-	adminSvc := adminapi.NewService(newStore(db))
+	adminSvc := adminapi.NewService(newStore(db), adminapi.WithActionStoreFactory(db, newStore))
 	mux.Handle("/admin/api/", adminapi.NewHandler(adminSvc, cfg.AdminToken))
 	mux.Handle("/admin/", adminui.NewHandler(cfg.AdminToken))
 

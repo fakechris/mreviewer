@@ -135,6 +135,10 @@ func (c *Client) GetPullRequestSnapshotByRepositoryRef(ctx context.Context, repo
 	if err != nil {
 		return PullRequestSnapshot{}, err
 	}
+	headCommit, err := c.getCommitByRepositoryRef(ctx, repositoryRef, prResp.Head.SHA)
+	if err != nil {
+		headCommit = PullRequestCommit{}
+	}
 
 	return PullRequestSnapshot{
 		PullRequest: PullRequest{
@@ -153,7 +157,53 @@ func (c *Client) GetPullRequestSnapshotByRepositoryRef(ctx context.Context, repo
 				Login: prResp.User.Login,
 			},
 		},
-		Files: files,
+		HeadCommit: headCommit,
+		Files:      files,
+	}, nil
+}
+
+func (c *Client) getCommitByRepositoryRef(ctx context.Context, repositoryRef, sha string) (PullRequestCommit, error) {
+	var payload struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+			Author  struct {
+				Name  string `json:"name"`
+				Email string `json:"email"`
+			} `json:"author"`
+			Committer struct {
+				Name  string `json:"name"`
+				Email string `json:"email"`
+			} `json:"committer"`
+		} `json:"commit"`
+		Author struct {
+			Login string `json:"login"`
+			ID    int64  `json:"id"`
+		} `json:"author"`
+		Committer struct {
+			Login string `json:"login"`
+			ID    int64  `json:"id"`
+		} `json:"committer"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s", repositoryRef, sha), nil, &payload); err != nil {
+		return PullRequestCommit{}, err
+	}
+	return PullRequestCommit{
+		SHA:     payload.SHA,
+		Message: payload.Commit.Message,
+		Title:   strings.TrimSpace(strings.Split(payload.Commit.Message, "\n")[0]),
+		Author: PullRequestUser{
+			Login: payload.Author.Login,
+			Name:  payload.Commit.Author.Name,
+			Email: payload.Commit.Author.Email,
+			ID:    payload.Author.ID,
+		},
+		Committer: PullRequestUser{
+			Login: payload.Committer.Login,
+			Name:  payload.Commit.Committer.Name,
+			Email: payload.Commit.Committer.Email,
+			ID:    payload.Committer.ID,
+		},
 	}, nil
 }
 
