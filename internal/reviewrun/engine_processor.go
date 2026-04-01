@@ -36,6 +36,8 @@ type EngineProcessor struct {
 	engine    ReviewEngine
 	newStore  func(db.DBTX) db.Store
 	writeback RunWriteback
+	defaultReviewerPacks []string
+	defaultAdvisorRoute  string
 }
 
 func NewEngineProcessor(sqlDB *sql.DB, loadInput ReviewInputLoader, engine ReviewEngine) *EngineProcessor {
@@ -61,6 +63,16 @@ func NewEngineProcessorWithStoreFactory(sqlDB *sql.DB, loadInput ReviewInputLoad
 
 func (p *EngineProcessor) WithWriteback(writeback RunWriteback) *EngineProcessor {
 	p.writeback = writeback
+	return p
+}
+
+func (p *EngineProcessor) WithDefaultReviewerPacks(packIDs []string) *EngineProcessor {
+	p.defaultReviewerPacks = append([]string(nil), packIDs...)
+	return p
+}
+
+func (p *EngineProcessor) WithDefaultAdvisorRoute(route string) *EngineProcessor {
+	p.defaultAdvisorRoute = strings.TrimSpace(route)
 	return p
 }
 
@@ -108,7 +120,9 @@ func (p *EngineProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (sch
 	bundle, err := p.engine.Run(ctx, input, core.RunOptions{
 		OutputMode:    "both",
 		PublishMode:   "full-review-comments",
+		ReviewerPacks: append([]string(nil), p.defaultReviewerPacks...),
 		RouteOverride: providerRoute,
+		AdvisorRoute:  p.defaultAdvisorRoute,
 	})
 	if err != nil {
 		return scheduler.ProcessOutcome{}, fmt.Errorf("reviewrun: run review engine: %w", err)

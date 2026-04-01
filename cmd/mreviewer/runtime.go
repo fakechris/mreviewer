@@ -16,6 +16,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/llm"
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
+	"github.com/mreviewer/mreviewer/internal/reviewadvisor"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/reviewinput"
 	"github.com/mreviewer/mreviewer/internal/reviewpack"
@@ -34,6 +35,35 @@ type failingEngine struct{ err error }
 
 func (e failingEngine) Run(context.Context, core.ReviewInput, core.RunOptions) (core.ReviewBundle, error) {
 	return core.ReviewBundle{}, e.err
+}
+
+type advisorAwareEngine struct {
+	base                *core.Engine
+	advisor             *reviewadvisor.Advisor
+	defaultAdvisorRoute string
+}
+
+func (e advisorAwareEngine) Run(ctx context.Context, input core.ReviewInput, opts core.RunOptions) (core.ReviewBundle, error) {
+	if e.base == nil {
+		return core.ReviewBundle{}, fmt.Errorf("review engine is required")
+	}
+	bundle, err := e.base.Run(ctx, input, opts)
+	if err != nil {
+		return core.ReviewBundle{}, err
+	}
+	route := strings.TrimSpace(opts.AdvisorRoute)
+	if route == "" {
+		route = strings.TrimSpace(e.defaultAdvisorRoute)
+	}
+	if route == "" || e.advisor == nil {
+		return bundle, nil
+	}
+	artifact, err := e.advisor.Advise(ctx, input, bundle, route)
+	if err != nil {
+		return core.ReviewBundle{}, err
+	}
+	bundle.AdvisorArtifact = artifact
+	return bundle, nil
 }
 
 func defaultLoadInput(ctx context.Context, configPath string, target core.ReviewTarget) (core.ReviewInput, error) {
@@ -143,7 +173,11 @@ func defaultReviewEngine(configPath string) reviewEngine {
 	for _, pack := range reviewpack.DefaultPacks() {
 		runners = append(runners, reviewpack.NewLegacyResolverRunner(pack.Contract(), resolve))
 	}
-	return core.NewEngine(runners, judgeAdapter{inner: judge.New()})
+	return advisorAwareEngine{
+		base:                core.NewEngine(runners, judgeAdapter{inner: judge.New()}),
+		advisor:             reviewadvisor.New(resolve),
+		defaultAdvisorRoute: strings.TrimSpace(cfg.ReviewAdvisorRoute),
+	}
 }
 
 func defaultPublish(ctx context.Context, configPath string, target core.ReviewTarget, bundle core.ReviewBundle) error {
@@ -250,7 +284,7 @@ func githubStatusDescription(state string, blockingFindings int) string {
 }
 
 func defaultCompare(ctx context.Context, configPath string, target core.ReviewTarget, bundle core.ReviewBundle, opts cliOptions) (*comparepkg.Report, error) {
-	artifacts := append([]core.ReviewerArtifact(nil), bundle.Artifacts...)
+	artifacts := comparepkg.BuildArtifactsForBundle(bundle, bundle.AdvisorArtifact)
 
 	imported, err := loadImportedArtifacts(opts.compareArtifactPaths)
 	if err != nil {

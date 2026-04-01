@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/mreviewer/mreviewer/internal/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/llm"
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
+	"github.com/mreviewer/mreviewer/internal/reviewadvisor"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/reviewinput"
 	"github.com/mreviewer/mreviewer/internal/reviewpack"
@@ -24,6 +26,39 @@ type workerReviewInputLoader func(ctx context.Context, target core.ReviewTarget,
 
 func (f workerReviewInputLoader) Load(ctx context.Context, target core.ReviewTarget, providerRoute string) (core.ReviewInput, error) {
 	return f(ctx, target, providerRoute)
+}
+
+type workerAdvisorAwareEngine struct {
+	base                *core.Engine
+	advisor             *reviewadvisor.Advisor
+	defaultAdvisorRoute string
+}
+
+func (e workerAdvisorAwareEngine) Run(ctx context.Context, input core.ReviewInput, opts core.RunOptions) (core.ReviewBundle, error) {
+	if e.base == nil {
+		return core.ReviewBundle{}, fmt.Errorf("worker runtime: review engine is required")
+	}
+	bundle, err := e.base.Run(ctx, input, opts)
+	if err != nil {
+		return core.ReviewBundle{}, err
+	}
+	route := strings.TrimSpace(opts.AdvisorRoute)
+	if route == "" {
+		route = strings.TrimSpace(e.defaultAdvisorRoute)
+	}
+	if route == "" || e.advisor == nil {
+		return bundle, nil
+	}
+	artifact, err := e.advisor.Advise(ctx, input, bundle, route)
+	if err != nil {
+		slog.Default().WarnContext(ctx, "worker runtime advisor failed; continuing with council result",
+			"route", route,
+			"error", err,
+		)
+		return bundle, nil
+	}
+	bundle.AdvisorArtifact = artifact
+	return bundle, nil
 }
 
 func newReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitlab.Client, githubClient *platformgithub.Client, rulesLoader reviewinput.RulesLoader, providerRegistry *llm.ProviderRegistry) (scheduler.Processor, error) {
@@ -61,8 +96,14 @@ func newReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitl
 	for _, pack := range reviewpack.DefaultPacks() {
 		runners = append(runners, reviewpack.NewLegacyResolverRunner(pack.Contract(), resolve))
 	}
-	engine := core.NewEngine(runners, workerJudgeAdapter{inner: judge.New()})
-	return reviewrun.NewEngineProcessor(sqlDB, inputLoader, engine), nil
+	engine := workerAdvisorAwareEngine{
+		base:                core.NewEngine(runners, workerJudgeAdapter{inner: judge.New()}),
+		advisor:             reviewadvisor.New(resolve),
+		defaultAdvisorRoute: strings.TrimSpace(cfg.ReviewAdvisorRoute),
+	}
+	return reviewrun.NewEngineProcessor(sqlDB, inputLoader, engine).
+		WithDefaultReviewerPacks(normalizedReviewPacks(cfg.ReviewPacks)).
+		WithDefaultAdvisorRoute(strings.TrimSpace(cfg.ReviewAdvisorRoute)), nil
 }
 
 func buildWorkerReviewInput(ctx context.Context, target core.ReviewTarget, gitlabClient *gitlab.Client, githubClient *platformgithub.Client, builder *reviewinput.Builder) (core.ReviewInput, error) {
@@ -135,4 +176,24 @@ func renderWorkerJudgeSummary(decision judge.Decision) string {
 		lines = append(lines, fmt.Sprintf("- [%s] %s", strings.ToUpper(strings.TrimSpace(item.Finding.Severity)), title))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func normalizedReviewPacks(packs []string) []string {
+	if len(packs) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(packs))
+	seen := make(map[string]struct{}, len(packs))
+	for _, pack := range packs {
+		token := strings.ToLower(strings.TrimSpace(pack))
+		if token == "" {
+			continue
+		}
+		if _, ok := seen[token]; ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		result = append(result, token)
+	}
+	return result
 }

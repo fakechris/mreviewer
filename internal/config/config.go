@@ -45,6 +45,10 @@ type Config struct {
 	LLMBaseURL  string `yaml:"llm_base_url"`
 	LLMModel    string `yaml:"llm_model"`
 
+	ReviewPacks            []string `yaml:"review_packs"`
+	ReviewAdvisorRoute     string   `yaml:"review_advisor_route"`
+	ReviewCompareReviewers []string `yaml:"review_compare_reviewers"`
+
 	LLM LLMConfig `yaml:"llm"`
 }
 
@@ -92,6 +96,9 @@ var envMapping = []struct {
 	{"LLM_API_KEY", func(c *Config, v string) { c.LLMAPIKey = v }},
 	{"LLM_BASE_URL", func(c *Config, v string) { c.LLMBaseURL = v }},
 	{"LLM_MODEL", func(c *Config, v string) { c.LLMModel = v }},
+	{"REVIEW_PACKS", func(c *Config, v string) { c.ReviewPacks = splitCSV(v) }},
+	{"REVIEW_ADVISOR_ROUTE", func(c *Config, v string) { c.ReviewAdvisorRoute = strings.TrimSpace(v) }},
+	{"REVIEW_COMPARE_REVIEWERS", func(c *Config, v string) { c.ReviewCompareReviewers = splitCSV(v) }},
 	{"LLM_DEFAULT_ROUTE", func(c *Config, v string) { c.LLM.DefaultRoute = v }},
 	{"LLM_FALLBACK_ROUTE", func(c *Config, v string) { c.LLM.FallbackRoute = v }},
 }
@@ -195,4 +202,22 @@ func applyMiniMaxFallback(cfg *Config) {
 			cfg.AnthropicModel = defaultMiniMaxModel
 		}
 	}
+}
+
+func splitCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

@@ -20,9 +20,11 @@ import (
 	"github.com/mreviewer/mreviewer/internal/db/dbtest"
 	"github.com/mreviewer/mreviewer/internal/gate"
 	"github.com/mreviewer/mreviewer/internal/gitlab"
+	"github.com/mreviewer/mreviewer/internal/judge"
 	"github.com/mreviewer/mreviewer/internal/llm"
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
+	"github.com/mreviewer/mreviewer/internal/reviewadvisor"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/reviewinput"
 	"github.com/mreviewer/mreviewer/internal/reviewpack"
@@ -756,8 +758,8 @@ func TestNewReviewRunProcessorProcessesRunViaNewEngine(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v4/projects/101/merge_requests/1":
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1"):
 			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
 				"id":            501,
 				"iid":           1,
@@ -777,7 +779,7 @@ func TestNewReviewRunProcessorProcessesRunViaNewEngine(t *testing.T) {
 				},
 				"author": map[string]any{"username": "worker-test"},
 			})
-		case "/api/v4/projects/101/merge_requests/1/versions":
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1/versions"):
 			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
 				"id":               1,
 				"head_commit_sha":  "sha-processor-engine",
@@ -789,7 +791,7 @@ func TestNewReviewRunProcessorProcessesRunViaNewEngine(t *testing.T) {
 				"state":            "collected",
 				"real_size":        "1",
 			}})
-		case "/api/v4/projects/101/merge_requests/1/diffs":
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1/diffs"):
 			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
 				"old_path":     "internal/legacy.go",
 				"new_path":     "internal/legacy.go",
@@ -906,8 +908,8 @@ func TestWorkerRuntimeProcessesNewEngineRunViaBundleWriteback(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v4/projects/101/merge_requests/1":
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1"):
 			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
 				"id":            501,
 				"iid":           1,
@@ -927,7 +929,7 @@ func TestWorkerRuntimeProcessesNewEngineRunViaBundleWriteback(t *testing.T) {
 				},
 				"author": map[string]any{"username": "worker-test"},
 			})
-		case "/api/v4/projects/101/merge_requests/1/versions":
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1/versions"):
 			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
 				"id":               1,
 				"head_commit_sha":  "sha-runtime-new-engine-writeback",
@@ -939,7 +941,7 @@ func TestWorkerRuntimeProcessesNewEngineRunViaBundleWriteback(t *testing.T) {
 				"state":            "collected",
 				"real_size":        "1",
 			}})
-		case "/api/v4/projects/101/merge_requests/1/diffs":
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1/diffs"):
 			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
 				"old_path":     "internal/legacy.go",
 				"new_path":     "internal/legacy.go",
@@ -1034,6 +1036,187 @@ func TestWorkerRuntimeProcessesNewEngineRunViaBundleWriteback(t *testing.T) {
 	}
 	if len(actions) != 2 {
 		t.Fatalf("comment action count = %d, want 2", len(actions))
+	}
+}
+
+func TestNewReviewRunProcessorHonorsConfiguredReviewPacksAndAdvisorRoute(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupTestDB(t)
+	instanceID := insertTestInstance(t, sqlDB)
+	projectID := insertTestProject(t, sqlDB, instanceID)
+	mrID := insertTestMR(t, sqlDB, projectID, 1, "sha-runtime-advisor")
+	runID := insertTestRun(t, sqlDB, projectID, mrID, "pending", "runtime-advisor", "sha-runtime-advisor")
+	if _, err := sqlDB.Exec(`UPDATE review_runs SET scope_json = ? WHERE id = ?`, db.NullRawMessage([]byte(`{"provider_route":"claude-opus-4-1"}`)), runID); err != nil {
+		t.Fatalf("update scope_json: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1"):
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"id":            301,
+				"iid":           1,
+				"project_id":    101,
+				"title":         "Runtime advisor",
+				"description":   "body",
+				"state":         "opened",
+				"web_url":       "https://test.gitlab.com/group/project/-/merge_requests/1",
+				"target_branch": "main",
+				"source_branch": "feature",
+				"sha":           "sha-runtime-advisor",
+				"diff_refs": map[string]any{
+					"base_sha":  "base-sha",
+					"start_sha": "start-sha",
+					"head_sha":  "sha-runtime-advisor",
+				},
+				"author":        map[string]any{"username": "chris"},
+			})
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1/changes"):
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"changes": []map[string]any{{
+					"old_path":     "internal/legacy.go",
+					"new_path":     "internal/legacy.go",
+					"diff":         "@@ -1 +1 @@\n-old\n+new\n",
+					"new_file":     false,
+					"renamed_file": false,
+					"deleted_file": false,
+				}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1/diffs"):
+			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
+				"old_path":     "internal/legacy.go",
+				"new_path":     "internal/legacy.go",
+				"diff":         "@@ -1 +1 @@\n-old\n+new\n",
+				"new_file":     false,
+				"renamed_file": false,
+				"deleted_file": false,
+			}})
+		case strings.HasSuffix(r.URL.Path, "/merge_requests/1/versions"):
+			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
+				"id":              7,
+				"head_commit_sha": "sha-runtime-advisor",
+				"base_commit_sha": "base-sha",
+				"start_commit_sha": "start-sha",
+			}})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := gitlab.NewClient(server.URL, "test-token", gitlab.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	loader := &testWorkerRulesLoader{
+		result: rules.LoadResult{
+			EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "default"},
+		},
+	}
+	councilProvider := &fakeWorkerDynamicProvider{
+		response: llm.ProviderResponse{
+			Result: llm.ReviewResult{
+				SchemaVersion: "1.0",
+				ReviewRunID:   "runtime-advisor",
+				Summary:       "Found a real issue",
+				Status:        "requested_changes",
+				Findings: []llm.ReviewFinding{{
+					Category:     "bug",
+					Severity:     "high",
+					Confidence:   0.93,
+					Title:        "Unsafe mutation path",
+					BodyMarkdown: "The update path skips validation.",
+					Path:         "internal/legacy.go",
+					AnchorKind:   "new_line",
+					NewLine:      int32PtrRuntime(1),
+				}},
+			},
+		},
+	}
+	advisorProvider := &fakeWorkerDynamicProvider{
+		response: llm.ProviderResponse{
+			Result: llm.ReviewResult{
+				SchemaVersion: "1.0",
+				ReviewRunID:   "runtime-advisor-advisor",
+				Summary:       "Advisor agrees with the council.",
+				Status:        "comment_only",
+			},
+		},
+	}
+	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", &fakeWorkerDynamicProvider{})
+	registry.Register("claude-opus-4-1", councilProvider)
+	registry.Register("openai-gpt-5-4", advisorProvider)
+
+	processor, err := newReviewRunProcessor(&config.Config{
+		ReviewPacks:        []string{"security"},
+		ReviewAdvisorRoute: "openai-gpt-5-4",
+	}, sqlDB, client, nil, loader, registry)
+	if err != nil {
+		t.Fatalf("newReviewRunProcessor: %v", err)
+	}
+	run, err := db.New(sqlDB).GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	outcome, err := processor.ProcessRun(ctx, run)
+	if err != nil {
+		t.Fatalf("ProcessRun: %v", err)
+	}
+	bundle, ok := outcome.ReviewBundle.(core.ReviewBundle)
+	if !ok {
+		t.Fatalf("outcome review bundle type = %T, want reviewcore.ReviewBundle", outcome.ReviewBundle)
+	}
+	if len(bundle.Artifacts) != 1 {
+		t.Fatalf("bundle artifacts = %d, want 1", len(bundle.Artifacts))
+	}
+	if bundle.Artifacts[0].ReviewerID != "security" {
+		t.Fatalf("bundle first artifact reviewer = %q, want security", bundle.Artifacts[0].ReviewerID)
+	}
+	if bundle.AdvisorArtifact == nil {
+		t.Fatal("expected advisor artifact to be populated")
+	}
+	if councilProvider.calls != 1 {
+		t.Fatalf("council provider calls = %d, want 1", councilProvider.calls)
+	}
+	if advisorProvider.calls != 1 {
+		t.Fatalf("advisor provider calls = %d, want 1", advisorProvider.calls)
+	}
+}
+
+func TestWorkerAdvisorAwareEngineDegradesAdvisorFailures(t *testing.T) {
+	engine := workerAdvisorAwareEngine{
+		base: core.NewEngine([]core.PackRunner{
+			fakePackRunner(func(context.Context, core.ReviewInput, core.RunOptions) (core.ReviewerArtifact, error) {
+				return core.ReviewerArtifact{
+					ReviewerID:   "security",
+					ReviewerKind: "pack",
+					Summary:      "council summary",
+				}, nil
+			}),
+		}, workerJudgeAdapter{inner: judge.New()}),
+		advisor: reviewadvisor.New(func(route string) llm.Provider {
+			if route != "openai-gpt-5-4" {
+				return nil
+			}
+			return &fakeWorkerDynamicProvider{err: errors.New("advisor unavailable")}
+		}),
+		defaultAdvisorRoute: "openai-gpt-5-4",
+	}
+
+	bundle, err := engine.Run(context.Background(), core.ReviewInput{
+		Target:        core.ReviewTarget{Platform: core.PlatformGitHub},
+		SystemPrompt:  "base",
+		RequestPayload: mustJSONRuntime(ctxpkg.ReviewRequest{ReviewRunID: "rr_1"}),
+	}, core.RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(bundle.Artifacts) != 1 {
+		t.Fatalf("bundle artifacts = %d, want 1", len(bundle.Artifacts))
+	}
+	if bundle.AdvisorArtifact != nil {
+		t.Fatalf("advisor artifact = %#v, want nil on degraded advisor path", bundle.AdvisorArtifact)
 	}
 }
 
@@ -1409,6 +1592,20 @@ func (f *fakeWorkerDynamicProvider) RequestPayloadWithSystemPrompt(_ ctxpkg.Revi
 
 func int32PtrRuntime(v int32) *int32 {
 	return &v
+}
+
+type fakePackRunner func(context.Context, core.ReviewInput, core.RunOptions) (core.ReviewerArtifact, error)
+
+func (f fakePackRunner) Run(ctx context.Context, input core.ReviewInput, opts core.RunOptions) (core.ReviewerArtifact, error) {
+	return f(ctx, input, opts)
+}
+
+func mustJSONRuntime(value any) []byte {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
 
 func writeRuntimeJSON(t *testing.T, w http.ResponseWriter, status int, payload any) {
