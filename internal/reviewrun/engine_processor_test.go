@@ -406,3 +406,108 @@ func TestEngineProcessorLoadsGitHubTargetFromScope(t *testing.T) {
 		t.Fatalf("loader target base url = %q, want https://github.com", inputLoader.target.BaseURL)
 	}
 }
+
+func TestPersistMRVersionFromInputUsesPlatformVersionID(t *testing.T) {
+	sqlDB := setupEngineProcessorDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+	_, _, mrID := seedEngineProcessorRunEntities(t, sqlDB, 401, 22, "head-sha-version-id")
+
+	err := persistMRVersionFromInput(ctx, queries, mrID, core.PlatformVersion{PlatformVersionID: "17"}, ctxpkg.VersionContext{
+		BaseSHA:    "base-sha",
+		StartSHA:   "start-sha",
+		HeadSHA:    "head-sha-version-id",
+		PatchIDSHA: "patch-sha",
+	})
+	if err != nil {
+		t.Fatalf("persistMRVersionFromInput: %v", err)
+	}
+
+	version, err := queries.GetLatestMRVersion(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetLatestMRVersion: %v", err)
+	}
+	if version.GitlabVersionID != 17 {
+		t.Fatalf("GitlabVersionID = %d, want 17", version.GitlabVersionID)
+	}
+}
+
+func TestPersistMRVersionFromInputSkipsDuplicateZeroVersion(t *testing.T) {
+	sqlDB := setupEngineProcessorDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+	_, _, mrID := seedEngineProcessorRunEntities(t, sqlDB, 402, 23, "head-sha-duplicate-zero")
+
+	if _, err := queries.InsertMRVersion(ctx, db.InsertMRVersionParams{
+		MergeRequestID:  mrID,
+		GitlabVersionID: 0,
+		BaseSha:         "base-sha",
+		StartSha:        "start-sha",
+		HeadSha:         "head-sha-duplicate-zero",
+		PatchIDSha:      "patch-sha",
+	}); err != nil {
+		t.Fatalf("InsertMRVersion: %v", err)
+	}
+
+	err := persistMRVersionFromInput(ctx, queries, mrID, core.PlatformVersion{}, ctxpkg.VersionContext{
+		BaseSHA:    "base-sha",
+		StartSHA:   "start-sha",
+		HeadSHA:    "head-sha-duplicate-zero",
+		PatchIDSHA: "patch-sha",
+	})
+	if err != nil {
+		t.Fatalf("persistMRVersionFromInput: %v", err)
+	}
+
+	var count int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM mr_versions WHERE merge_request_id = ?`, mrID).Scan(&count); err != nil {
+		t.Fatalf("count mr_versions: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("mr_versions count = %d, want 1", count)
+	}
+
+	version, err := queries.GetLatestMRVersion(ctx, mrID)
+	if err != nil {
+		t.Fatalf("GetLatestMRVersion: %v", err)
+	}
+	if version.GitlabVersionID != 0 {
+		t.Fatalf("GitlabVersionID = %d, want 0", version.GitlabVersionID)
+	}
+}
+
+func TestPersistMRVersionFromInputSkipsDuplicatePlatformVersionID(t *testing.T) {
+	sqlDB := setupEngineProcessorDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+	_, _, mrID := seedEngineProcessorRunEntities(t, sqlDB, 403, 24, "head-sha-duplicate-version-id")
+
+	if _, err := queries.InsertMRVersion(ctx, db.InsertMRVersionParams{
+		MergeRequestID:  mrID,
+		GitlabVersionID: 6563,
+		BaseSha:         "base-sha",
+		StartSha:        "start-sha",
+		HeadSha:         "head-sha-duplicate-version-id",
+		PatchIDSha:      "patch-sha",
+	}); err != nil {
+		t.Fatalf("InsertMRVersion: %v", err)
+	}
+
+	err := persistMRVersionFromInput(ctx, queries, mrID, core.PlatformVersion{PlatformVersionID: "6563"}, ctxpkg.VersionContext{
+		BaseSHA:    "base-sha",
+		StartSHA:   "start-sha",
+		HeadSHA:    "head-sha-duplicate-version-id",
+		PatchIDSHA: "patch-sha",
+	})
+	if err != nil {
+		t.Fatalf("persistMRVersionFromInput: %v", err)
+	}
+
+	var count int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM mr_versions WHERE merge_request_id = ?`, mrID).Scan(&count); err != nil {
+		t.Fatalf("count mr_versions: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("mr_versions count = %d, want 1", count)
+	}
+}

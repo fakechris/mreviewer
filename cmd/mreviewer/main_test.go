@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	comparepkg "github.com/mreviewer/mreviewer/internal/compare"
@@ -653,5 +655,64 @@ func TestRunWithDepsPublishesFailedGitHubStatusOnReviewError(t *testing.T) {
 	}
 	if calls[1].state != "failed" {
 		t.Fatalf("second status state = %q, want failed", calls[1].state)
+	}
+}
+
+func TestRunWithDepsDoesNotFailWhenStatusPublishingFails(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform:     core.PlatformGitHub,
+				URL:          "https://github.com/acme/repo/pull/17",
+				Repository:   "acme/repo",
+				ChangeNumber: 17,
+			},
+			Verdict:         "requested_changes",
+			MarkdownSummary: "judge summary",
+			PublishCandidates: []core.PublishCandidate{
+				{Kind: "finding", Body: "finding"},
+			},
+		},
+	}
+	input := core.ReviewInput{
+		Target: engine.bundle.Target,
+	}
+	input.Request.Project.FullPath = "acme/repo"
+	input.Request.Version.HeadSHA = "head-sha"
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runWithDeps([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--output", "json",
+		"--publish", "artifact-only",
+		"--exit-mode", "requested_changes",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, _ core.ReviewTarget) (core.ReviewInput, error) {
+			return input, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		status: func(_ context.Context, _ string, _ core.ReviewTarget, _ core.ReviewInput, _ string, _ int) error {
+			return errors.New("status timeout")
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+	if exitCode != 3 {
+		t.Fatalf("exitCode = %d, want 3 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "status failed") {
+		t.Fatalf("stderr = %q, want status warning", stderr.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json output: %v", err)
+	}
+	if payload["verdict"] != "requested_changes" {
+		t.Fatalf("verdict = %#v, want requested_changes (output=%s)", payload["verdict"], stdout.String())
+	}
+	if payload["target"] == nil {
+		t.Fatalf("target missing from output: %s", stdout.String())
 	}
 }

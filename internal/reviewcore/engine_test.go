@@ -2,13 +2,22 @@ package reviewcore
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+
+	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
 )
 
 type packRunnerFunc func(context.Context, ReviewTarget, RunOptions) (ReviewerArtifact, error)
 
 func (f packRunnerFunc) Run(ctx context.Context, input ReviewInput, opts RunOptions) (ReviewerArtifact, error) {
 	return f(ctx, input.Target, opts)
+}
+
+type packRunnerInputFunc func(context.Context, ReviewInput, RunOptions) (ReviewerArtifact, error)
+
+func (f packRunnerInputFunc) Run(ctx context.Context, input ReviewInput, opts RunOptions) (ReviewerArtifact, error) {
+	return f(ctx, input, opts)
 }
 
 type judgeFunc func([]ReviewerArtifact) JudgeDecision
@@ -135,5 +144,109 @@ func TestEngineAddsFindingPublishCandidatesFromJudgeDecision(t *testing.T) {
 	}
 	if bundle.PublishCandidates[1].Location.Path != "internal/service/handler.go" {
 		t.Fatalf("candidate path = %q", bundle.PublishCandidates[1].Location.Path)
+	}
+}
+
+func TestEngineAddsGitLabVersionMetadataToFindingPublishCandidates(t *testing.T) {
+	engine := NewEngine([]PackRunner{
+		packRunnerInputFunc(func(_ context.Context, input ReviewInput, _ RunOptions) (ReviewerArtifact, error) {
+			return ReviewerArtifact{
+				ReviewerID: "architecture",
+				Target:     input.Target,
+			}, nil
+		}),
+	}, judgeFunc(func(_ []ReviewerArtifact) JudgeDecision {
+		return JudgeDecision{
+			Verdict: "requested_changes",
+			Summary: "judge summary",
+			MergedFindings: []Finding{{
+				Category: "architecture.error-handling",
+				Severity: "medium",
+				Title:    "Dropped storage error",
+				Body:     "The returned storage error is ignored and the request still reports success.",
+				Identity: FindingIdentityInput{
+					Category:            "architecture.error-handling",
+					NormalizedClaim:     "the returned storage error is ignored and the request still reports success.",
+					EvidenceFingerprint: "storage-error-dropped",
+					Location: CanonicalLocation{
+						Path:      "internal/service/handler.go",
+						Side:      DiffSideNew,
+						StartLine: 19,
+						EndLine:   19,
+					},
+				},
+			}},
+		}
+	}))
+
+	bundle, err := engine.Run(context.Background(), ReviewInput{
+		Target: ReviewTarget{
+			Platform:     PlatformGitLab,
+			URL:          "https://gitlab.example.com/group/repo/-/merge_requests/23",
+			Repository:   "group/repo",
+			ProjectID:    77,
+			ChangeNumber: 23,
+		},
+		Request: ctxpkg.ReviewRequest{
+			Version: ctxpkg.VersionContext{
+				BaseSHA:  "base-sha",
+				StartSHA: "start-sha",
+				HeadSHA:  "head-sha",
+			},
+		},
+	}, RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(bundle.PublishCandidates) != 2 {
+		t.Fatalf("publish candidates len = %d, want 2", len(bundle.PublishCandidates))
+	}
+	var metadata struct {
+		BaseSHA  string `json:"base_sha"`
+		StartSHA string `json:"start_sha"`
+		HeadSHA  string `json:"head_sha"`
+	}
+	if err := json.Unmarshal(bundle.PublishCandidates[1].Location.PlatformMetadata, &metadata); err != nil {
+		t.Fatalf("Unmarshal metadata: %v", err)
+	}
+	if metadata.BaseSHA != "base-sha" || metadata.StartSHA != "start-sha" || metadata.HeadSHA != "head-sha" {
+		t.Fatalf("metadata = %+v, want version shas copied into publish candidate", metadata)
+	}
+}
+
+func TestEngineDowngradesUnanchoredFindingPublishCandidatesToSummary(t *testing.T) {
+	engine := NewEngine(nil, judgeFunc(func(_ []ReviewerArtifact) JudgeDecision {
+		return JudgeDecision{
+			Verdict: "requested_changes",
+			Summary: "judge summary",
+			MergedFindings: []Finding{{
+				Category: "correctness.spec-mismatch",
+				Severity: "high",
+				Title:    "MR title does not match the actual change",
+				Body:     "The change set does not contain any billing logic updates.",
+				Identity: FindingIdentityInput{
+					Category:            "correctness.spec-mismatch",
+					NormalizedClaim:     "the change set does not contain any billing logic updates",
+					EvidenceFingerprint: "mr-title-content-mismatch",
+					Location:            CanonicalLocation{},
+				},
+			}},
+		}
+	}))
+
+	bundle, err := engine.Run(context.Background(), ReviewInput{
+		Target: ReviewTarget{Platform: PlatformGitLab},
+	}, RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(bundle.PublishCandidates) != 2 {
+		t.Fatalf("publish candidates len = %d, want 2", len(bundle.PublishCandidates))
+	}
+	if bundle.PublishCandidates[1].Kind != "summary" {
+		t.Fatalf("candidate kind = %q, want summary downgrade", bundle.PublishCandidates[1].Kind)
+	}
+	if bundle.PublishCandidates[1].Body != "### MR title does not match the actual change\n\nThe change set does not contain any billing logic updates." {
+		t.Fatalf("candidate body = %q", bundle.PublishCandidates[1].Body)
 	}
 }

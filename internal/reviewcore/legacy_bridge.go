@@ -38,6 +38,16 @@ func PublishCandidatesFromLegacyResult(result llm.ReviewResult) []PublishCandida
 
 	for _, finding := range result.Findings {
 		location := locationFromLegacyFinding(finding)
+		if strings.TrimSpace(location.Path) == "" {
+			candidates = append(candidates, PublishCandidate{
+				Kind:     "summary",
+				Title:    strings.TrimSpace(finding.Title),
+				Body:     summaryBodyFromLegacyFinding(finding),
+				Severity: strings.TrimSpace(finding.Severity),
+				Location: location,
+			})
+			continue
+		}
 		candidates = append(candidates, PublishCandidate{
 			Kind:     "finding",
 			Title:    strings.TrimSpace(finding.Title),
@@ -47,6 +57,19 @@ func PublishCandidatesFromLegacyResult(result llm.ReviewResult) []PublishCandida
 		})
 	}
 	return candidates
+}
+
+func summaryBodyFromLegacyFinding(finding llm.ReviewFinding) string {
+	title := strings.TrimSpace(finding.Title)
+	body := strings.TrimSpace(finding.BodyMarkdown)
+	switch {
+	case title != "" && body != "":
+		return "### " + title + "\n\n" + body
+	case body != "":
+		return body
+	default:
+		return title
+	}
 }
 
 func findingFromLegacy(finding llm.ReviewFinding) Finding {

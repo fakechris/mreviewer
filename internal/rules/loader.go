@@ -418,14 +418,14 @@ func loadRepositoryFile(ctx context.Context, files any, input LoadInput, filePat
 	if files == nil {
 		return "", ErrNoRepositoryReader
 	}
-	if repositoryRef := strings.TrimSpace(input.RepositoryRef); repositoryRef != "" {
-		if reader, ok := files.(RepositoryRefFileReader); ok {
-			return reader.GetRepositoryFileByRepositoryRef(ctx, repositoryRef, filePath, input.HeadSHA)
-		}
-	}
 	if input.ProjectID > 0 {
 		if reader, ok := files.(RepositoryFileReader); ok {
 			return reader.GetRepositoryFile(ctx, input.ProjectID, filePath, input.HeadSHA)
+		}
+	}
+	if repositoryRef := strings.TrimSpace(input.RepositoryRef); repositoryRef != "" {
+		if reader, ok := files.(RepositoryRefFileReader); ok {
+			return reader.GetRepositoryFileByRepositoryRef(ctx, repositoryRef, filePath, input.HeadSHA)
 		}
 	}
 	return "", ErrNoRepositoryReader

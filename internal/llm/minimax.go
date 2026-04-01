@@ -142,6 +142,68 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 			lastErr = err
 			var structuredMiss *structuredOutputMissError
 			if errors.As(err, &structuredMiss) {
+				if strings.TrimSpace(structuredMiss.rawResponse) != "" {
+					repairedRaw, repairTokens, repairLatency, repairErr := p.callReviewTool(
+						ctx,
+						systemPrompt,
+						buildReviewRepairPayload(request, structuredMiss.rawResponse, structuredMiss.cause),
+					)
+					latency += repairLatency
+					tokens += repairTokens
+					if repairErr != nil {
+						return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
+							cause:       repairErr,
+							rawResponse: structuredMiss.rawResponse,
+							latency:     latency,
+							tokens:      tokens,
+							model:       p.routeName,
+						})
+					}
+					if repairValidationErr := validateReviewResultStrictJSON(repairedRaw); repairValidationErr != nil {
+						result, salvageErr := salvageReviewResultAfterStrictValidationFailure(repairedRaw, repairValidationErr)
+						if salvageErr != nil {
+							return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
+								cause:       salvageErr,
+								rawResponse: repairedRaw,
+								latency:     latency,
+								tokens:      tokens,
+								model:       p.routeName,
+							})
+						}
+						return ProviderResponse{
+							Result:          result,
+							RawText:         repairedRaw,
+							Latency:         latency,
+							Tokens:          tokens,
+							FallbackStage:   "repair_retry",
+							Model:           p.routeName,
+							ResponsePayload: map[string]any{"text": repairedRaw, "fallback_stage": "repair_retry"},
+						}, nil
+					}
+					result, parseStage, parseErr := ParseReviewResult(repairedRaw)
+					if parseErr != nil {
+						return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
+							cause:       parseErr,
+							rawResponse: repairedRaw,
+							latency:     latency,
+							tokens:      tokens,
+							model:       p.routeName,
+						})
+					}
+					stage := "repair_retry"
+					if parseStage != "" {
+						stage = "repair_retry"
+					}
+					return ProviderResponse{
+						Result:          result,
+						RawText:         repairedRaw,
+						Latency:         latency,
+						Tokens:          tokens,
+						FallbackStage:   stage,
+						Model:           p.routeName,
+						ResponsePayload: map[string]any{"text": repairedRaw, "fallback_stage": stage},
+					}, nil
+				}
 				return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
 					cause:       structuredMiss.cause,
 					rawResponse: structuredMiss.rawResponse,

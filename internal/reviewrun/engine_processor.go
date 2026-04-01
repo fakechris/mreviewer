@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
@@ -127,7 +128,7 @@ func (p *EngineProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (sch
 	if err != nil {
 		return scheduler.ProcessOutcome{}, fmt.Errorf("reviewrun: run review engine: %w", err)
 	}
-	if err := persistMRVersionFromInput(ctx, store, mr.ID, input.Request.Version); err != nil {
+	if err := persistMRVersionFromInput(ctx, store, mr.ID, input.Snapshot.Version, input.Request.Version); err != nil {
 		return scheduler.ProcessOutcome{}, fmt.Errorf("reviewrun: persist mr version: %w", err)
 	}
 
@@ -264,16 +265,32 @@ func normalizePath(path string) string {
 	return strings.Trim(path, "/")
 }
 
-func persistMRVersionFromInput(ctx context.Context, store db.Store, mergeRequestID int64, version ctxpkg.VersionContext) error {
+func persistMRVersionFromInput(ctx context.Context, store db.Store, mergeRequestID int64, snapshotVersion core.PlatformVersion, version ctxpkg.VersionContext) error {
 	if store == nil || mergeRequestID == 0 {
 		return nil
 	}
 	if strings.TrimSpace(version.HeadSHA) == "" {
 		return nil
 	}
-	_, err := store.InsertMRVersion(ctx, db.InsertMRVersionParams{
+	versionID := int64(0)
+	if raw := strings.TrimSpace(snapshotVersion.PlatformVersionID); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err == nil && parsed > 0 {
+			versionID = parsed
+		}
+	}
+	latest, err := store.GetLatestMRVersion(ctx, mergeRequestID)
+	if err == nil &&
+		latest.GitlabVersionID == versionID &&
+		strings.TrimSpace(latest.HeadSha) == strings.TrimSpace(version.HeadSHA) &&
+		strings.TrimSpace(latest.BaseSha) == strings.TrimSpace(version.BaseSHA) &&
+		strings.TrimSpace(latest.StartSha) == strings.TrimSpace(version.StartSHA) &&
+		strings.TrimSpace(latest.PatchIDSha) == strings.TrimSpace(version.PatchIDSHA) {
+		return nil
+	}
+	_, err = store.InsertMRVersion(ctx, db.InsertMRVersionParams{
 		MergeRequestID:  mergeRequestID,
-		GitlabVersionID: 0,
+		GitlabVersionID: versionID,
 		BaseSha:         strings.TrimSpace(version.BaseSHA),
 		StartSha:        strings.TrimSpace(version.StartSHA),
 		HeadSha:         strings.TrimSpace(version.HeadSHA),

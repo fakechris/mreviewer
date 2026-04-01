@@ -46,6 +46,9 @@ func (p *GitLabStatusPublisher) PublishStatus(ctx context.Context, result Result
 	if err != nil {
 		return fmt.Errorf("gate: load merge request %d: %w", result.MergeRequestID, err)
 	}
+	if looksLikeGitHubURL(mergeRequest.WebUrl) {
+		return nil
+	}
 
 	req := gitlab.CommitStatusRequest{
 		ProjectID:   project.GitlabProjectID,

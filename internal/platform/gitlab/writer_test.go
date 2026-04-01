@@ -177,3 +177,87 @@ func TestWriterBuildRequestsUsesPlatformMetadataLineRange(t *testing.T) {
 		t.Fatalf("position new_line = %+v, want 12", position.NewLine)
 	}
 }
+
+func TestWriterBuildRequestsUsesFilePositionForFileLevelFinding(t *testing.T) {
+	writer := NewWriter()
+	metadata, err := json.Marshal(map[string]any{
+		"base_sha":  "base-sha",
+		"start_sha": "start-sha",
+		"head_sha":  "head-sha",
+		"old_path":  "database/cli/seed.ts",
+		"new_path":  "database/cli/seed.ts",
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	bundle := core.ReviewBundle{
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitLab,
+			URL:          "https://gitlab.example.com/group/repo/-/merge_requests/23",
+			Repository:   "group/repo",
+			ProjectID:    77,
+			ChangeNumber: 23,
+		},
+		PublishCandidates: []core.PublishCandidate{{
+			Kind:     "finding",
+			Title:    "Deleted seed CLI tool",
+			Body:     "The seed CLI was removed without a replacement.",
+			Severity: "medium",
+			Location: core.CanonicalLocation{
+				Path:             "database/cli/seed.ts",
+				PlatformMetadata: metadata,
+			},
+		}},
+	}
+
+	requests, err := writer.BuildRequests(bundle)
+	if err != nil {
+		t.Fatalf("BuildRequests: %v", err)
+	}
+	if len(requests.Discussions) != 1 {
+		t.Fatalf("discussions len = %d, want 1", len(requests.Discussions))
+	}
+	position := requests.Discussions[0].Position
+	if position.PositionType != "file" {
+		t.Fatalf("position type = %q, want file", position.PositionType)
+	}
+	if position.OldLine != nil || position.NewLine != nil {
+		t.Fatalf("file position lines = old:%v new:%v, want nil", position.OldLine, position.NewLine)
+	}
+}
+
+func TestWriterBuildRequestsFallsBackToTitleWhenFindingBodyMissing(t *testing.T) {
+	writer := NewWriter()
+	bundle := core.ReviewBundle{
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitLab,
+			URL:          "https://gitlab.example.com/group/repo/-/merge_requests/23",
+			Repository:   "group/repo",
+			ProjectID:    77,
+			ChangeNumber: 23,
+		},
+		PublishCandidates: []core.PublishCandidate{{
+			Kind:     "finding",
+			Title:    "Unsafe query",
+			Body:     "",
+			Severity: "high",
+			Location: core.CanonicalLocation{
+				Path:      "internal/db/query.go",
+				Side:      core.DiffSideNew,
+				StartLine: 44,
+				EndLine:   44,
+			},
+		}},
+	}
+
+	reqs, err := writer.BuildRequests(bundle)
+	if err != nil {
+		t.Fatalf("BuildRequests: %v", err)
+	}
+	if len(reqs.Discussions) != 1 {
+		t.Fatalf("discussions = %d, want 1", len(reqs.Discussions))
+	}
+	if reqs.Discussions[0].Body != "### Unsafe query" {
+		t.Fatalf("discussion body = %q, want title fallback", reqs.Discussions[0].Body)
+	}
+}
