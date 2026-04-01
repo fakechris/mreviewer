@@ -35,6 +35,17 @@ func TestClientGetPullRequestSnapshotByRepositoryRef(t *testing.T) {
 				"status": "modified",
 				"patch": "@@ -1 +1 @@\n-old\n+new\n"
 			}]`))
+		case "/repos/acme/repo/commits/head":
+			_, _ = w.Write([]byte(`{
+				"sha": "head",
+				"commit": {
+					"author": {"name": "Chris Dev", "email": "chris@example.com"},
+					"committer": {"name": "Merge Bot", "email": "bot@example.com"},
+					"message": "Refactor parser"
+				},
+				"author": {"login": "chris", "id": 7},
+				"committer": {"login": "merge-bot", "id": 9}
+			}`))
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -58,6 +69,15 @@ func TestClientGetPullRequestSnapshotByRepositoryRef(t *testing.T) {
 	}
 	if len(snapshot.Files) != 1 || snapshot.Files[0].Filename != "internal/new.go" {
 		t.Fatalf("files = %#v", snapshot.Files)
+	}
+	if snapshot.HeadCommit.SHA != "head" {
+		t.Fatalf("head commit sha = %q, want head", snapshot.HeadCommit.SHA)
+	}
+	if snapshot.HeadCommit.Author.Email != "chris@example.com" {
+		t.Fatalf("head commit author email = %q, want chris@example.com", snapshot.HeadCommit.Author.Email)
+	}
+	if snapshot.HeadCommit.Committer.Login != "merge-bot" {
+		t.Fatalf("head commit committer login = %q, want merge-bot", snapshot.HeadCommit.Committer.Login)
 	}
 }
 
@@ -124,6 +144,17 @@ func TestClientGetPullRequestSnapshotByRepositoryRefPaginatesFiles(t *testing.T)
 			default:
 				_, _ = w.Write([]byte(`[]`))
 			}
+		case "/repos/acme/repo/commits/head":
+			_, _ = w.Write([]byte(`{
+				"sha": "head",
+				"commit": {
+					"author": {"name": "Chris Dev", "email": "chris@example.com"},
+					"committer": {"name": "Merge Bot", "email": "bot@example.com"},
+					"message": "Refactor parser"
+				},
+				"author": {"login": "chris", "id": 7},
+				"committer": {"login": "merge-bot", "id": 9}
+			}`))
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}

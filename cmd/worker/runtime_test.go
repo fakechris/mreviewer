@@ -800,6 +800,16 @@ func TestNewReviewRunProcessorProcessesRunViaNewEngine(t *testing.T) {
 				"renamed_file": false,
 				"deleted_file": false,
 			}})
+		case strings.HasSuffix(r.URL.Path, "/repository/commits/sha-processor-engine"):
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"id":              "sha-processor-engine",
+				"title":           "Engine-backed worker path",
+				"message":         "Engine-backed worker path",
+				"author_name":     "Worker Test",
+				"author_email":    "worker@example.com",
+				"committer_name":  "Worker Bot",
+				"committer_email": "bot@example.com",
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -950,6 +960,16 @@ func TestWorkerRuntimeProcessesNewEngineRunViaBundleWriteback(t *testing.T) {
 				"renamed_file": false,
 				"deleted_file": false,
 			}})
+		case strings.HasSuffix(r.URL.Path, "/repository/commits/sha-runtime-new-engine-writeback"):
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"id":              "sha-runtime-new-engine-writeback",
+				"title":           "Runtime writeback",
+				"message":         "Runtime writeback",
+				"author_name":     "Worker Test",
+				"author_email":    "worker@example.com",
+				"committer_name":  "Worker Bot",
+				"committer_email": "bot@example.com",
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1069,7 +1089,7 @@ func TestNewReviewRunProcessorHonorsConfiguredReviewPacksAndAdvisorRoute(t *test
 					"start_sha": "start-sha",
 					"head_sha":  "sha-runtime-advisor",
 				},
-				"author":        map[string]any{"username": "chris"},
+				"author": map[string]any{"username": "chris"},
 			})
 		case strings.HasSuffix(r.URL.Path, "/merge_requests/1/changes"):
 			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
@@ -1093,11 +1113,21 @@ func TestNewReviewRunProcessorHonorsConfiguredReviewPacksAndAdvisorRoute(t *test
 			}})
 		case strings.HasSuffix(r.URL.Path, "/merge_requests/1/versions"):
 			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{{
-				"id":              7,
-				"head_commit_sha": "sha-runtime-advisor",
-				"base_commit_sha": "base-sha",
+				"id":               7,
+				"head_commit_sha":  "sha-runtime-advisor",
+				"base_commit_sha":  "base-sha",
 				"start_commit_sha": "start-sha",
 			}})
+		case strings.HasSuffix(r.URL.Path, "/repository/commits/sha-runtime-advisor"):
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"id":              "sha-runtime-advisor",
+				"title":           "Runtime advisor",
+				"message":         "Runtime advisor",
+				"author_name":     "Chris Dev",
+				"author_email":    "chris@example.com",
+				"committer_name":  "Merge Bot",
+				"committer_email": "bot@example.com",
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1205,8 +1235,8 @@ func TestWorkerAdvisorAwareEngineDegradesAdvisorFailures(t *testing.T) {
 	}
 
 	bundle, err := engine.Run(context.Background(), core.ReviewInput{
-		Target:        core.ReviewTarget{Platform: core.PlatformGitHub},
-		SystemPrompt:  "base",
+		Target:         core.ReviewTarget{Platform: core.PlatformGitHub},
+		SystemPrompt:   "base",
 		RequestPayload: mustJSONRuntime(ctxpkg.ReviewRequest{ReviewRunID: "rr_1"}),
 	}, core.RunOptions{})
 	if err != nil {
@@ -1284,6 +1314,17 @@ func TestWorkerRuntimeProcessesGitHubRunViaBundleWriteback(t *testing.T) {
 				return
 			}
 			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{})
+		case "/repos/acme/repo/commits/github-runtime-writeback-sha":
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"sha": "github-runtime-writeback-sha",
+				"commit": map[string]any{
+					"author":    map[string]any{"name": "Octocat", "email": "octocat@example.com"},
+					"committer": map[string]any{"name": "Merge Bot", "email": "bot@example.com"},
+					"message":   "GitHub runtime writeback",
+				},
+				"author":    map[string]any{"login": "octocat", "id": 7},
+				"committer": map[string]any{"login": "merge-bot", "id": 9},
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1413,6 +1454,17 @@ func TestNewReviewRunProcessorProcessesGitHubRunViaNewEngine(t *testing.T) {
 				return
 			}
 			writeRuntimeJSON(t, w, http.StatusOK, []map[string]any{})
+		case "/repos/acme/repo/commits/github-head-sha":
+			writeRuntimeJSON(t, w, http.StatusOK, map[string]any{
+				"sha": "github-head-sha",
+				"commit": map[string]any{
+					"author":    map[string]any{"name": "Octocat", "email": "octocat@example.com"},
+					"committer": map[string]any{"name": "Merge Bot", "email": "bot@example.com"},
+					"message":   "GitHub automatic review",
+				},
+				"author":    map[string]any{"login": "octocat", "id": 7},
+				"committer": map[string]any{"login": "merge-bot", "id": 9},
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

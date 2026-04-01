@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mreviewer/mreviewer/internal/db"
@@ -14,6 +15,7 @@ const (
 	defaultLookbackWindow     = 24 * time.Hour
 	defaultTopProjectsLimit   = 5
 	defaultRecentFailures     = 10
+	defaultRecentRuns         = 50
 )
 
 type Store interface {
@@ -26,13 +28,18 @@ type Store interface {
 	ListRecentFailedRuns(ctx context.Context, limit int32) ([]db.ListRecentFailedRunsRow, error)
 	ListFailureCountsByErrorCode(ctx context.Context, updatedAt time.Time) ([]db.ListFailureCountsByErrorCodeRow, error)
 	ListWebhookVerificationCounts(ctx context.Context, createdAt time.Time) ([]db.ListWebhookVerificationCountsRow, error)
+	ListRecentRuns(ctx context.Context, arg db.ListRecentRunsParams) ([]db.ListRecentRunsRow, error)
+	GetRunDetail(ctx context.Context, id int64) (db.GetRunDetailRow, error)
+	ListIdentityMappings(ctx context.Context, arg db.ListIdentityMappingsParams) ([]db.ListIdentityMappingsRow, error)
+	GetIdentityMapping(ctx context.Context, id int64) (db.IdentityMapping, error)
 }
 
 type Option func(*Service)
 
 type Service struct {
-	store Store
-	now   func() time.Time
+	store    Store
+	now      func() time.Time
+	actionTx actionTxRunner
 }
 
 type QueueSnapshot struct {
@@ -69,6 +76,90 @@ type FailuresSnapshot struct {
 	ErrorBuckets               []ErrorBucket     `json:"error_buckets"`
 	WebhookRejectedLast24h     int64             `json:"webhook_rejected_last_24h"`
 	WebhookDeduplicatedLast24h int64             `json:"webhook_deduplicated_last_24h"`
+}
+
+type RunFilters struct {
+	Platform    string
+	Status      string
+	ErrorCode   string
+	ProjectPath string
+	HeadSHA     string
+	Limit       int32
+}
+
+type RunsSnapshot struct {
+	Items []RunListItem `json:"items"`
+}
+
+type IdentityFilters struct {
+	Platform    string
+	Status      string
+	ProjectPath string
+	Limit       int32
+}
+
+type IdentityMappingsSnapshot struct {
+	Items []IdentityMapping `json:"items"`
+}
+
+type IdentityMapping struct {
+	ID               int64             `json:"id"`
+	Platform         string            `json:"platform"`
+	ProjectPath      string            `json:"project_path"`
+	GitIdentityKey   string            `json:"git_identity_key"`
+	GitEmail         string            `json:"git_email"`
+	GitName          string            `json:"git_name"`
+	ObservedRole     string            `json:"observed_role"`
+	PlatformUsername string            `json:"platform_username"`
+	PlatformUserID   string            `json:"platform_user_id"`
+	HeadSHA          string            `json:"head_sha"`
+	Confidence       float64           `json:"confidence"`
+	Source           string            `json:"source"`
+	Status           string            `json:"status"`
+	LastSeenRunID    sql.NullInt64     `json:"last_seen_run_id"`
+	ResolvedBy       string            `json:"resolved_by"`
+	ResolvedAt       sql.NullTime      `json:"resolved_at"`
+	ResolutionDetail db.NullRawMessage `json:"resolution_detail"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+}
+
+type RunListItem struct {
+	ID                        int64          `json:"id"`
+	Platform                  string         `json:"platform"`
+	ProjectPath               string         `json:"project_path"`
+	WebURL                    sql.NullString `json:"web_url"`
+	MergeRequestID            int64          `json:"merge_request_id"`
+	Status                    string         `json:"status"`
+	ErrorCode                 string         `json:"error_code"`
+	TriggerType               string         `json:"trigger_type"`
+	HeadSHA                   string         `json:"head_sha"`
+	ClaimedBy                 string         `json:"claimed_by"`
+	RetryCount                int32          `json:"retry_count"`
+	NextRetryAt               sql.NullTime   `json:"next_retry_at"`
+	ProviderLatencyMs         int64          `json:"provider_latency_ms"`
+	ProviderTokensTotal       int64          `json:"provider_tokens_total"`
+	HookAction                string         `json:"hook_action"`
+	HookVerificationOutcome   string         `json:"hook_verification_outcome"`
+	FindingCount              int64          `json:"finding_count"`
+	CommentActionCount        int64          `json:"comment_action_count"`
+	CreatedAt                 time.Time      `json:"created_at"`
+	UpdatedAt                 time.Time      `json:"updated_at"`
+	StartedAt                 sql.NullTime   `json:"started_at"`
+	CompletedAt               sql.NullTime   `json:"completed_at"`
+	QueueAgeSeconds           int64          `json:"queue_age_seconds"`
+	QueueWaitSeconds          int64          `json:"queue_wait_seconds"`
+	ProcessingDurationSeconds int64          `json:"processing_duration_seconds"`
+}
+
+type RunDetail struct {
+	RunListItem
+	HookEventID       sql.NullInt64     `json:"hook_event_id"`
+	ErrorDetail       sql.NullString    `json:"error_detail"`
+	MaxRetries        int32             `json:"max_retries"`
+	IdempotencyKey    string            `json:"idempotency_key"`
+	ScopeJSON         db.NullRawMessage `json:"scope_json"`
+	SupersededByRunID sql.NullInt64     `json:"superseded_by_run_id"`
 }
 
 type RecentFailedRun struct {
@@ -252,4 +343,195 @@ func (s *Service) Failures(ctx context.Context) (FailuresSnapshot, error) {
 		}
 	}
 	return snapshot, nil
+}
+
+func (s *Service) Runs(ctx context.Context, filters RunFilters) (RunsSnapshot, error) {
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = defaultRecentRuns
+	}
+	rows, err := s.store.ListRecentRuns(ctx, db.ListRecentRunsParams{
+		Platform:    filters.Platform,
+		Status:      filters.Status,
+		ErrorCode:   filters.ErrorCode,
+		ProjectPath: filters.ProjectPath,
+		HeadSha:     filters.HeadSHA,
+		LimitCount:  limit,
+	})
+	if err != nil {
+		return RunsSnapshot{}, err
+	}
+	snapshot := RunsSnapshot{Items: make([]RunListItem, 0, len(rows))}
+	for _, row := range rows {
+		snapshot.Items = append(snapshot.Items, buildRunListItem(s.now(), row))
+	}
+	return snapshot, nil
+}
+
+func (s *Service) RunDetail(ctx context.Context, runID int64) (RunDetail, error) {
+	row, err := s.store.GetRunDetail(ctx, runID)
+	if err != nil {
+		return RunDetail{}, err
+	}
+	return RunDetail{
+		RunListItem: buildRunListItem(s.now(), db.ListRecentRunsRow{
+			ID:                      row.ID,
+			Platform:                row.Platform,
+			ProjectPath:             row.ProjectPath,
+			WebUrl:                  row.WebUrl,
+			MergeRequestID:          row.MergeRequestID,
+			Status:                  row.Status,
+			ErrorCode:               row.ErrorCode,
+			TriggerType:             row.TriggerType,
+			HeadSha:                 row.HeadSha,
+			ClaimedBy:               row.ClaimedBy,
+			RetryCount:              row.RetryCount,
+			NextRetryAt:             row.NextRetryAt,
+			ProviderLatencyMs:       row.ProviderLatencyMs,
+			ProviderTokensTotal:     row.ProviderTokensTotal,
+			HookAction:              row.HookAction,
+			HookVerificationOutcome: row.HookVerificationOutcome,
+			FindingCount:            row.FindingCount,
+			CommentActionCount:      row.CommentActionCount,
+			CreatedAt:               row.CreatedAt,
+			UpdatedAt:               row.UpdatedAt,
+			StartedAt:               row.StartedAt,
+			CompletedAt:             row.CompletedAt,
+		}),
+		HookEventID:       row.HookEventID,
+		ErrorDetail:       row.ErrorDetail,
+		MaxRetries:        row.MaxRetries,
+		IdempotencyKey:    row.IdempotencyKey,
+		ScopeJSON:         row.ScopeJson,
+		SupersededByRunID: row.SupersededByRunID,
+	}, nil
+}
+
+func (s *Service) IdentityMappings(ctx context.Context, filters IdentityFilters) (IdentityMappingsSnapshot, error) {
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = defaultRecentRuns
+	}
+	rows, err := s.store.ListIdentityMappings(ctx, db.ListIdentityMappingsParams{
+		Platform:    filters.Platform,
+		Status:      filters.Status,
+		ProjectPath: filters.ProjectPath,
+		LimitCount:  limit,
+	})
+	if err != nil {
+		return IdentityMappingsSnapshot{}, err
+	}
+	snapshot := IdentityMappingsSnapshot{Items: make([]IdentityMapping, 0, len(rows))}
+	for _, row := range rows {
+		snapshot.Items = append(snapshot.Items, IdentityMapping{
+			ID:               row.ID,
+			Platform:         row.Platform,
+			ProjectPath:      row.ProjectPath,
+			GitIdentityKey:   row.GitIdentityKey,
+			GitEmail:         row.GitEmail,
+			GitName:          row.GitName,
+			ObservedRole:     row.ObservedRole,
+			PlatformUsername: row.PlatformUsername,
+			PlatformUserID:   row.PlatformUserID,
+			HeadSHA:          row.HeadSha,
+			Confidence:       row.Confidence,
+			Source:           row.Source,
+			Status:           row.Status,
+			LastSeenRunID:    row.LastSeenRunID,
+			ResolvedBy:       row.ResolvedBy,
+			ResolvedAt:       row.ResolvedAt,
+			ResolutionDetail: row.ResolutionDetail,
+			CreatedAt:        row.CreatedAt,
+			UpdatedAt:        row.UpdatedAt,
+		})
+	}
+	return snapshot, nil
+}
+
+func (s *Service) ResolveIdentityMapping(ctx context.Context, mappingID int64, platformUsername, platformUserID, actor string) (IdentityMapping, error) {
+	if s == nil || s.store == nil {
+		return IdentityMapping{}, fmt.Errorf("adminapi: service store is not configured")
+	}
+	platformUsername = strings.TrimSpace(platformUsername)
+	if mappingID <= 0 || platformUsername == "" {
+		return IdentityMapping{}, &ActionError{StatusCode: 400, Message: "identity mapping and platform username are required"}
+	}
+	if actionStore, ok := s.store.(interface {
+		ResolveIdentityMapping(ctx context.Context, arg db.ResolveIdentityMappingParams) error
+	}); ok {
+		if err := actionStore.ResolveIdentityMapping(ctx, db.ResolveIdentityMappingParams{
+			ID:               mappingID,
+			PlatformUsername: platformUsername,
+			PlatformUserID:   strings.TrimSpace(platformUserID),
+			ResolvedBy:       strings.TrimSpace(actor),
+		}); err != nil {
+			return IdentityMapping{}, err
+		}
+	}
+	mapping, err := s.store.GetIdentityMapping(ctx, mappingID)
+	if err != nil {
+		return IdentityMapping{}, err
+	}
+	return IdentityMapping{
+		ID:               mapping.ID,
+		Platform:         mapping.Platform,
+		ProjectPath:      mapping.ProjectPath,
+		GitIdentityKey:   mapping.GitIdentityKey,
+		GitEmail:         mapping.GitEmail,
+		GitName:          mapping.GitName,
+		ObservedRole:     mapping.ObservedRole,
+		PlatformUsername: mapping.PlatformUsername,
+		PlatformUserID:   mapping.PlatformUserID,
+		HeadSHA:          mapping.HeadSha,
+		Confidence:       mapping.Confidence,
+		Source:           mapping.Source,
+		Status:           mapping.Status,
+		LastSeenRunID:    mapping.LastSeenRunID,
+		ResolvedBy:       mapping.ResolvedBy,
+		ResolvedAt:       mapping.ResolvedAt,
+		ResolutionDetail: mapping.ResolutionDetail,
+		CreatedAt:        mapping.CreatedAt,
+		UpdatedAt:        mapping.UpdatedAt,
+	}, nil
+}
+
+func buildRunListItem(now time.Time, row db.ListRecentRunsRow) RunListItem {
+	item := RunListItem{
+		ID:                      row.ID,
+		Platform:                row.Platform,
+		ProjectPath:             row.ProjectPath,
+		WebURL:                  row.WebUrl,
+		MergeRequestID:          row.MergeRequestID,
+		Status:                  row.Status,
+		ErrorCode:               row.ErrorCode,
+		TriggerType:             row.TriggerType,
+		HeadSHA:                 row.HeadSha,
+		ClaimedBy:               row.ClaimedBy,
+		RetryCount:              row.RetryCount,
+		NextRetryAt:             row.NextRetryAt,
+		ProviderLatencyMs:       row.ProviderLatencyMs,
+		ProviderTokensTotal:     row.ProviderTokensTotal,
+		HookAction:              row.HookAction,
+		HookVerificationOutcome: row.HookVerificationOutcome,
+		FindingCount:            row.FindingCount,
+		CommentActionCount:      row.CommentActionCount,
+		CreatedAt:               row.CreatedAt,
+		UpdatedAt:               row.UpdatedAt,
+		StartedAt:               row.StartedAt,
+		CompletedAt:             row.CompletedAt,
+	}
+	item.QueueAgeSeconds = int64(now.UTC().Sub(row.CreatedAt.UTC()).Seconds())
+	if row.StartedAt.Valid {
+		item.QueueWaitSeconds = int64(row.StartedAt.Time.UTC().Sub(row.CreatedAt.UTC()).Seconds())
+	} else {
+		item.QueueWaitSeconds = item.QueueAgeSeconds
+	}
+	if row.StartedAt.Valid {
+		end := now.UTC()
+		if row.CompletedAt.Valid {
+			end = row.CompletedAt.Time.UTC()
+		}
+		item.ProcessingDurationSeconds = int64(end.Sub(row.StartedAt.Time.UTC()).Seconds())
+	}
+	return item
 }

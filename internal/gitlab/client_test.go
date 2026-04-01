@@ -75,6 +75,73 @@ func TestGetMergeRequest(t *testing.T) {
 	}
 }
 
+func TestGetMergeRequestSnapshotByProjectRefIncludesHeadCommit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/projects/group/repo/merge_requests/7":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"id":         101,
+				"iid":        7,
+				"project_id": 123,
+				"title":      "Add reader client",
+				"state":      "opened",
+				"draft":      false,
+				"sha":        "head-sha",
+				"web_url":    "https://gitlab.example.com/group/project/-/merge_requests/7",
+				"diff_refs": map[string]any{
+					"base_sha":  "base-sha",
+					"head_sha":  "head-sha",
+					"start_sha": "start-sha",
+				},
+				"author": map[string]any{"username": "reviewer-bot"},
+			})
+		case "/api/v4/projects/123/merge_requests/7/versions":
+			writeJSON(t, w, http.StatusOK, []map[string]any{{
+				"id":               22,
+				"head_commit_sha":  "head-sha",
+				"base_commit_sha":  "base-sha",
+				"start_commit_sha": "start-sha",
+				"patch_id_sha":     "patch-sha",
+				"created_at":       "2026-03-17T12:00:00Z",
+				"merge_request_id": 101,
+				"state":            "collected",
+				"real_size":        "4",
+			}})
+		case "/api/v4/projects/123/merge_requests/7/diffs":
+			writeJSON(t, w, http.StatusOK, []map[string]any{{"old_path": "a.go", "new_path": "a.go", "diff": "@@ -1 +1 @@"}})
+		case "/api/v4/projects/group/repo/repository/commits/head-sha":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"id":              "head-sha",
+				"title":           "Add reader client",
+				"message":         "Add reader client",
+				"author_name":     "Chris Dev",
+				"author_email":    "chris@example.com",
+				"committer_name":  "Merge Bot",
+				"committer_email": "bot@example.com",
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+
+	snapshot, err := client.GetMergeRequestSnapshotByProjectRef(context.Background(), "group/repo", 7)
+	if err != nil {
+		t.Fatalf("GetMergeRequestSnapshotByProjectRef: %v", err)
+	}
+	if snapshot.HeadCommit.SHA != "head-sha" {
+		t.Fatalf("head commit sha = %q, want head-sha", snapshot.HeadCommit.SHA)
+	}
+	if snapshot.HeadCommit.Author.Email != "chris@example.com" {
+		t.Fatalf("head commit author email = %q, want chris@example.com", snapshot.HeadCommit.Author.Email)
+	}
+	if snapshot.HeadCommit.Committer.Name != "Merge Bot" {
+		t.Fatalf("head commit committer name = %q, want Merge Bot", snapshot.HeadCommit.Committer.Name)
+	}
+}
+
 func TestGetMergeRequestByProjectRefEscapesPath(t *testing.T) {
 	var requestURI string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -412,6 +479,16 @@ func TestDiffNotReadyRetry(t *testing.T) {
 				"new_path": "a.go",
 				"diff":     "@@ -1 +1 @@",
 			}})
+		case "/api/v4/projects/123/repository/commits/head-sha":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"id":              "head-sha",
+				"title":           "Add reader client",
+				"message":         "Add reader client",
+				"author_name":     "Chris Dev",
+				"author_email":    "chris@example.com",
+				"committer_name":  "Merge Bot",
+				"committer_email": "bot@example.com",
+			})
 		default:
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}

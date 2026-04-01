@@ -51,12 +51,30 @@ func (a *Adapter) FetchSnapshot(ctx context.Context, target core.ReviewTarget) (
 			HeadSHA:      snapshot.PullRequest.HeadSHA,
 			WebURL:       snapshot.PullRequest.HTMLURL,
 			Author: core.PlatformAuthor{
+				UserID:   strconv.FormatInt(snapshot.PullRequest.User.ID, 10),
 				Username: snapshot.PullRequest.User.Login,
 			},
 		},
 		Version: core.PlatformVersion{
 			BaseSHA: snapshot.PullRequest.BaseSHA,
 			HeadSHA: snapshot.PullRequest.HeadSHA,
+		},
+		HeadCommit: core.PlatformCommit{
+			SHA:     snapshot.HeadCommit.SHA,
+			Title:   snapshot.HeadCommit.Title,
+			Message: snapshot.HeadCommit.Message,
+			Author: core.PlatformAuthor{
+				UserID:   strconv.FormatInt(snapshot.HeadCommit.Author.ID, 10),
+				Username: snapshot.HeadCommit.Author.Login,
+				Name:     snapshot.HeadCommit.Author.Name,
+				Email:    snapshot.HeadCommit.Author.Email,
+			},
+			Committer: core.PlatformAuthor{
+				UserID:   strconv.FormatInt(snapshot.HeadCommit.Committer.ID, 10),
+				Username: snapshot.HeadCommit.Committer.Login,
+				Name:     snapshot.HeadCommit.Committer.Name,
+				Email:    snapshot.HeadCommit.Committer.Email,
+			},
 		},
 		Diffs: platformDiffs(snapshot.Files),
 	}, nil

@@ -19,6 +19,10 @@ type fakeStore struct {
 	recentFailedRuns          []db.ListRecentFailedRunsRow
 	failureCounts             []db.ListFailureCountsByErrorCodeRow
 	webhookVerificationCounts []db.ListWebhookVerificationCountsRow
+	recentRuns                []db.ListRecentRunsRow
+	runDetail                 db.GetRunDetailRow
+	identityMappings          []db.ListIdentityMappingsRow
+	resolvedIdentityMapping   db.IdentityMapping
 }
 
 func (f fakeStore) CountPendingQueue(context.Context) (int64, error) {
@@ -55,6 +59,22 @@ func (f fakeStore) ListFailureCountsByErrorCode(context.Context, time.Time) ([]d
 
 func (f fakeStore) ListWebhookVerificationCounts(context.Context, time.Time) ([]db.ListWebhookVerificationCountsRow, error) {
 	return f.webhookVerificationCounts, nil
+}
+
+func (f fakeStore) ListRecentRuns(context.Context, db.ListRecentRunsParams) ([]db.ListRecentRunsRow, error) {
+	return f.recentRuns, nil
+}
+
+func (f fakeStore) GetRunDetail(context.Context, int64) (db.GetRunDetailRow, error) {
+	return f.runDetail, nil
+}
+
+func (f fakeStore) ListIdentityMappings(context.Context, db.ListIdentityMappingsParams) ([]db.ListIdentityMappingsRow, error) {
+	return f.identityMappings, nil
+}
+
+func (f fakeStore) GetIdentityMapping(context.Context, int64) (db.IdentityMapping, error) {
+	return f.resolvedIdentityMapping, nil
 }
 
 func TestServiceQueueSummary(t *testing.T) {
@@ -146,5 +166,105 @@ func TestServiceFailuresSummary(t *testing.T) {
 	}
 	if snapshot.WebhookDeduplicatedLast24h != 5 {
 		t.Fatalf("webhook_deduplicated_last_24h = %d, want 5", snapshot.WebhookDeduplicatedLast24h)
+	}
+}
+
+func TestServiceListRuns(t *testing.T) {
+	now := time.Date(2026, time.March, 29, 19, 15, 0, 0, time.UTC)
+	svc := NewService(fakeStore{
+		recentRuns: []db.ListRecentRunsRow{
+			{
+				ID:                 41,
+				Platform:           "github",
+				ProjectPath:        "acme/repo",
+				MergeRequestID:     17,
+				Status:             "failed",
+				ErrorCode:          "publish_failed",
+				TriggerType:        "webhook",
+				HeadSha:            "deadbeef",
+				ClaimedBy:          "worker-1",
+				FindingCount:       2,
+				CommentActionCount: 1,
+				CreatedAt:          now.Add(-10 * time.Minute),
+				UpdatedAt:          now.Add(-1 * time.Minute),
+			},
+		},
+	}, WithNow(func() time.Time { return now }))
+
+	snapshot, err := svc.Runs(context.Background(), RunFilters{Platform: "github", Status: "failed"})
+	if err != nil {
+		t.Fatalf("Runs: %v", err)
+	}
+	if len(snapshot.Items) != 1 {
+		t.Fatalf("runs len = %d, want 1", len(snapshot.Items))
+	}
+	if snapshot.Items[0].Platform != "github" {
+		t.Fatalf("run platform = %q, want github", snapshot.Items[0].Platform)
+	}
+	if snapshot.Items[0].QueueAgeSeconds <= 0 {
+		t.Fatalf("queue_age_seconds = %d, want > 0", snapshot.Items[0].QueueAgeSeconds)
+	}
+}
+
+func TestServiceGetRunDetail(t *testing.T) {
+	now := time.Date(2026, time.March, 29, 19, 20, 0, 0, time.UTC)
+	svc := NewService(fakeStore{
+		runDetail: db.GetRunDetailRow{
+			ID:                  44,
+			Platform:            "gitlab",
+			ProjectPath:         "group/repo",
+			MergeRequestID:      18,
+			Status:              "completed",
+			ErrorCode:           "",
+			TriggerType:         "webhook",
+			HeadSha:             "cafebabe",
+			ClaimedBy:           "worker-2",
+			FindingCount:        3,
+			CommentActionCount:  2,
+			CreatedAt:           now.Add(-12 * time.Minute),
+			UpdatedAt:           now.Add(-2 * time.Minute),
+			StartedAt:           sql.NullTime{Time: now.Add(-11 * time.Minute), Valid: true},
+			CompletedAt:         sql.NullTime{Time: now.Add(-3 * time.Minute), Valid: true},
+			ProviderLatencyMs:   820,
+			ProviderTokensTotal: 5100,
+		},
+	}, WithNow(func() time.Time { return now }))
+
+	detail, err := svc.RunDetail(context.Background(), 44)
+	if err != nil {
+		t.Fatalf("RunDetail: %v", err)
+	}
+	if detail.ID != 44 {
+		t.Fatalf("detail id = %d, want 44", detail.ID)
+	}
+	if detail.ProcessingDurationSeconds <= 0 {
+		t.Fatalf("processing_duration_seconds = %d, want > 0", detail.ProcessingDurationSeconds)
+	}
+	if detail.ProviderTokensTotal != 5100 {
+		t.Fatalf("provider_tokens_total = %d, want 5100", detail.ProviderTokensTotal)
+	}
+}
+
+func TestServiceListIdentityMappings(t *testing.T) {
+	svc := NewService(fakeStore{
+		identityMappings: []db.ListIdentityMappingsRow{{
+			ID:               71,
+			Platform:         "gitlab",
+			ProjectPath:      "group/repo",
+			GitIdentityKey:   "email:chris@example.com",
+			GitEmail:         "chris@example.com",
+			GitName:          "Chris Dev",
+			ObservedRole:     "commit_author",
+			PlatformUsername: "chris",
+			Status:           "auto",
+		}},
+	})
+
+	snapshot, err := svc.IdentityMappings(context.Background(), IdentityFilters{Platform: "gitlab"})
+	if err != nil {
+		t.Fatalf("IdentityMappings: %v", err)
+	}
+	if len(snapshot.Items) != 1 || snapshot.Items[0].ID != 71 {
+		t.Fatalf("identity mappings = %+v, want mapping 71", snapshot.Items)
 	}
 }

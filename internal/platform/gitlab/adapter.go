@@ -107,6 +107,19 @@ func (a *Adapter) FetchSnapshot(ctx context.Context, target core.ReviewTarget) (
 			HeadSHA:           snapshot.Version.HeadSHA,
 			PatchIDSHA:        snapshot.Version.PatchIDSHA,
 		},
+		HeadCommit: core.PlatformCommit{
+			SHA:     snapshot.HeadCommit.SHA,
+			Title:   snapshot.HeadCommit.Title,
+			Message: snapshot.HeadCommit.Message,
+			Author: core.PlatformAuthor{
+				Name:  snapshot.HeadCommit.Author.Name,
+				Email: snapshot.HeadCommit.Author.Email,
+			},
+			Committer: core.PlatformAuthor{
+				Name:  snapshot.HeadCommit.Committer.Name,
+				Email: snapshot.HeadCommit.Committer.Email,
+			},
+		},
 		Diffs: platformDiffs(snapshot.Diffs),
 	}, nil
 }

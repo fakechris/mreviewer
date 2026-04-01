@@ -32,11 +32,11 @@ type BundleWriteback interface {
 }
 
 type EngineProcessor struct {
-	db        *sql.DB
-	loadInput ReviewInputLoader
-	engine    ReviewEngine
-	newStore  func(db.DBTX) db.Store
-	writeback RunWriteback
+	db                   *sql.DB
+	loadInput            ReviewInputLoader
+	engine               ReviewEngine
+	newStore             func(db.DBTX) db.Store
+	writeback            RunWriteback
 	defaultReviewerPacks []string
 	defaultAdvisorRoute  string
 }
@@ -117,6 +117,9 @@ func (p *EngineProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (sch
 	if err != nil {
 		return scheduler.ProcessOutcome{}, fmt.Errorf("reviewrun: load review input: %w", err)
 	}
+	if err := persistIdentityMappingsFromInput(ctx, store, run, input); err != nil {
+		return scheduler.ProcessOutcome{}, fmt.Errorf("reviewrun: persist identity mappings: %w", err)
+	}
 
 	bundle, err := p.engine.Run(ctx, input, core.RunOptions{
 		OutputMode:    "both",
@@ -157,6 +160,92 @@ func (p *EngineProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (sch
 		ReviewFindings: findings,
 		ReviewBundle:   bundle,
 	}, nil
+}
+
+func persistIdentityMappingsFromInput(ctx context.Context, store db.Store, run db.ReviewRun, input core.ReviewInput) error {
+	if store == nil {
+		return nil
+	}
+	projectPath := strings.TrimSpace(input.Target.Repository)
+	if projectPath == "" {
+		projectPath = strings.TrimSpace(input.Snapshot.Target.Repository)
+	}
+	platform := string(normalizePlatform(input.Target.Platform))
+	if platform == "" {
+		platform = string(normalizePlatform(input.Snapshot.Target.Platform))
+	}
+	if projectPath == "" || platform == "" {
+		return nil
+	}
+	platformUsername := strings.TrimSpace(input.Snapshot.Change.Author.Username)
+	platformUserID := strings.TrimSpace(input.Snapshot.Change.Author.UserID)
+	headSHA := firstNonEmpty(
+		strings.TrimSpace(input.Snapshot.HeadCommit.SHA),
+		strings.TrimSpace(input.Snapshot.Change.HeadSHA),
+		strings.TrimSpace(input.Snapshot.Version.HeadSHA),
+		strings.TrimSpace(run.HeadSha),
+	)
+	observations := []struct {
+		role   string
+		author core.PlatformAuthor
+	}{
+		{role: "commit_author", author: input.Snapshot.HeadCommit.Author},
+		{role: "commit_committer", author: input.Snapshot.HeadCommit.Committer},
+	}
+	for _, observation := range observations {
+		identityKey := gitIdentityKey(observation.author)
+		if identityKey == "" {
+			continue
+		}
+		status := "auto"
+		confidence := 0.72
+		if platformUsername == "" {
+			status = "unresolved"
+			confidence = 0.55
+		} else if strings.TrimSpace(observation.author.Email) != "" {
+			confidence = 0.94
+		}
+		if err := store.UpsertIdentityMapping(ctx, db.UpsertIdentityMappingParams{
+			Platform:         platform,
+			ProjectPath:      projectPath,
+			GitIdentityKey:   identityKey,
+			GitEmail:         strings.TrimSpace(observation.author.Email),
+			GitName:          strings.TrimSpace(observation.author.Name),
+			ObservedRole:     observation.role,
+			PlatformUsername: platformUsername,
+			PlatformUserID:   platformUserID,
+			HeadSha:          headSHA,
+			Confidence:       confidence,
+			Source:           "observed",
+			Status:           status,
+			LastSeenRunID:    sql.NullInt64{Int64: run.ID, Valid: run.ID > 0},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func gitIdentityKey(author core.PlatformAuthor) string {
+	if email := strings.ToLower(strings.TrimSpace(author.Email)); email != "" {
+		return "email:" + email
+	}
+	if name := strings.ToLower(strings.TrimSpace(author.Name)); name != "" {
+		return "name:" + name
+	}
+	if username := strings.ToLower(strings.TrimSpace(author.Username)); username != "" {
+		return "username:" + username
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func legacyResultFromBundle(run db.ReviewRun, bundle core.ReviewBundle) llm.ReviewResult {

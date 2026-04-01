@@ -2,6 +2,9 @@ package github
 
 type PullRequestUser struct {
 	Login string `json:"login"`
+	ID    int64  `json:"id,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 type PullRequest struct {
@@ -31,7 +34,16 @@ type PullRequestFile struct {
 
 type PullRequestSnapshot struct {
 	PullRequest PullRequest       `json:"pull_request"`
+	HeadCommit  PullRequestCommit `json:"head_commit,omitempty"`
 	Files       []PullRequestFile `json:"files,omitempty"`
+}
+
+type PullRequestCommit struct {
+	SHA       string          `json:"sha"`
+	Title     string          `json:"title,omitempty"`
+	Message   string          `json:"message,omitempty"`
+	Author    PullRequestUser `json:"author"`
+	Committer PullRequestUser `json:"committer"`
 }
 
 type IssueComment struct {

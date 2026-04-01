@@ -2,19 +2,455 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>MReviewer Admin</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MReviewer Control Plane</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f7fb;
+        --panel: #ffffff;
+        --border: #d9e0ea;
+        --text: #142033;
+        --muted: #5b6b82;
+        --accent: #0e7490;
+        --danger: #b42318;
+        --warn: #b54708;
+        --success: #027a48;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header, main { max-width: 1440px; margin: 0 auto; padding: 20px; }
+      h1, h2, h3, p { margin: 0; }
+      header p { color: var(--muted); margin-top: 8px; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+      }
+      .span-4 { grid-column: span 4; }
+      .span-6 { grid-column: span 6; }
+      .span-8 { grid-column: span 8; }
+      .span-12 { grid-column: span 12; }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+      .metric {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+        background: #fbfcfe;
+      }
+      .metric .label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+      .metric .value {
+        font-size: 24px;
+        font-weight: 700;
+        margin-top: 6px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 16px;
+        font-size: 14px;
+      }
+      th, td {
+        text-align: left;
+        padding: 10px 8px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }
+      input, select, button {
+        font: inherit;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: white;
+      }
+      button {
+        cursor: pointer;
+        background: #eef4ff;
+      }
+      button:hover { background: #e0ecff; }
+      button.danger {
+        background: #fff1f3;
+        border-color: #fecdd3;
+        color: var(--danger);
+      }
+      .status {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #edf2f7;
+      }
+      .status.running { background: #e0f2fe; color: var(--accent); }
+      .status.failed { background: #fef3f2; color: var(--danger); }
+      .status.completed { background: #ecfdf3; color: var(--success); }
+      .status.pending { background: #fff7ed; color: var(--warn); }
+      .muted { color: var(--muted); }
+      pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 12px;
+        border-radius: 10px;
+        overflow: auto;
+        font-size: 12px;
+        margin-top: 12px;
+      }
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+      .detail-item { border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+      .detail-item .label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+      .detail-item .value { margin-top: 6px; font-weight: 600; word-break: break-word; }
+      @media (max-width: 980px) {
+        .span-4, .span-6, .span-8, .span-12 { grid-column: span 12; }
+        .detail-grid, .metrics { grid-template-columns: 1fr; }
+      }
+    </style>
   </head>
   <body>
-    <h1>MReviewer Admin</h1>
-    <p>Live control-plane view for queue, concurrency, and failures.</p>
-    <ul>
-      <li><code>/admin/api/queue</code></li>
-      <li><code>/admin/api/concurrency</code></li>
-      <li><code>/admin/api/failures</code></li>
-    </ul>
+    <header>
+      <h1>MReviewer Control Plane</h1>
+      <p>Queue visibility, worker state, failures, recent runs, and operator actions for GitLab and GitHub review runtime.</p>
+    </header>
+    <main class="grid">
+      <section class="panel span-4">
+        <h2>Queue</h2>
+        <div class="metrics" id="queue-metrics"></div>
+      </section>
+      <section class="panel span-4">
+        <h2>Concurrency</h2>
+        <div class="metrics" id="concurrency-metrics"></div>
+      </section>
+      <section class="panel span-4">
+        <h2>Failures</h2>
+        <div class="metrics" id="failure-metrics"></div>
+      </section>
+
+      <section class="panel span-8">
+        <h2>Recent Runs</h2>
+        <div class="toolbar">
+          <select id="filter-platform">
+            <option value="">All platforms</option>
+            <option value="gitlab">GitLab</option>
+            <option value="github">GitHub</option>
+          </select>
+          <select id="filter-status">
+            <option value="">All statuses</option>
+            <option value="pending">pending</option>
+            <option value="running">running</option>
+            <option value="completed">completed</option>
+            <option value="failed">failed</option>
+            <option value="cancelled">cancelled</option>
+          </select>
+          <input id="filter-project" placeholder="project/repo">
+          <input id="filter-head-sha" placeholder="head sha">
+          <button id="refresh-runs">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Project</th>
+              <th>Status</th>
+              <th>Error</th>
+              <th>Worker</th>
+              <th>Signals</th>
+            </tr>
+          </thead>
+          <tbody id="runs-table"></tbody>
+        </table>
+      </section>
+
+      <section class="panel span-4">
+        <h2>Run Detail</h2>
+        <p class="muted">Select a run from the table to inspect details and take bounded actions.</p>
+        <div class="toolbar">
+          <button data-action="retry">Retry</button>
+          <button data-action="rerun">Rerun</button>
+          <button data-action="requeue">Requeue</button>
+          <button data-action="cancel" class="danger">Cancel</button>
+        </div>
+        <div id="run-detail"></div>
+      </section>
+
+      <section class="panel span-12">
+        <h2>Identity Mappings</h2>
+        <p class="muted">Observed git author and committer identities mapped to GitLab or GitHub users for runtime attribution and operator repair.</p>
+        <div class="toolbar">
+          <select id="identity-platform">
+            <option value="">All platforms</option>
+            <option value="gitlab">GitLab</option>
+            <option value="github">GitHub</option>
+          </select>
+          <select id="identity-status">
+            <option value="">All mapping states</option>
+            <option value="auto">auto</option>
+            <option value="manual">manual</option>
+            <option value="unresolved">unresolved</option>
+          </select>
+          <input id="identity-project" placeholder="project/repo">
+          <button id="refresh-identities">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Identity</th>
+              <th>Project</th>
+              <th>Observed</th>
+              <th>Mapped User</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="identity-table"></tbody>
+        </table>
+      </section>
+
+      <section class="panel span-12">
+        <h2>API Surface</h2>
+        <pre id="api-surface"></pre>
+      </section>
+    </main>
+
     <script>
-      const endpoints = ["/admin/api/queue", "/admin/api/concurrency", "/admin/api/failures"];
-      window.__MREVIEWER_ADMIN_ENDPOINTS__ = endpoints;
+      const endpoints = {
+        queue: "/admin/api/queue",
+        concurrency: "/admin/api/concurrency",
+        failures: "/admin/api/failures",
+        runs: "/admin/api/runs",
+        identities: "/admin/api/identities"
+      };
+      const state = { selectedRunId: null, selectedRunDetail: null };
+
+      function renderMetrics(containerId, metrics) {
+        const container = document.getElementById(containerId);
+        container.innerHTML = metrics.map((item) => `
+          <div class="metric">
+            <div class="label">${item.label}</div>
+            <div class="value">${item.value}</div>
+          </div>
+        `).join("");
+      }
+
+      function runStatusClass(status) {
+        return `status ${String(status || "").toLowerCase()}`;
+      }
+
+      function formatNullable(value) {
+        return value === null || value === undefined || value === "" ? "<span class=\"muted\">n/a</span>" : String(value);
+      }
+
+      async function fetchJSON(url, options) {
+        const response = await fetch(url, options);
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || `Request failed: ${response.status}`);
+        }
+        return response.json();
+      }
+
+      async function loadSnapshots() {
+        const [queue, concurrency, failures] = await Promise.all([
+          fetchJSON(endpoints.queue),
+          fetchJSON(endpoints.concurrency),
+          fetchJSON(endpoints.failures)
+        ]);
+
+        renderMetrics("queue-metrics", [
+          { label: "Pending", value: queue.pending_count },
+          { label: "Retry Scheduled", value: queue.retry_scheduled_count },
+          { label: "Oldest Waiting (s)", value: queue.oldest_waiting_age_seconds },
+          { label: "Superseded 24h", value: queue.superseded_last_24h }
+        ]);
+
+        renderMetrics("concurrency-metrics", [
+          { label: "Active Workers", value: concurrency.active_workers.length },
+          { label: "Configured Capacity", value: concurrency.total_configured_concurrency },
+          { label: "Running Runs", value: concurrency.total_running_runs },
+          { label: "Worker IDs", value: concurrency.active_workers.map((w) => w.worker_id).join(", ") || "n/a" }
+        ]);
+
+        renderMetrics("failure-metrics", [
+          { label: "Recent Failures", value: failures.recent_failed_runs.length },
+          { label: "Rejected 24h", value: failures.webhook_rejected_last_24h },
+          { label: "Deduplicated 24h", value: failures.webhook_deduplicated_last_24h },
+          { label: "Top Error", value: failures.error_buckets[0] ? failures.error_buckets[0].error_code : "n/a" }
+        ]);
+      }
+
+      function currentRunFilters() {
+        const params = new URLSearchParams();
+        const platform = document.getElementById("filter-platform").value;
+        const status = document.getElementById("filter-status").value;
+        const project = document.getElementById("filter-project").value.trim();
+        const headSha = document.getElementById("filter-head-sha").value.trim();
+        if (platform) params.set("platform", platform);
+        if (status) params.set("status", status);
+        if (project) params.set("project", project);
+        if (headSha) params.set("head_sha", headSha);
+        return params;
+      }
+
+      async function loadRuns() {
+        const params = currentRunFilters();
+        const payload = await fetchJSON(`${endpoints.runs}?${params.toString()}`);
+        const tbody = document.getElementById("runs-table");
+        tbody.innerHTML = payload.items.map((run) => `
+          <tr data-run-id="${run.id}">
+            <td>#${run.id}<br><span class="muted">${run.platform}</span></td>
+            <td>${run.project_path}<br><span class="muted">${formatNullable(run.web_url)}</span></td>
+            <td><span class="${runStatusClass(run.status)}">${run.status}</span></td>
+            <td>${formatNullable(run.error_code)}</td>
+            <td>${formatNullable(run.claimed_by)}</td>
+            <td>${run.finding_count} findings<br><span class="muted">${run.comment_action_count} actions</span></td>
+          </tr>
+        `).join("");
+        Array.from(tbody.querySelectorAll("tr")).forEach((row) => {
+          row.addEventListener("click", () => loadRunDetail(row.dataset.runId));
+        });
+      }
+
+      async function loadRunDetail(runId) {
+        state.selectedRunId = runId;
+        state.selectedRunDetail = await fetchJSON(`/admin/api/runs/${runId}`);
+        const detail = state.selectedRunDetail;
+        document.getElementById("run-detail").innerHTML = `
+          <div class="detail-grid">
+            <div class="detail-item"><div class="label">Run</div><div class="value">#${detail.id}</div></div>
+            <div class="detail-item"><div class="label">Status</div><div class="value">${detail.status}</div></div>
+            <div class="detail-item"><div class="label">Project</div><div class="value">${detail.project_path}</div></div>
+            <div class="detail-item"><div class="label">Trigger</div><div class="value">${detail.trigger_type}</div></div>
+            <div class="detail-item"><div class="label">Error Code</div><div class="value">${formatNullable(detail.error_code)}</div></div>
+            <div class="detail-item"><div class="label">Worker</div><div class="value">${formatNullable(detail.claimed_by)}</div></div>
+            <div class="detail-item"><div class="label">Head SHA</div><div class="value">${formatNullable(detail.head_sha)}</div></div>
+            <div class="detail-item"><div class="label">Hook Action</div><div class="value">${formatNullable(detail.hook_action)}</div></div>
+            <div class="detail-item"><div class="label">Queue Wait</div><div class="value">${detail.queue_wait_seconds}s</div></div>
+            <div class="detail-item"><div class="label">Processing</div><div class="value">${detail.processing_duration_seconds}s</div></div>
+            <div class="detail-item"><div class="label">Findings</div><div class="value">${detail.finding_count}</div></div>
+            <div class="detail-item"><div class="label">Comment Actions</div><div class="value">${detail.comment_action_count}</div></div>
+          </div>
+          <pre>${JSON.stringify(detail, null, 2)}</pre>
+        `;
+      }
+
+      function currentIdentityFilters() {
+        const params = new URLSearchParams();
+        const platform = document.getElementById("identity-platform").value;
+        const status = document.getElementById("identity-status").value;
+        const project = document.getElementById("identity-project").value.trim();
+        if (platform) params.set("platform", platform);
+        if (status) params.set("status", status);
+        if (project) params.set("project", project);
+        return params;
+      }
+
+      async function loadIdentities() {
+        const params = currentIdentityFilters();
+        const payload = await fetchJSON(`${endpoints.identities}?${params.toString()}`);
+        const tbody = document.getElementById("identity-table");
+        tbody.innerHTML = payload.items.map((item) => `
+          <tr>
+            <td>${formatNullable(item.git_email || item.git_name)}<br><span class="muted">${formatNullable(item.git_identity_key)}</span></td>
+            <td>${item.project_path}<br><span class="muted">${item.platform}</span></td>
+            <td>${formatNullable(item.observed_role)}<br><span class="muted">${formatNullable(item.head_sha)}</span></td>
+            <td>${formatNullable(item.platform_username)}<br><span class="muted">${formatNullable(item.platform_user_id)}</span></td>
+            <td><span class="${runStatusClass(item.status)}">${item.status}</span></td>
+            <td><button data-resolve-id="${item.id}" data-current-username="${item.platform_username || ""}" data-current-user-id="${item.platform_user_id || ""}">Resolve</button></td>
+          </tr>
+        `).join("");
+        Array.from(tbody.querySelectorAll("button[data-resolve-id]")).forEach((button) => {
+          button.addEventListener("click", () => resolveIdentity(button.dataset.resolveId, button.dataset.currentUsername, button.dataset.currentUserId).catch((error) => window.alert(error.message)));
+        });
+      }
+
+      async function resolveIdentity(id, currentUsername, currentUserId) {
+        const platformUsername = window.prompt("Platform username", currentUsername || "");
+        if (!platformUsername) return;
+        const platformUserID = window.prompt("Platform user ID (optional)", currentUserId || "") || "";
+        await fetchJSON(`/admin/api/identities/${id}/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            platform_username: platformUsername,
+            platform_user_id: platformUserID
+          })
+        });
+        await loadIdentities();
+      }
+
+      async function invokeAction(action) {
+        if (!state.selectedRunId) {
+          window.alert("Select a run first.");
+          return;
+        }
+        await fetchJSON(`/admin/api/runs/${state.selectedRunId}/${action}`, { method: "POST" });
+        await loadRuns();
+        await loadRunDetail(state.selectedRunId);
+      }
+
+      document.getElementById("refresh-runs").addEventListener("click", () => {
+        loadRuns().catch((error) => window.alert(error.message));
+      });
+      document.getElementById("refresh-identities").addEventListener("click", () => {
+        loadIdentities().catch((error) => window.alert(error.message));
+      });
+      Array.from(document.querySelectorAll("button[data-action]")).forEach((button) => {
+        button.addEventListener("click", () => invokeAction(button.dataset.action).catch((error) => window.alert(error.message)));
+      });
+
+      document.getElementById("api-surface").textContent = JSON.stringify({
+        endpoints: {
+          queue: endpoints.queue,
+          concurrency: endpoints.concurrency,
+          failures: endpoints.failures,
+          runs: endpoints.runs,
+          identities: endpoints.identities,
+          run_detail: "/admin/api/runs/{id}",
+          actions: [
+            "/admin/api/runs/{id}/retry",
+            "/admin/api/runs/{id}/rerun",
+            "/admin/api/runs/{id}/cancel",
+            "/admin/api/runs/{id}/requeue"
+          ],
+          identity_resolve: "/admin/api/identities/{id}/resolve"
+        }
+      }, null, 2);
+
+      Promise.all([loadSnapshots(), loadRuns(), loadIdentities()]).catch((error) => {
+        window.alert(error.message);
+      });
     </script>
   </body>
 </html>

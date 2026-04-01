@@ -3,6 +3,7 @@ package reviewrun
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 
 	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
@@ -17,6 +18,170 @@ type fakeReviewInputLoader struct {
 	route    string
 	loadErr  error
 	loadCall int
+}
+
+func TestPersistIdentityMappingsFromInputUpsertsCommitAuthorAndCommitter(t *testing.T) {
+	sqlDB := setupEngineProcessorDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+	_, projectID, mrID := seedEngineProcessorRunEntities(t, sqlDB, 301, 11, "head-sha-engine-processor")
+
+	runResult, err := queries.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID:      projectID,
+		MergeRequestID: mrID,
+		TriggerType:    "manual",
+		HeadSha:        "head-sha-engine-processor",
+		Status:         "pending",
+		MaxRetries:     3,
+		IdempotencyKey: "engine-processor-identity-run",
+		ScopeJson:      db.NullRawMessage([]byte(`{"platform":"gitlab"}`)),
+	})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	runID, _ := runResult.LastInsertId()
+	run, err := queries.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	input := core.ReviewInput{
+		Target: core.ReviewTarget{
+			Platform:     core.PlatformGitLab,
+			Repository:   "group/repo",
+			ProjectID:    301,
+			ChangeNumber: 11,
+		},
+		Snapshot: core.PlatformSnapshot{
+			Change: core.PlatformChange{
+				HeadSHA: "head-sha-engine-processor",
+				Author: core.PlatformAuthor{
+					Username: "chris",
+					UserID:   "77",
+				},
+			},
+			HeadCommit: core.PlatformCommit{
+				SHA: "head-sha-engine-processor",
+				Author: core.PlatformAuthor{
+					Name:  "Chris Dev",
+					Email: "chris@example.com",
+				},
+				Committer: core.PlatformAuthor{
+					Name:  "Merge Bot",
+					Email: "bot@example.com",
+				},
+			},
+		},
+	}
+
+	if err := persistIdentityMappingsFromInput(ctx, queries, run, input); err != nil {
+		t.Fatalf("persistIdentityMappingsFromInput: %v", err)
+	}
+
+	mappings, err := queries.ListIdentityMappings(ctx, db.ListIdentityMappingsParams{LimitCount: 10})
+	if err != nil {
+		t.Fatalf("ListIdentityMappings: %v", err)
+	}
+	if len(mappings) != 2 {
+		t.Fatalf("identity mappings len = %d, want 2", len(mappings))
+	}
+	found := map[string]db.ListIdentityMappingsRow{}
+	for _, item := range mappings {
+		found[item.GitIdentityKey] = item
+	}
+	if found["email:chris@example.com"].PlatformUsername != "chris" {
+		t.Fatalf("author mapping username = %q, want chris", found["email:chris@example.com"].PlatformUsername)
+	}
+	if found["email:bot@example.com"].ObservedRole != "commit_committer" {
+		t.Fatalf("committer observed role = %q, want commit_committer", found["email:bot@example.com"].ObservedRole)
+	}
+}
+
+func TestPersistIdentityMappingsFromInputPreservesManualResolution(t *testing.T) {
+	sqlDB := setupEngineProcessorDB(t)
+	ctx := context.Background()
+	queries := db.New(sqlDB)
+	_, projectID, mrID := seedEngineProcessorRunEntities(t, sqlDB, 301, 11, "head-sha-engine-processor")
+
+	runResult, err := queries.InsertReviewRun(ctx, db.InsertReviewRunParams{
+		ProjectID:      projectID,
+		MergeRequestID: mrID,
+		TriggerType:    "manual",
+		HeadSha:        "head-sha-engine-processor",
+		Status:         "pending",
+		MaxRetries:     3,
+		IdempotencyKey: "engine-processor-identity-run-manual",
+		ScopeJson:      db.NullRawMessage([]byte(`{"platform":"gitlab"}`)),
+	})
+	if err != nil {
+		t.Fatalf("InsertReviewRun: %v", err)
+	}
+	runID, _ := runResult.LastInsertId()
+	run, err := queries.GetReviewRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetReviewRun: %v", err)
+	}
+
+	detail := map[string]any{"note": "manual mapping"}
+	detailJSON, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, `
+INSERT INTO identity_mappings (
+	platform, project_path, git_identity_key, git_email, git_name, observed_role,
+	platform_username, platform_user_id, head_sha, confidence, source, status,
+	last_seen_run_id, resolved_by, resolved_at, resolution_detail
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+`,
+		"gitlab", "group/repo", "email:chris@example.com", "chris@example.com", "Chris Dev", "commit_author",
+		"reviewer-manual", "99", "head-sha-engine-processor", 1.0, "manual", "manual",
+		run.ID, "admin", string(detailJSON),
+	); err != nil {
+		t.Fatalf("seed manual identity mapping: %v", err)
+	}
+
+	input := core.ReviewInput{
+		Target: core.ReviewTarget{
+			Platform:   core.PlatformGitLab,
+			Repository: "group/repo",
+		},
+		Snapshot: core.PlatformSnapshot{
+			Change: core.PlatformChange{
+				HeadSHA: "head-sha-engine-processor",
+				Author: core.PlatformAuthor{
+					Username: "chris",
+					UserID:   "77",
+				},
+			},
+			HeadCommit: core.PlatformCommit{
+				SHA: "head-sha-engine-processor",
+				Author: core.PlatformAuthor{
+					Name:  "Chris Dev",
+					Email: "chris@example.com",
+				},
+			},
+		},
+	}
+
+	if err := persistIdentityMappingsFromInput(ctx, queries, run, input); err != nil {
+		t.Fatalf("persistIdentityMappingsFromInput: %v", err)
+	}
+
+	mapping, err := queries.GetIdentityMappingByIdentityKey(ctx, db.GetIdentityMappingByIdentityKeyParams{
+		Platform:       "gitlab",
+		ProjectPath:    "group/repo",
+		GitIdentityKey: "email:chris@example.com",
+	})
+	if err != nil {
+		t.Fatalf("GetIdentityMappingByIdentityKey: %v", err)
+	}
+	if mapping.PlatformUsername != "reviewer-manual" {
+		t.Fatalf("platform username = %q, want reviewer-manual", mapping.PlatformUsername)
+	}
+	if mapping.Status != "manual" {
+		t.Fatalf("status = %q, want manual", mapping.Status)
+	}
 }
 
 func (f *fakeReviewInputLoader) Load(_ context.Context, target core.ReviewTarget, providerRoute string) (core.ReviewInput, error) {
