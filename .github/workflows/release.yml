@@ -63,6 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-cli
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     env:

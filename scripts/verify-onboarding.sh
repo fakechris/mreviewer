@@ -142,6 +142,7 @@ require_pattern ".github/workflows/release.yml" "Formula/mreviewer\\.rb" "releas
 require_pattern ".github/workflows/release.yml" "release/formula-\\$\\{VERSION\\}" "release workflow must sync the generated formula through a dedicated branch"
 require_pattern ".github/workflows/release.yml" "gh pr create" "release workflow must open a PR for formula sync instead of pushing main directly"
 require_pattern ".github/workflows/release.yml" 'gh workflow run CI --ref "\$branch"' "release workflow must trigger CI for the generated formula sync branch"
+require_pattern ".github/workflows/release.yml" "^      actions: write$" "release workflow must request actions: write so formula sync CI dispatch is allowed"
 require_pattern ".github/workflows/release.yml" "workflow_dispatch:" "release workflow must support manual dispatch publishing"
 require_pattern ".github/workflows/release.yml" 'git fetch origin main$' "release workflow must fetch origin/main independently before preparing the formula sync branch"
 require_pattern ".github/workflows/release.yml" 'git fetch origin "\$branch" \|\| true' "release workflow must probe the existing formula sync branch separately so missing remote branches do not block release publishing"
