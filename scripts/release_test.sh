@@ -56,7 +56,8 @@ require_pattern ".github/workflows/release.yml" "Formula/mreviewer\\.rb" "releas
 require_pattern ".github/workflows/release.yml" "release/formula-\\$\\{VERSION\\}" "release workflow must sync the generated formula through a dedicated branch"
 require_pattern ".github/workflows/release.yml" "gh pr create" "release workflow must open a PR for formula sync instead of pushing main directly"
 require_pattern ".github/workflows/release.yml" "workflow_dispatch:" "release workflow must support manual dispatch publishing"
-require_pattern ".github/workflows/release.yml" 'git fetch origin main .*"\$branch"' "release workflow must fetch the existing formula sync branch so reruns can reuse it safely"
+require_pattern ".github/workflows/release.yml" 'git fetch origin main$' "release workflow must fetch origin/main independently before preparing the formula sync branch"
+require_pattern ".github/workflows/release.yml" 'git fetch origin "\$branch" \|\| true' "release workflow must probe the existing formula sync branch separately so missing remote branches do not block release publishing"
 require_multiline_pattern ".github/workflows/release.yml" 'if \[\[ -z "\$\(git status --porcelain -- Formula/mreviewer\.rb\)" \]\]; then\s+echo "branch=\$branch" >> "\$GITHUB_OUTPUT"\s+exit 0' "release workflow must still expose the formula sync branch when reruns find no diff"
 
 require_pattern "README.md" "brew tap fakechris/mreviewer https://github.com/fakechris/mreviewer" "README.md must document brew tap installation with the explicit repo URL"

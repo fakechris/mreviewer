@@ -113,7 +113,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           branch="release/formula-${VERSION}"
-          git fetch origin main "$branch" || true
+          git fetch origin main
+          git fetch origin "$branch" || true
           if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
             git checkout -B "$branch" "origin/$branch"
           else
