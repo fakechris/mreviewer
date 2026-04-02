@@ -55,6 +55,36 @@ func TestRunInitCommandWritesConfig(t *testing.T) {
 	}
 }
 
+func TestRunInitCommandDryRunPrintsConfigWithoutWriting(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runInitCommand([]string{"--config", configPath, "--provider", "openai", "--dry-run"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("config file exists after dry-run, err=%v", err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "app_env: development") {
+		t.Fatalf("dry-run output missing config body: %q", output)
+	}
+	if !strings.Contains(output, "# dry-run: config was not written") {
+		t.Fatalf("dry-run output missing dry-run marker: %q", output)
+	}
+}
+
 func TestRunDoctorCommandJSONReportsMissingPlatformTokens(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

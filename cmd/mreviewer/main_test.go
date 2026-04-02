@@ -230,6 +230,84 @@ func TestRunCLIShowsTopLevelHelpForHelpFlag(t *testing.T) {
 	}
 }
 
+func TestRunCLIShowsVersionForVersionFlag(t *testing.T) {
+	original := cliVersion
+	cliVersion = "0.1.11"
+	t.Cleanup(func() { cliVersion = original })
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"--version"}, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "mreviewer 0.1.11" {
+		t.Fatalf("version output = %q, want %q", stdout.String(), "mreviewer 0.1.11\n")
+	}
+}
+
+func TestRunCLIShowsVersionForVersionSubcommand(t *testing.T) {
+	original := cliVersion
+	cliVersion = "0.1.11"
+	t.Cleanup(func() { cliVersion = original })
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"version"}, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "mreviewer 0.1.11" {
+		t.Fatalf("version output = %q, want %q", stdout.String(), "mreviewer 0.1.11\n")
+	}
+}
+
+func TestRunCLIHelpSubcommandShowsTopLevelHelp(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runCLI([]string{"help"}, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
+		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
+	}
+}
+
+func TestRunCLIHelpReviewSubcommandShowsReviewHelp(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runCLI([]string{"help", "review"}, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	helpOutput := stdout.String() + stderr.String()
+	if !strings.Contains(helpOutput, "--dry-run") {
+		t.Fatalf("help output missing dry-run: %q", helpOutput)
+	}
+	if !strings.Contains(helpOutput, "--verbose") {
+		t.Fatalf("help output missing verbose: %q", helpOutput)
+	}
+}
+
 func TestRunCLIShowsModelChainLanguageInHelp(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -251,6 +329,12 @@ func TestRunCLIShowsModelChainLanguageInHelp(t *testing.T) {
 	}
 	if !strings.Contains(helpOutput, "optional stronger second-opinion model or model-chain override") {
 		t.Fatalf("help output missing advisor model-chain wording: %q", helpOutput)
+	}
+	if !strings.Contains(helpOutput, "--dry-run") {
+		t.Fatalf("help output missing dry-run flag: %q", helpOutput)
+	}
+	if !strings.Contains(helpOutput, "--verbose") {
+		t.Fatalf("help output missing verbose flag: %q", helpOutput)
 	}
 }
 
@@ -623,6 +707,39 @@ func TestParseOptionsSupportsAdvisorAndExitMode(t *testing.T) {
 	}
 }
 
+func TestParseOptionsSupportsDryRunAndVerboseLevels(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, err := parseOptions([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--dry-run",
+		"-vvv",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseOptions: %v", err)
+	}
+	if !opts.dryRun {
+		t.Fatal("dryRun = false, want true")
+	}
+	if opts.verbose != 3 {
+		t.Fatalf("verbose = %d, want 3", opts.verbose)
+	}
+}
+
+func TestParseOptionsRespectsDoubleDashTerminator(t *testing.T) {
+	var stderr bytes.Buffer
+	_, err := parseOptions([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--",
+		"-vv",
+	}, &stderr)
+	if err == nil {
+		t.Fatal("parseOptions error = nil, want invalid usage due to trailing positional arg")
+	}
+	if !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("error = %q, want unexpected positional arguments", err.Error())
+	}
+}
+
 func TestRunWithDepsJSONOutputSupportsMultiTargetCompare(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -946,6 +1063,87 @@ func TestRunWithDepsDoesNotFailWhenStatusPublishingFails(t *testing.T) {
 	}
 	if payload["target"] == nil {
 		t.Fatalf("target missing from output: %s", stdout.String())
+	}
+}
+
+func TestRunWithDepsDryRunSkipsPublishAndStatus(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform: core.PlatformGitHub,
+				URL:      "https://github.com/acme/repo/pull/17",
+			},
+			MarkdownSummary: "judge summary",
+		},
+	}
+	publishCalled := false
+	statusCalled := false
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--output", "json",
+		"--dry-run",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		publish: func(_ context.Context, _ string, _ core.ReviewTarget, _ core.ReviewBundle) error {
+			publishCalled = true
+			return nil
+		},
+		status: func(_ context.Context, _ string, _ core.ReviewTarget, _ core.ReviewInput, _ string, _ int) error {
+			statusCalled = true
+			return nil
+		},
+		stdout: &bytes.Buffer{},
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if publishCalled {
+		t.Fatal("publish called during dry-run")
+	}
+	if statusCalled {
+		t.Fatal("status called during dry-run")
+	}
+}
+
+func TestRunWithDepsVerboseWritesTrace(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform: core.PlatformGitHub,
+				URL:      "https://github.com/acme/repo/pull/17",
+			},
+			MarkdownSummary: "judge summary",
+		},
+	}
+	var stderr bytes.Buffer
+
+	exitCode := runWithDeps([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--output", "json",
+		"-vv",
+	}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		stdout:    &bytes.Buffer{},
+		stderr:    &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "cli: resolved target") {
+		t.Fatalf("stderr missing verbose trace: %q", stderr.String())
 	}
 }
 

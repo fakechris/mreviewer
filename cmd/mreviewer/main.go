@@ -61,6 +61,8 @@ type cliOptions struct {
 	advisorRoute         string
 	compareLiveReviewers []string
 	compareArtifactPaths []string
+	dryRun               bool
+	verbose              int
 }
 
 func main() {
@@ -84,9 +86,11 @@ func runCLI(args []string, reviewDeps runtimeDeps) int {
 		reviewDeps.stderr = os.Stderr
 	}
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		_, _ = fmt.Fprintln(reviewDeps.stdout, "Usage: mreviewer <command> [options]")
-		_, _ = fmt.Fprintln(reviewDeps.stdout)
-		_, _ = fmt.Fprintln(reviewDeps.stdout, "Commands: review, init, doctor, serve")
+		printTopLevelHelp(reviewDeps.stdout)
+		return 0
+	}
+	if args[0] == "--version" {
+		printVersion(reviewDeps.stdout)
 		return 0
 	}
 	if strings.HasPrefix(args[0], "-") {
@@ -101,8 +105,36 @@ func runCLI(args []string, reviewDeps runtimeDeps) int {
 		return runDoctorCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
 	case "serve":
 		return runServeCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
+	case "version":
+		printVersion(reviewDeps.stdout)
+		return 0
+	case "help":
+		return runHelpCommand(args[1:], reviewDeps)
 	default:
 		return runWithDeps(args, reviewDeps)
+	}
+}
+
+func runHelpCommand(args []string, deps runtimeDeps) int {
+	if len(args) == 0 {
+		printTopLevelHelp(deps.stdout)
+		return 0
+	}
+	switch strings.TrimSpace(args[0]) {
+	case "review":
+		return runWithDeps([]string{"--help"}, deps)
+	case "init":
+		return runInitCommand([]string{"--help"}, deps.stdout, deps.stderr)
+	case "doctor":
+		return runDoctorCommand([]string{"--help"}, deps.stdout, deps.stderr)
+	case "serve":
+		return runServeCommand([]string{"--help"}, deps.stdout, deps.stderr)
+	case "version":
+		printVersion(deps.stdout)
+		return 0
+	default:
+		_, _ = fmt.Fprintf(deps.stderr, "unknown help topic %q\n", strings.TrimSpace(args[0]))
+		return 2
 	}
 }
 
@@ -132,6 +164,9 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 		}
 		return 2
 	}
+	if opts.dryRun {
+		cliTracef(deps.stderr, opts.verbose, 1, "cli: dry-run enabled; publish and status updates are disabled")
+	}
 	var bundles []core.ReviewBundle
 	var comparisons []comparepkg.Report
 	for _, rawTarget := range opts.targets {
@@ -140,17 +175,20 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 			_, _ = fmt.Fprintf(deps.stderr, "resolve target failed: %v\n", err)
 			return 1
 		}
+		cliTracef(deps.stderr, opts.verbose, 2, "cli: resolved target %s (%s #%d)", target.URL, target.Platform, target.ChangeNumber)
 		input, err := deps.loadInput(context.Background(), opts.configPath, target)
 		if err != nil {
 			_, _ = fmt.Fprintf(deps.stderr, "build input failed: %v\n", err)
 			return 1
 		}
-		if deps.status != nil {
+		cliTracef(deps.stderr, opts.verbose, 3, "cli: loaded input for %s using config %s", target.URL, opts.configPath)
+		if deps.status != nil && !opts.dryRun {
 			if err := deps.status(context.Background(), opts.configPath, target, input, "running", 0); err != nil {
 				_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", err)
 			}
 		}
 
+		cliTracef(deps.stderr, opts.verbose, 2, "cli: running review engine (route=%s advisor=%s packs=%s publish=%s)", opts.routeOverride, opts.advisorRoute, strings.Join(opts.reviewerPacks, ","), opts.publishMode)
 		bundle, err := deps.newEngine(opts.configPath).Run(context.Background(), input, core.RunOptions{
 			OutputMode:    string(opts.outputMode),
 			PublishMode:   string(opts.publishMode),
@@ -159,7 +197,7 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 			AdvisorRoute:  opts.advisorRoute,
 		})
 		if err != nil {
-			if deps.status != nil {
+			if deps.status != nil && !opts.dryRun {
 				if statusErr := deps.status(context.Background(), opts.configPath, target, input, "failed", 0); statusErr != nil {
 					_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", statusErr)
 				}
@@ -170,6 +208,7 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 		bundles = append(bundles, bundle)
 
 		if deps.compare != nil && (len(opts.compareLiveReviewers) > 0 || len(opts.compareArtifactPaths) > 0) {
+			cliTracef(deps.stderr, opts.verbose, 3, "cli: running comparison for %s", target.URL)
 			comparison, err := deps.compare(context.Background(), opts.configPath, target, bundle, opts)
 			if err != nil {
 				_, _ = fmt.Fprintf(deps.stderr, "compare failed: %v\n", err)
@@ -179,13 +218,13 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 				comparisons = append(comparisons, *comparison)
 			}
 		}
-		if deps.publish != nil && opts.publishMode != PublishModeArtifactOnly {
+		if deps.publish != nil && opts.publishMode != PublishModeArtifactOnly && !opts.dryRun {
 			publishBundle := bundle
 			if opts.publishMode == PublishModeSummaryOnly {
 				publishBundle = summaryOnlyBundle(bundle)
 			}
 			if err := deps.publish(context.Background(), opts.configPath, target, publishBundle); err != nil {
-				if deps.status != nil {
+				if deps.status != nil && !opts.dryRun {
 					if statusErr := deps.status(context.Background(), opts.configPath, target, input, "failed", 0); statusErr != nil {
 						_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", statusErr)
 					}
@@ -194,7 +233,7 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 				return 1
 			}
 		}
-		if deps.status != nil {
+		if deps.status != nil && !opts.dryRun {
 			if err := deps.status(context.Background(), opts.configPath, target, input, finalStatusState(bundle), blockingFindings(bundle)); err != nil {
 				_, _ = fmt.Fprintf(deps.stderr, "status failed: %v\n", err)
 			}
@@ -438,9 +477,25 @@ func summaryOnlyBundle(bundle core.ReviewBundle) core.ReviewBundle {
 }
 
 func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
+	cleanedArgs, commonFlags, err := extractCommonCLIFlags(args)
+	if err != nil {
+		return cliOptions{}, err
+	}
 	fs := flag.NewFlagSet("mreviewer", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	opts := cliOptions{configPath: "config.yaml", exitMode: "never"}
+	setFlagSetUsage(fs, `
+Usage: mreviewer review --target <url> [options]
+
+Review a GitHub pull request or GitLab merge request and emit markdown/json artifacts.
+
+Agent-friendly flags: --dry-run (alias: --dryrun), --verbose, -vv, -vvv, -vvvv
+
+Examples:
+  mreviewer review --target https://github.com/acme/repo/pull/17
+  mreviewer review --target https://gitlab.example.com/group/repo/-/merge_requests/23 --output json
+  mreviewer review --target https://github.com/acme/repo/pull/17 --dry-run -vv
+`)
+	opts := cliOptions{configPath: "config.yaml", exitMode: "never", verbose: commonFlags.verbose}
 	var packs string
 	var compareLive string
 	var compareArtifacts string
@@ -458,8 +513,13 @@ func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	fs.StringVar(&opts.advisorRoute, "advisor-route", "", "optional stronger second-opinion model or model-chain override")
 	fs.StringVar(&compareLive, "compare-live", "", "comma separated live reviewers to compare")
 	fs.StringVar(&compareArtifacts, "compare-artifacts", "", "comma separated external artifact json paths")
-	if err := fs.Parse(args); err != nil {
+	fs.BoolVar(&opts.dryRun, "dry-run", false, "Resolve and render without publish or status side effects")
+	fs.BoolVar(&opts.dryRun, "dryrun", false, "Alias for --dry-run")
+	if err := fs.Parse(cleanedArgs); err != nil {
 		return cliOptions{}, err
+	}
+	if extra := fs.Args(); len(extra) > 0 {
+		return cliOptions{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(extra, ", "))
 	}
 	if targets != "" {
 		for _, part := range strings.Split(targets, ",") {
@@ -486,6 +546,9 @@ func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	case PublishModeFullReviewComments, PublishModeSummaryOnly, PublishModeArtifactOnly:
 	default:
 		return cliOptions{}, fmt.Errorf("--publish must be one of full-review-comments, summary-only, artifact-only")
+	}
+	if opts.dryRun {
+		opts.publishMode = PublishModeArtifactOnly
 	}
 	switch strings.TrimSpace(opts.exitMode) {
 	case "never", "requested_changes":

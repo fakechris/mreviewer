@@ -50,6 +50,8 @@ type serveOptions struct {
 	configPath string
 	port       string
 	dsn        string
+	dryRun     bool
+	verbose    int
 }
 
 type serveDeps struct {
@@ -109,6 +111,9 @@ func runServeWithDeps(args []string, deps serveDeps) int {
 	}
 	opts, err := parseServeOptions(args, deps.stderr)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	logger := logging.NewLogger(slog.LevelInfo)
@@ -128,6 +133,15 @@ func runServeWithDeps(args []string, deps serveDeps) int {
 	if err := validateServeConfig(cfg); err != nil {
 		_, _ = fmt.Fprintf(deps.stderr, "serve failed: %v\n", err)
 		return 1
+	}
+	cliTracef(deps.stderr, opts.verbose, 2, "cli: serve config loaded (config=%s port=%s dsn=%s dry-run=%t)", opts.configPath, cfg.Port, cfg.DSN(), opts.dryRun)
+	if opts.dryRun {
+		_, _ = fmt.Fprintf(deps.stdout, "mreviewer serve dry-run ok\n")
+		_, _ = fmt.Fprintf(deps.stdout, "  port: %s\n", cfg.Port)
+		_, _ = fmt.Fprintf(deps.stdout, "  db: %s\n", cfg.DSN())
+		_, _ = fmt.Fprintf(deps.stdout, "  webhooks: /webhook and /github/webhook\n")
+		_, _ = fmt.Fprintf(deps.stdout, "  admin: /admin/\n")
+		return 0
 	}
 	dsn := cfg.DSN()
 	if err := ensureSQLiteParentDir(dsn); err != nil {
@@ -181,14 +195,35 @@ func runServeWithDeps(args []string, deps serveDeps) int {
 }
 
 func parseServeOptions(args []string, stderr io.Writer) (serveOptions, error) {
+	cleanedArgs, commonFlags, err := extractCommonCLIFlags(args)
+	if err != nil {
+		return serveOptions{}, err
+	}
 	fs := flag.NewFlagSet("mreviewer serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	opts := serveOptions{configPath: defaultPersonalConfigPath}
+	opts := serveOptions{configPath: defaultPersonalConfigPath, verbose: commonFlags.verbose}
+	setFlagSetUsage(fs, `
+Usage: mreviewer serve [options]
+
+Run the local webhook runtime and admin dashboard on a single machine.
+
+Agent-friendly flags: --dry-run (alias: --dryrun), --verbose, -vv, -vvv, -vvvv
+
+Examples:
+  mreviewer serve
+  mreviewer serve --config config.yaml --port 3200
+  mreviewer serve --dry-run -vv
+`)
 	fs.StringVar(&opts.configPath, "config", defaultPersonalConfigPath, "Path to config file")
 	fs.StringVar(&opts.port, "port", "", "Port override")
 	fs.StringVar(&opts.dsn, "db", "", "Database DSN override (defaults to local SQLite)")
-	if err := fs.Parse(args); err != nil {
+	fs.BoolVar(&opts.dryRun, "dry-run", false, "Validate config and print the runtime plan without starting services")
+	fs.BoolVar(&opts.dryRun, "dryrun", false, "Alias for --dry-run")
+	if err := fs.Parse(cleanedArgs); err != nil {
 		return serveOptions{}, err
+	}
+	if extra := fs.Args(); len(extra) > 0 {
+		return serveOptions{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(extra, ", "))
 	}
 	return opts, nil
 }
