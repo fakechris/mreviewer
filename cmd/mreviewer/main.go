@@ -62,7 +62,7 @@ type cliOptions struct {
 }
 
 func main() {
-	os.Exit(runWithDeps(os.Args[1:], runtimeDeps{
+	os.Exit(runCLI(os.Args[1:], runtimeDeps{
 		resolveTarget: resolveReviewTarget,
 		loadInput:     defaultLoadInput,
 		newEngine:     defaultReviewEngine,
@@ -72,6 +72,36 @@ func main() {
 		stdout:        os.Stdout,
 		stderr:        os.Stderr,
 	}))
+}
+
+func runCLI(args []string, reviewDeps runtimeDeps) int {
+	if reviewDeps.stdout == nil {
+		reviewDeps.stdout = os.Stdout
+	}
+	if reviewDeps.stderr == nil {
+		reviewDeps.stderr = os.Stderr
+	}
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		_, _ = fmt.Fprintln(reviewDeps.stdout, "Usage: mreviewer <command> [options]")
+		_, _ = fmt.Fprintln(reviewDeps.stdout)
+		_, _ = fmt.Fprintln(reviewDeps.stdout, "Commands: review, init, doctor, serve")
+		return 0
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return runWithDeps(args, reviewDeps)
+	}
+	switch strings.TrimSpace(args[0]) {
+	case "review":
+		return runWithDeps(args[1:], reviewDeps)
+	case "init":
+		return runInitCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
+	case "doctor":
+		return runDoctorCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
+	case "serve":
+		return runServeCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
+	default:
+		return runWithDeps(args, reviewDeps)
+	}
 }
 
 func runWithDeps(args []string, deps runtimeDeps) int {

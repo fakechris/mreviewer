@@ -1,5 +1,7 @@
 # Docker 部署指南
 
+> 个人用户默认建议先走单二进制 CLI：`mreviewer init` → `mreviewer doctor` → `mreviewer review`。本文档只覆盖企业 webhook / Docker / MySQL 部署路径。
+
 ## 企业默认部署 / enterprise deployment
 
 企业部署默认推荐：
@@ -56,6 +58,10 @@ Admin 页面与 API：
 - `http://your-server:3100/admin/api/queue`
 - `http://your-server:3100/admin/api/concurrency`
 - `http://your-server:3100/admin/api/failures`
+- `http://your-server:3100/admin/api/runs`
+- `http://your-server:3100/admin/api/trends`
+- `http://your-server:3100/admin/api/ownership`
+- `http://your-server:3100/admin/api/identities`
 
 访问这些路由时带上：
 

@@ -15,138 +15,85 @@ AI-powered Code Review for GitLab Merge Requests. Self-hosted, multi-model suppo
 - 🔄 **Deduplication**: Fingerprint-based + LLM semantic matching
 - 📊 **Observability**: Grafana dashboards, audit logs, metrics
 
-## Deployment Decision
+## Choose Your Mode
 
-- Personal / small-team trial: quick start with one provider, webhook, and the built-in `/admin/` control plane
-- Enterprise default: MySQL-backed deployment, optional Redis coordination, webhook automation, and the `/admin/` page for queue/concurrency/failure visibility
-- SQLite remains supported for single-machine setups, but MySQL is the default recommendation for shared or production environments
+- **Personal CLI**: one binary, local SQLite, no Docker required. Best for individual developers reviewing GitHub/GitLab PRs on demand.
+- **Enterprise Webhook**: `ingress` + `worker` + `/admin/` control plane, MySQL-first, optional Redis, automatic webhook processing and operator actions.
 
-## Quick Start
+## Personal CLI Quick Start
 
-### Prerequisites
+### 1. Install the binary
 
-- Docker & Docker Compose
-- GitLab instance with API access
-- LLM provider API key (MiniMax, OpenAI, etc.)
+Download from GitHub Releases or run the installer:
 
-### Method 1: Minimal Setup (No Git Required)
-
-**For beginners** - Download 2 files and run
-
-1. **Download files**:
-   - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
-   - [.env template](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example) (rename to `.env`)
-
-2. **Edit `.env` with one of these equal quick-start profiles**:
-
-#### Method 1A: MiniMax
 ```bash
-GITLAB_BASE_URL=https://gitlab.example.com
-GITLAB_TOKEN=your_gitlab_token
-GITLAB_WEBHOOK_SECRET=your_webhook_secret
-LLM_PROVIDER=minimax
-LLM_API_KEY=your_minimax_key
-LLM_BASE_URL=https://api.minimaxi.com/anthropic
-LLM_MODEL=MiniMax-M2.7-highspeed
+curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/install.sh | bash
 ```
 
-#### Method 1B: Anthropic
+Homebrew is also supported from a release-provided formula asset:
+
 ```bash
-GITLAB_BASE_URL=https://gitlab.example.com
-GITLAB_TOKEN=your_gitlab_token
-GITLAB_WEBHOOK_SECRET=your_webhook_secret
-LLM_PROVIDER=anthropic
-LLM_API_KEY=your_anthropic_key
-LLM_BASE_URL=https://api.anthropic.com
-LLM_MODEL=claude-sonnet-4-6
+brew install ./mreviewer.rb
 ```
 
-#### Method 1C: ChatGPT / OpenAI
+### 2. Generate a personal config
+
 ```bash
-GITLAB_BASE_URL=https://gitlab.example.com
-GITLAB_TOKEN=your_gitlab_token
-GITLAB_WEBHOOK_SECRET=your_webhook_secret
-LLM_PROVIDER=openai
-LLM_API_KEY=your_openai_key
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-5.4
+mreviewer init --provider openai
 ```
 
-All three quick-start profiles use the same env-only contract and the same start command.
+This writes `config.yaml`, creates `.mreviewer/state/`, and defaults to local SQLite.
 
-3. **Start services**:
+### 3. Export your tokens
+
 ```bash
-docker compose -f docker-compose.prod.yaml up -d
+export OPENAI_API_KEY=...
+export GITHUB_TOKEN=...
+# optional:
+export GITLAB_BASE_URL=https://gitlab.example.com
+export GITLAB_TOKEN=...
 ```
 
-4. **Verify**:
+### 4. Verify the setup
+
 ```bash
-docker compose -f docker-compose.prod.yaml logs -f worker
+mreviewer doctor
 ```
 
-### Method 2: Advanced No-Git Setup (Multi-Provider / OpenAI / Custom Routes)
-
-**For operators** - Download 4 files and mount a custom config
-
-1. **Download files**:
-   - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
-   - [docker-compose.prod.config.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.config.yaml)
-   - [.env template](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example) (rename to `.env`)
-   - [config example](https://raw.githubusercontent.com/fakechris/mreviewer/main/config.example.yaml) (rename to `config.yaml`)
-
-2. **Edit `.env` and `config.yaml`**:
-- `docker-compose.prod.yaml` passes through your entire `.env`, so custom provider secrets are available inside the containers.
-- `docker-compose.prod.config.yaml` mounts your local `config.yaml` into `/app/config.yaml`.
-- `config.example.yaml` supports `${VAR}` syntax; environment variables are expanded at startup.
-
-3. **Start services**:
-```bash
-docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
-```
-
-Use this path for DeepSeek, Fireworks, mixed-provider routing, or SQLite deployments. See [config.example.yaml](./config.example.yaml) for a working template.
-
-4. **Verify**:
-```bash
-docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml logs -f worker
-```
-
-### Method 3: Full Clone (For Developers)
-
-**For developers** - Clone repo and run local source builds
+### 5. Run a review
 
 ```bash
-git clone https://github.com/fakechris/mreviewer.git
-cd mreviewer
-cp .env.example .env
-# Edit .env with your credentials
-docker compose up -d --build
-```
-
-This path builds `ingress` and `worker` from your local checkout, so code changes are reflected in the running containers.
-
-### Portable Review Council CLI
-
-The new `mreviewer` CLI runs the portable review council path directly against a GitHub or GitLab PR URL.
-
-Run from source:
-
-```bash
-go run ./cmd/mreviewer \
+mreviewer review \
   --target https://github.com/acme/repo/pull/17 \
   --output both \
-  --publish full-review-comments \
+  --publish artifact-only \
   --reviewer-packs security,architecture,database
 ```
 
-Run inside the worker image:
+### 6. Optional: run local webhooks and dashboard
 
 ```bash
-docker compose exec worker /app/mreviewer \
-  --target https://github.com/acme/repo/pull/17 \
-  --output json \
-  --publish artifact-only
+mreviewer serve
 ```
+
+By default this starts:
+- local SQLite at `.mreviewer/state/mreviewer.db`
+- GitLab webhook: `POST /webhook`
+- GitHub webhook: `POST /github/webhook`
+- local admin page: `/admin/`
+
+Use `mreviewer serve --db file:/custom/path.db` to override the local database path.
+
+## Personal CLI Commands
+
+- `mreviewer init`: generate a personal config template
+- `mreviewer doctor`: validate config, database, provider routes, and platform tokens
+- `mreviewer review`: review one GitHub/GitLab target
+- `mreviewer serve`: run ingress + worker in one local process with embedded migrations
+
+Backward compatibility remains: `mreviewer --target ...` still works and maps to `review`.
+
+## CLI Review Output
 
 Key flags:
 
@@ -161,46 +108,90 @@ Key flags:
 - `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `reviewer-a,reviewer-b`
 - `--compare-artifacts`: comma-separated JSON artifact paths to compare against the current review bundle
 
-The CLI emits the review bundle in JSON mode and, when comparison flags are provided, includes a comparison report with agreement rate, shared findings, and reviewer-unique findings.
-When `--targets` is provided, the JSON output also includes `aggregate_comparison` so you can compare reviewer agreement across multiple GitHub/GitLab changes in one run.
-When advisor or benchmark output is present, the JSON payload also includes `advisor_artifact`, `judge_verdict`, and `decision_benchmark`.
-For GitHub targets, the CLI also updates the commit status context `mreviewer/ai-review` while the review is running and after it completes.
+JSON output includes:
+- `review_brief`
+- `judge_verdict`
+- `decision_benchmark`
+- `comparison`
+- `aggregate_comparison`
+- `advisor_artifact`
+
+Markdown output starts with `# Review Decision Brief` and surfaces:
+- `Final Verdict`
+- `What To Fix First`
+- `Specialist Signals`
+- `Reviewer Overlap` when comparison is enabled
 
 Runtime environment overrides:
 
-- `REVIEW_PACKS`: default reviewer packs for worker/runtime processing
-- `REVIEW_ADVISOR_ROUTE`: default stronger second-opinion route for CLI/runtime processing
+- `REVIEW_PACKS`: default reviewer packs for CLI/runtime processing
+- `REVIEW_ADVISOR_ROUTE`: default stronger second-opinion route
 - `REVIEW_COMPARE_REVIEWERS`: comma-separated external reviewer IDs to compare during runtime processing
 
-### Configure GitLab Webhook
+## Enterprise Webhook Deployment
 
-**Required for automatic review**
+Use the enterprise path when you need:
+- automatic GitLab/GitHub webhook reviews
+- MySQL-backed queueing and history
+- separate `ingress` and `worker` services
+- operator actions and dashboard visibility
+
+### Enterprise quick start
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+For image-based deployment:
+
+```bash
+docker compose -f docker-compose.prod.yaml up -d
+```
+
+For custom routes or mounted config:
+
+```bash
+docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
+```
+
+`docker-compose.yaml` is for local developer source builds. `docker-compose.prod.yaml` is for enterprise-style deployment. MySQL is the recommended enterprise default; SQLite remains fine for local single-machine usage.
+
+### Configure GitLab Webhook
 
 1. Go to GitLab project → Settings → Webhooks
 2. URL: `http://your-server:3100/webhook`
    - For local-network testing, replace `your-server` with your machine's LAN IP, for example `http://10.0.0.16:3100/webhook`
    - Do not use `localhost` unless GitLab and mreviewer are running on the same host
-3. Secret: Value from `GITLAB_WEBHOOK_SECRET` in `.env`
-4. Trigger: Check "Merge request events"
-5. Click "Add webhook"
+3. Secret: value from `GITLAB_WEBHOOK_SECRET`
+4. Trigger: check `Merge request events`
+5. Click `Add webhook`
 
-If your GitLab instance rejects the hook with `Invalid url given`, ask a GitLab admin to enable `Allow requests to the local network from web hooks and services`, or use a public HTTPS tunnel instead of a LAN IP.
+If GitLab rejects the hook with `Invalid url given`, ask a GitLab admin to enable `Allow requests to the local network from web hooks and services`, or use a public HTTPS tunnel instead of a LAN IP.
 
-📖 Detailed webhook setup: [WEBHOOK.md](./WEBHOOK.md)
+GitHub webhook path is `POST /github/webhook` and follows the same ingress/worker control plane.
 
-### Admin Control Plane
+📖 Detailed setup: [WEBHOOK.md](./WEBHOOK.md)
 
-`ingress` now serves a small read-only operator page at `/admin/` plus JSON endpoints at:
+## Admin Control Plane
+
+Enterprise and local `serve` mode both expose `/admin/`.
+
+Key API routes:
 
 - `/admin/api/queue`
 - `/admin/api/concurrency`
 - `/admin/api/failures`
+- `/admin/api/runs`
+- `/admin/api/trends`
+- `/admin/api/ownership`
+- `/admin/api/identities`
 
-Set `MREVIEWER_ADMIN_TOKEN` or `ADMIN_TOKEN` to require `Authorization: Bearer <token>` on those routes. This is the fastest way to inspect queue depth, active workers, and recent failures without tailing logs.
+Set `MREVIEWER_ADMIN_TOKEN` or `ADMIN_TOKEN` to require `Authorization: Bearer <token>` on the admin routes.
 
-### Manual Trigger (Optional)
+## Manual Trigger (Enterprise Optional)
 
-Trigger review without webhook:
+Trigger a GitLab review without waiting for webhook delivery:
 
 ```bash
 docker compose exec worker /app/manual-trigger \
@@ -209,7 +200,7 @@ docker compose exec worker /app/manual-trigger \
   --wait
 ```
 
-**Note**: Requires `GITLAB_BASE_URL`, `GITLAB_TOKEN`, and LLM API keys configured in `.env`
+The worker image also includes `/app/mreviewer` for direct CLI review.
 
 ## Architecture
 

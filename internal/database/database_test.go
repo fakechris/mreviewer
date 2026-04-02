@@ -1,8 +1,13 @@
 package database
 
 import (
+	"database/sql"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pressly/goose/v3"
 )
 
 // TestOpenEmptyDSN verifies that an empty DSN is rejected immediately.
@@ -31,5 +36,64 @@ func TestOpenFailsWhenDatabaseUnreachable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "database: ping") {
 		t.Errorf("error = %q, want it to contain 'database: ping'", err)
+	}
+}
+
+func TestMigrateUpFromDSNInitializesSQLiteSchema(t *testing.T) {
+	dsn := "file:" + filepath.Join(t.TempDir(), "mreviewer.db")
+	if err := MigrateUpFromDSN(dsn); err != nil {
+		t.Fatalf("MigrateUpFromDSN: %v", err)
+	}
+	db, err := sql.Open("sqlite", strings.TrimPrefix(dsn, "file:"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('review_runs', 'hook_events', 'identity_mappings')`).Scan(&count); err != nil {
+		t.Fatalf("query sqlite_master: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("table count = %d, want 3", count)
+	}
+}
+
+func TestMigrateUpRestoresGooseBaseFS(t *testing.T) {
+	dsn := "file:" + filepath.Join(t.TempDir(), "embedded.db")
+	if err := MigrateUpFromDSN(dsn); err != nil {
+		t.Fatalf("MigrateUpFromDSN: %v", err)
+	}
+
+	migrationDir := t.TempDir()
+	migrationFile := filepath.Join(migrationDir, "00001_local_table.sql")
+	if err := os.WriteFile(migrationFile, []byte(`-- +goose Up
+CREATE TABLE local_table (id INTEGER);
+-- +goose Down
+DROP TABLE local_table;
+`), 0o644); err != nil {
+		t.Fatalf("write migration: %v", err)
+	}
+
+	localDSN := "file:" + filepath.Join(t.TempDir(), "local.db")
+	db, err := sql.Open("sqlite", strings.TrimPrefix(localDSN, "file:"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		t.Fatalf("SetDialect: %v", err)
+	}
+	if err := goose.Up(db, migrationDir); err != nil {
+		t.Fatalf("goose.Up local dir: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='local_table'`).Scan(&count); err != nil {
+		t.Fatalf("query sqlite_master: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("local_table count = %d, want 1", count)
 	}
 }

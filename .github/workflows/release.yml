@@ -1,0 +1,80 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-cli:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          out_dir="dist/mreviewer_${VERSION#v}_${GOOS}_${GOARCH}"
+          mkdir -p "$out_dir"
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$out_dir/mreviewer" ./cmd/mreviewer
+          tar -C "$out_dir" -czf "dist/mreviewer_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz" mreviewer
+          shasum -a 256 "dist/mreviewer_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz" | awk '{print $1}' > "dist/mreviewer_${VERSION#v}_${GOOS}_${GOARCH}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs: build-cli
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        run: |
+          find dist -mindepth 2 -type f -exec mv {} dist/ \;
+
+      - name: Generate Homebrew formula
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          darwin_amd64_sha="$(cat dist/mreviewer_${VERSION#v}_darwin_amd64.sha256)"
+          darwin_arm64_sha="$(cat dist/mreviewer_${VERSION#v}_darwin_arm64.sha256)"
+          linux_amd64_sha="$(cat dist/mreviewer_${VERSION#v}_linux_amd64.sha256)"
+          linux_arm64_sha="$(cat dist/mreviewer_${VERSION#v}_linux_arm64.sha256)"
+          mkdir -p dist/formula
+          bash scripts/render-homebrew-formula.sh "$VERSION" "$darwin_amd64_sha" "$darwin_arm64_sha" "$linux_amd64_sha" "$linux_arm64_sha" > dist/formula/mreviewer.rb
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/formula/mreviewer.rb

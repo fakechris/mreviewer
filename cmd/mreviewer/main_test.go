@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -102,6 +104,129 @@ func TestRunWithDepsJSONOutputArtifactOnly(t *testing.T) {
 	}
 	if payload["review_brief"] == nil {
 		t.Fatalf("review_brief missing: %s", stdout.String())
+	}
+}
+
+func TestRunCLIUsesReviewModeForFlagArgs(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform: core.PlatformGitHub,
+				URL:      "https://github.com/acme/repo/pull/17",
+			},
+			JSONSchemaVersion: "v1alpha1",
+		},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"--target", "https://github.com/acme/repo/pull/17", "--output", "json"}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		stdout:    &stdout,
+		stderr:    &stderr,
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if engine.input.Target.Platform != core.PlatformGitHub {
+		t.Fatalf("engine target platform = %q, want github", engine.input.Target.Platform)
+	}
+}
+
+func TestRunCLIReviewSubcommandUsesReviewMode(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform: core.PlatformGitLab,
+				URL:      "https://gitlab.example.com/group/repo/-/merge_requests/23",
+			},
+			JSONSchemaVersion: "v1alpha1",
+		},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"review", "--target", "https://gitlab.example.com/group/repo/-/merge_requests/23", "--output", "json"}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		stdout:    &stdout,
+		stderr:    &stderr,
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if engine.input.Target.Platform != core.PlatformGitLab {
+		t.Fatalf("engine target platform = %q, want gitlab", engine.input.Target.Platform)
+	}
+}
+
+func TestRunCLIInitSubcommandUsesInjectedWriters(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"init", "--config", filepath.Join(tmpDir, "config.yaml")}, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "wrote") {
+		t.Fatalf("expected injected stdout to capture init output, got %q", stdout.String())
+	}
+}
+
+func TestRunCLIShowsTopLevelHelpForEmptyArgs(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runCLI(nil, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
+		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Commands: review, init, doctor, serve") {
+		t.Fatalf("stdout missing command list: %q", stdout.String())
+	}
+}
+
+func TestRunCLIShowsTopLevelHelpForHelpFlag(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runCLI([]string{"--help"}, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
+		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Commands: review, init, doctor, serve") {
+		t.Fatalf("stdout missing command list: %q", stdout.String())
 	}
 }
 

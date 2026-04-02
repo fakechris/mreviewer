@@ -6,6 +6,10 @@
 - `/admin/api/queue`
 - `/admin/api/concurrency`
 - `/admin/api/failures`
+- `/admin/api/runs`
+- `/admin/api/trends`
+- `/admin/api/ownership`
+- `/admin/api/identities`
 
 ## Auth
 
@@ -46,6 +50,31 @@ Authorization: Bearer <token>
 - 按 `error_code` 聚合的失败桶
 - webhook `rejected`
 - webhook `deduplicated`
+
+### Runs
+
+`/admin/api/runs` 和 `/admin/api/runs/{id}` 提供：
+
+- recent runs 列表
+- 单个 run 的生命周期与错误码
+- operator actions 入口：`retry` / `rerun` / `cancel` / `requeue`
+
+### Trends
+
+`/admin/api/trends` 提供：
+
+- 最近 24 小时的 hourly buckets
+- platform rollups
+- top project rollups
+
+### Ownership / Identity Mappings
+
+`/admin/api/ownership` 和 `/admin/api/identities` 提供：
+
+- git author / committer 观测到的平台身份
+- 待处理的 identity mappings
+- manual resolve 入口
+- ownership 视图与映射建议
 
 ## Relationship With Grafana
 
