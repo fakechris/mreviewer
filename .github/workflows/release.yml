@@ -81,7 +81,8 @@ jobs:
         run: |
           : > dist/checksums.txt
           for archive in dist/mreviewer_${VERSION#v}_*.tar.gz; do
-            checksum="$(cat "${archive}.sha256")"
+            checksum_file="${archive%.tar.gz}.sha256"
+            checksum="$(cat "$checksum_file")"
             printf "%s  %s\n" "$checksum" "$(basename "$archive")" >> dist/checksums.txt
           done
 
