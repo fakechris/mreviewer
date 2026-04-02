@@ -145,6 +145,7 @@ require_pattern ".github/workflows/release.yml" "RELEASE_PR_TOKEN" "release work
 require_pattern ".github/workflows/release.yml" 'git remote set-url origin "https://x-access-token:\$\{FORMULA_PUSH_TOKEN\}@github.com/\$\{GITHUB_REPOSITORY\}\.git"' "release workflow must push formula sync branches with the dedicated token when configured"
 require_pattern ".github/workflows/release.yml" "env\\.RELEASE_PR_TOKEN == ''" "release workflow should only dispatch CI when a dedicated formula PR token is unavailable"
 require_pattern ".github/workflows/release.yml" 'gh workflow run CI --ref "\$branch"' "release workflow must retain the workflow_dispatch CI fallback"
+require_pattern ".github/workflows/release.yml" "actions: write" "release workflow must retain actions: write for the workflow_dispatch CI fallback"
 require_pattern ".github/workflows/release.yml" "workflow_dispatch:" "release workflow must support manual dispatch publishing"
 require_pattern ".github/workflows/release.yml" 'git fetch origin main$' "release workflow must fetch origin/main independently before preparing the formula sync branch"
 require_pattern ".github/workflows/release.yml" 'git fetch origin "\$branch" \|\| true' "release workflow must probe the existing formula sync branch separately so missing remote branches do not block release publishing"
