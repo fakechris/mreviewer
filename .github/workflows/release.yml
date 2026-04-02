@@ -148,3 +148,11 @@ jobs:
             --head "$branch" \
             --title "chore: update brew formula for ${VERSION}" \
             --body "Automated Homebrew formula sync generated from release ${VERSION}."
+
+      - name: Trigger CI for Homebrew formula sync branch
+        if: steps.formula_sync.outputs.branch != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="${{ steps.formula_sync.outputs.branch }}"
+          gh workflow run CI --ref "$branch"
