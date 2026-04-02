@@ -3493,6 +3493,26 @@ func TestProviderRegistryResolveWithFallback(t *testing.T) {
 	}
 }
 
+func TestFallbackProviderPreservesUnderlyingFinalError(t *testing.T) {
+	rootErr := errors.New("auth failed")
+	primary := &fakeProvider{err: scheduler.NewRetryableError("provider_request_failed", errors.New("upstream status 503"))}
+	secondary := &fakeProvider{err: rootErr}
+	provider := NewFallbackProvider(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		primary,
+		"primary",
+		[]namedProvider{{route: "secondary", provider: secondary}},
+	)
+
+	_, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{})
+	if err == nil {
+		t.Fatal("Review() error = nil, want chain failure")
+	}
+	if !errors.Is(err, rootErr) {
+		t.Fatalf("Review() error = %v, want wrapped root error", err)
+	}
+}
+
 // TestProviderRegistryRoutes verifies that Routes() returns all registered routes.
 func TestProviderRegistryRoutes(t *testing.T) {
 	defaultProv := &fakeProvider{}

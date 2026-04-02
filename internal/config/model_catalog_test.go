@@ -1,10 +1,12 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
+	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
 	"github.com/mreviewer/mreviewer/internal/llm"
 )
 
@@ -145,4 +147,76 @@ func TestResolveModelChainRejectsUnknownFallbackModel(t *testing.T) {
 	if err == nil {
 		t.Fatal("ResolveModelChain() error = nil, want missing fallback failure")
 	}
+}
+
+func TestRepositoryConfigYAMLUsesModelCatalogSchema(t *testing.T) {
+	cfg, err := Load(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load(root config.yaml) error: %v", err)
+	}
+	if len(cfg.Models) == 0 {
+		t.Fatal("root config.yaml must define models")
+	}
+	if cfg.Review.ModelChain == "" {
+		t.Fatal("root config.yaml must define review.model_chain")
+	}
+}
+
+func TestResolveProviderUsesDefaultFallbacksForDirectModelRef(t *testing.T) {
+	cfg := &Config{
+		Models: map[string]ModelConfig{
+			"primary": {Provider: llm.ProviderKindOpenAI, Model: "gpt-5.4"},
+			"backup":  {Provider: llm.ProviderKindAnthropic, Model: "claude-sonnet-4-6"},
+		},
+	}
+	registry := llm.NewProviderRegistry(nil, "primary", catalogTestProvider{name: "primary"})
+	registry.Register("backup", catalogTestProvider{name: "backup"})
+
+	provider := ResolveProvider(cfg, registry, "primary", []string{"backup"}, "primary")
+	if provider == nil {
+		t.Fatal("ResolveProvider returned nil provider")
+	}
+	payload := provider.RequestPayload(ctxpkg.ReviewRequest{})
+	if got := payload["provider_route"]; got != "primary" {
+		t.Fatalf("provider_route = %#v, want primary", got)
+	}
+	if got := payload["secondary_provider_route"]; got != "backup" {
+		t.Fatalf("secondary_provider_route = %#v, want backup", got)
+	}
+}
+
+func TestResolveProviderReturnsConfigErrorForInvalidConfiguredChain(t *testing.T) {
+	cfg := &Config{
+		Models: map[string]ModelConfig{
+			"default": {Provider: llm.ProviderKindOpenAI, Model: "gpt-5.4"},
+		},
+		ModelChains: map[string]ModelChainConfig{
+			"broken": {Primary: "missing"},
+		},
+	}
+	registry := llm.NewProviderRegistry(nil, "default", catalogTestProvider{name: "default"})
+
+	provider := ResolveProvider(cfg, registry, "default", nil, "broken")
+	if provider == nil {
+		t.Fatal("ResolveProvider returned nil provider")
+	}
+	_, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{})
+	if err == nil {
+		t.Fatal("Review() error = nil, want configuration failure")
+	}
+	if got := err.Error(); got != `config: invalid provider reference "broken": models.missing is not configured` {
+		t.Fatalf("Review() error = %q", got)
+	}
+}
+
+type catalogTestProvider struct {
+	name string
+}
+
+func (p catalogTestProvider) Review(_ context.Context, _ ctxpkg.ReviewRequest) (llm.ProviderResponse, error) {
+	return llm.ProviderResponse{Model: p.name}, nil
+}
+
+func (p catalogTestProvider) RequestPayload(_ ctxpkg.ReviewRequest) map[string]any {
+	return map[string]any{"route": p.name}
 }

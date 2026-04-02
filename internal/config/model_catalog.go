@@ -1,9 +1,11 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	ctxpkg "github.com/mreviewer/mreviewer/internal/context"
 	"github.com/mreviewer/mreviewer/internal/llm"
 )
 
@@ -132,8 +134,31 @@ func ResolveProvider(cfg *Config, registry *llm.ProviderRegistry, defaultPrimary
 	}
 	if cfg != nil {
 		if primary, fallbacks, err := ResolveProviderReference(cfg, ref); err == nil {
+			if len(fallbacks) == 0 {
+				return registry.ResolveWithFallbackRoutes(primary, defaultFallbacks)
+			}
 			return registry.ResolveWithFallbackRoutes(primary, fallbacks)
+		} else if _, chainExists := cfg.ModelChains[ref]; chainExists {
+			return invalidProviderReference{name: ref, err: err}
+		} else if _, modelExists := cfg.Models[ref]; modelExists {
+			return invalidProviderReference{name: ref, err: err}
 		}
 	}
 	return registry.ResolveWithFallbackRoutes(ref, defaultFallbacks)
+}
+
+type invalidProviderReference struct {
+	name string
+	err  error
+}
+
+func (p invalidProviderReference) Review(_ context.Context, _ ctxpkg.ReviewRequest) (llm.ProviderResponse, error) {
+	if p.err == nil {
+		return llm.ProviderResponse{}, fmt.Errorf("config: invalid provider reference %q", p.name)
+	}
+	return llm.ProviderResponse{}, fmt.Errorf("config: invalid provider reference %q: %w", p.name, p.err)
+}
+
+func (p invalidProviderReference) RequestPayload(_ ctxpkg.ReviewRequest) map[string]any {
+	return map[string]any{"provider_route": p.name, "invalid_provider_reference": true}
 }

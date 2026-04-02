@@ -209,12 +209,29 @@ func TestValidateProviderRouteOverrideReturnsSortedRoutes(t *testing.T) {
 			"zulu":  {},
 			"alpha": {},
 		},
+		ModelChains: map[string]config.ModelChainConfig{
+			"review_primary": {},
+		},
 	}, "missing")
 	if err == nil {
 		t.Fatal("expected unknown provider route error")
 	}
-	if !strings.Contains(err.Error(), "available: alpha, zulu") {
+	if !strings.Contains(err.Error(), "available: alpha, review_primary, zulu") {
 		t.Fatalf("error = %q, want sorted available routes", err.Error())
+	}
+}
+
+func TestValidateProviderRouteOverrideAcceptsModelChainReference(t *testing.T) {
+	err := validateProviderRouteOverride(&config.Config{
+		Models: map[string]config.ModelConfig{
+			"default": {},
+		},
+		ModelChains: map[string]config.ModelChainConfig{
+			"review_primary": {Primary: "default"},
+		},
+	}, "review_primary")
+	if err != nil {
+		t.Fatalf("validateProviderRouteOverride() error = %v, want nil", err)
 	}
 }
 

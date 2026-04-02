@@ -223,12 +223,12 @@ func (p *FallbackProvider) reviewFallbackChain(ctx context.Context, request ctxp
 		}
 		failures = append(failures, fmt.Sprintf("%s: %v", fallback.route, err))
 		if !shouldFallbackToSecondary(err) {
-			return ProviderResponse{}, fmt.Errorf("llm: provider chain failed (%s)", strings.Join(failures, "; "))
+			return ProviderResponse{}, fmt.Errorf("llm: provider chain failed (%s): %w", strings.Join(failures, "; "), err)
 		}
 		previousRoute = fallback.route
 		previousErr = err
 	}
-	return ProviderResponse{}, fmt.Errorf("llm: provider chain failed (%s)", strings.Join(failures, "; "))
+	return ProviderResponse{}, fmt.Errorf("llm: provider chain failed (%s): %w", strings.Join(failures, "; "), previousErr)
 }
 
 func (p *FallbackProvider) ReviewWithSystemPrompt(ctx context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (ProviderResponse, error) {

@@ -359,9 +359,9 @@ func validateProviderRouteOverride(cfg *config.Config, route string) error {
 	if route == "" {
 		return nil
 	}
-	available := availableProviderRoutes(cfg)
+	available := availableProviderReferences(cfg)
 	if len(available) == 0 {
-		return fmt.Errorf("manual-trigger: --llm-route requires configured llm routes")
+		return fmt.Errorf("manual-trigger: --llm-route requires configured models or model chains")
 	}
 	for _, candidate := range available {
 		if candidate == route {
@@ -371,23 +371,30 @@ func validateProviderRouteOverride(cfg *config.Config, route string) error {
 	return fmt.Errorf("manual-trigger: unknown --llm-route %q (available: %s)", route, strings.Join(available, ", "))
 }
 
-func availableProviderRoutes(cfg *config.Config) []string {
+func availableProviderReferences(cfg *config.Config) []string {
 	if cfg == nil {
 		return nil
 	}
-	if len(cfg.Models) > 0 {
-		routes := make([]string, 0, len(cfg.Models))
-		for route := range cfg.Models {
-			trimmed := strings.TrimSpace(route)
-			if trimmed == "" {
-				continue
-			}
-			routes = append(routes, trimmed)
+	available := make([]string, 0, len(cfg.Models)+len(cfg.ModelChains))
+	for route := range cfg.Models {
+		trimmed := strings.TrimSpace(route)
+		if trimmed == "" {
+			continue
 		}
-		sort.Strings(routes)
-		return routes
+		available = append(available, trimmed)
 	}
-	return nil
+	for chain := range cfg.ModelChains {
+		trimmed := strings.TrimSpace(chain)
+		if trimmed == "" {
+			continue
+		}
+		available = append(available, trimmed)
+	}
+	sort.Strings(available)
+	if len(available) == 0 {
+		return nil
+	}
+	return available
 }
 
 func newDefaultService(cfg *config.Config, sqlDB *sql.DB, pollInterval time.Duration) manualTriggerService {
