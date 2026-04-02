@@ -30,10 +30,10 @@ Download from GitHub Releases or run the installer:
 curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/install.sh | bash
 ```
 
-Homebrew is also supported directly through the repo tap:
+After the first tagged release is published, Homebrew is also supported through the repo tap:
 
 ```bash
-brew tap fakechris/mreviewer
+brew tap fakechris/mreviewer https://github.com/fakechris/mreviewer
 brew install mreviewer
 ```
 

@@ -1,6 +1,6 @@
 # Release Distribution
 
-`mreviewer` ships as a standalone Go CLI. Release distribution is built around GitHub Releases plus an in-repo Homebrew tap formula.
+`mreviewer` ships as a standalone Go CLI. Release distribution is built around GitHub Releases plus a Homebrew tap formula that the release workflow generates and commits after the first tagged release.
 
 ## What a release publishes
 
@@ -29,7 +29,7 @@ git push origin v1.2.3
 
 2. Or run the `Release CLI` workflow manually with `version=v1.2.3`.
 
-The version must start with `v`.
+The version must match `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-PRERELEASE`.
 
 ## User install paths
 
@@ -39,10 +39,10 @@ Installer script:
 curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/install.sh | bash
 ```
 
-Homebrew tap:
+Homebrew tap, after the first tagged release has completed:
 
 ```bash
-brew tap fakechris/mreviewer
+brew tap fakechris/mreviewer https://github.com/fakechris/mreviewer
 brew install mreviewer
 ```
 

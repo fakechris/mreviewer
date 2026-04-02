@@ -85,8 +85,9 @@ if [[ -z "$version" ]]; then
 fi
 
 archive="mreviewer_${version#v}_${os_name}_${arch_name}.tar.gz"
+checksum_asset="mreviewer_${version#v}_${os_name}_${arch_name}.sha256"
 url="https://github.com/${repo}/releases/download/${version}/${archive}"
-checksum_url="${url}.sha256"
+checksum_url="https://github.com/${repo}/releases/download/${version}/${checksum_asset}"
 target="${install_dir}/mreviewer"
 
 if [[ "$dry_run" == "1" ]]; then
