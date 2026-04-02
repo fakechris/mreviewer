@@ -30,10 +30,11 @@ GitLab Merge Request AI 代码审查工具。支持自托管、多模型、SQLit
 curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/install.sh | bash
 ```
 
-也支持使用 release 附带的 Homebrew formula：
+首个 tag release 发布后，也可以通过仓库 tap 使用 Homebrew 安装：
 
 ```bash
-brew install ./mreviewer.rb
+brew tap fakechris/mreviewer https://github.com/fakechris/mreviewer
+brew install mreviewer
 ```
 
 ### 2. 生成个人配置
