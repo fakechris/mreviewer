@@ -99,10 +99,8 @@ func TestRunWithDepsPassesLLMRouteToService(t *testing.T) {
 	exitCode := runWithDeps([]string{"--project-id", "123", "--mr-iid", "48", "--llm-route", "openai-gpt-5-4"}, runtimeDeps{
 		loadConfig: func(string) (*config.Config, error) {
 			return &config.Config{
-				LLM: config.LLMConfig{
-					Routes: map[string]config.LLMRouteConfig{
-						"openai-gpt-5-4": {},
-					},
+				Models: map[string]config.ModelConfig{
+					"openai-gpt-5-4": {Provider: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "secret", Model: "gpt-5.4"},
 				},
 			}, nil
 		},
@@ -169,7 +167,7 @@ func TestRunWithDepsRejectsEmptyProviderRouteOverride(t *testing.T) {
 	}
 }
 
-func TestRunWithDepsAllowsLegacyDefaultRouteOverride(t *testing.T) {
+func TestRunWithDepsAllowsConfiguredModelOverride(t *testing.T) {
 	svc := &fakeManualTriggerService{
 		triggerResult: manualtrigger.TriggerResult{
 			RunID:          105,
@@ -184,7 +182,13 @@ func TestRunWithDepsAllowsLegacyDefaultRouteOverride(t *testing.T) {
 	var stderr bytes.Buffer
 
 	exitCode := runWithDeps([]string{"--project-id", "123", "--mr-iid", "49", "--llm-route", "default"}, runtimeDeps{
-		loadConfig: func(string) (*config.Config, error) { return &config.Config{}, nil },
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{
+				Models: map[string]config.ModelConfig{
+					"default": {Provider: "openai", Model: "gpt-5.4"},
+				},
+			}, nil
+		},
 		openDB:     func(string) (*sql.DB, error) { return nil, nil },
 		newService: func(*config.Config, *sql.DB, time.Duration) manualTriggerService { return svc },
 		stdout:     &stdout,
@@ -201,11 +205,9 @@ func TestRunWithDepsAllowsLegacyDefaultRouteOverride(t *testing.T) {
 
 func TestValidateProviderRouteOverrideReturnsSortedRoutes(t *testing.T) {
 	err := validateProviderRouteOverride(&config.Config{
-		LLM: config.LLMConfig{
-			Routes: map[string]config.LLMRouteConfig{
-				"zulu":  {},
-				"alpha": {},
-			},
+		Models: map[string]config.ModelConfig{
+			"zulu":  {},
+			"alpha": {},
 		},
 	}, "missing")
 	if err == nil {

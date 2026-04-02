@@ -117,18 +117,21 @@ cp docker-compose.yaml "$tmpdir/docker-compose.yaml"
 cp docker-compose.prod.yaml "$tmpdir/docker-compose.prod.yaml"
 cp docker-compose.prod.config.yaml "$tmpdir/docker-compose.prod.config.yaml"
 cat >"$tmpdir/config.yaml" <<'EOF'
-llm:
-  default_route: openai-review
-  fallback_route: openai-review
-  routes:
-    openai-review:
-      provider: openai
-      base_url: https://api.openai.com/v1
-      api_key: ${OPENAI_API_KEY}
-      model: gpt-5.4
-      output_mode: json_schema
-      max_completion_tokens: 12000
-      reasoning_effort: medium
+models:
+  openai_default:
+    provider: openai
+    base_url: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-5.4
+    output_mode: json_schema
+    max_completion_tokens: 12000
+    reasoning_effort: medium
+model_chains:
+  review_primary:
+    primary: openai_default
+    fallbacks: []
+review:
+  model_chain: review_primary
 EOF
 
 (

@@ -11,20 +11,24 @@ import (
 )
 
 type FallbackProvider struct {
-	primary        Provider
-	secondary      Provider
-	primaryRoute   string
-	secondaryRoute string
-	logger         *slog.Logger
+	primary      Provider
+	fallbacks    []namedProvider
+	primaryRoute string
+	logger       *slog.Logger
+}
+
+type namedProvider struct {
+	route    string
+	provider Provider
 }
 
 // ProviderRegistry maps route names to Provider instances, enabling
 // runtime selection of the correct provider based on effective policy.
 type ProviderRegistry struct {
-	providers     map[string]Provider
-	defaultRoute  string
-	fallbackRoute string
-	logger        *slog.Logger
+	providers       map[string]Provider
+	defaultRoute    string
+	fallbackRoutes  []string
+	logger          *slog.Logger
 }
 
 // NewProviderRegistry creates a registry with a default and optional
@@ -51,10 +55,22 @@ func (r *ProviderRegistry) Register(route string, provider Provider) {
 	r.providers[route] = provider
 }
 
-// SetFallbackRoute designates a route to try when the primary route
+// SetFallbackRoutes designates routes to try when the primary route
 // for a run fails with a retryable/fallback-eligible error.
-func (r *ProviderRegistry) SetFallbackRoute(route string) {
-	r.fallbackRoute = strings.TrimSpace(route)
+func (r *ProviderRegistry) SetFallbackRoutes(routes []string) {
+	seen := map[string]struct{}{}
+	r.fallbackRoutes = r.fallbackRoutes[:0]
+	for _, route := range routes {
+		route = strings.TrimSpace(route)
+		if route == "" {
+			continue
+		}
+		if _, ok := seen[route]; ok {
+			continue
+		}
+		seen[route] = struct{}{}
+		r.fallbackRoutes = append(r.fallbackRoutes, route)
+	}
 }
 
 // Resolve returns the Provider registered for the given route.
@@ -72,16 +88,40 @@ func (r *ProviderRegistry) Resolve(route string) (Provider, string) {
 }
 
 // ResolveWithFallback returns a FallbackProvider that uses the
-// requested route as primary and the registry's fallback route as
-// secondary. If the requested route equals the fallback route (or
-// no fallback is configured), a plain provider is returned.
+// requested route as primary and the registry's configured fallback routes.
+// If no usable fallback routes remain, a plain provider is returned.
 func (r *ProviderRegistry) ResolveWithFallback(route string) Provider {
+	return r.ResolveWithFallbackRoutes(route, r.fallbackRoutes)
+}
+
+// ResolveWithFallbackRoutes returns a Provider using the requested route as
+// primary and the provided ordered fallback routes as alternates.
+func (r *ProviderRegistry) ResolveWithFallbackRoutes(route string, fallbackRoutes []string) Provider {
 	primary, resolvedRoute := r.Resolve(route)
-	if r.fallbackRoute == "" || r.fallbackRoute == resolvedRoute {
+	fallbackProviders := make([]namedProvider, 0, len(fallbackRoutes))
+	seen := map[string]struct{}{resolvedRoute: {}}
+	for _, fallbackRoute := range fallbackRoutes {
+		fallbackRoute = strings.TrimSpace(fallbackRoute)
+		if fallbackRoute == "" {
+			continue
+		}
+		if _, ok := seen[fallbackRoute]; ok {
+			continue
+		}
+		fallback, resolvedFallbackRoute := r.Resolve(fallbackRoute)
+		if _, ok := seen[resolvedFallbackRoute]; ok {
+			continue
+		}
+		seen[resolvedFallbackRoute] = struct{}{}
+		fallbackProviders = append(fallbackProviders, namedProvider{
+			route:    resolvedFallbackRoute,
+			provider: fallback,
+		})
+	}
+	if len(fallbackProviders) == 0 {
 		return primary
 	}
-	secondary, secondaryRoute := r.Resolve(r.fallbackRoute)
-	return NewFallbackProvider(r.logger, primary, resolvedRoute, secondary, secondaryRoute)
+	return NewFallbackProvider(r.logger, primary, resolvedRoute, fallbackProviders)
 }
 
 // Routes returns the list of registered route names.
@@ -94,11 +134,11 @@ func (r *ProviderRegistry) Routes() []string {
 	return routes
 }
 
-func NewFallbackProvider(logger *slog.Logger, primary Provider, primaryRoute string, secondary Provider, secondaryRoute string) *FallbackProvider {
+func NewFallbackProvider(logger *slog.Logger, primary Provider, primaryRoute string, fallbacks []namedProvider) *FallbackProvider {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &FallbackProvider{primary: primary, secondary: secondary, primaryRoute: strings.TrimSpace(primaryRoute), secondaryRoute: strings.TrimSpace(secondaryRoute), logger: logger}
+	return &FallbackProvider{primary: primary, fallbacks: fallbacks, primaryRoute: strings.TrimSpace(primaryRoute), logger: logger}
 }
 
 func (p *FallbackProvider) RequestPayload(request ctxpkg.ReviewRequest) map[string]any {
@@ -110,8 +150,15 @@ func (p *FallbackProvider) RequestPayload(request ctxpkg.ReviewRequest) map[stri
 		payload = map[string]any{}
 	}
 	payload["provider_route"] = p.primaryRoute
-	if p.secondary != nil && p.secondaryRoute != "" {
-		payload["secondary_provider_route"] = p.secondaryRoute
+	if len(p.fallbacks) > 0 {
+		payload["secondary_provider_route"] = p.fallbacks[0].route
+		if len(p.fallbacks) > 1 {
+			routes := make([]string, 0, len(p.fallbacks))
+			for _, fallback := range p.fallbacks {
+				routes = append(routes, fallback.route)
+			}
+			payload["secondary_provider_routes"] = routes
+		}
 	}
 	return payload
 }
@@ -125,8 +172,15 @@ func (p *FallbackProvider) RequestPayloadWithSystemPrompt(request ctxpkg.ReviewR
 		payload = map[string]any{}
 	}
 	payload["provider_route"] = p.primaryRoute
-	if p.secondary != nil && p.secondaryRoute != "" {
-		payload["secondary_provider_route"] = p.secondaryRoute
+	if len(p.fallbacks) > 0 {
+		payload["secondary_provider_route"] = p.fallbacks[0].route
+		if len(p.fallbacks) > 1 {
+			routes := make([]string, 0, len(p.fallbacks))
+			for _, fallback := range p.fallbacks {
+				routes = append(routes, fallback.route)
+			}
+			payload["secondary_provider_routes"] = routes
+		}
 	}
 	return payload
 }
@@ -136,24 +190,45 @@ func (p *FallbackProvider) Review(ctx context.Context, request ctxpkg.ReviewRequ
 		return ProviderResponse{}, fmt.Errorf("llm: primary provider is required")
 	}
 	response, err := p.primary.Review(ctx, request)
-	if err == nil || p.secondary == nil || !shouldFallbackToSecondary(err) {
+	if err == nil || len(p.fallbacks) == 0 || !shouldFallbackToSecondary(err) {
 		return response, err
 	}
-	p.logger.WarnContext(ctx, "primary provider failed, retrying with secondary provider", "primary_provider_route", p.primaryRoute, "secondary_provider_route", p.secondaryRoute, "error", err)
-	secondaryResponse, secondaryErr := p.secondary.Review(ctx, request)
-	if secondaryErr != nil {
-		return ProviderResponse{}, fmt.Errorf("llm: primary provider %q failed: %w; secondary provider %q failed: %v", p.primaryRoute, err, p.secondaryRoute, secondaryErr)
+	return p.reviewFallbackChain(ctx, request, err, func(provider Provider) (ProviderResponse, error) {
+		return provider.Review(ctx, request)
+	})
+}
+
+func (p *FallbackProvider) reviewFallbackChain(ctx context.Context, request ctxpkg.ReviewRequest, primaryErr error, call func(Provider) (ProviderResponse, error)) (ProviderResponse, error) {
+	previousRoute := p.primaryRoute
+	previousErr := primaryErr
+	failures := make([]string, 0, len(p.fallbacks)+1)
+	failures = append(failures, fmt.Sprintf("%s: %v", p.primaryRoute, primaryErr))
+	for _, fallback := range p.fallbacks {
+		if fallback.provider == nil || fallback.route == "" {
+			continue
+		}
+		p.logger.WarnContext(ctx, "provider failed, retrying with fallback provider", "failed_provider_route", previousRoute, "fallback_provider_route", fallback.route, "error", previousErr)
+		response, err := call(fallback.provider)
+		if err == nil {
+			if response.ResponsePayload == nil {
+				response.ResponsePayload = map[string]any{}
+			}
+			response.ResponsePayload["fallback_from_provider_route"] = previousRoute
+			response.ResponsePayload["provider_route"] = fallback.route
+			response.FallbackStage = strings.TrimSpace(joinNonEmpty(response.FallbackStage, "fallback_provider"))
+			if response.Model == "" {
+				response.Model = fallback.route
+			}
+			return response, nil
+		}
+		failures = append(failures, fmt.Sprintf("%s: %v", fallback.route, err))
+		if !shouldFallbackToSecondary(err) {
+			return ProviderResponse{}, fmt.Errorf("llm: provider chain failed (%s)", strings.Join(failures, "; "))
+		}
+		previousRoute = fallback.route
+		previousErr = err
 	}
-	if secondaryResponse.ResponsePayload == nil {
-		secondaryResponse.ResponsePayload = map[string]any{}
-	}
-	secondaryResponse.ResponsePayload["fallback_from_provider_route"] = p.primaryRoute
-	secondaryResponse.ResponsePayload["provider_route"] = p.secondaryRoute
-	secondaryResponse.FallbackStage = strings.TrimSpace(joinNonEmpty(secondaryResponse.FallbackStage, "secondary_provider"))
-	if secondaryResponse.Model == "" {
-		secondaryResponse.Model = p.secondaryRoute
-	}
-	return secondaryResponse, nil
+	return ProviderResponse{}, fmt.Errorf("llm: provider chain failed (%s)", strings.Join(failures, "; "))
 }
 
 func (p *FallbackProvider) ReviewWithSystemPrompt(ctx context.Context, request ctxpkg.ReviewRequest, systemPrompt string) (ProviderResponse, error) {
@@ -161,24 +236,12 @@ func (p *FallbackProvider) ReviewWithSystemPrompt(ctx context.Context, request c
 		return ProviderResponse{}, fmt.Errorf("llm: primary provider is required")
 	}
 	response, err := reviewWithSystemPrompt(p.primary, ctx, request, systemPrompt)
-	if err == nil || p.secondary == nil || !shouldFallbackToSecondary(err) {
+	if err == nil || len(p.fallbacks) == 0 || !shouldFallbackToSecondary(err) {
 		return response, err
 	}
-	p.logger.WarnContext(ctx, "primary provider failed, retrying with secondary provider", "primary_provider_route", p.primaryRoute, "secondary_provider_route", p.secondaryRoute, "error", err)
-	secondaryResponse, secondaryErr := reviewWithSystemPrompt(p.secondary, ctx, request, systemPrompt)
-	if secondaryErr != nil {
-		return ProviderResponse{}, fmt.Errorf("llm: primary provider %q failed: %w; secondary provider %q failed: %v", p.primaryRoute, err, p.secondaryRoute, secondaryErr)
-	}
-	if secondaryResponse.ResponsePayload == nil {
-		secondaryResponse.ResponsePayload = map[string]any{}
-	}
-	secondaryResponse.ResponsePayload["fallback_from_provider_route"] = p.primaryRoute
-	secondaryResponse.ResponsePayload["provider_route"] = p.secondaryRoute
-	secondaryResponse.FallbackStage = strings.TrimSpace(joinNonEmpty(secondaryResponse.FallbackStage, "secondary_provider"))
-	if secondaryResponse.Model == "" {
-		secondaryResponse.Model = p.secondaryRoute
-	}
-	return secondaryResponse, nil
+	return p.reviewFallbackChain(ctx, request, err, func(provider Provider) (ProviderResponse, error) {
+		return reviewWithSystemPrompt(provider, ctx, request, systemPrompt)
+	})
 }
 
 func shouldFallbackToSecondary(err error) bool {

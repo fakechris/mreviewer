@@ -851,7 +851,7 @@ func TestNewReviewRunProcessorProcessesRunViaNewEngine(t *testing.T) {
 	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
 	registry.Register("claude-opus-4-1", overrideProvider)
 
-	processor, err := newReviewRunProcessor(&config.Config{}, sqlDB, client, nil, loader, registry)
+	processor, err := newReviewRunProcessor(workerRuntimeConfig("default", "claude-opus-4-1"), sqlDB, client, nil, loader, registry)
 	if err != nil {
 		t.Fatalf("newReviewRunProcessor: %v", err)
 	}
@@ -1011,7 +1011,7 @@ func TestWorkerRuntimeProcessesNewEngineRunViaBundleWriteback(t *testing.T) {
 	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
 	registry.Register("claude-opus-4-1", overrideProvider)
 
-	processor, err := newReviewRunProcessor(&config.Config{}, sqlDB, client, nil, loader, registry)
+	processor, err := newReviewRunProcessor(workerRuntimeConfig("default", "claude-opus-4-1"), sqlDB, client, nil, loader, registry)
 	if err != nil {
 		t.Fatalf("newReviewRunProcessor: %v", err)
 	}
@@ -1177,10 +1177,10 @@ func TestNewReviewRunProcessorHonorsConfiguredReviewPacksAndAdvisorRoute(t *test
 	registry.Register("claude-opus-4-1", councilProvider)
 	registry.Register("openai-gpt-5-4", advisorProvider)
 
-	processor, err := newReviewRunProcessor(&config.Config{
-		ReviewPacks:        []string{"security"},
-		ReviewAdvisorRoute: "openai-gpt-5-4",
-	}, sqlDB, client, nil, loader, registry)
+	cfg := workerRuntimeConfig("default", "claude-opus-4-1", "openai-gpt-5-4")
+	cfg.Review.Packs = []string{"security"}
+	cfg.Review.AdvisorChain = "openai-gpt-5-4"
+	processor, err := newReviewRunProcessor(cfg, sqlDB, client, nil, loader, registry)
 	if err != nil {
 		t.Fatalf("newReviewRunProcessor: %v", err)
 	}
@@ -1231,7 +1231,7 @@ func TestWorkerAdvisorAwareEngineDegradesAdvisorFailures(t *testing.T) {
 			}
 			return &fakeWorkerDynamicProvider{err: errors.New("advisor unavailable")}
 		}),
-		defaultAdvisorRoute: "openai-gpt-5-4",
+		defaultAdvisorRef: "openai-gpt-5-4",
 	}
 
 	bundle, err := engine.Run(context.Background(), core.ReviewInput{
@@ -1364,10 +1364,9 @@ func TestWorkerRuntimeProcessesGitHubRunViaBundleWriteback(t *testing.T) {
 	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
 	registry.Register("claude-opus-4-1", overrideProvider)
 
-	cfg := &config.Config{
-		GitHubBaseURL: server.URL,
-		GitHubToken:   "test-token",
-	}
+	cfg := workerRuntimeConfig("default", "claude-opus-4-1")
+	cfg.GitHubBaseURL = server.URL
+	cfg.GitHubToken = "test-token"
 	processor, err := newReviewRunProcessor(cfg, sqlDB, nil, githubClient, loader, registry)
 	if err != nil {
 		t.Fatalf("newReviewRunProcessor: %v", err)
@@ -1504,10 +1503,9 @@ func TestNewReviewRunProcessorProcessesGitHubRunViaNewEngine(t *testing.T) {
 	registry := llm.NewProviderRegistry(slog.New(slog.NewJSONHandler(io.Discard, nil)), "default", defaultProvider)
 	registry.Register("claude-opus-4-1", overrideProvider)
 
-	cfg := &config.Config{
-		GitHubBaseURL: server.URL,
-		GitHubToken:   "test-token",
-	}
+	cfg := workerRuntimeConfig("default", "claude-opus-4-1")
+	cfg.GitHubBaseURL = server.URL
+	cfg.GitHubToken = "test-token"
 	processor, err := newReviewRunProcessor(cfg, sqlDB, nil, githubClient, loader, registry)
 	if err != nil {
 		t.Fatalf("newReviewRunProcessor: %v", err)
@@ -1640,6 +1638,62 @@ func (f *fakeWorkerDynamicProvider) RequestPayload(_ ctxpkg.ReviewRequest) map[s
 
 func (f *fakeWorkerDynamicProvider) RequestPayloadWithSystemPrompt(_ ctxpkg.ReviewRequest, systemPrompt string) map[string]any {
 	return map[string]any{"provider": "fake-worker", "system_prompt": systemPrompt}
+}
+
+func workerRuntimeConfig(modelIDs ...string) *config.Config {
+	models := make(map[string]config.ModelConfig, len(modelIDs))
+	for _, modelID := range modelIDs {
+		switch modelID {
+		case "default":
+			models[modelID] = config.ModelConfig{
+				Provider:   "minimax",
+				BaseURL:    "https://api.minimaxi.com/anthropic",
+				APIKey:     "test-key",
+				Model:      "MiniMax-M2.7-highspeed",
+				OutputMode: "tool_call",
+				MaxTokens:  4096,
+			}
+		case "claude-opus-4-1":
+			models[modelID] = config.ModelConfig{
+				Provider:   "anthropic",
+				BaseURL:    "https://api.anthropic.com",
+				APIKey:     "test-key",
+				Model:      "claude-opus-4-1",
+				OutputMode: "tool_call",
+				MaxTokens:  12000,
+			}
+		case "openai-gpt-5-4":
+			models[modelID] = config.ModelConfig{
+				Provider:            "openai",
+				BaseURL:             "https://api.openai.com/v1",
+				APIKey:              "test-key",
+				Model:               "gpt-5.4",
+				OutputMode:          "json_schema",
+				MaxCompletionTokens: 12000,
+				ReasoningEffort:     "medium",
+			}
+		default:
+			models[modelID] = config.ModelConfig{
+				Provider:   "openai",
+				BaseURL:    "https://api.openai.com/v1",
+				APIKey:     "test-key",
+				Model:      modelID,
+				OutputMode: "json_schema",
+			}
+		}
+	}
+	return &config.Config{
+		Models: models,
+		ModelChains: map[string]config.ModelChainConfig{
+			"review_primary": {
+				Primary:   "default",
+				Fallbacks: []string{},
+			},
+		},
+		Review: config.ReviewConfig{
+			ModelChain: "review_primary",
+		},
+	}
 }
 
 func int32PtrRuntime(v int32) *int32 {

@@ -290,7 +290,7 @@ func newPersonalWorkerRuntime(logger *slog.Logger, cfg *config.Config, sqlDB *sq
 		}
 		repositoryRulesClient.github = githubClient
 	}
-	defaultRoute, configuredFallbackRoute, providerConfigs, err := providerConfigsFromConfig(cfg)
+	defaultRoute, configuredFallbackRoutes, providerConfigs, err := providerConfigsFromConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +309,7 @@ func newPersonalWorkerRuntime(logger *slog.Logger, cfg *config.Config, sqlDB *sq
 		providerCfg.RateLimiter = llmLimiter
 		providerConfigs[route] = providerCfg
 	}
-	providerRegistry, err := llm.BuildProviderRegistryFromRouteConfigs(logger, defaultRoute, configuredFallbackRoute, providerConfigs)
+	providerRegistry, err := llm.BuildProviderRegistryFromRouteConfigs(logger, defaultRoute, configuredFallbackRoutes, providerConfigs)
 	if err != nil {
 		return nil, err
 	}
@@ -465,6 +465,10 @@ func wrapServeProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processo
 }
 
 func newServeReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitlab.Client, githubClient *platformgithub.Client, rulesLoader reviewinput.RulesLoader, providerRegistry *llm.ProviderRegistry) (scheduler.Processor, error) {
+	defaultRoute, configuredFallbackRoutes, _, err := config.ResolveReviewCatalog(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("serve: resolve review model chain: %w", err)
+	}
 	builder := reviewinput.NewBuilder(rulesLoader, ctxpkg.NewAssembler(), llm.NewSQLProcessorStore(sqlDB))
 	inputLoader := workerReviewInputLoader(func(ctx context.Context, target core.ReviewTarget, providerRoute string) (core.ReviewInput, error) {
 		input, err := buildServeReviewInput(ctx, target, gitlabClient, githubClient, builder)
@@ -476,7 +480,9 @@ func newServeReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient 
 		}
 		return input, nil
 	})
-	resolve := func(route string) llm.Provider { return providerRegistry.ResolveWithFallback(route) }
+	resolve := func(ref string) llm.Provider {
+		return config.ResolveProvider(cfg, providerRegistry, defaultRoute, configuredFallbackRoutes, ref)
+	}
 	runners := make([]core.PackRunner, 0, len(reviewpack.DefaultPacks()))
 	for _, pack := range reviewpack.DefaultPacks() {
 		runners = append(runners, reviewpack.NewLegacyResolverRunner(pack.Contract(), resolve))
@@ -484,11 +490,11 @@ func newServeReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient 
 	engine := workerAdvisorAwareEngine{
 		base:                core.NewEngine(runners, workerJudgeAdapter{inner: judge.New()}),
 		advisor:             reviewadvisor.New(resolve),
-		defaultAdvisorRoute: strings.TrimSpace(cfg.ReviewAdvisorRoute),
+		defaultAdvisorRef:   strings.TrimSpace(cfg.Review.AdvisorChain),
 	}
 	return reviewrun.NewEngineProcessor(sqlDB, inputLoader, engine).
-		WithDefaultReviewerPacks(normalizedReviewPacks(cfg.ReviewPacks)).
-		WithDefaultAdvisorRoute(strings.TrimSpace(cfg.ReviewAdvisorRoute)), nil
+		WithDefaultReviewerPacks(normalizedReviewPacks(cfg.Review.Packs)).
+		WithDefaultAdvisorRoute(strings.TrimSpace(cfg.Review.AdvisorChain)), nil
 }
 
 type workerReviewInputLoader func(ctx context.Context, target core.ReviewTarget, providerRoute string) (core.ReviewInput, error)
@@ -500,7 +506,7 @@ func (f workerReviewInputLoader) Load(ctx context.Context, target core.ReviewTar
 type workerAdvisorAwareEngine struct {
 	base                *core.Engine
 	advisor             *reviewadvisor.Advisor
-	defaultAdvisorRoute string
+	defaultAdvisorRef   string
 }
 
 func (e workerAdvisorAwareEngine) Run(ctx context.Context, input core.ReviewInput, opts core.RunOptions) (core.ReviewBundle, error) {
@@ -508,16 +514,16 @@ func (e workerAdvisorAwareEngine) Run(ctx context.Context, input core.ReviewInpu
 	if err != nil {
 		return core.ReviewBundle{}, err
 	}
-	route := strings.TrimSpace(opts.AdvisorRoute)
-	if route == "" {
-		route = strings.TrimSpace(e.defaultAdvisorRoute)
+	ref := strings.TrimSpace(opts.AdvisorRoute)
+	if ref == "" {
+		ref = strings.TrimSpace(e.defaultAdvisorRef)
 	}
-	if route == "" || e.advisor == nil {
+	if ref == "" || e.advisor == nil {
 		return bundle, nil
 	}
-	artifact, err := e.advisor.Advise(ctx, input, bundle, route)
+	artifact, err := e.advisor.Advise(ctx, input, bundle, ref)
 	if err != nil {
-		slog.Default().WarnContext(ctx, "serve runtime advisor failed; continuing with council result", "route", route, "error", err)
+		slog.Default().WarnContext(ctx, "serve runtime advisor failed; continuing with council result", "route", ref, "error", err)
 		return bundle, nil
 	}
 	bundle.AdvisorArtifact = artifact

@@ -39,7 +39,7 @@ func NewProviderFromConfig(cfg ProviderConfig) (Provider, error) {
 	}
 }
 
-func BuildProviderRegistryFromRouteConfigs(logger *slog.Logger, defaultRoute string, fallbackRoute string, routes map[string]ProviderConfig) (*ProviderRegistry, error) {
+func BuildProviderRegistryFromRouteConfigs(logger *slog.Logger, defaultRoute string, fallbackRoutes []string, routes map[string]ProviderConfig) (*ProviderRegistry, error) {
 	defaultRoute = strings.TrimSpace(defaultRoute)
 	if defaultRoute == "" {
 		return nil, fmt.Errorf("llm: default route is required")
@@ -65,14 +65,19 @@ func BuildProviderRegistryFromRouteConfigs(logger *slog.Logger, defaultRoute str
 		}
 		registry.Register(route, provider)
 	}
-	if strings.TrimSpace(fallbackRoute) != "" {
+	normalizedFallbacks := make([]string, 0, len(fallbackRoutes))
+	for _, fallbackRoute := range fallbackRoutes {
 		trimmedFallback := strings.TrimSpace(fallbackRoute)
-		if trimmedFallback != defaultRoute {
-			if _, ok := routes[trimmedFallback]; !ok {
-				return nil, fmt.Errorf("llm: missing fallback route config %q", trimmedFallback)
-			}
+		if trimmedFallback == "" || trimmedFallback == defaultRoute {
+			continue
 		}
-		registry.SetFallbackRoute(trimmedFallback)
+		if _, ok := routes[trimmedFallback]; !ok {
+			return nil, fmt.Errorf("llm: missing fallback route config %q", trimmedFallback)
+		}
+		normalizedFallbacks = append(normalizedFallbacks, trimmedFallback)
+	}
+	if len(normalizedFallbacks) > 0 {
+		registry.SetFallbackRoutes(normalizedFallbacks)
 	}
 	return registry, nil
 }

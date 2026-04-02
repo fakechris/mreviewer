@@ -113,7 +113,7 @@ func TestBuildProviderRegistryFromRouteConfigs(t *testing.T) {
 	registry, err := BuildProviderRegistryFromRouteConfigs(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"default",
-		"openai",
+		[]string{"openai", "opus"},
 		map[string]ProviderConfig{
 			"default": {
 				Kind:      "minimax",
@@ -159,7 +159,7 @@ func TestBuildProviderRegistryFromRouteConfigsRejectsUnknownFallback(t *testing.
 	_, err := BuildProviderRegistryFromRouteConfigs(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"default",
-		"missing-route",
+		[]string{"missing-route"},
 		map[string]ProviderConfig{
 			"default": {
 				Kind:      "minimax",

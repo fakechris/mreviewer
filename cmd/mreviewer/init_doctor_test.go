@@ -35,6 +35,18 @@ func TestRunInitCommandWritesConfig(t *testing.T) {
 	if !strings.Contains(content, "database_dsn: \"file:.mreviewer/state/mreviewer.db?_pragma=busy_timeout(5000)\"") {
 		t.Fatalf("config missing sqlite dsn: %s", content)
 	}
+	if !strings.Contains(content, "models:") {
+		t.Fatalf("config missing models section: %s", content)
+	}
+	if !strings.Contains(content, "model_chains:") {
+		t.Fatalf("config missing model_chains section: %s", content)
+	}
+	if !strings.Contains(content, "review:\n  model_chain: review_primary") {
+		t.Fatalf("config missing review model chain: %s", content)
+	}
+	if !strings.Contains(content, "openai_default:") {
+		t.Fatalf("config missing openai model id: %s", content)
+	}
 	if !strings.Contains(content, "provider: openai") {
 		t.Fatalf("config missing provider stanza: %s", content)
 	}
@@ -55,13 +67,24 @@ func TestRunDoctorCommandJSONReportsMissingPlatformTokens(t *testing.T) {
 	defer func() { _ = os.Chdir(wd) }()
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(`
+if err := os.WriteFile(configPath, []byte(`
 app_env: development
 database_dsn: "file:.mreviewer/state/mreviewer.db?_pragma=busy_timeout(5000)"
-llm_provider: openai
-llm_api_key: "test-key"
-llm_base_url: "https://api.openai.com/v1"
-llm_model: "gpt-5.4"
+models:
+  openai_default:
+    provider: openai
+    api_key: "test-key"
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-5.4"
+    output_mode: "json_schema"
+    max_completion_tokens: 12000
+model_chains:
+  review_primary:
+    primary: openai_default
+review:
+  model_chain: review_primary
+  packs:
+    - security
 `), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -97,6 +120,12 @@ func TestRenderPersonalConfigOmitsBlankOptionalLines(t *testing.T) {
 	}
 	if strings.Contains(content, "\n      \n") {
 		t.Fatalf("config contains indented blank optional line: %q", content)
+	}
+	if !strings.Contains(content, "model_chains:") {
+		t.Fatalf("config missing model_chains section: %s", content)
+	}
+	if !strings.Contains(content, "review:\n  model_chain: review_primary") {
+		t.Fatalf("config missing review section: %s", content)
 	}
 	if !strings.Contains(content, "max_tokens: 4096") {
 		t.Fatalf("config missing minimax max_tokens stanza: %s", content)

@@ -260,7 +260,7 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	fs.Int64Var(&opts.projectID, "project-id", 0, "GitLab project ID")
 	fs.Int64Var(&opts.mrIID, "mr-iid", 0, "GitLab merge request IID")
 	fs.StringVar(&opts.configPath, "config", "config.yaml", "Path to config file")
-	fs.Var(&llmRoute, "llm-route", "Use the named llm.routes entry for this manual review run only")
+	fs.Var(&llmRoute, "llm-route", "Use the named model or model chain reference for this manual review run only")
 	fs.Var(&providerRoute, "provider-route", "Alias of --llm-route")
 	fs.BoolVar(&opts.wait, "wait", false, "Wait for the review run to reach a terminal state")
 	fs.DurationVar(&opts.waitTimeout, "wait-timeout", 15*time.Minute, "Maximum time to wait when --wait is enabled")
@@ -375,9 +375,9 @@ func availableProviderRoutes(cfg *config.Config) []string {
 	if cfg == nil {
 		return nil
 	}
-	if len(cfg.LLM.Routes) > 0 {
-		routes := make([]string, 0, len(cfg.LLM.Routes))
-		for route := range cfg.LLM.Routes {
+	if len(cfg.Models) > 0 {
+		routes := make([]string, 0, len(cfg.Models))
+		for route := range cfg.Models {
 			trimmed := strings.TrimSpace(route)
 			if trimmed == "" {
 				continue
@@ -387,7 +387,7 @@ func availableProviderRoutes(cfg *config.Config) []string {
 		sort.Strings(routes)
 		return routes
 	}
-	return []string{"default", "secondary"}
+	return nil
 }
 
 func newDefaultService(cfg *config.Config, sqlDB *sql.DB, pollInterval time.Duration) manualTriggerService {

@@ -40,7 +40,7 @@ func (e failingEngine) Run(context.Context, core.ReviewInput, core.RunOptions) (
 type advisorAwareEngine struct {
 	base                *core.Engine
 	advisor             *reviewadvisor.Advisor
-	defaultAdvisorRoute string
+	defaultAdvisorRef   string
 }
 
 func (e advisorAwareEngine) Run(ctx context.Context, input core.ReviewInput, opts core.RunOptions) (core.ReviewBundle, error) {
@@ -51,14 +51,14 @@ func (e advisorAwareEngine) Run(ctx context.Context, input core.ReviewInput, opt
 	if err != nil {
 		return core.ReviewBundle{}, err
 	}
-	route := strings.TrimSpace(opts.AdvisorRoute)
-	if route == "" {
-		route = strings.TrimSpace(e.defaultAdvisorRoute)
+	ref := strings.TrimSpace(opts.AdvisorRoute)
+	if ref == "" {
+		ref = strings.TrimSpace(e.defaultAdvisorRef)
 	}
-	if route == "" || e.advisor == nil {
+	if ref == "" || e.advisor == nil {
 		return bundle, nil
 	}
-	artifact, err := e.advisor.Advise(ctx, input, bundle, route)
+	artifact, err := e.advisor.Advise(ctx, input, bundle, ref)
 	if err != nil {
 		return core.ReviewBundle{}, err
 	}
@@ -158,16 +158,16 @@ func defaultReviewEngine(configPath string) reviewEngine {
 		return failingEngine{err: fmt.Errorf("load config: %w", err)}
 	}
 	logger := slog.New(slog.NewTextHandler(nilDiscardWriter{}, nil))
-	defaultRoute, fallbackRoute, providerConfigs, err := providerConfigsFromConfig(cfg)
+	defaultRoute, fallbackRoutes, providerConfigs, err := providerConfigsFromConfig(cfg)
 	if err != nil {
 		return failingEngine{err: fmt.Errorf("resolve provider routes: %w", err)}
 	}
-	registry, err := llm.BuildProviderRegistryFromRouteConfigs(logger, defaultRoute, fallbackRoute, providerConfigs)
+	registry, err := llm.BuildProviderRegistryFromRouteConfigs(logger, defaultRoute, fallbackRoutes, providerConfigs)
 	if err != nil {
 		return failingEngine{err: fmt.Errorf("build provider registry: %w", err)}
 	}
-	resolve := func(route string) llm.Provider {
-		return registry.ResolveWithFallback(route)
+	resolve := func(ref string) llm.Provider {
+		return config.ResolveProvider(cfg, registry, defaultRoute, fallbackRoutes, ref)
 	}
 	runners := make([]core.PackRunner, 0, len(reviewpack.DefaultPacks()))
 	for _, pack := range reviewpack.DefaultPacks() {
@@ -176,7 +176,7 @@ func defaultReviewEngine(configPath string) reviewEngine {
 	return advisorAwareEngine{
 		base:                core.NewEngine(runners, judgeAdapter{inner: judge.New()}),
 		advisor:             reviewadvisor.New(resolve),
-		defaultAdvisorRoute: strings.TrimSpace(cfg.ReviewAdvisorRoute),
+		defaultAdvisorRef:   strings.TrimSpace(cfg.Review.AdvisorChain),
 	}
 }
 
@@ -533,82 +533,13 @@ func githubAPIBaseURL(targetBaseURL string) string {
 	}
 }
 
-func providerConfigsFromConfig(cfg *config.Config) (string, string, map[string]llm.ProviderConfig, error) {
+func providerConfigsFromConfig(cfg *config.Config) (string, []string, map[string]llm.ProviderConfig, error) {
 	if cfg == nil {
-		return "", "", nil, fmt.Errorf("worker: configuration is required")
+		return "", nil, nil, fmt.Errorf("worker: configuration is required")
 	}
-	routes := make(map[string]llm.ProviderConfig)
-	if providerKind := strings.ToLower(strings.TrimSpace(cfg.LLMProvider)); providerKind != "" {
-		const quickStartDefaultRoute = "default"
-		const quickStartFallbackRoute = "secondary"
+	return config.ResolveReviewCatalog(cfg)
+}
 
-		quickStart := llm.ProviderConfig{
-			Kind:       providerKind,
-			BaseURL:    strings.TrimSpace(cfg.LLMBaseURL),
-			APIKey:     strings.TrimSpace(cfg.LLMAPIKey),
-			Model:      strings.TrimSpace(cfg.LLMModel),
-			MaxTokens:  4096,
-			OutputMode: "tool_call",
-		}
-		if providerKind == llm.ProviderKindOpenAI {
-			quickStart.OutputMode = "json_schema"
-			quickStart.MaxCompletionTokens = 12000
-			quickStart.ReasoningEffort = "medium"
-		}
-
-		defaultProvider := quickStart
-		defaultProvider.RouteName = quickStartDefaultRoute
-		secondaryProvider := quickStart
-		secondaryProvider.RouteName = quickStartFallbackRoute
-		routes[quickStartDefaultRoute] = defaultProvider
-		routes[quickStartFallbackRoute] = secondaryProvider
-		return quickStartDefaultRoute, quickStartFallbackRoute, routes, nil
-	}
-	if len(cfg.LLM.Routes) > 0 {
-		defaultRoute := strings.TrimSpace(cfg.LLM.DefaultRoute)
-		if defaultRoute == "" {
-			return "", "", nil, fmt.Errorf("worker: llm.default_route is required when llm.routes is configured")
-		}
-		for routeName, route := range cfg.LLM.Routes {
-			trimmed := strings.TrimSpace(routeName)
-			if trimmed == "" {
-				return "", "", nil, fmt.Errorf("worker: llm route name cannot be empty")
-			}
-			providerKind := strings.TrimSpace(route.Provider)
-			if providerKind == "" {
-				return "", "", nil, fmt.Errorf("worker: llm.routes.%s.provider is required", trimmed)
-			}
-			routes[trimmed] = llm.ProviderConfig{
-				Kind:                providerKind,
-				BaseURL:             strings.TrimSpace(route.BaseURL),
-				APIKey:              strings.TrimSpace(route.APIKey),
-				Model:               strings.TrimSpace(route.Model),
-				RouteName:           trimmed,
-				OutputMode:          strings.TrimSpace(route.OutputMode),
-				MaxTokens:           route.MaxTokens,
-				MaxCompletionTokens: route.MaxCompletionTokens,
-				ReasoningEffort:     strings.TrimSpace(route.ReasoningEffort),
-				Temperature:         route.Temperature,
-			}
-		}
-		return defaultRoute, strings.TrimSpace(cfg.LLM.FallbackRoute), routes, nil
-	}
-
-	const legacyDefaultRoute = "default"
-	const legacyFallbackRoute = "secondary"
-	legacy := llm.ProviderConfig{
-		Kind:       llm.ProviderKindMiniMax,
-		BaseURL:    strings.TrimSpace(cfg.AnthropicBaseURL),
-		APIKey:     strings.TrimSpace(cfg.AnthropicAPIKey),
-		Model:      strings.TrimSpace(cfg.AnthropicModel),
-		MaxTokens:  4096,
-		OutputMode: "tool_call",
-	}
-	defaultProvider := legacy
-	defaultProvider.RouteName = legacyDefaultRoute
-	secondaryProvider := legacy
-	secondaryProvider.RouteName = legacyFallbackRoute
-	routes[legacyDefaultRoute] = defaultProvider
-	routes[legacyFallbackRoute] = secondaryProvider
-	return legacyDefaultRoute, legacyFallbackRoute, routes, nil
+func resolveProviderReference(cfg *config.Config, registry *llm.ProviderRegistry, defaultRoute string, defaultFallbacks []string, ref string) llm.Provider {
+	return config.ResolveProvider(cfg, registry, defaultRoute, defaultFallbacks, ref)
 }

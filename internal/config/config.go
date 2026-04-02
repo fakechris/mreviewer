@@ -11,11 +11,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	defaultMiniMaxBaseURL = "https://api.minimaxi.com/anthropic"
-	defaultMiniMaxModel   = "MiniMax-M2.7-highspeed"
-)
-
 var braceEnvPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
 // Config holds all application configuration values.
@@ -36,29 +31,12 @@ type Config struct {
 	GitHubToken         string `yaml:"github_token"`
 	GitHubWebhookSecret string `yaml:"github_webhook_secret"`
 
-	AnthropicBaseURL string `yaml:"anthropic_base_url"`
-	AnthropicAPIKey  string `yaml:"anthropic_api_key"`
-	AnthropicModel   string `yaml:"anthropic_model"`
-
-	LLMProvider string `yaml:"llm_provider"`
-	LLMAPIKey   string `yaml:"llm_api_key"`
-	LLMBaseURL  string `yaml:"llm_base_url"`
-	LLMModel    string `yaml:"llm_model"`
-
-	ReviewPacks            []string `yaml:"review_packs"`
-	ReviewAdvisorRoute     string   `yaml:"review_advisor_route"`
-	ReviewCompareReviewers []string `yaml:"review_compare_reviewers"`
-
-	LLM LLMConfig `yaml:"llm"`
+	Models      map[string]ModelConfig      `yaml:"models"`
+	ModelChains map[string]ModelChainConfig `yaml:"model_chains"`
+	Review      ReviewConfig                `yaml:"review"`
 }
 
-type LLMConfig struct {
-	DefaultRoute  string                    `yaml:"default_route"`
-	FallbackRoute string                    `yaml:"fallback_route"`
-	Routes        map[string]LLMRouteConfig `yaml:"routes"`
-}
-
-type LLMRouteConfig struct {
+type ModelConfig struct {
 	Provider            string  `yaml:"provider"`
 	BaseURL             string  `yaml:"base_url"`
 	APIKey              string  `yaml:"api_key"`
@@ -68,6 +46,18 @@ type LLMRouteConfig struct {
 	MaxTokens           int64   `yaml:"max_tokens"`
 	MaxCompletionTokens int64   `yaml:"max_completion_tokens"`
 	ReasoningEffort     string  `yaml:"reasoning_effort"`
+}
+
+type ModelChainConfig struct {
+	Primary   string   `yaml:"primary"`
+	Fallbacks []string `yaml:"fallbacks"`
+}
+
+type ReviewConfig struct {
+	ModelChain       string   `yaml:"model_chain"`
+	AdvisorChain     string   `yaml:"advisor_chain"`
+	Packs            []string `yaml:"packs"`
+	CompareReviewers []string `yaml:"compare_reviewers"`
 }
 
 // envMapping maps Config field setters to their environment variable names.
@@ -89,18 +79,10 @@ var envMapping = []struct {
 	{"GITHUB_BASE_URL", func(c *Config, v string) { c.GitHubBaseURL = v }},
 	{"GITHUB_TOKEN", func(c *Config, v string) { c.GitHubToken = v }},
 	{"GITHUB_WEBHOOK_SECRET", func(c *Config, v string) { c.GitHubWebhookSecret = v }},
-	{"ANTHROPIC_BASE_URL", func(c *Config, v string) { c.AnthropicBaseURL = v }},
-	{"ANTHROPIC_API_KEY", func(c *Config, v string) { c.AnthropicAPIKey = v }},
-	{"ANTHROPIC_MODEL", func(c *Config, v string) { c.AnthropicModel = v }},
-	{"LLM_PROVIDER", func(c *Config, v string) { c.LLMProvider = v }},
-	{"LLM_API_KEY", func(c *Config, v string) { c.LLMAPIKey = v }},
-	{"LLM_BASE_URL", func(c *Config, v string) { c.LLMBaseURL = v }},
-	{"LLM_MODEL", func(c *Config, v string) { c.LLMModel = v }},
-	{"REVIEW_PACKS", func(c *Config, v string) { c.ReviewPacks = splitCSV(v) }},
-	{"REVIEW_ADVISOR_ROUTE", func(c *Config, v string) { c.ReviewAdvisorRoute = strings.TrimSpace(v) }},
-	{"REVIEW_COMPARE_REVIEWERS", func(c *Config, v string) { c.ReviewCompareReviewers = splitCSV(v) }},
-	{"LLM_DEFAULT_ROUTE", func(c *Config, v string) { c.LLM.DefaultRoute = v }},
-	{"LLM_FALLBACK_ROUTE", func(c *Config, v string) { c.LLM.FallbackRoute = v }},
+	{"REVIEW_MODEL_CHAIN", func(c *Config, v string) { c.Review.ModelChain = strings.TrimSpace(v) }},
+	{"REVIEW_ADVISOR_CHAIN", func(c *Config, v string) { c.Review.AdvisorChain = strings.TrimSpace(v) }},
+	{"REVIEW_PACKS", func(c *Config, v string) { c.Review.Packs = splitCSV(v) }},
+	{"REVIEW_COMPARE_REVIEWERS", func(c *Config, v string) { c.Review.CompareReviewers = splitCSV(v) }},
 }
 
 // Load reads configuration first from the YAML file at yamlPath (if it exists
@@ -162,7 +144,6 @@ func applyEnv(cfg *Config) {
 			m.setter(cfg, v)
 		}
 	}
-	applyMiniMaxFallback(cfg)
 }
 
 // DSN returns the database connection string. It prefers DatabaseDSN if set,
@@ -172,36 +153,6 @@ func (c *Config) DSN() string {
 		return c.DatabaseDSN
 	}
 	return c.MySQLDSN
-}
-
-func applyMiniMaxFallback(cfg *Config) {
-	if cfg == nil {
-		return
-	}
-	if strings.TrimSpace(cfg.LLMProvider) != "" {
-		return
-	}
-	minimaxKey := strings.TrimSpace(os.Getenv("MINIMAX_API_KEY"))
-	if minimaxKey == "" {
-		return
-	}
-	if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) == "" {
-		cfg.AnthropicAPIKey = minimaxKey
-	}
-	if strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")) == "" {
-		if baseURL := strings.TrimSpace(os.Getenv("MINIMAX_BASE_URL")); baseURL != "" {
-			cfg.AnthropicBaseURL = baseURL
-		} else {
-			cfg.AnthropicBaseURL = defaultMiniMaxBaseURL
-		}
-	}
-	if strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")) == "" {
-		if model := strings.TrimSpace(os.Getenv("MINIMAX_MODEL")); model != "" {
-			cfg.AnthropicModel = model
-		} else {
-			cfg.AnthropicModel = defaultMiniMaxModel
-		}
-	}
 }
 
 func splitCSV(raw string) []string {

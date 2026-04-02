@@ -908,7 +908,10 @@ func TestProviderTimeoutRetry(t *testing.T) {
 func TestSecondaryProviderFallback(t *testing.T) {
 	primary := &fakeProvider{err: scheduler.NewRetryableError("provider_request_failed", errors.New("upstream status 503"))}
 	secondary := &fakeProvider{response: ProviderResponse{Result: ReviewResult{SchemaVersion: "1.0", ReviewRunID: "123", Summary: "ok", Findings: nil, Status: "completed"}, Model: "secondary", ResponsePayload: map[string]any{"provider": "secondary"}}}
-	provider := NewFallbackProvider(slog.New(slog.NewTextHandler(io.Discard, nil)), primary, "primary-route", secondary, "secondary-route")
+	provider := NewFallbackProvider(slog.New(slog.NewTextHandler(io.Discard, nil)), primary, "primary-route", []namedProvider{{
+		route:    "secondary-route",
+		provider: secondary,
+	}})
 
 	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
 	if err != nil {
@@ -923,8 +926,8 @@ func TestSecondaryProviderFallback(t *testing.T) {
 	if response.ResponsePayload["provider_route"] != "secondary-route" {
 		t.Fatalf("provider_route = %#v, want secondary-route", response.ResponsePayload["provider_route"])
 	}
-	if !strings.Contains(response.FallbackStage, "secondary_provider") {
-		t.Fatalf("fallback stage = %q, want secondary provider marker", response.FallbackStage)
+	if !strings.Contains(response.FallbackStage, "fallback_provider") {
+		t.Fatalf("fallback stage = %q, want fallback provider marker", response.FallbackStage)
 	}
 }
 
@@ -3401,7 +3404,7 @@ func TestProviderFallbackStillWorksWithPolicyRoute(t *testing.T) {
 
 	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "primary-custom", primaryProv)
 	registry.Register("fallback-secondary", secondaryProv)
-	registry.SetFallbackRoute("fallback-secondary")
+	registry.SetFallbackRoutes([]string{"fallback-secondary"})
 
 	rulesLoader := &fakeRulesLoader{result: rules.LoadResult{
 		EffectivePolicy: rules.EffectivePolicy{ProviderRoute: "primary-custom"},
@@ -3468,7 +3471,7 @@ func TestProviderRegistryResolveWithFallback(t *testing.T) {
 	secondaryProv := &fakeProvider{response: ProviderResponse{Model: "secondary"}}
 	registry := NewProviderRegistry(slog.New(slog.NewTextHandler(io.Discard, nil)), "default", defaultProv)
 	registry.Register("secondary", secondaryProv)
-	registry.SetFallbackRoute("secondary")
+	registry.SetFallbackRoutes([]string{"secondary"})
 
 	// When requesting "default" route, should get a FallbackProvider.
 	provider := registry.ResolveWithFallback("default")

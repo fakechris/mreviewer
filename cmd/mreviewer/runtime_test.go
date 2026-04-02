@@ -179,7 +179,7 @@ func TestDefaultLoadInputSupportsGitHubTarget(t *testing.T) {
 	}))
 	defer server.Close()
 
-	configPath := writeRuntimeConfig(t, "github_base_url: "+server.URL+"\ngithub_token: test-token\nllm_provider: minimax\nllm_api_key: test-key\nllm_base_url: https://example.com\nllm_model: test-model\n")
+	configPath := writeRuntimeConfig(t, "github_base_url: "+server.URL+"\ngithub_token: test-token\n")
 	target := core.ReviewTarget{
 		Platform:     core.PlatformGitHub,
 		URL:          "https://github.com/acme/repo/pull/17",
@@ -481,6 +481,9 @@ func TestDefaultStatusPublishesGitHubCommitStatus(t *testing.T) {
 
 func writeRuntimeConfig(t *testing.T, body string) string {
 	t.Helper()
+	if !strings.Contains(body, "models:") {
+		body += "\nmodels:\n  minimax_default:\n    provider: minimax\n    base_url: https://example.com\n    api_key: test-key\n    model: test-model\n    output_mode: tool_call\n    max_tokens: 4096\nmodel_chains:\n  review_primary:\n    primary: minimax_default\n    fallbacks: []\nreview:\n  model_chain: review_primary\n"
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
