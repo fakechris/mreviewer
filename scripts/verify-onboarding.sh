@@ -37,18 +37,20 @@ forbid_pattern() {
   fi
 }
 
-for file in README.md README.zh-CN.md WEBHOOK.md DEPLOYMENT.md docker-compose.yaml docker-compose.prod.yaml docker-compose.prod.config.yaml Dockerfile .github/workflows/ci.yml .github/workflows/release.yml scripts/install.sh scripts/install_test.sh scripts/render-homebrew-formula.sh; do
+for file in README.md README.zh-CN.md WEBHOOK.md DEPLOYMENT.md docker-compose.yaml docker-compose.prod.yaml docker-compose.prod.config.yaml Dockerfile .github/workflows/ci.yml .github/workflows/release.yml scripts/install.sh scripts/install_test.sh scripts/render-homebrew-formula.sh scripts/release_test.sh Formula/mreviewer.rb; do
   [[ -f "$file" ]] || fail "missing required file: $file"
 done
 
 [[ -x scripts/install.sh ]] || fail "scripts/install.sh must be executable"
 [[ -x scripts/install_test.sh ]] || fail "scripts/install_test.sh must be executable"
 [[ -x scripts/render-homebrew-formula.sh ]] || fail "scripts/render-homebrew-formula.sh must be executable"
+[[ -x scripts/release_test.sh ]] || fail "scripts/release_test.sh must be executable"
 
 # Personal CLI docs must be binary-first and docker-optional.
 require_pattern "README.md" "^## Personal CLI Quick Start" "README.md must document a Personal CLI quick start"
 require_pattern "README.md" "curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/install.sh \\| bash" "README.md must document the installer script"
-require_pattern "README.md" "brew install ./mreviewer.rb" "README.md must mention the Homebrew formula path"
+require_pattern "README.md" "brew tap fakechris/mreviewer" "README.md must document the Homebrew tap"
+require_pattern "README.md" "brew install mreviewer" "README.md must document brew install mreviewer"
 require_pattern "README.md" "mreviewer init" "README.md must document mreviewer init"
 require_pattern "README.md" "mreviewer doctor" "README.md must document mreviewer doctor"
 require_pattern "README.md" "mreviewer review" "README.md must document mreviewer review"
@@ -56,7 +58,8 @@ require_pattern "README.md" "mreviewer serve" "README.md must document mreviewer
 require_pattern "README.md" "SQLite" "README.md must document SQLite for personal mode"
 require_pattern "README.zh-CN.md" "^## 个人 CLI 快速开始" "README.zh-CN.md must document a personal CLI quick start"
 require_pattern "README.zh-CN.md" "curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/install.sh \\| bash" "README.zh-CN.md must document the installer script"
-require_pattern "README.zh-CN.md" "brew install ./mreviewer.rb" "README.zh-CN.md must mention the Homebrew formula path"
+require_pattern "README.zh-CN.md" "brew tap fakechris/mreviewer" "README.zh-CN.md must document the Homebrew tap"
+require_pattern "README.zh-CN.md" "brew install mreviewer" "README.zh-CN.md must document brew install mreviewer"
 require_pattern "README.zh-CN.md" "mreviewer init" "README.zh-CN.md must document mreviewer init"
 require_pattern "README.zh-CN.md" "mreviewer doctor" "README.zh-CN.md must document mreviewer doctor"
 require_pattern "README.zh-CN.md" "mreviewer review" "README.zh-CN.md must document mreviewer review"
@@ -96,10 +99,17 @@ require_pattern "docs/operations/admin-dashboard.md" "retry" "admin dashboard do
 # Binary/release assets must exist.
 require_pattern ".github/workflows/release.yml" "mreviewer_\\$\\{VERSION#v\\}_" "release workflow must build versioned CLI archives"
 require_pattern ".github/workflows/release.yml" "render-homebrew-formula" "release workflow must render a Homebrew formula"
+require_pattern ".github/workflows/release.yml" "checksums\\.txt" "release workflow must publish a consolidated checksums.txt"
+require_pattern ".github/workflows/release.yml" "Formula/mreviewer\\.rb" "release workflow must update the checked-in Homebrew formula"
+require_pattern ".github/workflows/release.yml" "git push origin HEAD:main" "release workflow must push the updated tap formula"
+require_pattern ".github/workflows/release.yml" "workflow_dispatch:" "release workflow must support manual dispatch publishing"
 require_pattern ".github/workflows/ci.yml" "bash scripts/install_test.sh" "CI must run the installer script test"
+require_pattern ".github/workflows/ci.yml" "bash scripts/release_test.sh" "CI must run the release distribution test"
 require_pattern "scripts/install.sh" "releases/latest" "install.sh must resolve the latest GitHub release"
 require_pattern "scripts/install.sh" "mreviewer_\\$\\{version#v\\}_" "install.sh must download versioned release archives"
+require_pattern "scripts/install.sh" "checksum_url=" "install.sh must expose the checksum release asset"
 require_pattern "scripts/render-homebrew-formula.sh" "class Mreviewer < Formula" "Homebrew formula renderer must emit a Formula"
+require_pattern "Formula/mreviewer.rb" "class Mreviewer < Formula" "checked-in Formula/mreviewer.rb must define the Homebrew formula"
 
 # Existing container story must stay valid for enterprise users.
 require_pattern "Dockerfile" "/out/mreviewer" "Dockerfile must build the mreviewer CLI"

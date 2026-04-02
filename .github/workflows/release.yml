@@ -4,10 +4,18 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to publish (for example v1.2.3)
+        required: true
+        type: string
 
 jobs:
   build-cli:
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
     strategy:
       matrix:
         include:
@@ -26,11 +34,21 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Validate release version
+        run: |
+          case "$VERSION" in
+            v*) ;;
+            *)
+              echo "release version must start with v (got: $VERSION)" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Build archive
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.VERSION }}
         run: |
           mkdir -p dist
           out_dir="dist/mreviewer_${VERSION#v}_${GOOS}_${GOARCH}"
@@ -49,6 +67,8 @@ jobs:
     needs: build-cli
     permissions:
       contents: write
+    env:
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -60,9 +80,15 @@ jobs:
         run: |
           find dist -mindepth 2 -type f -exec mv {} dist/ \;
 
+      - name: Generate consolidated checksums
+        run: |
+          : > dist/checksums.txt
+          for archive in dist/mreviewer_${VERSION#v}_*.tar.gz; do
+            checksum="$(cat "${archive}.sha256")"
+            printf "%s  %s\n" "$checksum" "$(basename "$archive")" >> dist/checksums.txt
+          done
+
       - name: Generate Homebrew formula
-        env:
-          VERSION: ${{ github.ref_name }}
         run: |
           darwin_amd64_sha="$(cat dist/mreviewer_${VERSION#v}_darwin_amd64.sha256)"
           darwin_arm64_sha="$(cat dist/mreviewer_${VERSION#v}_darwin_arm64.sha256)"
@@ -74,7 +100,25 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
           files: |
             dist/*.tar.gz
             dist/*.sha256
+            dist/checksums.txt
             dist/formula/mreviewer.rb
+
+      - name: Update checked-in Homebrew formula
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+          mkdir -p Formula
+          cp dist/formula/mreviewer.rb Formula/mreviewer.rb
+          if git diff --quiet -- Formula/mreviewer.rb; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/mreviewer.rb
+          git commit -m "chore: update brew formula for ${VERSION}"
+          git push origin HEAD:main

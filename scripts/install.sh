@@ -86,20 +86,49 @@ fi
 
 archive="mreviewer_${version#v}_${os_name}_${arch_name}.tar.gz"
 url="https://github.com/${repo}/releases/download/${version}/${archive}"
+checksum_url="${url}.sha256"
 target="${install_dir}/mreviewer"
 
 if [[ "$dry_run" == "1" ]]; then
   echo "version=${version}"
   echo "url=${url}"
+  echo "checksum_url=${checksum_url}"
   echo "target=${target}"
   exit 0
 fi
+
+compute_sha256() {
+  local file="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+    return
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+    return
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$file" | awk '{print $NF}'
+    return
+  fi
+  echo "install.sh: no SHA-256 tool found (need shasum, sha256sum, or openssl)" >&2
+  exit 1
+}
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 mkdir -p "$install_dir"
 curl -fsSL "$url" -o "$tmpdir/$archive"
+curl -fsSL "$checksum_url" -o "$tmpdir/$archive.sha256"
+expected_checksum="$(tr -d '[:space:]' < "$tmpdir/$archive.sha256")"
+actual_checksum="$(compute_sha256 "$tmpdir/$archive")"
+if [[ "$actual_checksum" != "$expected_checksum" ]]; then
+  echo "install.sh: checksum verification failed for ${archive}" >&2
+  echo "expected=${expected_checksum}" >&2
+  echo "actual=${actual_checksum}" >&2
+  exit 1
+fi
 tar -xzf "$tmpdir/$archive" -C "$tmpdir"
 install -m 0755 "$tmpdir/mreviewer" "$target"
 
