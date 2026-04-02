@@ -95,7 +95,8 @@ func parseInitOptions(args []string, stderr io.Writer) (initOptions, error) {
 
 func renderPersonalConfig(provider string) (string, error) {
 	type providerTemplate struct {
-		RouteName string
+		ModelID   string
+		ChainID   string
 		Provider  string
 		BaseURL   string
 		APIKeyEnv string
@@ -106,7 +107,8 @@ func renderPersonalConfig(provider string) (string, error) {
 	}
 	templateByProvider := map[string]providerTemplate{
 		"openai": {
-			RouteName: "openai-review",
+			ModelID:   "openai_default",
+			ChainID:   "review_primary",
 			Provider:  "openai",
 			BaseURL:   "https://api.openai.com/v1",
 			APIKeyEnv: "${OPENAI_API_KEY}",
@@ -116,7 +118,8 @@ func renderPersonalConfig(provider string) (string, error) {
 			Reasoning: "reasoning_effort: medium",
 		},
 		"minimax": {
-			RouteName: "minimax-review",
+			ModelID:   "minimax_default",
+			ChainID:   "review_primary",
 			Provider:  "minimax",
 			BaseURL:   "https://api.minimaxi.com/anthropic",
 			APIKeyEnv: "${MINIMAX_API_KEY}",
@@ -125,7 +128,8 @@ func renderPersonalConfig(provider string) (string, error) {
 			Tokens:    "max_tokens: 4096",
 		},
 		"anthropic": {
-			RouteName: "anthropic-review",
+			ModelID:   "anthropic_default",
+			ChainID:   "review_primary",
 			Provider:  "anthropic",
 			BaseURL:   "https://api.anthropic.com",
 			APIKeyEnv: "${ANTHROPIC_API_KEY}",
@@ -156,28 +160,33 @@ github_base_url: ${GITHUB_BASE_URL}
 github_token: ${GITHUB_TOKEN}
 github_webhook_secret: ${GITHUB_WEBHOOK_SECRET}
 
-review_packs:
-  - security
-  - architecture
-  - database
-
-llm:
-  default_route: %s
-  fallback_route: %s
-  routes:
-    %s:
-      provider: %s
-      base_url: %s
-      api_key: %s
-      model: %s
-      output_mode: %s
-`, defaultPersonalPort, chosen.RouteName, chosen.RouteName, chosen.RouteName, chosen.Provider, chosen.BaseURL, chosen.APIKeyEnv, chosen.Model, chosen.Output))
+models:
+  %s:
+    provider: %s
+    base_url: %s
+    api_key: %s
+    model: %s
+    output_mode: %s
+`, defaultPersonalPort, chosen.ModelID, chosen.Provider, chosen.BaseURL, chosen.APIKeyEnv, chosen.Model, chosen.Output))
 	if trimmed := strings.TrimSpace(chosen.Tokens); trimmed != "" {
-		builder.WriteString(fmt.Sprintf("      %s\n", trimmed))
+		builder.WriteString(fmt.Sprintf("    %s\n", trimmed))
 	}
 	if trimmed := strings.TrimSpace(chosen.Reasoning); trimmed != "" {
-		builder.WriteString(fmt.Sprintf("      %s\n", trimmed))
+		builder.WriteString(fmt.Sprintf("    %s\n", trimmed))
 	}
+	builder.WriteString(fmt.Sprintf(`
+model_chains:
+  %s:
+    primary: %s
+    fallbacks: []
+
+review:
+  model_chain: %s
+  packs:
+    - security
+    - architecture
+    - database
+`, chosen.ChainID, chosen.ModelID, chosen.ChainID))
 	return builder.String(), nil
 }
 
@@ -240,13 +249,13 @@ func runDoctorCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 	_ = dbConn.Close()
 	report.Checks = append(report.Checks, doctorCheck{Name: "database", Status: "pass", Message: fmt.Sprintf("%s connection opened", dialect)})
 
-	defaultRoute, fallbackRoute, providerConfigs, err := providerConfigsFromConfig(cfg)
+	defaultRoute, fallbackRoutes, providerConfigs, err := providerConfigsFromConfig(cfg)
 	if err != nil {
 		report.Checks = append(report.Checks, doctorCheck{Name: "llm", Status: "fail", Message: err.Error()})
 		return writeDoctorReport(stdout, report, opts.jsonOutput, 1)
 	}
 	logger := logging.NewLogger(slog.LevelWarn)
-	registry, err := llm.BuildProviderRegistryFromRouteConfigs(logger, defaultRoute, fallbackRoute, providerConfigs)
+	registry, err := llm.BuildProviderRegistryFromRouteConfigs(logger, defaultRoute, fallbackRoutes, providerConfigs)
 	if err != nil {
 		report.Checks = append(report.Checks, doctorCheck{Name: "llm", Status: "fail", Message: err.Error()})
 		return writeDoctorReport(stdout, report, opts.jsonOutput, 1)

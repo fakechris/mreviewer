@@ -102,8 +102,8 @@ Key flags:
 - `--output`: `markdown`, `json`, or `both`
 - `--publish`: `full-review-comments`, `summary-only`, or `artifact-only`
 - `--reviewer-packs`: comma-separated reviewer packs
-- `--route`: provider route override
-- `--advisor-route`: optional stronger second-opinion provider route
+- `--route`: model or model-chain override
+- `--advisor-route`: optional stronger second-opinion model or chain override
 - `--exit-mode`: `never` or `requested_changes`; returns exit code `3` when the final verdict requests changes
 - `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `reviewer-a,reviewer-b`
 - `--compare-artifacts`: comma-separated JSON artifact paths to compare against the current review bundle
@@ -125,7 +125,8 @@ Markdown output starts with `# Review Decision Brief` and surfaces:
 Runtime environment overrides:
 
 - `REVIEW_PACKS`: default reviewer packs for CLI/runtime processing
-- `REVIEW_ADVISOR_ROUTE`: default stronger second-opinion route
+- `REVIEW_MODEL_CHAIN`: default review chain reference
+- `REVIEW_ADVISOR_CHAIN`: default stronger second-opinion chain reference
 - `REVIEW_COMPARE_REVIEWERS`: comma-separated external reviewer IDs to compare during runtime processing
 
 ## Enterprise Webhook Deployment

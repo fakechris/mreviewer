@@ -12,7 +12,8 @@ GitHub webhook 入口：
 - `GITHUB_TOKEN`
 - `GITHUB_WEBHOOK_SECRET`
 - 可选：`REVIEW_PACKS`
-- 可选：`REVIEW_ADVISOR_ROUTE`
+- 可选：`REVIEW_MODEL_CHAIN`
+- 可选：`REVIEW_ADVISOR_CHAIN`
 - 可选：`REVIEW_COMPARE_REVIEWERS`
 
 GitHub.com 默认填 `https://api.github.com`。

@@ -11,54 +11,92 @@ gitlab_base_url: "https://gitlab.example.com"
 gitlab_token: ""
 gitlab_webhook_secret: ""
 
-# Single-provider quick-start contract:
-# - Preferred for the equal quick-start path shared by MiniMax / Anthropic / OpenAI.
-# - Use environment variables so the same docker-compose flow works across providers:
-#   LLM_PROVIDER=minimax|anthropic|openai
-#   LLM_API_KEY=...
-#   LLM_BASE_URL=...
-#   LLM_MODEL=...
-# - Route-based `llm.routes` below remains the advanced path.
-llm_provider: ""
-llm_api_key: ""
-llm_base_url: ""
-llm_model: ""
-
-anthropic_base_url: "https://api.minimaxi.com/anthropic"
-anthropic_api_key: ""
-anthropic_model: "MiniMax-M2.7-highspeed"
-
 # Optional runtime defaults for the portable review council:
-# review_packs:
-#   - security
-#   - architecture
-#   - database
-# review_advisor_route: "openai-gpt-5-4"
-# review_compare_reviewers:
-#   - github:gemini
-#   - gitlab:coderabbit
+# review:
+#   packs:
+#     - security
+#     - architecture
+#     - database
+#   advisor_chain: advisor_primary
+#   compare_reviewers:
+#     - github:gemini
+#     - gitlab:coderabbit
+
+models:
+  minimax_reasoning:
+    provider: minimax
+    base_url: ${MINIMAX_BASE_URL}
+    api_key: ${MINIMAX_API_KEY}
+    model: ${MINIMAX_MODEL}
+    output_mode: tool_call
+    max_tokens: 4096
+    temperature: 0.2
+  claude_backup:
+    provider: anthropic
+    base_url: ${ANTHROPIC_BASE_URL}
+    api_key: ${ANTHROPIC_API_KEY}
+    model: claude-sonnet-4-6
+    output_mode: tool_call
+    max_tokens: 12000
+    temperature: 0.2
+  openai_advisor:
+    provider: openai
+    base_url: ${OPENAI_BASE_URL}
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-5.4
+    output_mode: json_schema
+    max_completion_tokens: 12000
+    reasoning_effort: medium
+    temperature: 0.2
+
+model_chains:
+  review_primary:
+    primary: minimax_reasoning
+    fallbacks:
+      - claude_backup
+  advisor_primary:
+    primary: openai_advisor
+    fallbacks:
+      - claude_backup
+
+review:
+  model_chain: review_primary
+  advisor_chain: advisor_primary
+  packs:
+    - security
+    - architecture
+    - database
 
 # Advanced multi-provider example:
 # - Environment variables inside this file are expanded at startup.
 # - Uncomment the block below, or copy `config.example.yaml` to start from a fuller template.
 #
-# llm:
-#   default_route: minimax-review
-#   fallback_route: claude-sonnet-4-6
-#   routes:
-#     minimax-review:
-#       provider: minimax
-#       base_url: ${MINIMAX_BASE_URL}
-#       api_key: ${MINIMAX_API_KEY}
-#       model: ${MINIMAX_MODEL}
-#       output_mode: tool_call
-#       max_tokens: 4096
-#       temperature: 0.2
-#     claude-sonnet-4-6:
-#       provider: anthropic
-#       base_url: ${ANTHROPIC_BASE_URL}
-#       api_key: ${ANTHROPIC_API_KEY}
-#       model: claude-sonnet-4-6
-#       output_mode: tool_call
-#       max_tokens: 12000
-#       temperature: 0.2
+# models:
+#   deepseek_reasoning:
+#     provider: fireworks_router
+#     base_url: ${FIREWORKS_BASE_URL}
+#     api_key: ${FIREWORKS_API_KEY}
+#     model: accounts/fireworks/routers/deepseek-v3
+#     output_mode: tool_call
+#     max_tokens: 4096
+#     temperature: 0.2
+#   openai_judge:
+#     provider: openai
+#     base_url: ${OPENAI_BASE_URL}
+#     api_key: ${OPENAI_API_KEY}
+#     model: gpt-5.4
+#     output_mode: json_schema
+#     max_completion_tokens: 12000
+#     reasoning_effort: medium
+# model_chains:
+#   review_primary:
+#     primary: deepseek_reasoning
+#     fallbacks:
+#       - claude_backup
+#   advisor_primary:
+#     primary: openai_judge
+#     fallbacks:
+#       - deepseek_reasoning
+# review:
+#   model_chain: review_primary
+#   advisor_chain: advisor_primary

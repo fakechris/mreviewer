@@ -23,11 +23,22 @@ func TestRunServeWithDepsAppliesDefaultSQLiteDSN(t *testing.T) {
 	exitCode := runServeWithDeps([]string{"--port", "3200"}, serveDeps{
 		loadConfig: func(string) (*config.Config, error) {
 			return &config.Config{
-				LLMProvider: "openai",
-				LLMAPIKey:   "test-key",
-				LLMBaseURL:  "https://api.openai.com/v1",
-				LLMModel:    "gpt-5.4",
 				GitHubToken: "github-token",
+				Models: map[string]config.ModelConfig{
+					"openai_default": {
+						Provider:            "openai",
+						BaseURL:             "https://api.openai.com/v1",
+						APIKey:              "test-key",
+						Model:               "gpt-5.4",
+						OutputMode:          "json_schema",
+						MaxCompletionTokens: 12000,
+						ReasoningEffort:     "medium",
+					},
+				},
+				ModelChains: map[string]config.ModelChainConfig{
+					"review_primary": {Primary: "openai_default"},
+				},
+				Review: config.ReviewConfig{ModelChain: "review_primary"},
 			}, nil
 		},
 		migrateUpFromDSN: func(dsn string) error {

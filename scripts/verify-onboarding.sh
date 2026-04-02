@@ -78,6 +78,8 @@ require_pattern "DEPLOYMENT.md" "企业默认部署 / enterprise deployment" "DE
 require_pattern "DEPLOYMENT.md" "/admin/api/runs" "DEPLOYMENT.md must mention run visibility"
 require_pattern "DEPLOYMENT.md" "/admin/api/trends" "DEPLOYMENT.md must mention trend visibility"
 require_pattern "DEPLOYMENT.md" "/admin/api/identities" "DEPLOYMENT.md must mention identity mapping visibility"
+require_pattern "DEPLOYMENT.md" "models" "DEPLOYMENT.md must document models-based configuration"
+require_pattern "DEPLOYMENT.md" "model_chains" "DEPLOYMENT.md must document model_chains-based configuration"
 
 # Webhook and dashboard docs must cover the productized control plane.
 require_pattern "WEBHOOK.md" "GitLab / GitHub Webhook" "WEBHOOK.md must mention both GitLab and GitHub webhooks"
@@ -104,6 +106,21 @@ require_pattern "Dockerfile" "/out/mreviewer" "Dockerfile must build the mreview
 require_pattern "Dockerfile" "/out/manual-trigger" "Dockerfile must build the manual-trigger CLI"
 require_pattern "Dockerfile" "cmd/manual-trigger" "Dockerfile must compile cmd/manual-trigger"
 require_pattern "Dockerfile" "cmd/mreviewer" "Dockerfile must compile cmd/mreviewer"
+require_pattern "config.yaml" "^models:" "config.yaml must use the model catalog schema"
+require_pattern "config.yaml" "^model_chains:" "config.yaml must define model_chains"
+require_pattern "config.yaml" "^review:" "config.yaml must define review bindings"
+forbid_pattern "config.yaml" "^llm_provider:" "config.yaml must not use legacy llm_provider"
+forbid_pattern "config.yaml" "^anthropic_base_url:" "config.yaml must not use legacy anthropic fields"
+forbid_pattern ".env.prod.example" "^LLM_PROVIDER=" ".env.prod.example must not use legacy single-provider envs"
+forbid_pattern ".env.prod.example" "^LLM_API_KEY=" ".env.prod.example must not use legacy single-provider envs"
+forbid_pattern ".env.prod.example" "^LLM_BASE_URL=" ".env.prod.example must not use legacy single-provider envs"
+forbid_pattern ".env.prod.example" "^LLM_MODEL=" ".env.prod.example must not use legacy single-provider envs"
+forbid_pattern ".env.prod.example" "^ANTHROPIC_MODEL=" ".env.prod.example must not use legacy anthropic model envs"
+forbid_pattern "docker-compose.prod.yaml" "LLM_PROVIDER:" "docker-compose.prod.yaml must not pass legacy LLM_PROVIDER envs"
+forbid_pattern "docker-compose.prod.yaml" "LLM_API_KEY:" "docker-compose.prod.yaml must not pass legacy LLM_API_KEY envs"
+forbid_pattern "docker-compose.prod.yaml" "LLM_BASE_URL:" "docker-compose.prod.yaml must not pass legacy LLM_BASE_URL envs"
+forbid_pattern "docker-compose.prod.yaml" "LLM_MODEL:" "docker-compose.prod.yaml must not pass legacy LLM_MODEL envs"
+forbid_pattern "docker-compose.prod.yaml" "ANTHROPIC_MODEL:" "docker-compose.prod.yaml must not pass legacy ANTHROPIC_MODEL envs"
 forbid_pattern "README.md" "docker-compose " "README.md must use docker compose consistently"
 forbid_pattern "README.zh-CN.md" "docker-compose " "README.zh-CN.md must use docker compose consistently"
 forbid_pattern "DEPLOYMENT.md" "docker-compose " "DEPLOYMENT.md must use docker compose consistently"
@@ -117,18 +134,21 @@ cp docker-compose.yaml "$tmpdir/docker-compose.yaml"
 cp docker-compose.prod.yaml "$tmpdir/docker-compose.prod.yaml"
 cp docker-compose.prod.config.yaml "$tmpdir/docker-compose.prod.config.yaml"
 cat >"$tmpdir/config.yaml" <<'EOF'
-llm:
-  default_route: openai-review
-  fallback_route: openai-review
-  routes:
-    openai-review:
-      provider: openai
-      base_url: https://api.openai.com/v1
-      api_key: ${OPENAI_API_KEY}
-      model: gpt-5.4
-      output_mode: json_schema
-      max_completion_tokens: 12000
-      reasoning_effort: medium
+models:
+  openai_default:
+    provider: openai
+    base_url: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-5.4
+    output_mode: json_schema
+    max_completion_tokens: 12000
+    reasoning_effort: medium
+model_chains:
+  review_primary:
+    primary: openai_default
+    fallbacks: []
+review:
+  model_chain: review_primary
 EOF
 
 (

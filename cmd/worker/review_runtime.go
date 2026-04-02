@@ -31,7 +31,7 @@ func (f workerReviewInputLoader) Load(ctx context.Context, target core.ReviewTar
 type workerAdvisorAwareEngine struct {
 	base                *core.Engine
 	advisor             *reviewadvisor.Advisor
-	defaultAdvisorRoute string
+	defaultAdvisorRef   string
 }
 
 func (e workerAdvisorAwareEngine) Run(ctx context.Context, input core.ReviewInput, opts core.RunOptions) (core.ReviewBundle, error) {
@@ -42,17 +42,17 @@ func (e workerAdvisorAwareEngine) Run(ctx context.Context, input core.ReviewInpu
 	if err != nil {
 		return core.ReviewBundle{}, err
 	}
-	route := strings.TrimSpace(opts.AdvisorRoute)
-	if route == "" {
-		route = strings.TrimSpace(e.defaultAdvisorRoute)
+	ref := strings.TrimSpace(opts.AdvisorRoute)
+	if ref == "" {
+		ref = strings.TrimSpace(e.defaultAdvisorRef)
 	}
-	if route == "" || e.advisor == nil {
+	if ref == "" || e.advisor == nil {
 		return bundle, nil
 	}
-	artifact, err := e.advisor.Advise(ctx, input, bundle, route)
+	artifact, err := e.advisor.Advise(ctx, input, bundle, ref)
 	if err != nil {
 		slog.Default().WarnContext(ctx, "worker runtime advisor failed; continuing with council result",
-			"route", route,
+			"route", ref,
 			"error", err,
 		)
 		return bundle, nil
@@ -89,8 +89,12 @@ func newReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitl
 		}
 		return input, nil
 	})
-	resolve := func(route string) llm.Provider {
-		return providerRegistry.ResolveWithFallback(route)
+	defaultRoute, fallbackRoutes, _, err := config.ResolveReviewCatalog(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("worker: resolve review model chain: %w", err)
+	}
+	resolve := func(ref string) llm.Provider {
+		return config.ResolveProvider(cfg, providerRegistry, defaultRoute, fallbackRoutes, ref)
 	}
 	runners := make([]core.PackRunner, 0, len(reviewpack.DefaultPacks()))
 	for _, pack := range reviewpack.DefaultPacks() {
@@ -99,11 +103,11 @@ func newReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitl
 	engine := workerAdvisorAwareEngine{
 		base:                core.NewEngine(runners, workerJudgeAdapter{inner: judge.New()}),
 		advisor:             reviewadvisor.New(resolve),
-		defaultAdvisorRoute: strings.TrimSpace(cfg.ReviewAdvisorRoute),
+		defaultAdvisorRef:   strings.TrimSpace(cfg.Review.AdvisorChain),
 	}
 	return reviewrun.NewEngineProcessor(sqlDB, inputLoader, engine).
-		WithDefaultReviewerPacks(normalizedReviewPacks(cfg.ReviewPacks)).
-		WithDefaultAdvisorRoute(strings.TrimSpace(cfg.ReviewAdvisorRoute)), nil
+		WithDefaultReviewerPacks(normalizedReviewPacks(cfg.Review.Packs)).
+		WithDefaultAdvisorRoute(strings.TrimSpace(cfg.Review.AdvisorChain)), nil
 }
 
 func buildWorkerReviewInput(ctx context.Context, target core.ReviewTarget, gitlabClient *gitlab.Client, githubClient *platformgithub.Client, builder *reviewinput.Builder) (core.ReviewInput, error) {

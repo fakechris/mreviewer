@@ -31,188 +31,87 @@ func TestValidateWorkerConfigAllowsConfiguredToken(t *testing.T) {
 	}
 }
 
-func TestProviderConfigsFromLegacyAnthropicSettings(t *testing.T) {
+func TestProviderConfigsFromModelChainConfig(t *testing.T) {
 	cfg := &config.Config{
-		AnthropicBaseURL: "https://api.minimaxi.com/anthropic",
-		AnthropicAPIKey:  "secret",
-		AnthropicModel:   "MiniMax-M2.7",
+		Models: map[string]config.ModelConfig{
+			"minimax_reasoning": {
+				Provider:   "minimax",
+				BaseURL:    "https://api.minimaxi.com/anthropic",
+				APIKey:     "secret",
+				Model:      "MiniMax-M2.7",
+				OutputMode: "tool_call",
+				MaxTokens:  4096,
+			},
+			"openai_backup": {
+				Provider:            "openai",
+				BaseURL:             "https://api.openai.com/v1",
+				APIKey:              "openai-secret",
+				Model:               "gpt-5.4",
+				OutputMode:          "json_schema",
+				MaxCompletionTokens: 12000,
+				ReasoningEffort:     "medium",
+			},
+		},
+		ModelChains: map[string]config.ModelChainConfig{
+			"review_primary": {
+				Primary:   "minimax_reasoning",
+				Fallbacks: []string{"openai_backup"},
+			},
+		},
+		Review: config.ReviewConfig{ModelChain: "review_primary"},
 	}
 
-	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
+	defaultRoute, fallbackRoutes, routes, err := providerConfigsFromConfig(cfg)
 	if err != nil {
 		t.Fatalf("providerConfigsFromConfig: %v", err)
 	}
-	if defaultRoute != "default" {
-		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
+	if defaultRoute != "minimax_reasoning" {
+		t.Fatalf("defaultRoute = %q, want minimax_reasoning", defaultRoute)
 	}
-	if fallbackRoute != "secondary" {
-		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
+	if len(fallbackRoutes) != 1 || fallbackRoutes[0] != "openai_backup" {
+		t.Fatalf("fallbackRoutes = %#v, want [openai_backup]", fallbackRoutes)
 	}
 	if len(routes) != 2 {
 		t.Fatalf("routes = %d, want 2", len(routes))
 	}
-	if routes["default"].Kind != "minimax" {
-		t.Fatalf("default kind = %q, want minimax", routes["default"].Kind)
+	if routes["minimax_reasoning"].Kind != "minimax" {
+		t.Fatalf("primary kind = %q, want minimax", routes["minimax_reasoning"].Kind)
+	}
+	if routes["openai_backup"].Kind != "openai" {
+		t.Fatalf("fallback kind = %q, want openai", routes["openai_backup"].Kind)
+	}
+	if routes["openai_backup"].OutputMode != "json_schema" {
+		t.Fatalf("openai output_mode = %q, want json_schema", routes["openai_backup"].OutputMode)
+	}
+	if routes["openai_backup"].MaxCompletionTokens != 12000 {
+		t.Fatalf("openai max_completion_tokens = %d, want 12000", routes["openai_backup"].MaxCompletionTokens)
+	}
+	if routes["openai_backup"].ReasoningEffort != "medium" {
+		t.Fatalf("openai reasoning_effort = %q, want medium", routes["openai_backup"].ReasoningEffort)
 	}
 }
 
-func TestProviderConfigsFromLLMRoutes(t *testing.T) {
+func TestProviderConfigsFromModelChainRequiresProviderKind(t *testing.T) {
 	cfg := &config.Config{
-		LLM: config.LLMConfig{
-			DefaultRoute:  "minimax",
-			FallbackRoute: "openai",
-			Routes: map[string]config.LLMRouteConfig{
-				"minimax": {
-					Provider:    "minimax",
-					BaseURL:     "https://api.minimaxi.com/anthropic",
-					APIKey:      "minimax-secret",
-					Model:       "MiniMax-M2.7",
-					OutputMode:  "tool_call",
-					MaxTokens:   4096,
-					Temperature: 0.2,
-				},
-				"openai": {
-					Provider:            "openai",
-					BaseURL:             "https://api.openai.com/v1",
-					APIKey:              "openai-secret",
-					Model:               "gpt-5.4",
-					OutputMode:          "json_schema",
-					MaxCompletionTokens: 12000,
-					ReasoningEffort:     "medium",
-					Temperature:         0.2,
-				},
+		Models: map[string]config.ModelConfig{
+			"openai_primary": {
+				BaseURL: "https://api.openai.com/v1",
+				APIKey:  "openai-secret",
+				Model:   "gpt-5.4",
 			},
 		},
-	}
-
-	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
-	if err != nil {
-		t.Fatalf("providerConfigsFromConfig: %v", err)
-	}
-	if defaultRoute != "minimax" {
-		t.Fatalf("defaultRoute = %q, want minimax", defaultRoute)
-	}
-	if fallbackRoute != "openai" {
-		t.Fatalf("fallbackRoute = %q, want openai", fallbackRoute)
-	}
-	if len(routes) != 2 {
-		t.Fatalf("routes = %d, want 2", len(routes))
-	}
-	if routes["openai"].Kind != "openai" {
-		t.Fatalf("openai kind = %q, want openai", routes["openai"].Kind)
-	}
-	if routes["minimax"].RouteName != "minimax" {
-		t.Fatalf("minimax route name = %q, want minimax", routes["minimax"].RouteName)
-	}
-	if routes["openai"].OutputMode != "json_schema" {
-		t.Fatalf("openai output_mode = %q, want json_schema", routes["openai"].OutputMode)
-	}
-	if routes["openai"].MaxCompletionTokens != 12000 {
-		t.Fatalf("openai max_completion_tokens = %d, want 12000", routes["openai"].MaxCompletionTokens)
-	}
-	if routes["openai"].ReasoningEffort != "medium" {
-		t.Fatalf("openai reasoning_effort = %q, want medium", routes["openai"].ReasoningEffort)
-	}
-}
-
-func TestProviderConfigsFromLLMRoutesRequiresProviderKind(t *testing.T) {
-	cfg := &config.Config{
-		LLM: config.LLMConfig{
-			DefaultRoute: "openai",
-			Routes: map[string]config.LLMRouteConfig{
-				"openai": {
-					BaseURL: "https://api.openai.com/v1",
-					APIKey:  "openai-secret",
-					Model:   "gpt-5.4",
-				},
-			},
+		ModelChains: map[string]config.ModelChainConfig{
+			"review_primary": {Primary: "openai_primary"},
 		},
+		Review: config.ReviewConfig{ModelChain: "review_primary"},
 	}
 
 	_, _, _, err := providerConfigsFromConfig(cfg)
 	if err == nil {
 		t.Fatal("expected missing provider kind error")
 	}
-	if !strings.Contains(err.Error(), "llm.routes.openai.provider is required") {
+	if !strings.Contains(err.Error(), "models.openai_primary.provider is required") {
 		t.Fatalf("error = %q, want provider required message", err.Error())
-	}
-}
-
-func TestProviderConfigsFromSingleProviderQuickStartMiniMax(t *testing.T) {
-	cfg := &config.Config{
-		LLMProvider: "minimax",
-		LLMBaseURL:  "https://api.minimaxi.com/anthropic",
-		LLMAPIKey:   "minimax-secret",
-		LLMModel:    "MiniMax-M2.7-highspeed",
-	}
-
-	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
-	if err != nil {
-		t.Fatalf("providerConfigsFromConfig: %v", err)
-	}
-	if defaultRoute != "default" {
-		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
-	}
-	if fallbackRoute != "secondary" {
-		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
-	}
-	if got := routes["default"].Kind; got != "minimax" {
-		t.Fatalf("default kind = %q, want minimax", got)
-	}
-}
-
-func TestProviderConfigsFromSingleProviderQuickStartAnthropic(t *testing.T) {
-	cfg := &config.Config{
-		LLMProvider: "anthropic",
-		LLMBaseURL:  "https://api.anthropic.com",
-		LLMAPIKey:   "anthropic-secret",
-		LLMModel:    "claude-sonnet-4-6",
-	}
-
-	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
-	if err != nil {
-		t.Fatalf("providerConfigsFromConfig: %v", err)
-	}
-	if defaultRoute != "default" {
-		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
-	}
-	if fallbackRoute != "secondary" {
-		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
-	}
-	if got := routes["default"].Kind; got != "anthropic" {
-		t.Fatalf("default kind = %q, want anthropic", got)
-	}
-}
-
-func TestProviderConfigsFromSingleProviderQuickStartOpenAI(t *testing.T) {
-	cfg := &config.Config{
-		LLMProvider: "openai",
-		LLMBaseURL:  "https://api.openai.com/v1",
-		LLMAPIKey:   "openai-secret",
-		LLMModel:    "gpt-5.4",
-	}
-
-	defaultRoute, fallbackRoute, routes, err := providerConfigsFromConfig(cfg)
-	if err != nil {
-		t.Fatalf("providerConfigsFromConfig: %v", err)
-	}
-	if defaultRoute != "default" {
-		t.Fatalf("defaultRoute = %q, want default", defaultRoute)
-	}
-	if fallbackRoute != "secondary" {
-		t.Fatalf("fallbackRoute = %q, want secondary", fallbackRoute)
-	}
-	if got := routes["default"].Kind; got != "openai" {
-		t.Fatalf("default kind = %q, want openai", got)
-	}
-	if got := routes["default"].MaxTokens; got != 4096 {
-		t.Fatalf("default max_tokens = %d, want 4096", got)
-	}
-	if got := routes["default"].MaxCompletionTokens; got != 12000 {
-		t.Fatalf("default max_completion_tokens = %d, want 12000", got)
-	}
-	if got := routes["default"].OutputMode; got != "json_schema" {
-		t.Fatalf("default output_mode = %q, want json_schema", got)
 	}
 }
 

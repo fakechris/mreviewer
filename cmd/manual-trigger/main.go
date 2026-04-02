@@ -260,7 +260,7 @@ func parseCLIOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	fs.Int64Var(&opts.projectID, "project-id", 0, "GitLab project ID")
 	fs.Int64Var(&opts.mrIID, "mr-iid", 0, "GitLab merge request IID")
 	fs.StringVar(&opts.configPath, "config", "config.yaml", "Path to config file")
-	fs.Var(&llmRoute, "llm-route", "Use the named llm.routes entry for this manual review run only")
+	fs.Var(&llmRoute, "llm-route", "Use the named model or model chain reference for this manual review run only")
 	fs.Var(&providerRoute, "provider-route", "Alias of --llm-route")
 	fs.BoolVar(&opts.wait, "wait", false, "Wait for the review run to reach a terminal state")
 	fs.DurationVar(&opts.waitTimeout, "wait-timeout", 15*time.Minute, "Maximum time to wait when --wait is enabled")
@@ -359,9 +359,9 @@ func validateProviderRouteOverride(cfg *config.Config, route string) error {
 	if route == "" {
 		return nil
 	}
-	available := availableProviderRoutes(cfg)
+	available := availableProviderReferences(cfg)
 	if len(available) == 0 {
-		return fmt.Errorf("manual-trigger: --llm-route requires configured llm routes")
+		return fmt.Errorf("manual-trigger: --llm-route requires configured models or model chains")
 	}
 	for _, candidate := range available {
 		if candidate == route {
@@ -371,23 +371,30 @@ func validateProviderRouteOverride(cfg *config.Config, route string) error {
 	return fmt.Errorf("manual-trigger: unknown --llm-route %q (available: %s)", route, strings.Join(available, ", "))
 }
 
-func availableProviderRoutes(cfg *config.Config) []string {
+func availableProviderReferences(cfg *config.Config) []string {
 	if cfg == nil {
 		return nil
 	}
-	if len(cfg.LLM.Routes) > 0 {
-		routes := make([]string, 0, len(cfg.LLM.Routes))
-		for route := range cfg.LLM.Routes {
-			trimmed := strings.TrimSpace(route)
-			if trimmed == "" {
-				continue
-			}
-			routes = append(routes, trimmed)
+	available := make([]string, 0, len(cfg.Models)+len(cfg.ModelChains))
+	for route := range cfg.Models {
+		trimmed := strings.TrimSpace(route)
+		if trimmed == "" {
+			continue
 		}
-		sort.Strings(routes)
-		return routes
+		available = append(available, trimmed)
 	}
-	return []string{"default", "secondary"}
+	for chain := range cfg.ModelChains {
+		trimmed := strings.TrimSpace(chain)
+		if trimmed == "" {
+			continue
+		}
+		available = append(available, trimmed)
+	}
+	sort.Strings(available)
+	if len(available) == 0 {
+		return nil
+	}
+	return available
 }
 
 func newDefaultService(cfg *config.Config, sqlDB *sql.DB, pollInterval time.Duration) manualTriggerService {

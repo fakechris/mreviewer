@@ -18,12 +18,13 @@
 ```bash
 # 1. 配置环境变量
 cp .env.example .env
-# 编辑 .env，填入 GitLab 凭证和一组 quick-start provider 凭证
-# 默认示例使用:
-#   LLM_PROVIDER=minimax
-#   LLM_API_KEY=...
-#   LLM_BASE_URL=https://api.minimaxi.com/anthropic
-#   LLM_MODEL=MiniMax-M2.7-highspeed
+# 编辑 .env，填入 GitLab 凭证以及 config.yaml 引用的 provider 凭证
+# 默认安全配置使用:
+#   MINIMAX_API_KEY=...
+#   MINIMAX_BASE_URL=https://api.minimaxi.com/anthropic
+#   MINIMAX_MODEL=MiniMax-M2.7-highspeed
+#   ANTHROPIC_API_KEY=...
+#   OPENAI_API_KEY=...
 
 # 2. 启动所有服务
 docker compose up -d --build
@@ -36,8 +37,9 @@ docker compose logs -f worker
 
 - `docker-compose.yaml` 面向开发者，本地源码会被重新构建。
 - 如果你想用 Docker Hub 镜像做服务器部署，使用下方的 `docker-compose.prod.yaml`。
-- `MiniMax`、`Anthropic`、`ChatGPT/OpenAI` 都可以直接走同一套 `LLM_PROVIDER / LLM_API_KEY / LLM_BASE_URL / LLM_MODEL` quick-start 合约。
-- 如果你需要 DeepSeek、Fireworks、多 provider 路由或 SQLite，自定义 `config.yaml` 并配合 `docker-compose.prod.config.yaml` 一起使用。
+- 当前配置架构固定为 `models` + `model_chains` + `review`。
+- 默认 `config.yaml` 已经带一套安全可运行的 `models` / `model_chains`，通过 `${VAR}` 引用 `.env` 里的 provider 密钥和 base URL。
+- 如果你需要 DeepSeek、Fireworks、多 provider 链路或 SQLite，自定义 `config.yaml` 并配合 `docker-compose.prod.config.yaml` 一起使用。
 - Compose 文件不再固定 `container_name`，便于同机并行测试多个环境。进入 worker 时优先使用 `docker compose exec worker ...`。
 
 ## 企业运维最小配置
