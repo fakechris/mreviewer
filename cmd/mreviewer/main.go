@@ -62,7 +62,7 @@ type cliOptions struct {
 }
 
 func main() {
-	os.Exit(runWithDeps(os.Args[1:], runtimeDeps{
+	os.Exit(runCLI(os.Args[1:], runtimeDeps{
 		resolveTarget: resolveReviewTarget,
 		loadInput:     defaultLoadInput,
 		newEngine:     defaultReviewEngine,
@@ -72,6 +72,24 @@ func main() {
 		stdout:        os.Stdout,
 		stderr:        os.Stderr,
 	}))
+}
+
+func runCLI(args []string, reviewDeps runtimeDeps) int {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return runWithDeps(args, reviewDeps)
+	}
+	switch strings.TrimSpace(args[0]) {
+	case "review":
+		return runWithDeps(args[1:], reviewDeps)
+	case "init":
+		return runInitCommand(args[1:], os.Stdout, os.Stderr)
+	case "doctor":
+		return runDoctorCommand(args[1:], os.Stdout, os.Stderr)
+	case "serve":
+		return runServeCommand(args[1:], os.Stdout, os.Stderr)
+	default:
+		return runWithDeps(args, reviewDeps)
+	}
 }
 
 func runWithDeps(args []string, deps runtimeDeps) int {

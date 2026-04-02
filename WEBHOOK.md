@@ -1,6 +1,6 @@
-# GitLab Webhook 配置指南
+# GitLab / GitHub Webhook 配置指南
 
-本文档提供三种 Webhook 配置方式的详细步骤。
+本文档提供 GitLab / GitHub webhook 的产品化部署要点和 GitLab 三种配置方式的详细步骤。
 
 ---
 
@@ -9,7 +9,7 @@
 - Webhook 入口只做验签、去重、审计、入队和快速返回
 - Review 队列采用 `latest-head-wins` 语义
 - 同一个 MR 出现更新 head 时，旧的 run 会被 superseded，而不是继续无限排队
-- 运维可以通过 `/admin/`、`/admin/api/queue`、`/admin/api/concurrency`、`/admin/api/failures` 观察当前状态
+- 运维可以通过 `/admin/`、`/admin/api/queue`、`/admin/api/concurrency`、`/admin/api/failures`、`/admin/api/runs`、`/admin/api/trends`、`/admin/api/ownership`、`/admin/api/identities` 观察当前状态
 - Webhook、`manual-trigger` 和新的 `mreviewer` CLI 现在共享同一条 review engine 主路径；Webhook 不再是独立实现
 
 这意味着 Webhook 不是同步调用大模型的黑盒链路，而是企业可观测的异步控制面。
@@ -23,6 +23,20 @@
 - `mreviewer` CLI: 直接对 GitHub / GitLab PR URL 运行 portable review council
 
 这三条入口最终都会进入同一套 reviewer packs、judge、canonical bundle 和 write-back 语义，因此 webhook 链路与 CLI 链路的行为差异已经大幅收敛。
+
+## GitHub Webhook
+
+- 路径：`POST /github/webhook`
+- 必需配置：
+  - `GITHUB_TOKEN`
+  - `GITHUB_WEBHOOK_SECRET`
+- 运行行为：
+  - ingress 验签、去重、入队
+  - worker 拉取 PR snapshot
+  - 更新 `mreviewer/ai-review` commit status
+  - 写回 summary / inline review comments
+
+本地 `mreviewer serve` 和企业 `ingress + worker` 部署都支持这条路径。
 
 ## 方式 1: 项目级别配置（所有版本适用）
 

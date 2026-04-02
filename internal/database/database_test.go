@@ -1,6 +1,8 @@
 package database
 
 import (
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,5 +33,25 @@ func TestOpenFailsWhenDatabaseUnreachable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "database: ping") {
 		t.Errorf("error = %q, want it to contain 'database: ping'", err)
+	}
+}
+
+func TestMigrateUpFromDSNInitializesSQLiteSchema(t *testing.T) {
+	dsn := "file:" + filepath.Join(t.TempDir(), "mreviewer.db")
+	if err := MigrateUpFromDSN(dsn); err != nil {
+		t.Fatalf("MigrateUpFromDSN: %v", err)
+	}
+	db, err := sql.Open("sqlite", strings.TrimPrefix(dsn, "file:"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('review_runs', 'hook_events', 'identity_mappings')`).Scan(&count); err != nil {
+		t.Fatalf("query sqlite_master: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("table count = %d, want 3", count)
 	}
 }

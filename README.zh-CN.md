@@ -15,138 +15,85 @@ GitLab Merge Request AI 代码审查工具。支持自托管、多模型、SQLit
 - 🔄 **智能去重**: 指纹匹配 + LLM 语义去重
 - 📊 **可观测性**: Grafana 仪表板、审计日志、指标
 
-## 部署决策
+## 选择你的模式
 
-- 个人 / 小团队试用：直接走单 provider quick start、Webhook 和内置 `/admin/` 控制面
-- 企业默认：使用 MySQL 作为中心存储，可选 Redis 协调，配合 Webhook 自动触发和 `/admin/` 页面查看排队、并发、失败
-- SQLite 继续保留给单机场景，但共享环境和生产环境默认推荐 MySQL
+- **个人 CLI**：单可执行文件、本地 SQLite、默认不需要 Docker，适合个人开发者按需 review GitHub/GitLab PR。
+- **企业 Webhook**：`ingress` + `worker` + `/admin/` 控制面，MySQL 优先，可选 Redis，适合自动化 webhook review 和运维排障。
 
-## 快速开始
+## 个人 CLI 快速开始
 
-### 前置要求
+### 1. 安装二进制
 
-- Docker & Docker Compose
-- GitLab 实例及 API 访问权限
-- LLM 提供商 API Key（MiniMax、OpenAI 等）
+直接从 GitHub Releases 下载，或者运行安装脚本：
 
-### 方式 1：极简部署（无需 Git）
-
-**适合新手** - 下载 2 个文件即可运行
-
-1. **下载文件**：
-   - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
-   - [.env 模板](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example)（重命名为 `.env`）
-
-2. **编辑 `.env`，从下面三条等价 quick start 里选一条**：
-
-#### 方式 1A：MiniMax
 ```bash
-GITLAB_BASE_URL=https://gitlab.example.com
-GITLAB_TOKEN=your_gitlab_token
-GITLAB_WEBHOOK_SECRET=your_webhook_secret
-LLM_PROVIDER=minimax
-LLM_API_KEY=your_minimax_key
-LLM_BASE_URL=https://api.minimaxi.com/anthropic
-LLM_MODEL=MiniMax-M2.7-highspeed
+curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/install.sh | bash
 ```
 
-#### 方式 1B：Anthropic
+也支持使用 release 附带的 Homebrew formula：
+
 ```bash
-GITLAB_BASE_URL=https://gitlab.example.com
-GITLAB_TOKEN=your_gitlab_token
-GITLAB_WEBHOOK_SECRET=your_webhook_secret
-LLM_PROVIDER=anthropic
-LLM_API_KEY=your_anthropic_key
-LLM_BASE_URL=https://api.anthropic.com
-LLM_MODEL=claude-sonnet-4-6
+brew install ./mreviewer.rb
 ```
 
-#### 方式 1C：ChatGPT / OpenAI
+### 2. 生成个人配置
+
 ```bash
-GITLAB_BASE_URL=https://gitlab.example.com
-GITLAB_TOKEN=your_gitlab_token
-GITLAB_WEBHOOK_SECRET=your_webhook_secret
-LLM_PROVIDER=openai
-LLM_API_KEY=your_openai_key
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-5.4
+mreviewer init --provider openai
 ```
 
-这三条 quick start 共用同一套 env-only 合约和同一条启动命令。
+这会生成 `config.yaml`，并创建默认本地状态目录 `.mreviewer/state/`。
 
-3. **启动服务**：
+### 3. 导出凭证
+
 ```bash
-docker compose -f docker-compose.prod.yaml up -d
+export OPENAI_API_KEY=...
+export GITHUB_TOKEN=...
+# 可选：
+export GITLAB_BASE_URL=https://gitlab.example.com
+export GITLAB_TOKEN=...
 ```
 
-4. **验证**：
+### 4. 检查配置
+
 ```bash
-docker compose -f docker-compose.prod.yaml logs -f worker
+mreviewer doctor
 ```
 
-### 方式 2：高级无 Git 部署（多提供商 / OpenAI / 自定义路由）
-
-**适合运维/高级用户** - 下载 4 个文件并挂载自定义配置
-
-1. **下载文件**：
-   - [docker-compose.prod.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.yaml)
-   - [docker-compose.prod.config.yaml](https://raw.githubusercontent.com/fakechris/mreviewer/main/docker-compose.prod.config.yaml)
-   - [.env 模板](https://raw.githubusercontent.com/fakechris/mreviewer/main/.env.prod.example)（重命名为 `.env`）
-   - [config 示例](https://raw.githubusercontent.com/fakechris/mreviewer/main/config.example.yaml)（重命名为 `config.yaml`）
-
-2. **编辑 `.env` 和 `config.yaml`**：
-- `docker-compose.prod.yaml` 会把整个 `.env` 透传进容器，所以自定义 provider 密钥也会生效。
-- `docker-compose.prod.config.yaml` 会把本地 `config.yaml` 挂载到 `/app/config.yaml`。
-- `config.example.yaml` 支持 `${VAR}` 语法，启动时会自动展开环境变量。
-
-3. **启动服务**：
-```bash
-docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
-```
-
-DeepSeek、Fireworks、混合路由或 SQLite 部署请走这条路径。可直接参考 [config.example.yaml](./config.example.yaml)。
-
-4. **验证**：
-```bash
-docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml logs -f worker
-```
-
-### 方式 3：完整克隆（开发者）
-
-**适合开发者** - 克隆仓库并运行本地源码构建
+### 5. 运行 review
 
 ```bash
-git clone https://github.com/fakechris/mreviewer.git
-cd mreviewer
-cp .env.example .env
-# 编辑 .env 填入凭证
-docker compose up -d --build
-```
-
-这条路径会从你当前 checkout 本地构建 `ingress` 和 `worker`，所以修改代码后重新构建即可验证。
-
-### Portable Review Council CLI
-
-新的 `mreviewer` CLI 可以直接对 GitHub 或 GitLab 的 PR / MR URL 运行 portable review council。
-
-本地源码运行方式：
-
-```bash
-go run ./cmd/mreviewer \
+mreviewer review \
   --target https://github.com/acme/repo/pull/17 \
   --output both \
-  --publish full-review-comments \
+  --publish artifact-only \
   --reviewer-packs security,architecture,database
 ```
 
-容器内运行方式：
+### 6. 可选：本地启动 webhook 和 dashboard
 
 ```bash
-docker compose exec worker /app/mreviewer \
-  --target https://github.com/acme/repo/pull/17 \
-  --output json \
-  --publish artifact-only
+mreviewer serve
 ```
+
+默认会启动：
+- 本地 SQLite：`.mreviewer/state/mreviewer.db`
+- GitLab webhook：`POST /webhook`
+- GitHub webhook：`POST /github/webhook`
+- 本地控制面：`/admin/`
+
+如需自定义数据库位置，可使用 `mreviewer serve --db file:/custom/path.db`。
+
+## 个人 CLI 命令
+
+- `mreviewer init`：生成个人配置模板
+- `mreviewer doctor`：检查配置、数据库、provider route 和平台凭证
+- `mreviewer review`：review 单个 GitHub/GitLab 目标
+- `mreviewer serve`：在单进程中启动 ingress + worker，并自动执行 embedded migrations
+
+为了兼容旧用法，`mreviewer --target ...` 仍然等价于 `mreviewer review --target ...`。
+
+## CLI 输出能力
 
 关键参数：
 
@@ -156,51 +103,97 @@ docker compose exec worker /app/mreviewer \
 - `--publish`: `full-review-comments`、`summary-only` 或 `artifact-only`
 - `--reviewer-packs`: 逗号分隔的 reviewer pack 列表
 - `--route`: provider route override
-- `--advisor-route`: 可选的更强的 second opinion provider route
-- `--exit-mode`: `never` 或 `requested_changes`；当最终 verdict 为需要修改时返回退出码 `3`
-- `--compare-live`: 逗号分隔的目标 PR/MR 上已有 reviewer 标识，例如 `reviewer-a,reviewer-b`
+- `--advisor-route`: 可选的更强 second opinion route
+- `--exit-mode`: `never` 或 `requested_changes`；最终 verdict 需要修改时返回退出码 `3`
+- `--compare-live`: 逗号分隔的已有 reviewer 标识
 - `--compare-artifacts`: 逗号分隔的外部 JSON artifact 路径
 
-当提供 compare 参数时，CLI 会在 JSON 输出里附带 comparison report，包括 agreement rate、shared findings 和各 reviewer 的 unique findings。
-当提供 `--targets` 时，JSON 输出还会包含 `aggregate_comparison`，用于在一次运行里比较多个 GitHub/GitLab 变更上的 reviewer 一致性。
-当启用 advisor 或 benchmark 时，JSON 输出还会包含 `advisor_artifact`、`judge_verdict` 和 `decision_benchmark`。
-当目标是 GitHub PR 时，CLI 还会在 review 运行中和结束后更新 `mreviewer/ai-review` 这个 commit status。
+JSON 输出包含：
+- `review_brief`
+- `judge_verdict`
+- `decision_benchmark`
+- `comparison`
+- `aggregate_comparison`
+- `advisor_artifact`
+
+Markdown 输出会先给出 `# Review Decision Brief`，并组织为：
+- `Final Verdict`
+- `What To Fix First`
+- `Specialist Signals`
+- 启用 comparison 时的 `Reviewer Overlap`
 
 运行时环境变量覆盖：
 
-- `REVIEW_PACKS`: worker/runtime 默认启用的 reviewer packs
-- `REVIEW_ADVISOR_ROUTE`: CLI/runtime 默认使用的更强的 second opinion route
-- `REVIEW_COMPARE_REVIEWERS`: runtime 自动 comparison 时要拉取的外部 reviewer 列表
+- `REVIEW_PACKS`
+- `REVIEW_ADVISOR_ROUTE`
+- `REVIEW_COMPARE_REVIEWERS`
+
+## 企业 Webhook 部署
+
+当你需要：
+- 自动 GitLab/GitHub webhook review
+- MySQL 支撑的控制面和历史记录
+- ingress / worker 分离部署
+- operator actions、dashboard 和队列可观测性
+
+就应该走企业路径。
+
+### 企业快速启动
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+镜像部署：
+
+```bash
+docker compose -f docker-compose.prod.yaml up -d
+```
+
+挂载自定义配置：
+
+```bash
+docker compose -f docker-compose.prod.yaml -f docker-compose.prod.config.yaml up -d
+```
+
+`docker-compose.yaml` 适合开发者本地源码构建，`docker-compose.prod.yaml` 适合企业式部署。企业默认推荐 MySQL；SQLite 仍适合个人或单机环境。
 
 ### 配置 GitLab Webhook
 
-**自动审查必需**
+1. GitLab 项目 → Settings → Webhooks
+2. URL：`http://your-server:3100/webhook`
+   - 局域网联调时，把 `your-server` 换成局域网 IP，例如 `http://10.0.0.16:3100/webhook`
+   - 除非 GitLab 和 mreviewer 在同一台机器，否则不要用 `localhost`
+3. Secret：`GITLAB_WEBHOOK_SECRET`
+4. Trigger：勾选 `Merge request events`
+5. 点击 `Add webhook`
 
-1. 进入 GitLab 项目 → Settings → Webhooks
-2. URL: `http://your-server:3100/webhook`
-   - 如果是在局域网内联调，把 `your-server` 换成你机器的局域网 IP，例如 `http://10.0.0.16:3100/webhook`
-   - 只有 GitLab 和 mreviewer 跑在同一台机器上时，才应该使用 `localhost`
-3. Secret: 填入 `.env` 中的 `GITLAB_WEBHOOK_SECRET`
-4. 触发器: 勾选 "Merge request events"
-5. 点击 "Add webhook"
+如果 GitLab 返回 `Invalid url given`，需要 GitLab 管理员启用 `Allow requests to the local network from web hooks and services`，或者改用公网 HTTPS tunnel。
 
-如果 GitLab 返回 `Invalid url given`，需要让 GitLab 管理员打开 `Allow requests to the local network from web hooks and services`，或者改用公网 HTTPS tunnel，而不是直接填局域网 IP。
+GitHub webhook 路径为 `POST /github/webhook`，同样走 ingress / worker 控制面。
 
-📖 详细配置: [WEBHOOK.md](./WEBHOOK.md)
+📖 详细配置见 [WEBHOOK.md](./WEBHOOK.md)
 
-### Admin 控制面
+## Admin 控制面
 
-`ingress` 现在会暴露只读运维页面 `/admin/`，以及以下 JSON 接口：
+企业部署和本地 `serve` 都会暴露 `/admin/`。
+
+关键接口：
 
 - `/admin/api/queue`
 - `/admin/api/concurrency`
 - `/admin/api/failures`
+- `/admin/api/runs`
+- `/admin/api/trends`
+- `/admin/api/ownership`
+- `/admin/api/identities`
 
-配置 `MREVIEWER_ADMIN_TOKEN` 或 `ADMIN_TOKEN` 后，这些路由会要求 `Authorization: Bearer <token>`。这让运维可以直接查看排队、活跃 worker 和失败情况，而不必先翻日志。
+配置 `MREVIEWER_ADMIN_TOKEN` 或 `ADMIN_TOKEN` 后，这些路由要求 `Authorization: Bearer <token>`。
 
-### 手动触发（可选）
+## 手动触发（企业可选）
 
-无需 webhook 手动触发审查：
+无需等待 webhook 可直接手动触发 GitLab review：
 
 ```bash
 docker compose exec worker /app/manual-trigger \
@@ -209,7 +202,7 @@ docker compose exec worker /app/manual-trigger \
   --wait
 ```
 
-**注意**: 需要在 `.env` 中配置 `GITLAB_BASE_URL`、`GITLAB_TOKEN` 和 LLM API 密钥
+worker 镜像里也内置了 `/app/mreviewer`，可用于直接运行 CLI review。
 
 ## 架构
 

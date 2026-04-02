@@ -26,6 +26,7 @@ jobs:
     - name: Script Tests
       run: |
         bash scripts/init-local-env_test.sh
+        bash scripts/install_test.sh
         bash scripts/review-mr_test.sh
         bash scripts/verify-onboarding.sh
         bash scripts/verify-onboarding_test.sh

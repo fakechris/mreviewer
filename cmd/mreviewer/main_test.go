@@ -105,6 +105,64 @@ func TestRunWithDepsJSONOutputArtifactOnly(t *testing.T) {
 	}
 }
 
+func TestRunCLIUsesReviewModeForFlagArgs(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform: core.PlatformGitHub,
+				URL:      "https://github.com/acme/repo/pull/17",
+			},
+			JSONSchemaVersion: "v1alpha1",
+		},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"--target", "https://github.com/acme/repo/pull/17", "--output", "json"}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		stdout:    &stdout,
+		stderr:    &stderr,
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if engine.input.Target.Platform != core.PlatformGitHub {
+		t.Fatalf("engine target platform = %q, want github", engine.input.Target.Platform)
+	}
+}
+
+func TestRunCLIReviewSubcommandUsesReviewMode(t *testing.T) {
+	engine := &fakeEngine{
+		bundle: core.ReviewBundle{
+			Target: core.ReviewTarget{
+				Platform: core.PlatformGitLab,
+				URL:      "https://gitlab.example.com/group/repo/-/merge_requests/23",
+			},
+			JSONSchemaVersion: "v1alpha1",
+		},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"review", "--target", "https://gitlab.example.com/group/repo/-/merge_requests/23", "--output", "json"}, runtimeDeps{
+		resolveTarget: resolveReviewTarget,
+		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
+			return core.ReviewInput{Target: target}, nil
+		},
+		newEngine: func(string) reviewEngine { return engine },
+		stdout:    &stdout,
+		stderr:    &stderr,
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if engine.input.Target.Platform != core.PlatformGitLab {
+		t.Fatalf("engine target platform = %q, want gitlab", engine.input.Target.Platform)
+	}
+}
+
 func TestRenderMarkdownOutputIncludesDecisionBriefSections(t *testing.T) {
 	bundle := core.ReviewBundle{
 		Target: core.ReviewTarget{
