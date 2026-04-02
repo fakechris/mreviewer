@@ -75,14 +75,20 @@ func main() {
 }
 
 func runCLI(args []string, reviewDeps runtimeDeps) int {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return runWithDeps(args, reviewDeps)
-	}
 	if reviewDeps.stdout == nil {
 		reviewDeps.stdout = os.Stdout
 	}
 	if reviewDeps.stderr == nil {
 		reviewDeps.stderr = os.Stderr
+	}
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		_, _ = fmt.Fprintln(reviewDeps.stdout, "Usage: mreviewer <command> [options]")
+		_, _ = fmt.Fprintln(reviewDeps.stdout)
+		_, _ = fmt.Fprintln(reviewDeps.stdout, "Commands: review, init, doctor, serve")
+		return 0
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return runWithDeps(args, reviewDeps)
 	}
 	switch strings.TrimSpace(args[0]) {
 	case "review":

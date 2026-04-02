@@ -108,7 +108,7 @@ func renderPersonalConfig(provider string) (string, error) {
 		"openai": {
 			RouteName: "openai-review",
 			Provider:  "openai",
-			BaseURL:   "${OPENAI_BASE_URL}",
+			BaseURL:   "https://api.openai.com/v1",
 			APIKeyEnv: "${OPENAI_API_KEY}",
 			Model:     "gpt-5.4",
 			Output:    "json_schema",
@@ -118,7 +118,7 @@ func renderPersonalConfig(provider string) (string, error) {
 		"minimax": {
 			RouteName: "minimax-review",
 			Provider:  "minimax",
-			BaseURL:   "${MINIMAX_BASE_URL}",
+			BaseURL:   "https://api.minimaxi.com/anthropic",
 			APIKeyEnv: "${MINIMAX_API_KEY}",
 			Model:     "MiniMax-M2.7-highspeed",
 			Output:    "tool_call",
@@ -127,7 +127,7 @@ func renderPersonalConfig(provider string) (string, error) {
 		"anthropic": {
 			RouteName: "anthropic-review",
 			Provider:  "anthropic",
-			BaseURL:   "${ANTHROPIC_BASE_URL}",
+			BaseURL:   "https://api.anthropic.com",
 			APIKeyEnv: "${ANTHROPIC_API_KEY}",
 			Model:     "claude-sonnet-4-6",
 			Output:    "tool_call",

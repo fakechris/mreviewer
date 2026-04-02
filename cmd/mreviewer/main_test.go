@@ -190,6 +190,46 @@ func TestRunCLIInitSubcommandUsesInjectedWriters(t *testing.T) {
 	}
 }
 
+func TestRunCLIShowsTopLevelHelpForEmptyArgs(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runCLI(nil, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
+		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Commands: review, init, doctor, serve") {
+		t.Fatalf("stdout missing command list: %q", stdout.String())
+	}
+}
+
+func TestRunCLIShowsTopLevelHelpForHelpFlag(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runCLI([]string{"--help"}, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
+		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Commands: review, init, doctor, serve") {
+		t.Fatalf("stdout missing command list: %q", stdout.String())
+	}
+}
+
 func TestRenderMarkdownOutputIncludesDecisionBriefSections(t *testing.T) {
 	bundle := core.ReviewBundle{
 		Target: core.ReviewTarget{

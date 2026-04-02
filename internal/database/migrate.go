@@ -27,6 +27,7 @@ func MigrateUp(db *sql.DB, dialect Dialect) error {
 		return fmt.Errorf("database: db is required for migrations")
 	}
 	goose.SetBaseFS(embeddedMigrations)
+	defer goose.SetBaseFS(nil)
 
 	dir := "embeddedmigrations/mysql"
 	gooseDialect := "mysql"

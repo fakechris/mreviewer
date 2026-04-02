@@ -105,3 +105,44 @@ func TestRenderPersonalConfigOmitsBlankOptionalLines(t *testing.T) {
 		t.Fatalf("config should omit empty reasoning stanza: %s", content)
 	}
 }
+
+func TestRunInitThenDoctorUsesProviderDefaultBaseURLWhenEnvUnset(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+
+	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("GITHUB_TOKEN", "test-github-token")
+	t.Setenv("GITHUB_BASE_URL", "")
+	t.Setenv("GITLAB_TOKEN", "")
+	t.Setenv("GITLAB_BASE_URL", "")
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	var initStdout bytes.Buffer
+	var initStderr bytes.Buffer
+	if exitCode := runInitCommand([]string{"--config", configPath, "--provider", "openai"}, &initStdout, &initStderr); exitCode != 0 {
+		t.Fatalf("init exitCode = %d, want 0 (stderr=%s)", exitCode, initStderr.String())
+	}
+
+	var doctorStdout bytes.Buffer
+	var doctorStderr bytes.Buffer
+	exitCode := runDoctorCommand([]string{"--config", configPath, "--json"}, &doctorStdout, &doctorStderr)
+	if exitCode != 0 {
+		t.Fatalf("doctor exitCode = %d, want 0 (stdout=%s stderr=%s)", exitCode, doctorStdout.String(), doctorStderr.String())
+	}
+
+	var report doctorReport
+	if err := json.Unmarshal(doctorStdout.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if !report.OK {
+		t.Fatalf("report.OK = false, want true: %+v", report.Checks)
+	}
+}
