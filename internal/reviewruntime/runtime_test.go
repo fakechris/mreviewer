@@ -50,3 +50,13 @@ func TestJudgeSummary(t *testing.T) {
 		t.Fatalf("summary = %q, want merged finding", summary)
 	}
 }
+
+func TestJudgeSummaryIncludesVerdictWithoutFindings(t *testing.T) {
+	summary := JudgeSummary(core.JudgeDecision{Verdict: "approve"})
+	if !strings.Contains(summary, "Verdict: approve") {
+		t.Fatalf("summary = %q, want verdict", summary)
+	}
+	if !strings.Contains(summary, "No review findings detected.") {
+		t.Fatalf("summary = %q, want empty finding message", summary)
+	}
+}

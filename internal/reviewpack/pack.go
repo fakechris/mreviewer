@@ -351,6 +351,9 @@ func shouldBypassExclusions(contract Contract, finding core.Finding) bool {
 	}
 	for _, marker := range contract.ExclusionBypassKeywords {
 		marker = strings.ToLower(strings.TrimSpace(marker))
+		if marker == "" {
+			continue
+		}
 		if strings.Contains(text, marker) {
 			return true
 		}

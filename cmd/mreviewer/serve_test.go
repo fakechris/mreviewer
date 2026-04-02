@@ -9,10 +9,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mreviewer/mreviewer/internal/config"
 	"github.com/mreviewer/mreviewer/internal/database"
+	core "github.com/mreviewer/mreviewer/internal/reviewcore"
+	"github.com/mreviewer/mreviewer/internal/reviewinput"
 )
 
 func TestRunServeWithDepsAppliesDefaultSQLiteDSN(t *testing.T) {
@@ -188,6 +191,20 @@ func TestEnsureSQLiteParentDirCreatesParentDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmpDir, "subdir")); err != nil {
 		t.Fatalf("expected sqlite parent dir: %v", err)
+	}
+}
+
+func TestBuildServeReviewInputRequiresConfiguredPlatformClient(t *testing.T) {
+	builder := reviewinput.NewBuilder(nil, nil, nil)
+
+	_, err := buildServeReviewInput(context.Background(), core.ReviewTarget{Platform: core.PlatformGitHub}, nil, nil, builder)
+	if err == nil || !strings.Contains(err.Error(), "github client is required") {
+		t.Fatalf("github error = %v, want github client is required", err)
+	}
+
+	_, err = buildServeReviewInput(context.Background(), core.ReviewTarget{Platform: core.PlatformGitLab}, nil, nil, builder)
+	if err == nil || !strings.Contains(err.Error(), "gitlab client is required") {
+		t.Fatalf("gitlab error = %v, want gitlab client is required", err)
 	}
 }
 

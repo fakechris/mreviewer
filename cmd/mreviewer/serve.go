@@ -496,8 +496,14 @@ func buildServeReviewInput(ctx context.Context, target core.ReviewTarget, gitlab
 	)
 	switch target.Platform {
 	case core.PlatformGitHub:
+		if githubClient == nil {
+			return core.ReviewInput{}, fmt.Errorf("build review input: github client is required")
+		}
 		snapshot, err = platformgithub.NewAdapter(githubClient).FetchSnapshot(ctx, target)
 	case core.PlatformGitLab:
+		if gitlabClient == nil {
+			return core.ReviewInput{}, fmt.Errorf("build review input: gitlab client is required")
+		}
 		snapshot, err = platformgitlab.NewAdapter(gitlabClient).FetchSnapshot(ctx, target)
 	default:
 		return core.ReviewInput{}, fmt.Errorf("unsupported platform: %s", target.Platform)

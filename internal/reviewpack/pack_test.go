@@ -322,6 +322,9 @@ func TestShouldBypassExclusionsUsesConfiguredKeywords(t *testing.T) {
 	if shouldBypassExclusions(Contract{}, finding) {
 		t.Fatal("empty contract should not bypass exclusions")
 	}
+	if shouldBypassExclusions(Contract{ExclusionBypassKeywords: []string{""}}, finding) {
+		t.Fatal("empty bypass keyword should not bypass exclusions")
+	}
 	if !shouldBypassExclusions(Contract{ExclusionBypassKeywords: []string{"attacker leverage"}}, finding) {
 		t.Fatal("configured bypass keyword should bypass exclusions")
 	}

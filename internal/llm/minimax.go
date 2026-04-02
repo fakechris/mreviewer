@@ -271,6 +271,8 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 		}
 		if stage == "direct" {
 			stage = parseStage
+		} else {
+			stage = fallbackStageWithParseStage(stage, parseStage)
 		}
 		return ProviderResponse{Result: result, RawText: raw, Latency: latency, Tokens: tokens, FallbackStage: stage, Model: p.routeName, ResponsePayload: map[string]any{"text": raw, "fallback_stage": stage}}, nil
 	}

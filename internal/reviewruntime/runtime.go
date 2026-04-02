@@ -82,10 +82,12 @@ func (a JudgeAdapter) Decide(artifacts []core.ReviewerArtifact) core.JudgeDecisi
 }
 
 func JudgeSummary(decision core.JudgeDecision) string {
+	lines := []string{fmt.Sprintf("Verdict: %s", decision.Verdict)}
 	if len(decision.MergedFindings) == 0 {
-		return "No review findings detected."
+		lines = append(lines, "", "No review findings detected.")
+		return strings.Join(lines, "\n")
 	}
-	lines := []string{fmt.Sprintf("Verdict: %s", decision.Verdict), "", "Findings:"}
+	lines = append(lines, "", "Findings:")
 	for _, item := range decision.MergedFindings {
 		title := strings.TrimSpace(item.Title)
 		if title == "" {
