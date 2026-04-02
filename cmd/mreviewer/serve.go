@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,18 +34,16 @@ import (
 	"github.com/mreviewer/mreviewer/internal/ops"
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
-	"github.com/mreviewer/mreviewer/internal/reviewadvisor"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/reviewinput"
-	"github.com/mreviewer/mreviewer/internal/reviewpack"
 	"github.com/mreviewer/mreviewer/internal/reviewrun"
+	"github.com/mreviewer/mreviewer/internal/reviewruntime"
 	"github.com/mreviewer/mreviewer/internal/rules"
 	"github.com/mreviewer/mreviewer/internal/runs"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 	"github.com/mreviewer/mreviewer/internal/server"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 	"github.com/mreviewer/mreviewer/internal/writer"
-	"github.com/mreviewer/mreviewer/internal/judge"
 )
 
 type serveOptions struct {
@@ -56,14 +53,14 @@ type serveOptions struct {
 }
 
 type serveDeps struct {
-	loadConfig      func(string) (*config.Config, error)
+	loadConfig       func(string) (*config.Config, error)
 	migrateUpFromDSN func(string) error
-	openWithDialect func(string) (*sql.DB, database.Dialect, error)
-	newIngressMux   func(*slog.Logger, *config.Config, *sql.DB, database.Dialect) (http.Handler, error)
-	newWorker       func(*slog.Logger, *config.Config, *sql.DB, database.Dialect) (*personalWorkerRuntime, error)
-	newServer       func(string, http.Handler, *slog.Logger) serverStarter
-	stdout          io.Writer
-	stderr          io.Writer
+	openWithDialect  func(string) (*sql.DB, database.Dialect, error)
+	newIngressMux    func(*slog.Logger, *config.Config, *sql.DB, database.Dialect) (http.Handler, error)
+	newWorker        func(*slog.Logger, *config.Config, *sql.DB, database.Dialect) (*personalWorkerRuntime, error)
+	newServer        func(string, http.Handler, *slog.Logger) serverStarter
+	stdout           io.Writer
+	stderr           io.Writer
 }
 
 type serverStarter interface {
@@ -90,11 +87,11 @@ func (r *personalWorkerRuntime) Run(ctx context.Context) error {
 
 func runServeCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 	return runServeWithDeps(args, serveDeps{
-		loadConfig:      config.Load,
+		loadConfig:       config.Load,
 		migrateUpFromDSN: database.MigrateUpFromDSN,
-		openWithDialect: database.OpenWithDialect,
-		newIngressMux:   newPersonalIngressMux,
-		newWorker:       newPersonalWorkerRuntime,
+		openWithDialect:  database.OpenWithDialect,
+		newIngressMux:    newPersonalIngressMux,
+		newWorker:        newPersonalWorkerRuntime,
 		newServer: func(port string, handler http.Handler, logger *slog.Logger) serverStarter {
 			return server.New(port, handler, logger)
 		},
@@ -163,7 +160,9 @@ func runServeWithDeps(args []string, deps serveDeps) int {
 	defer stop()
 
 	errCh := make(chan error, 2)
-	go func() { errCh <- deps.newServer(cfg.Port, apphttp.RequestIDMiddleware(logger, handler), logger).Start(ctx) }()
+	go func() {
+		errCh <- deps.newServer(cfg.Port, apphttp.RequestIDMiddleware(logger, handler), logger).Start(ctx)
+	}()
 	go func() { errCh <- workerRuntime.Run(ctx) }()
 
 	_, _ = fmt.Fprintf(deps.stdout, "mreviewer serve listening on http://127.0.0.1:%s (db=%s)\n", cfg.Port, dsn)
@@ -421,7 +420,7 @@ func newServePlatformRuntimeWriteback(sqlDB *sql.DB, gitlabClient writer.Discuss
 }
 
 func (w *servePlatformRuntimeWriteback) Write(ctx context.Context, run db.ReviewRun, findings []db.ReviewFinding) error {
-	if isGitHubRuntimeRun(run) {
+	if reviewruntime.IsGitHubRuntimeRun(run, slog.Default()) {
 		if w.github == nil {
 			return fmt.Errorf("no github writer configured for runtime writeback")
 		}
@@ -434,7 +433,7 @@ func (w *servePlatformRuntimeWriteback) Write(ctx context.Context, run db.Review
 }
 
 func (w *servePlatformRuntimeWriteback) WriteBundle(ctx context.Context, run db.ReviewRun, bundle core.ReviewBundle) error {
-	if bundle.Target.Platform == core.PlatformGitHub || isGitHubRuntimeRun(run) {
+	if bundle.Target.Platform == core.PlatformGitHub || reviewruntime.IsGitHubRuntimeRun(run, slog.Default()) {
 		if w.github == nil {
 			return fmt.Errorf("no github writer configured for runtime writeback")
 		}
@@ -476,12 +475,8 @@ func wrapServeProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processo
 }
 
 func newServeReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient *gitlab.Client, githubClient *platformgithub.Client, rulesLoader reviewinput.RulesLoader, providerRegistry *llm.ProviderRegistry) (scheduler.Processor, error) {
-	defaultRoute, configuredFallbackRoutes, _, err := config.ResolveReviewCatalog(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("serve: resolve review model chain: %w", err)
-	}
 	builder := reviewinput.NewBuilder(rulesLoader, ctxpkg.NewAssembler(), llm.NewSQLProcessorStore(sqlDB))
-	inputLoader := workerReviewInputLoader(func(ctx context.Context, target core.ReviewTarget, providerRoute string) (core.ReviewInput, error) {
+	inputLoader := reviewruntime.InputLoaderFunc(func(ctx context.Context, target core.ReviewTarget, providerRoute string) (core.ReviewInput, error) {
 		input, err := buildServeReviewInput(ctx, target, gitlabClient, githubClient, builder)
 		if err != nil {
 			return core.ReviewInput{}, err
@@ -491,54 +486,7 @@ func newServeReviewRunProcessor(cfg *config.Config, sqlDB *sql.DB, gitlabClient 
 		}
 		return input, nil
 	})
-	resolve := func(ref string) llm.Provider {
-		return config.ResolveProvider(cfg, providerRegistry, defaultRoute, configuredFallbackRoutes, ref)
-	}
-	runners := make([]core.PackRunner, 0, len(reviewpack.DefaultPacks()))
-	for _, pack := range reviewpack.DefaultPacks() {
-		runners = append(runners, reviewpack.NewLegacyResolverRunner(pack.Contract(), resolve))
-	}
-	engine := workerAdvisorAwareEngine{
-		base:                core.NewEngine(runners, workerJudgeAdapter{inner: judge.New()}),
-		advisor:             reviewadvisor.New(resolve),
-		defaultAdvisorRef:   strings.TrimSpace(cfg.Review.AdvisorChain),
-	}
-	return reviewrun.NewEngineProcessor(sqlDB, inputLoader, engine).
-		WithDefaultReviewerPacks(normalizedReviewPacks(cfg.Review.Packs)).
-		WithDefaultAdvisorRoute(strings.TrimSpace(cfg.Review.AdvisorChain)), nil
-}
-
-type workerReviewInputLoader func(ctx context.Context, target core.ReviewTarget, providerRoute string) (core.ReviewInput, error)
-
-func (f workerReviewInputLoader) Load(ctx context.Context, target core.ReviewTarget, providerRoute string) (core.ReviewInput, error) {
-	return f(ctx, target, providerRoute)
-}
-
-type workerAdvisorAwareEngine struct {
-	base                *core.Engine
-	advisor             *reviewadvisor.Advisor
-	defaultAdvisorRef   string
-}
-
-func (e workerAdvisorAwareEngine) Run(ctx context.Context, input core.ReviewInput, opts core.RunOptions) (core.ReviewBundle, error) {
-	bundle, err := e.base.Run(ctx, input, opts)
-	if err != nil {
-		return core.ReviewBundle{}, err
-	}
-	ref := strings.TrimSpace(opts.AdvisorRoute)
-	if ref == "" {
-		ref = strings.TrimSpace(e.defaultAdvisorRef)
-	}
-	if ref == "" || e.advisor == nil {
-		return bundle, nil
-	}
-	artifact, err := e.advisor.Advise(ctx, input, bundle, ref)
-	if err != nil {
-		slog.Default().WarnContext(ctx, "serve runtime advisor failed; continuing with council result", "route", ref, "error", err)
-		return bundle, nil
-	}
-	bundle.AdvisorArtifact = artifact
-	return bundle, nil
+	return reviewruntime.NewProcessor(cfg, sqlDB, inputLoader, providerRegistry, "serve runtime advisor failed; continuing with council result")
 }
 
 func buildServeReviewInput(ctx context.Context, target core.ReviewTarget, gitlabClient *gitlab.Client, githubClient *platformgithub.Client, builder *reviewinput.Builder) (core.ReviewInput, error) {
@@ -561,62 +509,6 @@ func buildServeReviewInput(ctx context.Context, target core.ReviewTarget, gitlab
 		Snapshot:             snapshot,
 		ProjectDefaultBranch: snapshot.Change.TargetBranch,
 	})
-}
-
-type workerJudgeAdapter struct{ inner *judge.Engine }
-
-func (a workerJudgeAdapter) Decide(artifacts []core.ReviewerArtifact) core.JudgeDecision {
-	if a.inner == nil {
-		return core.JudgeDecision{}
-	}
-	decision := a.inner.Decide(artifacts)
-	merged := make([]core.Finding, 0, len(decision.MergedFindings))
-	for _, item := range decision.MergedFindings {
-		merged = append(merged, item.Finding)
-	}
-	return core.JudgeDecision{
-		Verdict:        decision.Verdict,
-		MergedFindings: merged,
-		Summary:        renderWorkerJudgeSummary(decision),
-	}
-}
-
-func renderWorkerJudgeSummary(decision judge.Decision) string {
-	if len(decision.MergedFindings) == 0 {
-		return "No review findings detected."
-	}
-	lines := []string{fmt.Sprintf("Verdict: %s", decision.Verdict), "", "Findings:"}
-	for _, item := range decision.MergedFindings {
-		title := strings.TrimSpace(item.Finding.Title)
-		if title == "" {
-			title = strings.TrimSpace(item.Finding.Claim)
-		}
-		if title == "" {
-			title = "Unnamed finding"
-		}
-		lines = append(lines, fmt.Sprintf("- [%s] %s", strings.ToUpper(strings.TrimSpace(item.Finding.Severity)), title))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func normalizedReviewPacks(packs []string) []string {
-	if len(packs) == 0 {
-		return nil
-	}
-	result := make([]string, 0, len(packs))
-	seen := make(map[string]struct{}, len(packs))
-	for _, pack := range packs {
-		token := strings.ToLower(strings.TrimSpace(pack))
-		if token == "" {
-			continue
-		}
-		if _, ok := seen[token]; ok {
-			continue
-		}
-		seen[token] = struct{}{}
-		result = append(result, token)
-	}
-	return result
 }
 
 type workerRepositoryRulesClient struct {
@@ -675,12 +567,4 @@ func (c githubStatusClient) SetCommitStatus(ctx context.Context, req gate.GitHub
 		Description: req.Description,
 		TargetURL:   req.TargetURL,
 	})
-}
-
-func isGitHubRuntimeRun(run db.ReviewRun) bool {
-	var scope struct {
-		Platform core.Platform `json:"platform"`
-	}
-	_ = json.Unmarshal(run.ScopeJson, &scope)
-	return scope.Platform == core.PlatformGitHub
 }

@@ -63,10 +63,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-cli
     permissions:
-      actions: write
       contents: write
       pull-requests: write
     env:
+      RELEASE_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
       VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
@@ -111,7 +111,7 @@ jobs:
       - name: Prepare Homebrew formula sync branch
         id: formula_sync
         env:
-          GH_TOKEN: ${{ github.token }}
+          FORMULA_PUSH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' && secrets.RELEASE_PR_TOKEN || github.token }}
         run: |
           branch="release/formula-${VERSION}"
           git fetch origin main
@@ -129,6 +129,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${FORMULA_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git add Formula/mreviewer.rb
           git commit -m "chore: update brew formula for ${VERSION}"
           git push --force-with-lease origin "$branch"
@@ -137,7 +138,7 @@ jobs:
       - name: Open Homebrew formula sync PR
         if: steps.formula_sync.outputs.branch != ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' && secrets.RELEASE_PR_TOKEN || github.token }}
         run: |
           branch="${{ steps.formula_sync.outputs.branch }}"
           existing="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
@@ -151,7 +152,7 @@ jobs:
             --body "Automated Homebrew formula sync generated from release ${VERSION}."
 
       - name: Trigger CI for Homebrew formula sync branch
-        if: steps.formula_sync.outputs.branch != ''
+        if: steps.formula_sync.outputs.branch != '' && env.RELEASE_PR_TOKEN == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

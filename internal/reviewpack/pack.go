@@ -12,18 +12,19 @@ import (
 )
 
 type Contract struct {
-	ID                   string   `json:"id"`
-	FocusAreas           []string `json:"focus_areas,omitempty"`
-	CategoryAnchors      []string `json:"category_anchors,omitempty"`
-	OutputSchema         string   `json:"output_schema,omitempty"`
-	Standards            []string `json:"standards,omitempty"`
-	HardExclusions       []string `json:"hard_exclusions,omitempty"`
-	ConfidenceGate       float64  `json:"confidence_gate,omitempty"`
-	NewIssuesOnly        bool     `json:"new_issues_only,omitempty"`
-	ExploitabilityFocus  string   `json:"exploitability_focus,omitempty"`
-	Prompt               string   `json:"prompt,omitempty"`
-	EvidenceRequirements []string `json:"evidence_requirements,omitempty"`
-	Rubric               []string `json:"rubric,omitempty"`
+	ID                      string   `json:"id"`
+	FocusAreas              []string `json:"focus_areas,omitempty"`
+	CategoryAnchors         []string `json:"category_anchors,omitempty"`
+	ExclusionBypassKeywords []string `json:"exclusion_bypass_keywords,omitempty"`
+	OutputSchema            string   `json:"output_schema,omitempty"`
+	Standards               []string `json:"standards,omitempty"`
+	HardExclusions          []string `json:"hard_exclusions,omitempty"`
+	ConfidenceGate          float64  `json:"confidence_gate,omitempty"`
+	NewIssuesOnly           bool     `json:"new_issues_only,omitempty"`
+	ExploitabilityFocus     string   `json:"exploitability_focus,omitempty"`
+	Prompt                  string   `json:"prompt,omitempty"`
+	EvidenceRequirements    []string `json:"evidence_requirements,omitempty"`
+	Rubric                  []string `json:"rubric,omitempty"`
 }
 
 type Pack interface {
@@ -53,6 +54,17 @@ func DefaultPacks() []Pack {
 				"secret exposure",
 				"privilege escalation",
 				"unsafe deserialization",
+			},
+			ExclusionBypassKeywords: []string{
+				"attacker",
+				"authorization",
+				"auth bypass",
+				"tenant check",
+				"privilege escalation",
+				"secret",
+				"injection",
+				"exploit",
+				"trust boundary",
 			},
 			OutputSchema: "review_finding_v1",
 			Standards:    []string{"owasp", "asvs"},
@@ -325,9 +337,6 @@ func isExcludedFinding(contract Contract, finding core.Finding) bool {
 }
 
 func shouldBypassExclusions(contract Contract, finding core.Finding) bool {
-	if contract.ID != "security" {
-		return false
-	}
 	text := strings.ToLower(strings.Join([]string{
 		finding.Category,
 		finding.Title,
@@ -340,17 +349,8 @@ func shouldBypassExclusions(contract Contract, finding core.Finding) bool {
 			return true
 		}
 	}
-	for _, marker := range []string{
-		"attacker",
-		"authorization",
-		"auth bypass",
-		"tenant check",
-		"privilege escalation",
-		"secret",
-		"injection",
-		"exploit",
-		"trust boundary",
-	} {
+	for _, marker := range contract.ExclusionBypassKeywords {
+		marker = strings.ToLower(strings.TrimSpace(marker))
 		if strings.Contains(text, marker) {
 			return true
 		}

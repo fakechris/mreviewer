@@ -200,6 +200,15 @@ func TestCanonicalRunStatus(t *testing.T) {
 	}
 }
 
+func TestFallbackStageWithParseStagePreservesParseStage(t *testing.T) {
+	if got := fallbackStageWithParseStage("repair_retry", "quoted_json_string"); got != "repair_retry_quoted_json_string" {
+		t.Fatalf("fallbackStageWithParseStage returned %q, want repair_retry_quoted_json_string", got)
+	}
+	if got := fallbackStageWithParseStage("repair_retry", ""); got != "repair_retry" {
+		t.Fatalf("fallbackStageWithParseStage returned %q, want repair_retry", got)
+	}
+}
+
 func TestMiniMaxToolCallRequestShape(t *testing.T) {
 	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"tool_use","id":"toolu_1","name":"submit_review","input":{"schema_version":"1.0","review_run_id":"123","summary":"ok","findings":[]}}],"usage":{"output_tokens":42}}`}
 	provider, err := NewMiniMaxProvider(ProviderConfig{

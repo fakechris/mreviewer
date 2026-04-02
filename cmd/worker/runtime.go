@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,6 +14,7 @@ import (
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
+	"github.com/mreviewer/mreviewer/internal/reviewruntime"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
 	tracing "github.com/mreviewer/mreviewer/internal/trace"
 	"github.com/mreviewer/mreviewer/internal/writer"
@@ -134,7 +134,7 @@ func (w *platformRuntimeWriteback) Write(ctx context.Context, run db.ReviewRun, 
 	if w == nil {
 		return nil
 	}
-	if isGitHubRuntimeRun(run) {
+	if reviewruntime.IsGitHubRuntimeRun(run, slog.Default()) {
 		if w.github == nil {
 			return fmt.Errorf("no github writer configured for runtime writeback")
 		}
@@ -150,7 +150,7 @@ func (w *platformRuntimeWriteback) WriteBundle(ctx context.Context, run db.Revie
 	if w == nil {
 		return nil
 	}
-	if bundle.Target.Platform == core.PlatformGitHub || isGitHubRuntimeRun(run) {
+	if bundle.Target.Platform == core.PlatformGitHub || reviewruntime.IsGitHubRuntimeRun(run, slog.Default()) {
 		if w.github == nil {
 			return fmt.Errorf("no github writer configured for runtime writeback")
 		}
@@ -160,16 +160,6 @@ func (w *platformRuntimeWriteback) WriteBundle(ctx context.Context, run db.Revie
 		return fmt.Errorf("no gitlab writer configured for runtime writeback")
 	}
 	return w.gitlab.WriteBundle(ctx, run, bundle)
-}
-
-func isGitHubRuntimeRun(run db.ReviewRun) bool {
-	var scope struct {
-		Platform core.Platform `json:"platform"`
-	}
-	if err := json.Unmarshal(run.ScopeJson, &scope); err == nil && scope.Platform == core.PlatformGitHub {
-		return true
-	}
-	return false
 }
 
 func wrapProcessorWithWriteback(sqlDB *sql.DB, processor scheduler.Processor, runtimeWriter runtimeWriteback, newStore func(db.DBTX) db.Store) scheduler.Processor {

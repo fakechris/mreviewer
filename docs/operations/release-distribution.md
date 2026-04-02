@@ -16,6 +16,8 @@ The `Release CLI` workflow publishes:
 
 After the release assets are published, the workflow also opens a formula-sync pull request that updates `Formula/mreviewer.rb` on `main`.
 
+For a fully automatic formula-sync PR, configure `RELEASE_PR_TOKEN` as either a GitHub App installation token or a PAT with permission to push the `release/formula-*` branch and open pull requests. The default `github.token` is sufficient for publishing release assets, but GitHub does not reliably attach normal PR checks when the formula branch and PR are both created by `GITHUB_TOKEN`.
+
 ## How to publish
 
 Two supported paths:
@@ -90,6 +92,18 @@ This keeps the release surface understandable:
 - Tags publish versions.
 - Homebrew follows the tagged release, not individual feature branches.
 
+## Formula PR token
+
+Set `RELEASE_PR_TOKEN` in repository secrets to complete the release closure cleanly.
+
+- Preferred: GitHub App installation token scoped to this repository.
+- Acceptable: PAT with `contents:write` and `pull_requests:write`.
+
+Behavior:
+
+- With `RELEASE_PR_TOKEN`: the release workflow pushes `release/formula-*` and opens the formula PR using that token, so normal `push` and `pull_request` checks attach to the PR.
+- Without `RELEASE_PR_TOKEN`: the workflow falls back to `github.token` and manually dispatches `CI` for the formula branch. That keeps the branch tested, but the dispatched run may not satisfy required PR checks on the PR itself.
+
 ## What counts as a successful release
 
 A release is only considered fully successful when all of these are true:
@@ -103,16 +117,17 @@ A release is only considered fully successful when all of these are true:
 
 Publishing only the GitHub Release assets is a partial success, not the full release closure.
 
-## Current expectation for first full release success
+## Current release status
 
-As of `2026-04-02`, GitHub Release asset publishing has already succeeded on real tags, but the full end-to-end release closure has not yet been completed in one pass.
-
-The next candidate, expected to be `v0.1.4`, should be the first release that exercises the full path:
+As of `2026-04-02`, the first full production release cycle has already completed successfully on `v0.1.5`:
 
 1. tag push
 2. Release CLI asset publish
 3. automatic formula-sync PR creation
 4. formula PR merge
-5. installer and Homebrew verification
+5. installer verification
+6. Homebrew verification
 
-That is the point where the project can say it has completed its first full production release cycle.
+The remaining release automation improvement is narrower:
+
+- keep the formula-sync PR on the normal `push`/`pull_request` check path by using `RELEASE_PR_TOKEN`, instead of relying on a manually dispatched fallback CI run.
