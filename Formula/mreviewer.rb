@@ -2,25 +2,25 @@ class Mreviewer < Formula
   desc "Portable AI review council for GitHub and GitLab"
   homepage "https://github.com/fakechris/mreviewer"
   license "MIT"
-  version "0.1.5"
+  version "0.1.9"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/fakechris/mreviewer/releases/download/v0.1.5/mreviewer_0.1.5_darwin_arm64.tar.gz"
-      sha256 "36731f051d4974a39dad5b988c09b22fe5d29185ae07ef08db702df3ba9997f8"
+      url "https://github.com/fakechris/mreviewer/releases/download/v0.1.9/mreviewer_0.1.9_darwin_arm64.tar.gz"
+      sha256 "a22a9cb99d940d545788e9cac42ea793157f6dadf93455ff0b306ee6e09d0c90"
     else
-      url "https://github.com/fakechris/mreviewer/releases/download/v0.1.5/mreviewer_0.1.5_darwin_amd64.tar.gz"
-      sha256 "c2e8c87b9063a1a91ddfc131fac47a7d607041caaf4a8a17e83319596cf5dd56"
+      url "https://github.com/fakechris/mreviewer/releases/download/v0.1.9/mreviewer_0.1.9_darwin_amd64.tar.gz"
+      sha256 "0b3533d4386726b29e33bbdfbc240feb9469839b3970ccb8d759cf65b4f9806e"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/fakechris/mreviewer/releases/download/v0.1.5/mreviewer_0.1.5_linux_arm64.tar.gz"
-      sha256 "3ee60cf215fe4612af361bb3e22a3b203178f2f968ba039b7f6495f39f6ae32d"
+      url "https://github.com/fakechris/mreviewer/releases/download/v0.1.9/mreviewer_0.1.9_linux_arm64.tar.gz"
+      sha256 "b4f9c9c16c9ae2a9b47b3c0a416c6a11c08ddd6ea051856a47f617f3529bf518"
     else
-      url "https://github.com/fakechris/mreviewer/releases/download/v0.1.5/mreviewer_0.1.5_linux_amd64.tar.gz"
-      sha256 "1e985aa088b9f4f85f709256946ec361ef7df99368727b560117f9c3e4bf46d5"
+      url "https://github.com/fakechris/mreviewer/releases/download/v0.1.9/mreviewer_0.1.9_linux_amd64.tar.gz"
+      sha256 "b2841050e056df0db24e3395d34a59a8e78b8a91d676a05c75974d891b51f21b"
     end
   end
 
