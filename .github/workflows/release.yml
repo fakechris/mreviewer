@@ -46,11 +46,14 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           VERSION: ${{ env.VERSION }}
+          GIT_COMMIT: ${{ github.sha }}
         run: |
           mkdir -p dist
           out_dir="dist/mreviewer_${VERSION#v}_${GOOS}_${GOARCH}"
           mkdir -p "$out_dir"
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$out_dir/mreviewer" ./cmd/mreviewer
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldflags="-s -w -X main.cliVersion=${VERSION#v} -X main.cliCommit=${GIT_COMMIT} -X main.cliBuildDate=${build_date}"
+          CGO_ENABLED=0 go build -trimpath -ldflags="$ldflags" -o "$out_dir/mreviewer" ./cmd/mreviewer
           tar -C "$out_dir" -czf "dist/mreviewer_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz" mreviewer
           shasum -a 256 "dist/mreviewer_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz" | awk '{print $1}' > "dist/mreviewer_${VERSION#v}_${GOOS}_${GOARCH}.sha256"
 

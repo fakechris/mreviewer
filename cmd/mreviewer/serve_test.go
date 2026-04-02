@@ -155,6 +155,77 @@ func TestRunServeWithDepsAllowsIncompleteGitLabWhenGitHubIsConfigured(t *testing
 	}
 }
 
+func TestRunServeWithDepsDryRunSkipsMigrateAndStart(t *testing.T) {
+	var migrated bool
+	var opened bool
+	var serverStarted bool
+	var workerBuilt bool
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runServeWithDeps([]string{"--port", "3200", "--dry-run", "-vv"}, serveDeps{
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{
+				GitHubToken: "github-token",
+				Models: map[string]config.ModelConfig{
+					"openai_default": {
+						Provider:   "openai",
+						BaseURL:    "https://api.openai.com/v1",
+						APIKey:     "test-key",
+						Model:      "gpt-5.4",
+						OutputMode: "json_schema",
+					},
+				},
+				ModelChains: map[string]config.ModelChainConfig{
+					"review_primary": {Primary: "openai_default"},
+				},
+				Review: config.ReviewConfig{ModelChain: "review_primary"},
+			}, nil
+		},
+		migrateUpFromDSN: func(string) error {
+			migrated = true
+			return nil
+		},
+		openWithDialect: func(string) (*sql.DB, database.Dialect, error) {
+			opened = true
+			db, _, err := database.OpenWithDialect("file::memory:?cache=shared")
+			return db, database.DialectSQLite, err
+		},
+		newIngressMux: func(_ *slog.Logger, _ *config.Config, _ *sql.DB, _ database.Dialect) (http.Handler, error) {
+			return http.NewServeMux(), nil
+		},
+		newWorker: func(_ *slog.Logger, _ *config.Config, _ *sql.DB, _ database.Dialect) (*personalWorkerRuntime, error) {
+			workerBuilt = true
+			return &personalWorkerRuntime{}, nil
+		},
+		newServer: func(string, http.Handler, *slog.Logger) serverStarter {
+			serverStarted = true
+			return serverStarterFunc(func(context.Context) error { return nil })
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if migrated {
+		t.Fatal("migrateUpFromDSN called during dry-run")
+	}
+	if opened {
+		t.Fatal("openWithDialect called during dry-run")
+	}
+	if workerBuilt {
+		t.Fatal("newWorker called during dry-run")
+	}
+	if serverStarted {
+		t.Fatal("server started during dry-run")
+	}
+	if !strings.Contains(stdout.String(), "dry-run") {
+		t.Fatalf("stdout missing dry-run marker: %q", stdout.String())
+	}
+}
+
 func TestValidateServeConfigExplainsIncompleteGitLabWithoutGitHub(t *testing.T) {
 	cfg := &config.Config{
 		GitLabToken: "gitlab-token",

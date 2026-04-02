@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -27,11 +28,14 @@ type initOptions struct {
 	configPath string
 	force      bool
 	provider   string
+	dryRun     bool
+	verbose    int
 }
 
 type doctorOptions struct {
 	configPath string
 	jsonOutput bool
+	verbose    int
 }
 
 type doctorReport struct {
@@ -57,12 +61,21 @@ func runInitCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	opts, err := parseInitOptions(args, stderr)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
+	cliTracef(stderr, opts.verbose, 2, "cli: rendering init config (provider=%s path=%s dry-run=%t)", opts.provider, opts.configPath, opts.dryRun)
 	content, err := renderPersonalConfig(opts.provider)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "init failed: %v\n", err)
 		return 1
+	}
+	if opts.dryRun {
+		_, _ = fmt.Fprintln(stdout, "# dry-run: config was not written")
+		_, _ = fmt.Fprint(stdout, content)
+		return 0
 	}
 	if err := writePersonalConfig(opts.configPath, content, opts.force); err != nil {
 		_, _ = fmt.Fprintf(stderr, "init failed: %v\n", err)
@@ -77,16 +90,36 @@ func runInitCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func parseInitOptions(args []string, stderr io.Writer) (initOptions, error) {
+	cleanedArgs, commonFlags, err := extractCommonCLIFlags(args)
+	if err != nil {
+		return initOptions{}, err
+	}
 	fs := flag.NewFlagSet("mreviewer init", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	opts := initOptions{
 		configPath: defaultPersonalConfigPath,
 		provider:   "openai",
+		verbose:    commonFlags.verbose,
 	}
+	setFlagSetUsage(fs, `
+Usage: mreviewer init [options]
+
+Generate a personal config template for local CLI usage.
+
+Agent-friendly flags: --dry-run (alias: --dryrun), --verbose, -vv, -vvv, -vvvv
+
+Examples:
+  mreviewer init
+  mreviewer init --provider minimax
+  mreviewer init --config ~/.config/mreviewer/config.yaml --dry-run
+`)
 	fs.StringVar(&opts.configPath, "config", defaultPersonalConfigPath, "Path to config file")
 	fs.BoolVar(&opts.force, "force", false, "Overwrite config file if it already exists")
 	fs.StringVar(&opts.provider, "provider", "openai", "Provider template to initialize: openai|minimax|anthropic")
-	if err := fs.Parse(args); err != nil {
+	fs.BoolVar(&opts.dryRun, "dry-run", false, "Render the config template without writing files")
+	fs.BoolVar(&opts.dryRun, "dryrun", false, "Alias for --dry-run")
+	fs.Bool("verbose", false, "Increase detail; repeat -vv/-vvv/-vvvv for debug traces")
+	if err := fs.Parse(cleanedArgs); err != nil {
 		return initOptions{}, err
 	}
 	opts.provider = strings.ToLower(strings.TrimSpace(opts.provider))
@@ -220,8 +253,12 @@ func runDoctorCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	opts, err := parseDoctorOptions(args, stderr)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
+	cliTracef(stderr, opts.verbose, 2, "cli: running doctor with config %s", opts.configPath)
 	report := doctorReport{ConfigPath: opts.configPath}
 	cfg, err := config.Load(opts.configPath)
 	if err != nil {
@@ -295,12 +332,29 @@ func runDoctorCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func parseDoctorOptions(args []string, stderr io.Writer) (doctorOptions, error) {
+	cleanedArgs, commonFlags, err := extractCommonCLIFlags(args)
+	if err != nil {
+		return doctorOptions{}, err
+	}
 	fs := flag.NewFlagSet("mreviewer doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	opts := doctorOptions{configPath: defaultPersonalConfigPath}
+	setFlagSetUsage(fs, `
+Usage: mreviewer doctor [options]
+
+Validate config, database, LLM routes, and platform credentials.
+
+Agent-friendly flags: --json, --verbose, -vv, -vvv, -vvvv
+
+Examples:
+  mreviewer doctor
+  mreviewer doctor --json
+  mreviewer doctor --config ~/.config/mreviewer/config.yaml
+`)
+	opts := doctorOptions{configPath: defaultPersonalConfigPath, verbose: commonFlags.verbose}
 	fs.StringVar(&opts.configPath, "config", defaultPersonalConfigPath, "Path to config file")
 	fs.BoolVar(&opts.jsonOutput, "json", false, "Emit machine-readable doctor output")
-	if err := fs.Parse(args); err != nil {
+	fs.Bool("verbose", false, "Increase detail; repeat -vv/-vvv/-vvvv for debug traces")
+	if err := fs.Parse(cleanedArgs); err != nil {
 		return doctorOptions{}, err
 	}
 	return opts, nil
