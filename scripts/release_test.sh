@@ -22,7 +22,18 @@ require_multiline_pattern() {
   local file="$1"
   local pattern="$2"
   local message="$3"
-  if ! PATTERN="$pattern" perl -0ne 'my $pattern = $ENV{PATTERN}; exit(!(/$pattern/s));' "$file"; then
+  if ! PATTERN="$pattern" python3 - "$file" <<'PY'
+import os
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+pattern = os.environ["PATTERN"]
+text = path.read_text()
+sys.exit(0 if re.search(pattern, text, re.S) else 1)
+PY
+  then
     fail "$message"
   fi
 }
