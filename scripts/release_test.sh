@@ -22,7 +22,19 @@ require_multiline_pattern() {
   local file="$1"
   local pattern="$2"
   local message="$3"
-  if ! PATTERN="$pattern" python3 - "$file" <<'PY'
+  local python_bin="${PYTHON_BIN:-}"
+  if [[ -z "$python_bin" ]]; then
+    if [[ -x /usr/bin/python3 ]]; then
+      python_bin="/usr/bin/python3"
+    elif command -v python3 >/dev/null 2>&1; then
+      python_bin="$(command -v python3)"
+    elif command -v python >/dev/null 2>&1; then
+      python_bin="$(command -v python)"
+    else
+      fail "missing python interpreter for multiline release checks"
+    fi
+  fi
+  if ! PATTERN="$pattern" "$python_bin" - "$file" <<'PY'
 import os
 import pathlib
 import re
