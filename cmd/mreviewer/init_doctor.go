@@ -274,7 +274,9 @@ func runDoctorCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 		report.Checks = append(report.Checks, doctorCheck{Name: "github", Status: "warn", Message: "GITHUB_TOKEN is not configured"})
 	}
 	if strings.TrimSpace(cfg.GitLabToken) != "" {
-		if _, err := gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken); err != nil {
+		if strings.TrimSpace(cfg.GitLabBaseURL) == "" {
+			report.Checks = append(report.Checks, doctorCheck{Name: "gitlab", Status: "warn", Message: "GITLAB_TOKEN is configured but GITLAB_BASE_URL is empty; skipping GitLab client"})
+		} else if _, err := gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken); err != nil {
 			report.Checks = append(report.Checks, doctorCheck{Name: "gitlab", Status: "fail", Message: err.Error()})
 		} else {
 			platformPasses++

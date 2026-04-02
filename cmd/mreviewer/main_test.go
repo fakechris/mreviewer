@@ -230,6 +230,30 @@ func TestRunCLIShowsTopLevelHelpForHelpFlag(t *testing.T) {
 	}
 }
 
+func TestRunCLIShowsModelChainLanguageInHelp(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runCLI([]string{"review", "--help"}, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	helpOutput := stdout.String() + stderr.String()
+	if strings.Contains(helpOutput, "provider route") {
+		t.Fatalf("help output should not mention provider routes: %q", helpOutput)
+	}
+	if !strings.Contains(helpOutput, "model or model-chain override") {
+		t.Fatalf("help output missing model-chain wording: %q", helpOutput)
+	}
+	if !strings.Contains(helpOutput, "optional stronger second-opinion model or model-chain override") {
+		t.Fatalf("help output missing advisor model-chain wording: %q", helpOutput)
+	}
+}
+
 func TestRenderMarkdownOutputIncludesDecisionBriefSections(t *testing.T) {
 	bundle := core.ReviewBundle{
 		Target: core.ReviewTarget{

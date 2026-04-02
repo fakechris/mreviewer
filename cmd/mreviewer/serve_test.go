@@ -98,6 +98,88 @@ func TestApplyPersonalDefaultsSetsSQLiteAndGitHubBaseURL(t *testing.T) {
 	}
 }
 
+func TestRunServeWithDepsAllowsIncompleteGitLabWhenGitHubIsConfigured(t *testing.T) {
+	cfg := &config.Config{
+		GitHubToken: "github-token",
+		GitLabToken: "gitlab-token",
+		Models: map[string]config.ModelConfig{
+			"openai_default": {
+				Provider:            "openai",
+				BaseURL:             "https://api.openai.com/v1",
+				APIKey:              "test-key",
+				Model:               "gpt-5.4",
+				OutputMode:          "json_schema",
+				MaxCompletionTokens: 12000,
+				ReasoningEffort:     "medium",
+			},
+		},
+		ModelChains: map[string]config.ModelChainConfig{
+			"review_primary": {Primary: "openai_default"},
+		},
+		Review: config.ReviewConfig{ModelChain: "review_primary"},
+	}
+	if err := validateServeConfig(cfg); err != nil {
+		t.Fatalf("validateServeConfig() error = %v, want nil", err)
+	}
+
+	exitCode := runServeWithDeps([]string{"--port", "3200"}, serveDeps{
+		loadConfig: func(string) (*config.Config, error) {
+			return cfg, nil
+		},
+		migrateUpFromDSN: func(string) error { return nil },
+		openWithDialect: func(string) (*sql.DB, database.Dialect, error) {
+			db, _, err := database.OpenWithDialect("file::memory:?cache=shared")
+			return db, database.DialectSQLite, err
+		},
+		newIngressMux: func(_ *slog.Logger, _ *config.Config, _ *sql.DB, _ database.Dialect) (http.Handler, error) {
+			return http.NewServeMux(), nil
+		},
+		newWorker: func(_ *slog.Logger, _ *config.Config, _ *sql.DB, _ database.Dialect) (*personalWorkerRuntime, error) {
+			return &personalWorkerRuntime{}, nil
+		},
+		newServer: func(string, http.Handler, *slog.Logger) serverStarter {
+			return serverStarterFunc(func(ctx context.Context) error {
+				<-ctx.Done()
+				return ctx.Err()
+			})
+		},
+		stdout: io.Discard,
+		stderr: &bytes.Buffer{},
+	})
+
+	if exitCode != 1 {
+		t.Fatalf("exitCode = %d, want 1", exitCode)
+	}
+}
+
+func TestValidateServeConfigExplainsIncompleteGitLabWithoutGitHub(t *testing.T) {
+	cfg := &config.Config{
+		GitLabToken: "gitlab-token",
+		Models: map[string]config.ModelConfig{
+			"openai_default": {
+				Provider:            "openai",
+				BaseURL:             "https://api.openai.com/v1",
+				APIKey:              "test-key",
+				Model:               "gpt-5.4",
+				OutputMode:          "json_schema",
+				MaxCompletionTokens: 12000,
+			},
+		},
+		ModelChains: map[string]config.ModelChainConfig{
+			"review_primary": {Primary: "openai_default"},
+		},
+		Review: config.ReviewConfig{ModelChain: "review_primary"},
+	}
+
+	err := validateServeConfig(cfg)
+	if err == nil {
+		t.Fatal("validateServeConfig() error = nil, want error")
+	}
+	if err.Error() != "configure at least one platform: set GITHUB_TOKEN, or both GITLAB_TOKEN and GITLAB_BASE_URL" {
+		t.Fatalf("validateServeConfig() error = %q", err.Error())
+	}
+}
+
 func TestEnsureSQLiteParentDirCreatesParentDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	dsn := "file:" + filepath.Join(tmpDir, "subdir", "mreviewer.db") + "?_pragma=busy_timeout(5000)"

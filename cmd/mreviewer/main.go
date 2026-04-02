@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -125,6 +126,9 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 
 	opts, err := parseOptions(args, deps.stderr)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	var bundles []core.ReviewBundle
@@ -449,8 +453,8 @@ func parseOptions(args []string, stderr io.Writer) (cliOptions, error) {
 	fs.StringVar(&publish, "publish", publish, "full-review-comments|summary-only|artifact-only")
 	fs.StringVar(&opts.exitMode, "exit-mode", "never", "never|requested_changes")
 	fs.StringVar(&packs, "reviewer-packs", "", "comma separated reviewer packs")
-	fs.StringVar(&opts.routeOverride, "route", "", "provider route override")
-	fs.StringVar(&opts.advisorRoute, "advisor-route", "", "optional stronger second-opinion provider route")
+	fs.StringVar(&opts.routeOverride, "route", "", "model or model-chain override")
+	fs.StringVar(&opts.advisorRoute, "advisor-route", "", "optional stronger second-opinion model or model-chain override")
 	fs.StringVar(&compareLive, "compare-live", "", "comma separated live reviewers to compare")
 	fs.StringVar(&compareArtifacts, "compare-artifacts", "", "comma separated external artifact json paths")
 	if err := fs.Parse(args); err != nil {

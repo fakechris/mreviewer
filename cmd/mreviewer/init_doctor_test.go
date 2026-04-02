@@ -175,3 +175,59 @@ func TestRunInitThenDoctorUsesProviderDefaultBaseURLWhenEnvUnset(t *testing.T) {
 		t.Fatalf("report.OK = false, want true: %+v", report.Checks)
 	}
 }
+
+func TestRunDoctorCommandWarnsForIncompleteGitLabWhenGitHubIsConfigured(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+app_env: development
+database_dsn: "file:.mreviewer/state/mreviewer.db?_pragma=busy_timeout(5000)"
+gitlab_token: "gitlab-token"
+models:
+  openai_default:
+    provider: openai
+    api_key: "test-key"
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-5.4"
+    output_mode: "json_schema"
+    max_completion_tokens: 12000
+model_chains:
+  review_primary:
+    primary: openai_default
+review:
+  model_chain: review_primary
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv("GITHUB_TOKEN", "test-github-token")
+	t.Setenv("GITHUB_BASE_URL", "")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runDoctorCommand([]string{"--config", configPath, "--json"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stdout=%s stderr=%s)", exitCode, stdout.String(), stderr.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if !report.OK {
+		t.Fatalf("report.OK = false, want true: %+v", report.Checks)
+	}
+	for _, check := range report.Checks {
+		if check.Name == "gitlab" && check.Status == "fail" {
+			t.Fatalf("gitlab check = fail, want warn: %+v", check)
+		}
+	}
+}
