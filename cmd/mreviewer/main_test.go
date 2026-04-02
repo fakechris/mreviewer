@@ -249,7 +249,7 @@ func TestRunCLIShowsModelChainLanguageInHelp(t *testing.T) {
 	if !strings.Contains(helpOutput, "model or model-chain override") {
 		t.Fatalf("help output missing model-chain wording: %q", helpOutput)
 	}
-	if !strings.Contains(helpOutput, "optional stronger second-opinion model or chain override") {
+	if !strings.Contains(helpOutput, "optional stronger second-opinion model or model-chain override") {
 		t.Fatalf("help output missing advisor model-chain wording: %q", helpOutput)
 	}
 }

@@ -243,8 +243,13 @@ func validateServeConfig(cfg *config.Config) error {
 		return fmt.Errorf("configuration is required")
 	}
 	githubConfigured := strings.TrimSpace(cfg.GitHubToken) != ""
-	gitlabConfigured := strings.TrimSpace(cfg.GitLabToken) != "" && strings.TrimSpace(cfg.GitLabBaseURL) != ""
+	gitlabTokenSet := strings.TrimSpace(cfg.GitLabToken) != ""
+	gitlabBaseURLSet := strings.TrimSpace(cfg.GitLabBaseURL) != ""
+	gitlabConfigured := gitlabTokenSet && gitlabBaseURLSet
 	if !githubConfigured && !gitlabConfigured {
+		if gitlabTokenSet && !gitlabBaseURLSet {
+			return fmt.Errorf("configure at least one platform: set GITHUB_TOKEN, or both GITLAB_TOKEN and GITLAB_BASE_URL")
+		}
 		return fmt.Errorf("configure at least one of GITLAB_TOKEN or GITHUB_TOKEN")
 	}
 	if _, _, _, err := providerConfigsFromConfig(cfg); err != nil {

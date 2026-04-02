@@ -152,6 +152,34 @@ func TestRunServeWithDepsAllowsIncompleteGitLabWhenGitHubIsConfigured(t *testing
 	}
 }
 
+func TestValidateServeConfigExplainsIncompleteGitLabWithoutGitHub(t *testing.T) {
+	cfg := &config.Config{
+		GitLabToken: "gitlab-token",
+		Models: map[string]config.ModelConfig{
+			"openai_default": {
+				Provider:            "openai",
+				BaseURL:             "https://api.openai.com/v1",
+				APIKey:              "test-key",
+				Model:               "gpt-5.4",
+				OutputMode:          "json_schema",
+				MaxCompletionTokens: 12000,
+			},
+		},
+		ModelChains: map[string]config.ModelChainConfig{
+			"review_primary": {Primary: "openai_default"},
+		},
+		Review: config.ReviewConfig{ModelChain: "review_primary"},
+	}
+
+	err := validateServeConfig(cfg)
+	if err == nil {
+		t.Fatal("validateServeConfig() error = nil, want error")
+	}
+	if err.Error() != "configure at least one platform: set GITHUB_TOKEN, or both GITLAB_TOKEN and GITLAB_BASE_URL" {
+		t.Fatalf("validateServeConfig() error = %q", err.Error())
+	}
+}
+
 func TestEnsureSQLiteParentDirCreatesParentDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	dsn := "file:" + filepath.Join(tmpDir, "subdir", "mreviewer.db") + "?_pragma=busy_timeout(5000)"
