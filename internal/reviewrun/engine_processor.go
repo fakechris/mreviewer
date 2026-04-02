@@ -13,6 +13,7 @@ import (
 	"github.com/mreviewer/mreviewer/internal/llm"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
 	"github.com/mreviewer/mreviewer/internal/scheduler"
+	"github.com/mreviewer/mreviewer/internal/textutil"
 )
 
 type ReviewInputLoader interface {
@@ -179,7 +180,7 @@ func persistIdentityMappingsFromInput(ctx context.Context, store db.Store, run d
 	}
 	platformUsername := strings.TrimSpace(input.Snapshot.Change.Author.Username)
 	platformUserID := strings.TrimSpace(input.Snapshot.Change.Author.UserID)
-	headSHA := firstNonEmpty(
+	headSHA := textutil.FirstNonEmpty(
 		strings.TrimSpace(input.Snapshot.HeadCommit.SHA),
 		strings.TrimSpace(input.Snapshot.Change.HeadSHA),
 		strings.TrimSpace(input.Snapshot.Version.HeadSHA),
@@ -243,15 +244,6 @@ func gitIdentityKey(author core.PlatformAuthor) string {
 	}
 	if name := strings.ToLower(strings.TrimSpace(author.Name)); name != "" {
 		return "name:" + name
-	}
-	return ""
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
 	}
 	return ""
 }

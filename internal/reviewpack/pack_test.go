@@ -305,6 +305,43 @@ func TestBuildCapabilityPromptIncludesArchitectureAndDatabaseDiscipline(t *testi
 	}
 }
 
+func TestSecurityContractExposesExclusionBypassKeywords(t *testing.T) {
+	contract := securityContract(t)
+	if len(contract.ExclusionBypassKeywords) == 0 {
+		t.Fatal("security contract exclusion bypass keywords should not be empty")
+	}
+	if !shouldBypassExclusions(contract, core.Finding{
+		Title: "Attacker can bypass authorization after tenant check removal",
+	}) {
+		t.Fatal("security contract should bypass exclusions when configured keywords match")
+	}
+}
+
+func TestShouldBypassExclusionsUsesConfiguredKeywords(t *testing.T) {
+	finding := core.Finding{Title: "Attacker leverage exists through a concrete exploit path"}
+	if shouldBypassExclusions(Contract{}, finding) {
+		t.Fatal("empty contract should not bypass exclusions")
+	}
+	if shouldBypassExclusions(Contract{ExclusionBypassKeywords: []string{""}}, finding) {
+		t.Fatal("empty bypass keyword should not bypass exclusions")
+	}
+	if !shouldBypassExclusions(Contract{ExclusionBypassKeywords: []string{"attacker leverage"}}, finding) {
+		t.Fatal("configured bypass keyword should bypass exclusions")
+	}
+}
+
+func securityContract(t *testing.T) Contract {
+	t.Helper()
+	for _, pack := range DefaultPacks() {
+		contract := pack.Contract()
+		if contract.ID == "security" {
+			return contract
+		}
+	}
+	t.Fatal("security contract not found")
+	return Contract{}
+}
+
 func TestFilterFindingsAppliesConfidenceGateAndHardExclusions(t *testing.T) {
 	contract := Contract{
 		ID:             "database",
@@ -373,15 +410,3 @@ func rulesEffectivePolicy(route string) coreRunEffectivePolicy {
 type coreRunEffectivePolicy = rules.EffectivePolicy
 
 func int32Ptr(v int32) *int32 { return &v }
-
-func securityContract(t *testing.T) Contract {
-	t.Helper()
-	for _, pack := range DefaultPacks() {
-		contract := pack.Contract()
-		if contract.ID == "security" {
-			return contract
-		}
-	}
-	t.Fatal("security pack not found")
-	return Contract{}
-}

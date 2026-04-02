@@ -15,6 +15,7 @@ import (
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
 	platformgitlab "github.com/mreviewer/mreviewer/internal/platform/gitlab"
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
+	"github.com/mreviewer/mreviewer/internal/textutil"
 )
 
 type PublishMode string
@@ -49,15 +50,15 @@ type runtimeDeps struct {
 }
 
 type cliOptions struct {
-	target        string
-	targets       []string
-	configPath    string
-	outputMode    OutputMode
-	publishMode   PublishMode
-	exitMode      string
-	reviewerPacks []string
-	routeOverride string
-	advisorRoute  string
+	target               string
+	targets              []string
+	configPath           string
+	outputMode           OutputMode
+	publishMode          PublishMode
+	exitMode             string
+	reviewerPacks        []string
+	routeOverride        string
+	advisorRoute         string
 	compareLiveReviewers []string
 	compareArtifactPaths []string
 }
@@ -294,16 +295,16 @@ type runOutput struct {
 }
 
 type multiRunOutput struct {
-	Reviews             []core.ReviewBundle           `json:"reviews"`
-	Comparisons         []comparepkg.Report           `json:"comparisons,omitempty"`
-	AggregateComparison *comparepkg.AggregateReport   `json:"aggregate_comparison,omitempty"`
+	Reviews             []core.ReviewBundle         `json:"reviews"`
+	Comparisons         []comparepkg.Report         `json:"comparisons,omitempty"`
+	AggregateComparison *comparepkg.AggregateReport `json:"aggregate_comparison,omitempty"`
 }
 
 type reviewBrief struct {
-	Verdict          string           `json:"verdict,omitempty"`
-	ActionItems      []briefAction    `json:"action_items,omitempty"`
-	SpecialistSignals []briefSignal   `json:"specialist_signals,omitempty"`
-	Comparison       *briefComparison `json:"comparison,omitempty"`
+	Verdict           string           `json:"verdict,omitempty"`
+	ActionItems       []briefAction    `json:"action_items,omitempty"`
+	SpecialistSignals []briefSignal    `json:"specialist_signals,omitempty"`
+	Comparison        *briefComparison `json:"comparison,omitempty"`
 }
 
 type briefAction struct {
@@ -623,7 +624,7 @@ func renderDecisionBriefMarkdown(bundle core.ReviewBundle, comparison *comparepk
 		out.WriteString("\n## Specialist Signals\n\n")
 		for _, signal := range brief.SpecialistSignals {
 			out.WriteString("- ")
-			out.WriteString(firstNonEmpty(signal.ReviewerID, "reviewer"))
+			out.WriteString(textutil.FirstNonEmpty(signal.ReviewerID, "reviewer"))
 			out.WriteString(": ")
 			out.WriteString(signal.Summary)
 			out.WriteString("\n")
@@ -648,15 +649,6 @@ func renderAggregateDecisionBriefMarkdown(bundles []core.ReviewBundle, aggregate
 	return strings.TrimSpace(out.String())
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
 func sanitizeActionLabel(title, body string) string {
 	label := strings.TrimSpace(title)
 	if label == "" {
@@ -670,7 +662,7 @@ func sanitizeActionLabel(title, body string) string {
 	if label == "" {
 		return ""
 	}
-	label = regexp.MustCompile(`^[#>\-\*\s` + "`" + `]+`).ReplaceAllString(label, "")
+	label = regexp.MustCompile(`^[#>\-\*\s`+"`"+`]+`).ReplaceAllString(label, "")
 	label = strings.Join(strings.Fields(label), " ")
 	return strings.TrimSpace(label)
 }

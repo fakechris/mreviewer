@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	core "github.com/mreviewer/mreviewer/internal/reviewcore"
+	"github.com/mreviewer/mreviewer/internal/textutil"
 )
 
 type ExternalComment struct {
@@ -203,7 +204,7 @@ func normalizeExternalFinding(comment ExternalComment) core.Finding {
 		Severity:   normalizedToken(comment.Severity),
 		Title:      strings.TrimSpace(comment.Title),
 		Body:       strings.TrimSpace(comment.Body),
-		Claim:      firstNonEmpty(strings.TrimSpace(comment.Claim), strings.TrimSpace(comment.Body), strings.TrimSpace(comment.Title)),
+		Claim:      textutil.FirstNonEmpty(strings.TrimSpace(comment.Claim), strings.TrimSpace(comment.Body), strings.TrimSpace(comment.Title)),
 		Confidence: comment.Confidence,
 		Identity: core.FindingIdentityInput{
 			Category:            normalizedToken(comment.Category),
@@ -227,7 +228,7 @@ func identityKey(identity core.FindingIdentityInput) string {
 }
 
 func normalizedClaim(comment ExternalComment) string {
-	return normalizedText(firstNonEmpty(comment.Claim, comment.Body, comment.Title))
+	return normalizedText(textutil.FirstNonEmpty(comment.Claim, comment.Body, comment.Title))
 }
 
 func normalizedText(raw string) string {
@@ -269,13 +270,4 @@ func reviewerList(m map[string]struct{}) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }

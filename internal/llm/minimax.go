@@ -190,10 +190,7 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 							model:       p.routeName,
 						})
 					}
-					stage := "repair_retry"
-					if parseStage != "" {
-						stage = "repair_retry"
-					}
+					stage := fallbackStageWithParseStage("repair_retry", parseStage)
 					return ProviderResponse{
 						Result:          result,
 						RawText:         repairedRaw,
@@ -274,10 +271,20 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 		}
 		if stage == "direct" {
 			stage = parseStage
+		} else {
+			stage = fallbackStageWithParseStage(stage, parseStage)
 		}
 		return ProviderResponse{Result: result, RawText: raw, Latency: latency, Tokens: tokens, FallbackStage: stage, Model: p.routeName, ResponsePayload: map[string]any{"text": raw, "fallback_stage": stage}}, nil
 	}
 	return ProviderResponse{}, lastErr
+}
+
+func fallbackStageWithParseStage(base, parseStage string) string {
+	parseStage = strings.TrimSpace(parseStage)
+	if parseStage == "" || parseStage == "direct" {
+		return base
+	}
+	return base + "_" + parseStage
 }
 
 func (p *MiniMaxProvider) callReviewTool(ctx context.Context, systemPrompt string, userContent string) (string, int64, time.Duration, error) {
