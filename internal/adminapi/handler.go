@@ -16,6 +16,7 @@ type SnapshotService interface {
 	Queue(ctx context.Context) (QueueSnapshot, error)
 	Concurrency(ctx context.Context) (ConcurrencySnapshot, error)
 	Failures(ctx context.Context) (FailuresSnapshot, error)
+	Trends(ctx context.Context) (TrendsSnapshot, error)
 	Runs(ctx context.Context, filters RunFilters) (RunsSnapshot, error)
 	RunDetail(ctx context.Context, runID int64) (RunDetail, error)
 	RetryRun(ctx context.Context, runID int64, actor string) (RunDetail, error)
@@ -24,6 +25,8 @@ type SnapshotService interface {
 	RequeueRun(ctx context.Context, runID int64, actor string) (RunDetail, error)
 	IdentityMappings(ctx context.Context, filters IdentityFilters) (IdentityMappingsSnapshot, error)
 	ResolveIdentityMapping(ctx context.Context, mappingID int64, platformUsername, platformUserID, actor string) (IdentityMapping, error)
+	Ownership(ctx context.Context, filters IdentityFilters) (OwnershipSnapshot, error)
+	IdentitySuggestions(ctx context.Context, mappingID int64) (IdentitySuggestionsSnapshot, error)
 }
 
 func NewHandler(service SnapshotService, token string) http.Handler {
@@ -46,6 +49,14 @@ func NewHandler(service SnapshotService, token string) http.Handler {
 	})
 	mux.HandleFunc("GET /admin/api/failures", func(w http.ResponseWriter, r *http.Request) {
 		snapshot, err := service.Failures(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, snapshot)
+	})
+	mux.HandleFunc("GET /admin/api/trends", func(w http.ResponseWriter, r *http.Request) {
+		snapshot, err := service.Trends(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
@@ -102,6 +113,41 @@ func NewHandler(service SnapshotService, token string) http.Handler {
 			Limit:       limit,
 		})
 		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, snapshot)
+	})
+	mux.HandleFunc("GET /admin/api/ownership", func(w http.ResponseWriter, r *http.Request) {
+		limit, err := parseOptionalInt32(r.URL.Query().Get("limit"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"})
+			return
+		}
+		snapshot, err := service.Ownership(r.Context(), IdentityFilters{
+			Platform:    strings.TrimSpace(r.URL.Query().Get("platform")),
+			Status:      strings.TrimSpace(r.URL.Query().Get("status")),
+			ProjectPath: strings.TrimSpace(r.URL.Query().Get("project")),
+			Limit:       limit,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, snapshot)
+	})
+	mux.HandleFunc("GET /admin/api/identities/{id}/suggestions", func(w http.ResponseWriter, r *http.Request) {
+		mappingID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || mappingID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid identity mapping id"})
+			return
+		}
+		snapshot, err := service.IdentitySuggestions(r.Context(), mappingID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+				return
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
 		}

@@ -114,7 +114,28 @@
       .status.failed { background: #fef3f2; color: var(--danger); }
       .status.completed { background: #ecfdf3; color: var(--success); }
       .status.pending { background: #fff7ed; color: var(--warn); }
+      .status.stale { background: #fff1f3; color: var(--danger); }
       .muted { color: var(--muted); }
+      .header-toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 16px;
+        flex-wrap: wrap;
+      }
+      .small {
+        font-size: 12px;
+      }
+      .warning {
+        color: var(--danger);
+        font-weight: 600;
+      }
+      .subgrid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 16px;
+      }
       pre {
         background: #0f172a;
         color: #e2e8f0;
@@ -143,6 +164,19 @@
     <header>
       <h1>MReviewer Control Plane</h1>
       <p>Queue visibility, worker state, failures, recent runs, and operator actions for GitLab and GitHub review runtime.</p>
+      <div class="header-toolbar">
+        <label class="small">Auto refresh
+          <select id="refresh-interval">
+            <option value="0">off</option>
+            <option value="15000">15s</option>
+            <option value="30000" selected>30s</option>
+            <option value="60000">60s</option>
+          </select>
+        </label>
+        <button id="refresh-all">Refresh all</button>
+        <span class="small muted" id="last-refresh">Last refreshed: never</span>
+        <span class="small" id="runtime-warning"></span>
+      </div>
     </header>
     <main class="grid">
       <section class="panel span-4">
@@ -156,6 +190,58 @@
       <section class="panel span-4">
         <h2>Failures</h2>
         <div class="metrics" id="failure-metrics"></div>
+      </section>
+
+      <section class="panel span-8">
+        <h2>Trend Window</h2>
+        <p class="muted">Last 24h volume, webhook verification drift, and platform/project rollups.</p>
+        <div class="subgrid">
+          <div>
+            <h3>Hourly Buckets</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Bucket</th>
+                  <th>Runs</th>
+                  <th>Completed</th>
+                  <th>Failed</th>
+                  <th>Webhook</th>
+                </tr>
+              </thead>
+              <tbody id="trend-buckets"></tbody>
+            </table>
+          </div>
+          <div>
+            <h3>Platform Rollup</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Platform</th>
+                  <th>Runs</th>
+                  <th>Pending</th>
+                  <th>Running</th>
+                  <th>Failed</th>
+                </tr>
+              </thead>
+              <tbody id="platform-rollups"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel span-4">
+        <h2>Ownership</h2>
+        <p class="muted">Resolved author/committer mappings grouped into review ownership signals.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Project</th>
+              <th>Signals</th>
+            </tr>
+          </thead>
+          <tbody id="ownership-table"></tbody>
+        </table>
       </section>
 
       <section class="panel span-8">
@@ -231,6 +317,7 @@
               <th>Observed</th>
               <th>Mapped User</th>
               <th>Status</th>
+              <th>Suggestions</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -249,16 +336,27 @@
         queue: "/admin/api/queue",
         concurrency: "/admin/api/concurrency",
         failures: "/admin/api/failures",
+        trends: "/admin/api/trends",
         runs: "/admin/api/runs",
-        identities: "/admin/api/identities"
+        identities: "/admin/api/identities",
+        ownership: "/admin/api/ownership"
       };
-      const state = { selectedRunId: null, selectedRunDetail: null };
+      const state = { selectedRunId: null, selectedRunDetail: null, refreshTimer: null };
+
+      function escapeHTML(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
 
       function renderMetrics(containerId, metrics) {
         const container = document.getElementById(containerId);
         container.innerHTML = metrics.map((item) => `
           <div class="metric">
-            <div class="label">${item.label}</div>
+            <div class="label">${escapeHTML(item.label)}</div>
             <div class="value">${item.value}</div>
           </div>
         `).join("");
@@ -269,7 +367,14 @@
       }
 
       function formatNullable(value) {
-        return value === null || value === undefined || value === "" ? "<span class=\"muted\">n/a</span>" : String(value);
+        return value === null || value === undefined || value === "" ? "<span class=\"muted\">n/a</span>" : escapeHTML(String(value));
+      }
+
+      function formatTime(value) {
+        if (!value) return "n/a";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return escapeHTML(String(value));
+        return escapeHTML(date.toLocaleString());
       }
 
       async function fetchJSON(url, options) {
@@ -282,10 +387,12 @@
       }
 
       async function loadSnapshots() {
-        const [queue, concurrency, failures] = await Promise.all([
+        const [queue, concurrency, failures, trends, ownership] = await Promise.all([
           fetchJSON(endpoints.queue),
           fetchJSON(endpoints.concurrency),
-          fetchJSON(endpoints.failures)
+          fetchJSON(endpoints.failures),
+          fetchJSON(endpoints.trends),
+          fetchJSON(`${endpoints.ownership}?${currentIdentityFilters().toString()}`)
         ]);
 
         renderMetrics("queue-metrics", [
@@ -299,7 +406,8 @@
           { label: "Active Workers", value: concurrency.active_workers.length },
           { label: "Configured Capacity", value: concurrency.total_configured_concurrency },
           { label: "Running Runs", value: concurrency.total_running_runs },
-          { label: "Worker IDs", value: concurrency.active_workers.map((w) => w.worker_id).join(", ") || "n/a" }
+          { label: "Stale Workers", value: concurrency.stale_worker_count },
+          { label: "Worker IDs", value: escapeHTML(concurrency.active_workers.map((w) => w.worker_id + (w.stale ? " (stale)" : "")).join(", ") || "n/a") }
         ]);
 
         renderMetrics("failure-metrics", [
@@ -308,6 +416,44 @@
           { label: "Deduplicated 24h", value: failures.webhook_deduplicated_last_24h },
           { label: "Top Error", value: failures.error_buckets[0] ? failures.error_buckets[0].error_code : "n/a" }
         ]);
+
+        document.getElementById("trend-buckets").innerHTML = trends.buckets.map((bucket) => `
+          <tr>
+            <td>${formatTime(bucket.bucket_start)}</td>
+            <td>${bucket.run_count}</td>
+            <td>${bucket.completed_count}</td>
+            <td>${bucket.failed_count}</td>
+            <td>${bucket.webhook_rejected_count}/${bucket.webhook_deduplicated_count}</td>
+          </tr>
+        `).join("");
+        document.getElementById("platform-rollups").innerHTML = trends.platforms.map((item) => `
+          <tr>
+            <td>${escapeHTML(item.platform)}</td>
+            <td>${item.run_count}</td>
+            <td>${item.pending_count}</td>
+            <td>${item.running_count}</td>
+            <td>${item.failed_count}</td>
+          </tr>
+        `).join("");
+        document.getElementById("ownership-table").innerHTML = ownership.items.map((item) => `
+          <tr>
+            <td>${escapeHTML(item.platform_username)}<br><span class="muted">${formatNullable(item.platform_user_id)}</span></td>
+            <td>${escapeHTML(item.project_path)}</td>
+            <td>${item.identity_count} identities<br><span class="muted">${escapeHTML(item.observed_roles.join(", "))}</span></td>
+          </tr>
+        `).join("");
+
+        const runtimeWarning = document.getElementById("runtime-warning");
+        if (concurrency.stale_worker_count > 0) {
+          runtimeWarning.className = "small warning";
+          runtimeWarning.textContent = `${concurrency.stale_worker_count} stale worker(s) detected`;
+        } else if (ownership.unresolved_count > 0) {
+          runtimeWarning.className = "small warning";
+          runtimeWarning.textContent = `${ownership.unresolved_count} unresolved identity mapping(s)`;
+        } else {
+          runtimeWarning.className = "small muted";
+          runtimeWarning.textContent = "Runtime healthy";
+        }
       }
 
       function currentRunFilters() {
@@ -330,7 +476,7 @@
         tbody.innerHTML = payload.items.map((run) => `
           <tr data-run-id="${run.id}">
             <td>#${run.id}<br><span class="muted">${run.platform}</span></td>
-            <td>${run.project_path}<br><span class="muted">${formatNullable(run.web_url)}</span></td>
+            <td>${escapeHTML(run.project_path)}<br><span class="muted">${formatNullable(run.web_url)}</span></td>
             <td><span class="${runStatusClass(run.status)}">${run.status}</span></td>
             <td>${formatNullable(run.error_code)}</td>
             <td>${formatNullable(run.claimed_by)}</td>
@@ -346,12 +492,13 @@
         state.selectedRunId = runId;
         state.selectedRunDetail = await fetchJSON(`/admin/api/runs/${runId}`);
         const detail = state.selectedRunDetail;
-        document.getElementById("run-detail").innerHTML = `
+        const container = document.getElementById("run-detail");
+        container.innerHTML = `
           <div class="detail-grid">
             <div class="detail-item"><div class="label">Run</div><div class="value">#${detail.id}</div></div>
-            <div class="detail-item"><div class="label">Status</div><div class="value">${detail.status}</div></div>
-            <div class="detail-item"><div class="label">Project</div><div class="value">${detail.project_path}</div></div>
-            <div class="detail-item"><div class="label">Trigger</div><div class="value">${detail.trigger_type}</div></div>
+            <div class="detail-item"><div class="label">Status</div><div class="value">${escapeHTML(detail.status)}</div></div>
+            <div class="detail-item"><div class="label">Project</div><div class="value">${escapeHTML(detail.project_path)}</div></div>
+            <div class="detail-item"><div class="label">Trigger</div><div class="value">${escapeHTML(detail.trigger_type)}</div></div>
             <div class="detail-item"><div class="label">Error Code</div><div class="value">${formatNullable(detail.error_code)}</div></div>
             <div class="detail-item"><div class="label">Worker</div><div class="value">${formatNullable(detail.claimed_by)}</div></div>
             <div class="detail-item"><div class="label">Head SHA</div><div class="value">${formatNullable(detail.head_sha)}</div></div>
@@ -361,8 +508,9 @@
             <div class="detail-item"><div class="label">Findings</div><div class="value">${detail.finding_count}</div></div>
             <div class="detail-item"><div class="label">Comment Actions</div><div class="value">${detail.comment_action_count}</div></div>
           </div>
-          <pre>${JSON.stringify(detail, null, 2)}</pre>
+          <pre id="run-detail-json"></pre>
         `;
+        container.querySelector("#run-detail-json").textContent = JSON.stringify(detail, null, 2);
       }
 
       function currentIdentityFilters() {
@@ -383,16 +531,30 @@
         tbody.innerHTML = payload.items.map((item) => `
           <tr>
             <td>${formatNullable(item.git_email || item.git_name)}<br><span class="muted">${formatNullable(item.git_identity_key)}</span></td>
-            <td>${item.project_path}<br><span class="muted">${item.platform}</span></td>
+            <td>${escapeHTML(item.project_path)}<br><span class="muted">${escapeHTML(item.platform)}</span></td>
             <td>${formatNullable(item.observed_role)}<br><span class="muted">${formatNullable(item.head_sha)}</span></td>
             <td>${formatNullable(item.platform_username)}<br><span class="muted">${formatNullable(item.platform_user_id)}</span></td>
             <td><span class="${runStatusClass(item.status)}">${item.status}</span></td>
+            <td><button data-suggest-id="${item.id}">Suggestions</button></td>
             <td><button data-resolve-id="${item.id}" data-current-username="${item.platform_username || ""}" data-current-user-id="${item.platform_user_id || ""}">Resolve</button></td>
           </tr>
         `).join("");
         Array.from(tbody.querySelectorAll("button[data-resolve-id]")).forEach((button) => {
           button.addEventListener("click", () => resolveIdentity(button.dataset.resolveId, button.dataset.currentUsername, button.dataset.currentUserId).catch((error) => window.alert(error.message)));
         });
+        Array.from(tbody.querySelectorAll("button[data-suggest-id]")).forEach((button) => {
+          button.addEventListener("click", () => showIdentitySuggestions(button.dataset.suggestId).catch((error) => window.alert(error.message)));
+        });
+      }
+
+      async function showIdentitySuggestions(id) {
+        const payload = await fetchJSON(`/admin/api/identities/${id}/suggestions`);
+        if (!payload.suggestions.length) {
+          window.alert("No local suggestions found.");
+          return;
+        }
+        const lines = payload.suggestions.map((item) => `${item.platform_username} (${item.platform_user_id || "n/a"}) score=${item.match_score} via ${item.reasons.join(", ")}`);
+        window.alert(lines.join("\n"));
       }
 
       async function resolveIdentity(id, currentUsername, currentUserId) {
@@ -407,7 +569,7 @@
             platform_user_id: platformUserID
           })
         });
-        await loadIdentities();
+        await loadAll();
       }
 
       async function invokeAction(action) {
@@ -418,14 +580,37 @@
         await fetchJSON(`/admin/api/runs/${state.selectedRunId}/${action}`, { method: "POST" });
         await loadRuns();
         await loadRunDetail(state.selectedRunId);
+        await loadSnapshots();
+      }
+
+      async function loadAll() {
+        await Promise.all([loadSnapshots(), loadRuns(), loadIdentities()]);
+        document.getElementById("last-refresh").textContent = `Last refreshed: ${new Date().toLocaleTimeString()}`;
+      }
+
+      function configureAutoRefresh() {
+        const interval = Number(document.getElementById("refresh-interval").value || "0");
+        if (state.refreshTimer) {
+          window.clearInterval(state.refreshTimer);
+          state.refreshTimer = null;
+        }
+        if (interval > 0) {
+          state.refreshTimer = window.setInterval(() => {
+            loadAll().catch((error) => window.alert(error.message));
+          }, interval);
+        }
       }
 
       document.getElementById("refresh-runs").addEventListener("click", () => {
         loadRuns().catch((error) => window.alert(error.message));
       });
+      document.getElementById("refresh-all").addEventListener("click", () => {
+        loadAll().catch((error) => window.alert(error.message));
+      });
       document.getElementById("refresh-identities").addEventListener("click", () => {
         loadIdentities().catch((error) => window.alert(error.message));
       });
+      document.getElementById("refresh-interval").addEventListener("change", configureAutoRefresh);
       Array.from(document.querySelectorAll("button[data-action]")).forEach((button) => {
         button.addEventListener("click", () => invokeAction(button.dataset.action).catch((error) => window.alert(error.message)));
       });
@@ -435,8 +620,10 @@
           queue: endpoints.queue,
           concurrency: endpoints.concurrency,
           failures: endpoints.failures,
+          trends: endpoints.trends,
           runs: endpoints.runs,
           identities: endpoints.identities,
+          ownership: endpoints.ownership,
           run_detail: "/admin/api/runs/{id}",
           actions: [
             "/admin/api/runs/{id}/retry",
@@ -444,11 +631,13 @@
             "/admin/api/runs/{id}/cancel",
             "/admin/api/runs/{id}/requeue"
           ],
-          identity_resolve: "/admin/api/identities/{id}/resolve"
+          identity_resolve: "/admin/api/identities/{id}/resolve",
+          identity_suggestions: "/admin/api/identities/{id}/suggestions"
         }
       }, null, 2);
 
-      Promise.all([loadSnapshots(), loadRuns(), loadIdentities()]).catch((error) => {
+      configureAutoRefresh();
+      loadAll().catch((error) => {
         window.alert(error.message);
       });
     </script>
