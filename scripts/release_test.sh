@@ -21,7 +21,8 @@ require_pattern() {
 require_pattern ".github/workflows/release.yml" "checksums\\.txt" "release workflow must publish a consolidated checksums.txt"
 require_pattern ".github/workflows/release.yml" 'archive%\.tar\.gz' "release workflow must derive consolidated checksums from the published .sha256 asset names"
 require_pattern ".github/workflows/release.yml" "Formula/mreviewer\\.rb" "release workflow must manage the checked-in BrewTap formula"
-require_pattern ".github/workflows/release.yml" "git push origin HEAD:main" "release workflow must update the checked-in BrewTap formula on main"
+require_pattern ".github/workflows/release.yml" "release/formula-\\$\\{VERSION\\}" "release workflow must sync the generated formula through a dedicated branch"
+require_pattern ".github/workflows/release.yml" "gh pr create" "release workflow must open a PR for formula sync instead of pushing main directly"
 require_pattern ".github/workflows/release.yml" "workflow_dispatch:" "release workflow must support manual dispatch publishing"
 
 require_pattern "README.md" "brew tap fakechris/mreviewer https://github.com/fakechris/mreviewer" "README.md must document brew tap installation with the explicit repo URL"
