@@ -14,7 +14,7 @@ The `Release CLI` workflow publishes:
 - a consolidated `checksums.txt`
 - a generated `mreviewer.rb` Homebrew formula asset
 
-After the release assets are published, the workflow also updates the checked-in tap formula at `Formula/mreviewer.rb` on `main`.
+After the release assets are published, the workflow also opens a formula-sync pull request that updates `Formula/mreviewer.rb` on `main`.
 
 ## How to publish
 

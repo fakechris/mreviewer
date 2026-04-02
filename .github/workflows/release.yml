@@ -64,6 +64,7 @@ jobs:
     needs: build-cli
     permissions:
       contents: write
+      pull-requests: write
     env:
       VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
     steps:
@@ -106,10 +107,14 @@ jobs:
             dist/checksums.txt
             dist/formula/mreviewer.rb
 
-      - name: Update checked-in Homebrew formula
+      - name: Prepare Homebrew formula sync branch
+        id: formula_sync
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          branch="release/formula-${VERSION}"
           git fetch origin main
-          git checkout -B main origin/main
+          git checkout -B "$branch" origin/main
           mkdir -p Formula
           cp dist/formula/mreviewer.rb Formula/mreviewer.rb
           if [[ -z "$(git status --porcelain -- Formula/mreviewer.rb)" ]]; then
@@ -119,4 +124,21 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/mreviewer.rb
           git commit -m "chore: update brew formula for ${VERSION}"
-          git push origin HEAD:main
+          git push --force-with-lease origin "$branch"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Open Homebrew formula sync PR
+        if: steps.formula_sync.outputs.branch != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="${{ steps.formula_sync.outputs.branch }}"
+          existing="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing" ]]; then
+            exit 0
+          fi
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore: update brew formula for ${VERSION}" \
+            --body "Automated Homebrew formula sync generated from release ${VERSION}."
