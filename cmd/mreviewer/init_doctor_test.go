@@ -89,3 +89,19 @@ llm_model: "gpt-5.4"
 		t.Fatalf("expected platforms failure in report: %+v", report.Checks)
 	}
 }
+
+func TestRenderPersonalConfigOmitsBlankOptionalLines(t *testing.T) {
+	content, err := renderPersonalConfig("minimax")
+	if err != nil {
+		t.Fatalf("renderPersonalConfig: %v", err)
+	}
+	if strings.Contains(content, "\n      \n") {
+		t.Fatalf("config contains indented blank optional line: %q", content)
+	}
+	if !strings.Contains(content, "max_tokens: 4096") {
+		t.Fatalf("config missing minimax max_tokens stanza: %s", content)
+	}
+	if strings.Contains(content, "reasoning_effort:") {
+		t.Fatalf("config should omit empty reasoning stanza: %s", content)
+	}
+}

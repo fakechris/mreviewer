@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -160,6 +162,31 @@ func TestRunCLIReviewSubcommandUsesReviewMode(t *testing.T) {
 	}
 	if engine.input.Target.Platform != core.PlatformGitLab {
 		t.Fatalf("engine target platform = %q, want gitlab", engine.input.Target.Platform)
+	}
+}
+
+func TestRunCLIInitSubcommandUsesInjectedWriters(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"init", "--config", filepath.Join(tmpDir, "config.yaml")}, runtimeDeps{
+		stdout: &stdout,
+		stderr: &stderr,
+	})
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr=%s)", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "wrote") {
+		t.Fatalf("expected injected stdout to capture init output, got %q", stdout.String())
 	}
 }
 

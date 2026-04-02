@@ -78,15 +78,21 @@ func runCLI(args []string, reviewDeps runtimeDeps) int {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return runWithDeps(args, reviewDeps)
 	}
+	if reviewDeps.stdout == nil {
+		reviewDeps.stdout = os.Stdout
+	}
+	if reviewDeps.stderr == nil {
+		reviewDeps.stderr = os.Stderr
+	}
 	switch strings.TrimSpace(args[0]) {
 	case "review":
 		return runWithDeps(args[1:], reviewDeps)
 	case "init":
-		return runInitCommand(args[1:], os.Stdout, os.Stderr)
+		return runInitCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
 	case "doctor":
-		return runDoctorCommand(args[1:], os.Stdout, os.Stderr)
+		return runDoctorCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
 	case "serve":
-		return runServeCommand(args[1:], os.Stdout, os.Stderr)
+		return runServeCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
 	default:
 		return runWithDeps(args, reviewDeps)
 	}
