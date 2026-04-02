@@ -278,6 +278,32 @@ func TestServiceTrendsSummary(t *testing.T) {
 	}
 }
 
+func TestServiceTrendsSummaryKeepsWebhookCountsAcrossBucketExpansion(t *testing.T) {
+	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
+	svc := NewService(&fakeStore{
+		runTrendBuckets: []db.ListRunTrendBucketsRow{
+			{BucketStart: "2026-04-01 11:00:00", RunCount: 1},
+		},
+		webhookTrendBuckets: []db.ListWebhookVerificationTrendBucketsRow{
+			{BucketStart: "2026-04-01 10:00:00", VerificationOutcome: "rejected", Count: 2},
+			{BucketStart: "2026-04-01 11:00:00", VerificationOutcome: "deduplicated", Count: 1},
+		},
+	}, WithNow(func() time.Time { return now }))
+
+	snapshot, err := svc.Trends(context.Background())
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+	if len(snapshot.Buckets) != 2 {
+		t.Fatalf("buckets len = %d, want 2", len(snapshot.Buckets))
+	}
+	for _, bucket := range snapshot.Buckets {
+		if bucket.BucketStart.Equal(time.Date(2026, time.April, 1, 11, 0, 0, 0, time.UTC)) && bucket.WebhookDeduplicatedCount != 1 {
+			t.Fatalf("11:00 bucket = %+v, want deduplicated=1", bucket)
+		}
+	}
+}
+
 func TestServiceListRuns(t *testing.T) {
 	now := time.Date(2026, time.March, 29, 19, 15, 0, 0, time.UTC)
 	svc := NewService(&fakeStore{
@@ -431,6 +457,35 @@ func TestServiceIdentitySuggestions(t *testing.T) {
 	}
 }
 
+func TestServiceIdentitySuggestionsAggregatesAfterSliceGrowth(t *testing.T) {
+	svc := NewService(&fakeStore{
+		resolvedIdentityMapping: db.IdentityMapping{
+			ID:             71,
+			Platform:       "gitlab",
+			ProjectPath:    "group/repo",
+			GitEmail:       "chris@example.com",
+			GitName:        "Chris Dev",
+			GitIdentityKey: "email:chris@example.com",
+		},
+		identityMappings: []db.ListIdentityMappingsRow{
+			{ID: 72, Platform: "gitlab", ProjectPath: "group/repo", GitEmail: "chris@example.com", GitIdentityKey: "email:chris@example.com", PlatformUsername: "chris", PlatformUserID: "99", Status: "manual"},
+			{ID: 73, Platform: "gitlab", ProjectPath: "group/other", GitName: "Chris Dev", PlatformUsername: "other", Status: "auto"},
+			{ID: 74, Platform: "gitlab", ProjectPath: "group/repo", GitEmail: "chris@example.com", GitIdentityKey: "email:chris@example.com", PlatformUsername: "chris", PlatformUserID: "99", Status: "manual"},
+		},
+	})
+
+	snapshot, err := svc.IdentitySuggestions(context.Background(), 71)
+	if err != nil {
+		t.Fatalf("IdentitySuggestions: %v", err)
+	}
+	if len(snapshot.Suggestions) < 2 {
+		t.Fatalf("suggestions len = %d, want >= 2", len(snapshot.Suggestions))
+	}
+	if snapshot.Suggestions[0].PlatformUsername != "chris" || snapshot.Suggestions[0].IdentityCount != 2 {
+		t.Fatalf("top suggestion = %+v, want chris with identity_count=2", snapshot.Suggestions[0])
+	}
+}
+
 func TestServiceOwnershipSummary(t *testing.T) {
 	svc := NewService(&fakeStore{
 		identityMappings: []db.ListIdentityMappingsRow{
@@ -481,6 +536,31 @@ func TestServiceOwnershipSummary(t *testing.T) {
 	}
 	if len(snapshot.Items[0].ObservedRoles) != 2 {
 		t.Fatalf("observed_roles = %+v, want 2 roles", snapshot.Items[0].ObservedRoles)
+	}
+}
+
+func TestServiceOwnershipSummaryAggregatesAfterSliceGrowth(t *testing.T) {
+	svc := NewService(&fakeStore{
+		identityMappings: []db.ListIdentityMappingsRow{
+			{ID: 71, Platform: "gitlab", ProjectPath: "group/repo", ObservedRole: "commit_author", PlatformUsername: "chris", PlatformUserID: "99", Status: "manual", LastSeenRunID: sql.NullInt64{Int64: 31, Valid: true}},
+			{ID: 72, Platform: "gitlab", ProjectPath: "group/repo", ObservedRole: "commit_author", PlatformUsername: "other", PlatformUserID: "100", Status: "manual", LastSeenRunID: sql.NullInt64{Int64: 32, Valid: true}},
+			{ID: 73, Platform: "gitlab", ProjectPath: "group/repo", ObservedRole: "commit_committer", PlatformUsername: "chris", PlatformUserID: "99", Status: "auto", LastSeenRunID: sql.NullInt64{Int64: 33, Valid: true}},
+		},
+	})
+
+	snapshot, err := svc.Ownership(context.Background(), IdentityFilters{Platform: "gitlab", ProjectPath: "group/repo"})
+	if err != nil {
+		t.Fatalf("Ownership: %v", err)
+	}
+	if len(snapshot.Items) != 2 {
+		t.Fatalf("ownership items = %d, want 2", len(snapshot.Items))
+	}
+	for _, item := range snapshot.Items {
+		if item.PlatformUsername == "chris" {
+			if item.IdentityCount != 2 || item.LastSeenRunID != 33 || len(item.ObservedRoles) != 2 {
+				t.Fatalf("chris ownership = %+v, want identity_count=2 last_seen_run_id=33 roles=2", item)
+			}
+		}
 	}
 }
 

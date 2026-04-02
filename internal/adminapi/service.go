@@ -457,7 +457,7 @@ func (s *Service) Trends(ctx context.Context) (TrendsSnapshot, error) {
 		return TrendsSnapshot{}, err
 	}
 
-	bucketsByKey := make(map[string]*TrendBucket, len(runBuckets))
+	bucketsByKey := make(map[string]int, len(runBuckets))
 	snapshot := TrendsSnapshot{
 		WindowHours: int(defaultLookbackWindow / time.Hour),
 		Buckets:     make([]TrendBucket, 0, len(runBuckets)),
@@ -478,24 +478,24 @@ func (s *Service) Trends(ctx context.Context) (TrendsSnapshot, error) {
 			FailedCount:    row.FailedCount,
 			CancelledCount: row.CancelledCount,
 		})
-		bucketsByKey[row.BucketStart] = &snapshot.Buckets[len(snapshot.Buckets)-1]
+		bucketsByKey[row.BucketStart] = len(snapshot.Buckets) - 1
 	}
 	for _, row := range webhookBuckets {
-		bucket, ok := bucketsByKey[row.BucketStart]
+		idx, ok := bucketsByKey[row.BucketStart]
 		if !ok {
 			bucketStart, err := parseTimeString(row.BucketStart)
 			if err != nil {
 				return TrendsSnapshot{}, err
 			}
 			snapshot.Buckets = append(snapshot.Buckets, TrendBucket{BucketStart: bucketStart})
-			bucket = &snapshot.Buckets[len(snapshot.Buckets)-1]
-			bucketsByKey[row.BucketStart] = bucket
+			idx = len(snapshot.Buckets) - 1
+			bucketsByKey[row.BucketStart] = idx
 		}
 		switch row.VerificationOutcome {
 		case "rejected":
-			bucket.WebhookRejectedCount = row.Count
+			snapshot.Buckets[idx].WebhookRejectedCount = row.Count
 		case "deduplicated":
-			bucket.WebhookDeduplicatedCount = row.Count
+			snapshot.Buckets[idx].WebhookDeduplicatedCount = row.Count
 		}
 	}
 	for _, row := range platformRows {
@@ -647,7 +647,7 @@ func (s *Service) Ownership(ctx context.Context, filters IdentityFilters) (Owner
 		platformUsername string
 		platformUserID   string
 	}
-	grouped := map[ownershipKey]*OwnershipSummary{}
+	grouped := map[ownershipKey]int{}
 	snapshot := OwnershipSnapshot{Items: []OwnershipSummary{}}
 	for _, row := range rows {
 		if strings.TrimSpace(row.PlatformUsername) == "" {
@@ -660,7 +660,7 @@ func (s *Service) Ownership(ctx context.Context, filters IdentityFilters) (Owner
 			platformUsername: row.PlatformUsername,
 			platformUserID:   row.PlatformUserID,
 		}
-		item, ok := grouped[key]
+		idx, ok := grouped[key]
 		if !ok {
 			snapshot.Items = append(snapshot.Items, OwnershipSummary{
 				Platform:         row.Platform,
@@ -668,15 +668,15 @@ func (s *Service) Ownership(ctx context.Context, filters IdentityFilters) (Owner
 				PlatformUsername: row.PlatformUsername,
 				PlatformUserID:   row.PlatformUserID,
 			})
-			item = &snapshot.Items[len(snapshot.Items)-1]
-			grouped[key] = item
+			idx = len(snapshot.Items) - 1
+			grouped[key] = idx
 		}
-		item.IdentityCount++
-		if row.LastSeenRunID.Valid && row.LastSeenRunID.Int64 > item.LastSeenRunID {
-			item.LastSeenRunID = row.LastSeenRunID.Int64
+		snapshot.Items[idx].IdentityCount++
+		if row.LastSeenRunID.Valid && row.LastSeenRunID.Int64 > snapshot.Items[idx].LastSeenRunID {
+			snapshot.Items[idx].LastSeenRunID = row.LastSeenRunID.Int64
 		}
-		item.ObservedRoles = appendUnique(item.ObservedRoles, row.ObservedRole)
-		item.Statuses = appendUnique(item.Statuses, row.Status)
+		snapshot.Items[idx].ObservedRoles = appendUnique(snapshot.Items[idx].ObservedRoles, row.ObservedRole)
+		snapshot.Items[idx].Statuses = appendUnique(snapshot.Items[idx].Statuses, row.Status)
 	}
 	return snapshot, nil
 }
@@ -702,7 +702,7 @@ func (s *Service) IdentitySuggestions(ctx context.Context, mappingID int64) (Ide
 		project  string
 		status   string
 	}
-	grouped := map[suggestionKey]*IdentitySuggestion{}
+	grouped := map[suggestionKey]int{}
 	result := IdentitySuggestionsSnapshot{
 		Mapping:     buildIdentityMapping(target),
 		Suggestions: []IdentitySuggestion{},
@@ -721,7 +721,7 @@ func (s *Service) IdentitySuggestions(ctx context.Context, mappingID int64) (Ide
 			project:  row.ProjectPath,
 			status:   row.Status,
 		}
-		item, ok := grouped[key]
+		idx, ok := grouped[key]
 		if !ok {
 			result.Suggestions = append(result.Suggestions, IdentitySuggestion{
 				PlatformUsername: row.PlatformUsername,
@@ -731,13 +731,13 @@ func (s *Service) IdentitySuggestions(ctx context.Context, mappingID int64) (Ide
 				MatchScore:       score,
 				Reasons:          reasons,
 			})
-			item = &result.Suggestions[len(result.Suggestions)-1]
-			grouped[key] = item
+			idx = len(result.Suggestions) - 1
+			grouped[key] = idx
 		}
-		item.IdentityCount++
-		if score > item.MatchScore {
-			item.MatchScore = score
-			item.Reasons = reasons
+		result.Suggestions[idx].IdentityCount++
+		if score > result.Suggestions[idx].MatchScore {
+			result.Suggestions[idx].MatchScore = score
+			result.Suggestions[idx].Reasons = reasons
 		}
 	}
 	sortIdentitySuggestions(result.Suggestions)
