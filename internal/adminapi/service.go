@@ -498,6 +498,9 @@ func (s *Service) Trends(ctx context.Context) (TrendsSnapshot, error) {
 			snapshot.Buckets[idx].WebhookDeduplicatedCount = row.Count
 		}
 	}
+	sort.Slice(snapshot.Buckets, func(i, j int) bool {
+		return snapshot.Buckets[i].BucketStart.After(snapshot.Buckets[j].BucketStart)
+	})
 	for _, row := range platformRows {
 		snapshot.Platforms = append(snapshot.Platforms, PlatformRollup{
 			Platform:       row.Platform,

@@ -492,7 +492,8 @@
         state.selectedRunId = runId;
         state.selectedRunDetail = await fetchJSON(`/admin/api/runs/${runId}`);
         const detail = state.selectedRunDetail;
-        document.getElementById("run-detail").innerHTML = `
+        const container = document.getElementById("run-detail");
+        container.innerHTML = `
           <div class="detail-grid">
             <div class="detail-item"><div class="label">Run</div><div class="value">#${detail.id}</div></div>
             <div class="detail-item"><div class="label">Status</div><div class="value">${escapeHTML(detail.status)}</div></div>
@@ -507,8 +508,9 @@
             <div class="detail-item"><div class="label">Findings</div><div class="value">${detail.finding_count}</div></div>
             <div class="detail-item"><div class="label">Comment Actions</div><div class="value">${detail.comment_action_count}</div></div>
           </div>
-          <pre>${JSON.stringify(detail, null, 2)}</pre>
+          <pre id="run-detail-json"></pre>
         `;
+        container.querySelector("#run-detail-json").textContent = JSON.stringify(detail, null, 2);
       }
 
       function currentIdentityFilters() {

@@ -22,6 +22,7 @@ type fakeSnapshotService struct {
 	ownership      OwnershipSnapshot
 	suggestions    IdentitySuggestionsSnapshot
 	runDetailErr   error
+	suggestionsErr error
 	lastRunFilters RunFilters
 	lastIDFilters  IdentityFilters
 }
@@ -81,7 +82,7 @@ func (f fakeSnapshotService) Ownership(_ context.Context, _ IdentityFilters) (Ow
 }
 
 func (f fakeSnapshotService) IdentitySuggestions(_ context.Context, _ int64) (IdentitySuggestionsSnapshot, error) {
-	return f.suggestions, nil
+	return f.suggestions, f.suggestionsErr
 }
 
 func TestHandlerRejectsUnauthorizedWhenTokenConfigured(t *testing.T) {
@@ -259,6 +260,21 @@ func TestHandlerServesIdentitySuggestions(t *testing.T) {
 	}
 	if len(payload.Suggestions) != 1 || payload.Suggestions[0].PlatformUsername != "chris" {
 		t.Fatalf("suggestions payload = %+v, want chris suggestion", payload)
+	}
+}
+
+func TestHandlerReturnsNotFoundForUnknownIdentitySuggestions(t *testing.T) {
+	handler := NewHandler(&fakeSnapshotService{
+		suggestionsErr: sql.ErrNoRows,
+	}, "secret-token")
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/identities/404/suggestions", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
 

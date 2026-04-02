@@ -297,6 +297,9 @@ func TestServiceTrendsSummaryKeepsWebhookCountsAcrossBucketExpansion(t *testing.
 	if len(snapshot.Buckets) != 2 {
 		t.Fatalf("buckets len = %d, want 2", len(snapshot.Buckets))
 	}
+	if !snapshot.Buckets[0].BucketStart.After(snapshot.Buckets[1].BucketStart) {
+		t.Fatalf("bucket order = [%s, %s], want descending by bucket_start", snapshot.Buckets[0].BucketStart, snapshot.Buckets[1].BucketStart)
+	}
 	for _, bucket := range snapshot.Buckets {
 		if bucket.BucketStart.Equal(time.Date(2026, time.April, 1, 11, 0, 0, 0, time.UTC)) && bucket.WebhookDeduplicatedCount != 1 {
 			t.Fatalf("11:00 bucket = %+v, want deduplicated=1", bucket)
