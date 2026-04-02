@@ -112,7 +112,7 @@ jobs:
           git checkout -B main origin/main
           mkdir -p Formula
           cp dist/formula/mreviewer.rb Formula/mreviewer.rb
-          if git diff --quiet -- Formula/mreviewer.rb; then
+          if [[ -z "$(git status --porcelain -- Formula/mreviewer.rb)" ]]; then
             exit 0
           fi
           git config user.name "github-actions[bot]"
