@@ -242,7 +242,9 @@ func validateServeConfig(cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("configuration is required")
 	}
-	if strings.TrimSpace(cfg.GitLabToken) == "" && strings.TrimSpace(cfg.GitHubToken) == "" {
+	githubConfigured := strings.TrimSpace(cfg.GitHubToken) != ""
+	gitlabConfigured := strings.TrimSpace(cfg.GitLabToken) != "" && strings.TrimSpace(cfg.GitLabBaseURL) != ""
+	if !githubConfigured && !gitlabConfigured {
 		return fmt.Errorf("configure at least one of GITLAB_TOKEN or GITHUB_TOKEN")
 	}
 	if _, _, _, err := providerConfigsFromConfig(cfg); err != nil {
@@ -277,9 +279,13 @@ func newPersonalWorkerRuntime(logger *slog.Logger, cfg *config.Config, sqlDB *sq
 	var githubClient *platformgithub.Client
 	var err error
 	if strings.TrimSpace(cfg.GitLabToken) != "" {
-		gitlabClient, err = gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken)
-		if err != nil {
-			return nil, err
+		if strings.TrimSpace(cfg.GitLabBaseURL) == "" {
+			logger.Warn("gitlab token configured without gitlab_base_url; skipping gitlab client")
+		} else {
+			gitlabClient, err = gitlab.NewClient(cfg.GitLabBaseURL, cfg.GitLabToken)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	repositoryRulesClient := &workerRepositoryRulesClient{gitlab: gitlabClient}
