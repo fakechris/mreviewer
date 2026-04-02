@@ -63,8 +63,16 @@ func printVersion(stdout io.Writer) {
 func extractCommonCLIFlags(args []string) ([]string, commonCLIFlags, error) {
 	cleaned := make([]string, 0, len(args))
 	flags := commonCLIFlags{}
+	afterTerminator := false
 	for _, arg := range args {
+		if afterTerminator {
+			cleaned = append(cleaned, arg)
+			continue
+		}
 		switch {
+		case arg == "--":
+			afterTerminator = true
+			cleaned = append(cleaned, arg)
 		case arg == "--verbose":
 			flags.verbose++
 		case len(arg) >= 2 && strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--"):

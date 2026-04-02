@@ -725,6 +725,21 @@ func TestParseOptionsSupportsDryRunAndVerboseLevels(t *testing.T) {
 	}
 }
 
+func TestParseOptionsRespectsDoubleDashTerminator(t *testing.T) {
+	var stderr bytes.Buffer
+	_, err := parseOptions([]string{
+		"--target", "https://github.com/acme/repo/pull/17",
+		"--",
+		"-vv",
+	}, &stderr)
+	if err == nil {
+		t.Fatal("parseOptions error = nil, want invalid usage due to trailing positional arg")
+	}
+	if !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("error = %q, want unexpected positional arguments", err.Error())
+	}
+}
+
 func TestRunWithDepsJSONOutputSupportsMultiTargetCompare(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

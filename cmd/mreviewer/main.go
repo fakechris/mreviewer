@@ -515,9 +515,11 @@ Examples:
 	fs.StringVar(&compareArtifacts, "compare-artifacts", "", "comma separated external artifact json paths")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "Resolve and render without publish or status side effects")
 	fs.BoolVar(&opts.dryRun, "dryrun", false, "Alias for --dry-run")
-	fs.Bool("verbose", false, "Increase detail; repeat -vv/-vvv/-vvvv for debug traces")
 	if err := fs.Parse(cleanedArgs); err != nil {
 		return cliOptions{}, err
+	}
+	if extra := fs.Args(); len(extra) > 0 {
+		return cliOptions{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(extra, ", "))
 	}
 	if targets != "" {
 		for _, part := range strings.Split(targets, ",") {

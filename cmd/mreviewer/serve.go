@@ -219,9 +219,11 @@ Examples:
 	fs.StringVar(&opts.dsn, "db", "", "Database DSN override (defaults to local SQLite)")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "Validate config and print the runtime plan without starting services")
 	fs.BoolVar(&opts.dryRun, "dryrun", false, "Alias for --dry-run")
-	fs.Bool("verbose", false, "Increase detail; repeat -vv/-vvv/-vvvv for debug traces")
 	if err := fs.Parse(cleanedArgs); err != nil {
 		return serveOptions{}, err
+	}
+	if extra := fs.Args(); len(extra) > 0 {
+		return serveOptions{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(extra, ", "))
 	}
 	return opts, nil
 }

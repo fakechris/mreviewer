@@ -118,9 +118,11 @@ Examples:
 	fs.StringVar(&opts.provider, "provider", "openai", "Provider template to initialize: openai|minimax|anthropic")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "Render the config template without writing files")
 	fs.BoolVar(&opts.dryRun, "dryrun", false, "Alias for --dry-run")
-	fs.Bool("verbose", false, "Increase detail; repeat -vv/-vvv/-vvvv for debug traces")
 	if err := fs.Parse(cleanedArgs); err != nil {
 		return initOptions{}, err
+	}
+	if extra := fs.Args(); len(extra) > 0 {
+		return initOptions{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(extra, ", "))
 	}
 	opts.provider = strings.ToLower(strings.TrimSpace(opts.provider))
 	return opts, nil
@@ -353,9 +355,11 @@ Examples:
 	opts := doctorOptions{configPath: defaultPersonalConfigPath, verbose: commonFlags.verbose}
 	fs.StringVar(&opts.configPath, "config", defaultPersonalConfigPath, "Path to config file")
 	fs.BoolVar(&opts.jsonOutput, "json", false, "Emit machine-readable doctor output")
-	fs.Bool("verbose", false, "Increase detail; repeat -vv/-vvv/-vvvv for debug traces")
 	if err := fs.Parse(cleanedArgs); err != nil {
 		return doctorOptions{}, err
+	}
+	if extra := fs.Args(); len(extra) > 0 {
+		return doctorOptions{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(extra, ", "))
 	}
 	return opts, nil
 }
