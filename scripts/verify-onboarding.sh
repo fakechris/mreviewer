@@ -28,11 +28,48 @@ require_pattern() {
   fi
 }
 
+multiline_pattern_matches() {
+  local pattern="$1"
+  local file="$2"
+  local python_bin="${PYTHON_BIN:-}"
+  if [[ -z "$python_bin" ]]; then
+    if [[ -x /usr/bin/python3 ]]; then
+      python_bin="/usr/bin/python3"
+    elif command -v python3 >/dev/null 2>&1; then
+      python_bin="$(command -v python3)"
+    elif command -v python >/dev/null 2>&1; then
+      python_bin="$(command -v python)"
+    else
+      fail "missing python interpreter for multiline onboarding checks"
+    fi
+  fi
+  PATTERN="$pattern" "$python_bin" - "$file" <<'PY'
+import os
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+pattern = os.environ["PATTERN"]
+text = path.read_text()
+sys.exit(0 if re.search(pattern, text, re.S) else 1)
+PY
+}
+
 forbid_pattern() {
   local file="$1"
   local pattern="$2"
   local description="$3"
   if pattern_matches "$pattern" "$file"; then
+    fail "$description"
+  fi
+}
+
+require_multiline_pattern() {
+  local file="$1"
+  local pattern="$2"
+  local description="$3"
+  if ! multiline_pattern_matches "$pattern" "$file"; then
     fail "$description"
   fi
 }
@@ -105,6 +142,8 @@ require_pattern ".github/workflows/release.yml" "Formula/mreviewer\\.rb" "releas
 require_pattern ".github/workflows/release.yml" "release/formula-\\$\\{VERSION\\}" "release workflow must sync the generated formula through a dedicated branch"
 require_pattern ".github/workflows/release.yml" "gh pr create" "release workflow must open a PR for formula sync instead of pushing main directly"
 require_pattern ".github/workflows/release.yml" "workflow_dispatch:" "release workflow must support manual dispatch publishing"
+require_pattern ".github/workflows/release.yml" 'git fetch origin main .*"\$branch"' "release workflow must fetch the existing formula sync branch so reruns can reuse it safely"
+require_multiline_pattern ".github/workflows/release.yml" 'if \[\[ -z "\$\(git status --porcelain -- Formula/mreviewer\.rb\)" \]\]; then\s+echo "branch=\$branch" >> "\$GITHUB_OUTPUT"\s+exit 0' "release workflow must still expose the formula sync branch when reruns find no diff"
 require_pattern ".github/workflows/ci.yml" "bash scripts/install_test.sh" "CI must run the installer script test"
 require_pattern ".github/workflows/ci.yml" "bash scripts/release_test.sh" "CI must run the release distribution test"
 require_pattern "scripts/install.sh" "releases/latest" "install.sh must resolve the latest GitHub release"

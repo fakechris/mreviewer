@@ -113,11 +113,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           branch="release/formula-${VERSION}"
-          git fetch origin main
-          git checkout -B "$branch" origin/main
+          git fetch origin main "$branch" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+            git checkout -B "$branch" "origin/$branch"
+          else
+            git checkout -B "$branch" origin/main
+          fi
           mkdir -p Formula
           cp dist/formula/mreviewer.rb Formula/mreviewer.rb
           if [[ -z "$(git status --porcelain -- Formula/mreviewer.rb)" ]]; then
+            echo "branch=$branch" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
