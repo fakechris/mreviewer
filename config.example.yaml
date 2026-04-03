@@ -41,6 +41,22 @@ models:
     max_completion_tokens: 12000
     reasoning_effort: medium
     temperature: 0.2
+  # doubao_turbo:
+  #   provider: ark_openai
+  #   base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+  #   api_key: ${ARK_TOKEN}
+  #   model: doubao-seed-2.0-code
+  #   output_mode: tool_call
+  #   max_tokens: 4096
+  #   temperature: 0.2
+  # kimi_turbo:
+  #   provider: fireworks_router
+  #   base_url: https://api.fireworks.ai/inference
+  #   api_key: ${FIREWORKS_API_KEY}
+  #   model: accounts/fireworks/routers/kimi-k2p5-turbo
+  #   output_mode: tool_call
+  #   max_tokens: 4096
+  #   temperature: 0.2
 
 model_chains:
   review_primary:

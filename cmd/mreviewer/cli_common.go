@@ -23,10 +23,11 @@ func printTopLevelHelp(stdout io.Writer) {
 	}
 	_, _ = fmt.Fprintln(stdout, "Usage: mreviewer <command> [options]")
 	_, _ = fmt.Fprintln(stdout)
-	_, _ = fmt.Fprintln(stdout, "Commands: review, init, doctor, serve")
+	_, _ = fmt.Fprintln(stdout, "Commands: review, schema-benchmark, init, doctor, serve")
 	_, _ = fmt.Fprintln(stdout)
 	_, _ = fmt.Fprintln(stdout, "Review:")
 	_, _ = fmt.Fprintln(stdout, "  review      Review a GitHub or GitLab PR/MR (start here)")
+	_, _ = fmt.Fprintln(stdout, "  schema-benchmark  Benchmark route schema compliance on serialized review requests")
 	_, _ = fmt.Fprintln(stdout, "  serve       Run local webhook + admin runtime")
 	_, _ = fmt.Fprintln(stdout)
 	_, _ = fmt.Fprintln(stdout, "Setup:")

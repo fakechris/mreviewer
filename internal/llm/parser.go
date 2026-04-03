@@ -16,11 +16,12 @@ import (
 )
 
 type providerParseError struct {
-	cause       error
-	rawResponse string
-	latency     time.Duration
-	tokens      int64
-	model       string
+	cause        error
+	rawResponse  string
+	latency      time.Duration
+	tokens       int64
+	model        string
+	schemaReport *SchemaExecutionReport
 }
 
 type structuredOutputMissError struct {
@@ -57,6 +58,35 @@ func (e *structuredOutputMissError) Unwrap() error {
 		return nil
 	}
 	return e.cause
+}
+
+func enrichProviderParseError(err error, fallbackRaw string, latency time.Duration, tokens int64, model string) *providerParseError {
+	var parseErr *providerParseError
+	if errors.As(err, &parseErr) {
+		raw := strings.TrimSpace(parseErr.rawResponse)
+		if raw == "" {
+			raw = strings.TrimSpace(fallbackRaw)
+		}
+		cause := parseErr.cause
+		if cause == nil {
+			cause = err
+		}
+		return &providerParseError{
+			cause:        cause,
+			rawResponse:  raw,
+			latency:      latency + parseErr.latency,
+			tokens:       tokens + parseErr.tokens,
+			model:        model,
+			schemaReport: parseErr.schemaReport,
+		}
+	}
+	return &providerParseError{
+		cause:       err,
+		rawResponse: strings.TrimSpace(fallbackRaw),
+		latency:     latency,
+		tokens:      tokens,
+		model:       model,
+	}
 }
 
 func ParseReviewResult(raw string) (ReviewResult, string, error) {
@@ -704,7 +734,7 @@ func collectToolUseInput(message *anthropic.Message, toolName string) (string, e
 	return "", fmt.Errorf("llm: missing tool_use block %q", toolName)
 }
 
-func buildReviewRepairPayload(request ctxpkg.ReviewRequest, invalidRaw string, validationErr error) string {
+func buildReviewRepairPayload(request ctxpkg.ReviewRequest, invalidRaw string, validationErr error, validationIssues []SchemaIssue) string {
 	payload := map[string]any{
 		"task": "repair_review_output",
 		"instructions": []string{
@@ -713,6 +743,7 @@ func buildReviewRepairPayload(request ctxpkg.ReviewRequest, invalidRaw string, v
 			"Return tool input that strictly satisfies the required schema.",
 			"Preserve every valid field from the original tool input.",
 			"Fill every missing required field called out by validation_error.",
+			"Use validation_issues for exact field paths when repairing the payload.",
 			"Do not emit markdown fences or free-form prose.",
 		},
 		"original_request": request,
@@ -723,7 +754,8 @@ func buildReviewRepairPayload(request ctxpkg.ReviewRequest, invalidRaw string, v
 			}
 			return parsed
 		}(),
-		"validation_error": validationErr.Error(),
+		"validation_error":  validationErr.Error(),
+		"validation_issues": validationIssues,
 	}
 	return mustJSON(payload)
 }
@@ -737,20 +769,45 @@ func salvageReviewResultAfterStrictValidationFailure(raw string, validationErr e
 }
 
 func validateReviewResultStrictJSON(raw string) error {
+	_, err := validateReviewResultStrictIssues(raw)
+	return err
+}
+
+func validateReviewResultStrictIssues(raw string) ([]SchemaIssue, error) {
 	var value any
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
-		return fmt.Errorf("llm: strict validation decode failed: %w", err)
+		wrapped := fmt.Errorf("llm: strict validation decode failed: %w", err)
+		return []SchemaIssue{{Path: "$", Message: wrapped.Error()}}, wrapped
 	}
 	if decoder.More() {
-		return fmt.Errorf("llm: strict validation found trailing JSON content")
+		err := fmt.Errorf("llm: strict validation found trailing JSON content")
+		return []SchemaIssue{{Path: "$", Message: err.Error()}}, err
 	}
 	errs := validateValueAgainstSchema(value, reviewResultValidationSchema(), "$")
 	if len(errs) == 0 {
-		return nil
+		return nil, nil
 	}
-	return fmt.Errorf("llm: strict validation failed: %s", strings.Join(errs, "; "))
+	issues := make([]SchemaIssue, 0, len(errs))
+	for _, issue := range errs {
+		issues = append(issues, schemaIssueFromValidationMessage(issue))
+	}
+	return issues, fmt.Errorf("llm: strict validation failed: %s", strings.Join(errs, "; "))
+}
+
+func schemaIssueFromValidationMessage(message string) SchemaIssue {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return SchemaIssue{Path: "$", Message: "unknown validation error"}
+	}
+	if idx := strings.IndexByte(message, ' '); idx > 0 {
+		return SchemaIssue{
+			Path:    strings.TrimSpace(message[:idx]),
+			Message: strings.TrimSpace(message[idx+1:]),
+		}
+	}
+	return SchemaIssue{Path: "$", Message: message}
 }
 
 func validateValueAgainstSchema(value any, schema map[string]any, path string) []string {

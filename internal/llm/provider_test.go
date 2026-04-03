@@ -427,7 +427,7 @@ func TestMiniMaxToolCallResponseParsesToolInput(t *testing.T) {
 	}
 }
 
-func TestMiniMaxToolCallMissingToolUseFails(t *testing.T) {
+func TestMiniMaxToolCallMissingToolUseSalvagesRawJSON(t *testing.T) {
 	transport := &captureTransport{responseBody: `{"id":"msg_1","content":[{"type":"text","text":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}],"usage":{"output_tokens":42}}`}
 	provider, err := NewMiniMaxProvider(ProviderConfig{
 		BaseURL:    "https://api.minimaxi.com/anthropic",
@@ -440,22 +440,27 @@ func TestMiniMaxToolCallMissingToolUseFails(t *testing.T) {
 		t.Fatalf("NewMiniMaxProvider: %v", err)
 	}
 
-	_, err = provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
-	if err == nil {
-		t.Fatal("expected missing tool_use parser error")
+	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
 	}
-	if !isParserError(err) {
-		t.Fatalf("error = %v, want parser_error classification", err)
+	if transport.calls != 1 {
+		t.Fatalf("calls = %d, want 1", transport.calls)
 	}
-	if !strings.Contains(err.Error(), "tool_use") {
-		t.Fatalf("error = %v, want tool_use mention", err)
+	if response.Result.ReviewRunID != "123" {
+		t.Fatalf("review_run_id = %q, want 123", response.Result.ReviewRunID)
 	}
-	var parseErr *providerParseError
-	if !errors.As(err, &parseErr) {
-		t.Fatalf("expected providerParseError, got %T", err)
+	if response.SchemaReport == nil {
+		t.Fatal("expected schema report")
 	}
-	if !strings.Contains(parseErr.rawResponse, `"findings":[]`) {
-		t.Fatalf("rawResponse = %q, want captured plain-text payload", parseErr.rawResponse)
+	if !response.SchemaReport.Initial.MissingStructuredOutput {
+		t.Fatal("expected missing structured output marker")
+	}
+	if response.SchemaReport.RepairAttempted {
+		t.Fatal("expected no repair attempt")
+	}
+	if response.FallbackStage != "missing_tool_use" {
+		t.Fatalf("fallback stage = %q, want missing_tool_use", response.FallbackStage)
 	}
 }
 
@@ -484,6 +489,21 @@ func TestMiniMaxToolCallRepairsInvalidToolInput(t *testing.T) {
 	}
 	if response.FallbackStage != "repair_retry" {
 		t.Fatalf("fallback stage = %q, want repair_retry", response.FallbackStage)
+	}
+	if response.SchemaReport == nil {
+		t.Fatal("expected schema report")
+	}
+	if response.SchemaReport.Initial.Valid {
+		t.Fatal("expected initial strict validation failure")
+	}
+	if !response.SchemaReport.RepairAttempted {
+		t.Fatal("expected repair_attempted")
+	}
+	if response.SchemaReport.Repair == nil || !response.SchemaReport.Repair.Valid {
+		t.Fatalf("repair report = %#v, want valid repair", response.SchemaReport.Repair)
+	}
+	if !response.SchemaReport.FinalValid {
+		t.Fatal("expected final_valid=true")
 	}
 	if len(response.Result.Findings) != 1 || response.Result.Findings[0].Category != "bug" {
 		t.Fatalf("findings = %#v", response.Result.Findings)
@@ -515,6 +535,15 @@ func TestMiniMaxToolCallSalvagesRepairOutputMissingBodyMarkdown(t *testing.T) {
 	}
 	if response.FallbackStage != "repair_retry" {
 		t.Fatalf("fallback stage = %q, want repair_retry", response.FallbackStage)
+	}
+	if response.SchemaReport == nil {
+		t.Fatal("expected schema report")
+	}
+	if response.SchemaReport.Repair == nil || response.SchemaReport.Repair.Valid {
+		t.Fatalf("repair report = %#v, want invalid repair", response.SchemaReport.Repair)
+	}
+	if response.SchemaReport.FinalValid {
+		t.Fatal("expected final_valid=false for salvaged response")
 	}
 	if len(response.Result.Findings) != 1 {
 		t.Fatalf("findings = %#v, want one finding", response.Result.Findings)
@@ -553,11 +582,97 @@ func TestMiniMaxToolCallRepairsMissingToolUseFromPlainTextResponse(t *testing.T)
 	if response.FallbackStage != "repair_retry" {
 		t.Fatalf("fallback stage = %q, want repair_retry", response.FallbackStage)
 	}
+	if response.SchemaReport == nil {
+		t.Fatal("expected schema report")
+	}
+	if !response.SchemaReport.Initial.MissingStructuredOutput {
+		t.Fatal("expected missing structured output marker")
+	}
+	if response.SchemaReport.Repair == nil || !response.SchemaReport.Repair.Valid {
+		t.Fatalf("repair report = %#v, want valid repair", response.SchemaReport.Repair)
+	}
 	if len(response.Result.Findings) != 1 {
 		t.Fatalf("findings = %#v, want one finding", response.Result.Findings)
 	}
 	if response.Result.Findings[0].Category != "database" {
 		t.Fatalf("category = %q, want database", response.Result.Findings[0].Category)
+	}
+}
+
+func TestOpenAIProviderReviewReturnsSchemaReportAfterRepair(t *testing.T) {
+	transport := &captureTransport{responseBodies: []string{
+		`{"choices":[{"message":{"tool_calls":[{"type":"function","function":{"name":"submit_review","arguments":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[{\"severity\":\"high\",\"confidence\":0.91,\"title\":\"Issue\",\"body_markdown\":\"body\",\"path\":\"main.go\",\"anchor_kind\":\"new_line\",\"new_line\":5}]}"}}]}}],"usage":{"completion_tokens":42}}`,
+		`{"choices":[{"message":{"tool_calls":[{"type":"function","function":{"name":"submit_review","arguments":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[{\"category\":\"bug\",\"severity\":\"high\",\"confidence\":0.91,\"title\":\"Issue\",\"body_markdown\":\"body\",\"path\":\"main.go\",\"anchor_kind\":\"new_line\",\"new_line\":5}]}"}}]}}],"usage":{"completion_tokens":21}}`,
+	}}
+	provider, err := NewOpenAIProvider(ProviderConfig{
+		BaseURL:    "https://api.openai.com/v1",
+		APIKey:     "secret-token",
+		Model:      "gpt-4o",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIProvider: %v", err)
+	}
+
+	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if response.SchemaReport == nil {
+		t.Fatal("expected schema report")
+	}
+	if response.SchemaReport.Initial.Valid {
+		t.Fatal("expected initial invalid result")
+	}
+	if response.SchemaReport.Repair == nil || !response.SchemaReport.Repair.Valid {
+		t.Fatalf("repair report = %#v, want valid repair", response.SchemaReport.Repair)
+	}
+	if !response.SchemaReport.FinalValid {
+		t.Fatal("expected final_valid=true")
+	}
+	if response.FallbackStage != "repair_retry" {
+		t.Fatalf("fallback stage = %q, want repair_retry", response.FallbackStage)
+	}
+}
+
+func TestOpenAIProviderSalvagesJSONContentWithoutToolCall(t *testing.T) {
+	transport := &captureTransport{responseBody: `{"choices":[{"message":{"content":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[{\"category\":\"bug\",\"severity\":\"high\",\"confidence\":0.91,\"title\":\"Issue\",\"body_markdown\":\"body\",\"path\":\"main.go\",\"anchor_kind\":\"new_line\",\"new_line\":5}]}"}}],"usage":{"completion_tokens":42}}`}
+	provider, err := NewOpenAIProvider(ProviderConfig{
+		BaseURL:    "https://api.openai.com/v1",
+		APIKey:     "secret-token",
+		Model:      "gpt-4o",
+		HTTPClient: &http.Client{Transport: transport},
+		Now:        func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIProvider: %v", err)
+	}
+
+	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if transport.calls != 1 {
+		t.Fatalf("calls = %d, want 1 without repair retry", transport.calls)
+	}
+	if response.Result.ReviewRunID != "123" {
+		t.Fatalf("review_run_id = %q, want 123", response.Result.ReviewRunID)
+	}
+	if response.SchemaReport == nil {
+		t.Fatal("expected schema report")
+	}
+	if !response.SchemaReport.Initial.MissingStructuredOutput {
+		t.Fatal("expected missing structured output marker")
+	}
+	if response.SchemaReport.RepairAttempted {
+		t.Fatal("expected no repair attempt when raw JSON can be salvaged directly")
+	}
+	if !response.SchemaReport.FinalValid {
+		t.Fatal("expected final valid result")
+	}
+	if response.FallbackStage != "missing_tool_use" {
+		t.Fatalf("fallback stage = %q, want missing_tool_use", response.FallbackStage)
 	}
 }
 
@@ -3784,6 +3899,7 @@ func TestBuildReviewRepairPayloadIncludesExplicitRepairGuidance(t *testing.T) {
 		ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"},
 		`{"bad":true}`,
 		errors.New("$.findings[0].body_markdown is required"),
+		[]SchemaIssue{{Path: "$.findings[0].body_markdown", Message: "$.findings[0].body_markdown is required"}},
 	)
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
@@ -3803,6 +3919,23 @@ func TestBuildReviewRepairPayloadIncludesExplicitRepairGuidance(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("instructions missing %q in %v", want, instructions)
 		}
+	}
+	issues, ok := payload["validation_issues"].([]any)
+	if !ok {
+		t.Fatalf("validation_issues = %#v", payload["validation_issues"])
+	}
+	if len(issues) != 1 {
+		t.Fatalf("validation_issues len = %d, want 1", len(issues))
+	}
+	firstIssue, ok := issues[0].(map[string]any)
+	if !ok {
+		t.Fatalf("validation_issues[0] = %#v", issues[0])
+	}
+	if got := firstIssue["path"]; got != "$.findings[0].body_markdown" {
+		t.Fatalf("validation_issues[0].path = %#v", got)
+	}
+	if got := firstIssue["message"]; got != "$.findings[0].body_markdown is required" {
+		t.Fatalf("validation_issues[0].message = %#v", got)
 	}
 }
 
