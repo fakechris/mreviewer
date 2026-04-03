@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -58,6 +59,7 @@ type ProviderResponse struct {
 	FallbackStage   string
 	Model           string
 	ResponsePayload map[string]any
+	SchemaReport    *SchemaExecutionReport
 
 	// SubProviderResults holds per-provider metrics when a composite
 	// provider (e.g. ConsensusReviewService) fans out to multiple
@@ -168,4 +170,12 @@ type ProviderConfig struct {
 	Now                 func() time.Time
 	Sleep               func(context.Context, time.Duration) error
 	CompatMode          *OpenAICompatMode
+}
+
+func SchemaReportFromError(err error) *SchemaExecutionReport {
+	var parseErr *providerParseError
+	if errors.As(err, &parseErr) {
+		return parseErr.schemaReport
+	}
+	return nil
 }

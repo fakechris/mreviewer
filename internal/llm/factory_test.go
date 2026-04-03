@@ -394,7 +394,7 @@ func TestValidateReviewResultStrictJSONRejectsWrongOptionalFieldType(t *testing.
 	}
 }
 
-func TestOpenAIProviderMissingToolCallReturnsParserError(t *testing.T) {
+func TestOpenAIProviderMissingToolCallFallsBackWithSchemaReport(t *testing.T) {
 	transport := &captureTransport{responseBody: `{"choices":[{"message":{"content":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}}],"usage":{"completion_tokens":21}}`}
 	provider, err := NewProviderFromConfig(ProviderConfig{
 		Kind:       "openai",
@@ -409,19 +409,24 @@ func TestOpenAIProviderMissingToolCallReturnsParserError(t *testing.T) {
 		t.Fatalf("NewProviderFromConfig: %v", err)
 	}
 
-	_, err = provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
-	if err == nil {
-		t.Fatal("expected missing tool_call parser error")
+	response, err := provider.Review(context.Background(), ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "123"})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
 	}
-	if !isParserError(err) {
-		t.Fatalf("error = %v, want parser_error classification", err)
+	if response.Result.ReviewRunID != "123" {
+		t.Fatalf("review_run_id = %q, want 123", response.Result.ReviewRunID)
 	}
-	var parseErr *providerParseError
-	if !errors.As(err, &parseErr) {
-		t.Fatalf("expected providerParseError, got %T", err)
+	if response.SchemaReport == nil {
+		t.Fatal("expected schema report")
 	}
-	if !strings.Contains(parseErr.rawResponse, `"findings":[]`) {
-		t.Fatalf("rawResponse = %q, want captured assistant content", parseErr.rawResponse)
+	if !response.SchemaReport.Initial.MissingStructuredOutput {
+		t.Fatal("expected missing structured output marker")
+	}
+	if response.SchemaReport.RepairAttempted {
+		t.Fatal("expected no repair attempt")
+	}
+	if response.FallbackStage != "missing_tool_use" {
+		t.Fatalf("fallback stage = %q, want missing_tool_use", response.FallbackStage)
 	}
 }
 

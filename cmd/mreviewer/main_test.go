@@ -39,9 +39,9 @@ type publishCall struct {
 }
 
 type statusCall struct {
-	target          core.ReviewTarget
-	input           core.ReviewInput
-	state           string
+	target           core.ReviewTarget
+	input            core.ReviewInput
+	state            string
 	blockingFindings int
 }
 
@@ -54,12 +54,12 @@ func TestRunWithDepsJSONOutputArtifactOnly(t *testing.T) {
 				Repository:   "group/repo",
 				ChangeNumber: 23,
 				ProjectID:    77,
-				},
-				MarkdownSummary:   "# Review\n\nLooks good.",
-				JSONSchemaVersion: "v1alpha1",
-				Verdict:           "pass",
 			},
-		}
+			MarkdownSummary:   "# Review\n\nLooks good.",
+			JSONSchemaVersion: "v1alpha1",
+			Verdict:           "pass",
+		},
+	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -74,9 +74,9 @@ func TestRunWithDepsJSONOutputArtifactOnly(t *testing.T) {
 		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
 			return core.ReviewInput{Target: target}, nil
 		},
-		newEngine:     func(string) reviewEngine { return engine },
-		stdout:        &stdout,
-		stderr:        &stderr,
+		newEngine: func(string) reviewEngine { return engine },
+		stdout:    &stdout,
+		stderr:    &stderr,
 	})
 
 	if exitCode != 0 {
@@ -205,7 +205,7 @@ func TestRunCLIShowsTopLevelHelpForEmptyArgs(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
 		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Commands: review, init, doctor, serve") {
+	if !strings.Contains(stdout.String(), "Commands: review, schema-benchmark, init, doctor, serve") {
 		t.Fatalf("stdout missing command list: %q", stdout.String())
 	}
 }
@@ -225,7 +225,7 @@ func TestRunCLIShowsTopLevelHelpForHelpFlag(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
 		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Commands: review, init, doctor, serve") {
+	if !strings.Contains(stdout.String(), "Commands: review, schema-benchmark, init, doctor, serve") {
 		t.Fatalf("stdout missing command list: %q", stdout.String())
 	}
 }
@@ -405,9 +405,9 @@ func TestRunWithDepsRejectsUnknownPublishMode(t *testing.T) {
 		loadInput: func(_ context.Context, _ string, target core.ReviewTarget) (core.ReviewInput, error) {
 			return core.ReviewInput{Target: target}, nil
 		},
-		newEngine:     func(string) reviewEngine { return &fakeEngine{} },
-		stdout:        &stdout,
-		stderr:        &stderr,
+		newEngine: func(string) reviewEngine { return &fakeEngine{} },
+		stdout:    &stdout,
+		stderr:    &stderr,
 	})
 	if exitCode != 2 {
 		t.Fatalf("exitCode = %d, want 2", exitCode)

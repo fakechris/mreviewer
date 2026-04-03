@@ -136,78 +136,35 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 	if maxAttempts <= 0 {
 		maxAttempts = 1
 	}
+	harness := ReviewSchemaHarness{}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		raw, tokens, latency, err := p.callReviewTool(ctx, systemPrompt, mustJSON(request))
 		if err != nil {
 			lastErr = err
 			var structuredMiss *structuredOutputMissError
 			if errors.As(err, &structuredMiss) {
-				if strings.TrimSpace(structuredMiss.rawResponse) != "" {
-					repairedRaw, repairTokens, repairLatency, repairErr := p.callReviewTool(
-						ctx,
-						systemPrompt,
-						buildReviewRepairPayload(request, structuredMiss.rawResponse, structuredMiss.cause),
-					)
-					latency += repairLatency
-					tokens += repairTokens
-					if repairErr != nil {
-						return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
-							cause:       repairErr,
-							rawResponse: structuredMiss.rawResponse,
-							latency:     latency,
-							tokens:      tokens,
-							model:       p.routeName,
-						})
-					}
-					if repairValidationErr := validateReviewResultStrictJSON(repairedRaw); repairValidationErr != nil {
-						result, salvageErr := salvageReviewResultAfterStrictValidationFailure(repairedRaw, repairValidationErr)
-						if salvageErr != nil {
-							return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
-								cause:       salvageErr,
-								rawResponse: repairedRaw,
-								latency:     latency,
-								tokens:      tokens,
-								model:       p.routeName,
-							})
-						}
-						return ProviderResponse{
-							Result:          result,
-							RawText:         repairedRaw,
-							Latency:         latency,
-							Tokens:          tokens,
-							FallbackStage:   "repair_retry",
-							Model:           p.routeName,
-							ResponsePayload: map[string]any{"text": repairedRaw, "fallback_stage": "repair_retry"},
-						}, nil
-					}
-					result, parseStage, parseErr := ParseReviewResult(repairedRaw)
-					if parseErr != nil {
-						return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
-							cause:       parseErr,
-							rawResponse: repairedRaw,
-							latency:     latency,
-							tokens:      tokens,
-							model:       p.routeName,
-						})
-					}
-					stage := fallbackStageWithParseStage("repair_retry", parseStage)
-					return ProviderResponse{
-						Result:          result,
-						RawText:         repairedRaw,
-						Latency:         latency,
-						Tokens:          tokens,
-						FallbackStage:   stage,
-						Model:           p.routeName,
-						ResponsePayload: map[string]any{"text": repairedRaw, "fallback_stage": stage},
-					}, nil
-				}
-				return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
-					cause:       structuredMiss.cause,
-					rawResponse: structuredMiss.rawResponse,
-					latency:     latency,
-					tokens:      tokens,
-					model:       p.routeName,
+				result, harnessErr := harness.Execute(ctx, request, StructuredOutputCandidate{
+					RawText:                  strings.TrimSpace(structuredMiss.rawResponse),
+					MissingStructuredOutput:  structuredMiss.cause,
+					MissingStructuredRawText: structuredMiss.rawResponse,
+				}, func(ctx context.Context, repairPayload string) (string, int64, time.Duration, error) {
+					return p.callReviewTool(ctx, systemPrompt, repairPayload)
 				})
+				if harnessErr != nil {
+					return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, enrichProviderParseError(harnessErr, structuredMiss.rawResponse, latency, tokens, p.routeName))
+				}
+				totalLatency := latency + result.Latency
+				totalTokens := tokens + result.Tokens
+				return ProviderResponse{
+					Result:          result.Result,
+					RawText:         result.RawText,
+					Latency:         totalLatency,
+					Tokens:          totalTokens,
+					FallbackStage:   result.FallbackStage,
+					Model:           p.routeName,
+					ResponsePayload: map[string]any{"text": result.RawText, "fallback_stage": result.FallbackStage},
+					SchemaReport:    &result.Report,
+				}, nil
 			}
 			if !isTimeoutError(err) || attempt == maxAttempts-1 {
 				return ProviderResponse{}, err
@@ -217,64 +174,24 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 			}
 			continue
 		}
-		stage := "direct"
-		if validationErr := validateReviewResultStrictJSON(raw); validationErr != nil {
-			repairedRaw, repairTokens, repairLatency, repairErr := p.callReviewTool(
-				ctx,
-				systemPrompt,
-				buildReviewRepairPayload(request, raw, validationErr),
-			)
-			latency += repairLatency
-			tokens += repairTokens
-			if repairErr != nil {
-				return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
-					cause:       repairErr,
-					rawResponse: raw,
-					latency:     latency,
-					tokens:      tokens,
-					model:       p.routeName,
-				})
-			}
-			if repairValidationErr := validateReviewResultStrictJSON(repairedRaw); repairValidationErr != nil {
-				result, salvageErr := salvageReviewResultAfterStrictValidationFailure(repairedRaw, repairValidationErr)
-				if salvageErr != nil {
-					return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
-						cause:       salvageErr,
-						rawResponse: repairedRaw,
-						latency:     latency,
-						tokens:      tokens,
-						model:       p.routeName,
-					})
-				}
-				return ProviderResponse{
-					Result:          result,
-					RawText:         repairedRaw,
-					Latency:         latency,
-					Tokens:          tokens,
-					FallbackStage:   "repair_retry",
-					Model:           p.routeName,
-					ResponsePayload: map[string]any{"text": repairedRaw, "fallback_stage": "repair_retry"},
-				}, nil
-			}
-			raw = repairedRaw
-			stage = "repair_retry"
+		result, harnessErr := harness.Execute(ctx, request, StructuredOutputCandidate{RawText: raw}, func(ctx context.Context, repairPayload string) (string, int64, time.Duration, error) {
+			return p.callReviewTool(ctx, systemPrompt, repairPayload)
+		})
+		if harnessErr != nil {
+			return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, enrichProviderParseError(harnessErr, raw, latency, tokens, p.routeName))
 		}
-		result, parseStage, parseErr := ParseReviewResult(raw)
-		if parseErr != nil {
-			return ProviderResponse{}, scheduler.NewTerminalError(parserErrorCode, &providerParseError{
-				cause:       parseErr,
-				rawResponse: raw,
-				latency:     latency,
-				tokens:      tokens,
-				model:       p.routeName,
-			})
-		}
-		if stage == "direct" {
-			stage = parseStage
-		} else {
-			stage = fallbackStageWithParseStage(stage, parseStage)
-		}
-		return ProviderResponse{Result: result, RawText: raw, Latency: latency, Tokens: tokens, FallbackStage: stage, Model: p.routeName, ResponsePayload: map[string]any{"text": raw, "fallback_stage": stage}}, nil
+		totalLatency := latency + result.Latency
+		totalTokens := tokens + result.Tokens
+		return ProviderResponse{
+			Result:          result.Result,
+			RawText:         result.RawText,
+			Latency:         totalLatency,
+			Tokens:          totalTokens,
+			FallbackStage:   result.FallbackStage,
+			Model:           p.routeName,
+			ResponsePayload: map[string]any{"text": result.RawText, "fallback_stage": result.FallbackStage},
+			SchemaReport:    &result.Report,
+		}, nil
 	}
 	return ProviderResponse{}, lastErr
 }
