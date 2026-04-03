@@ -136,8 +136,12 @@ install -m 0755 "$tmpdir/mreviewer" "$target"
 cat <<EOF
 Installed mreviewer to ${target}
 
-Next:
+First run:
   1. Ensure ${install_dir} is in your PATH
-  2. Run: mreviewer init
-  3. Run: mreviewer doctor
+  2. Run: mreviewer version
+  3. Run: mreviewer init --provider openai
+  4. Export: OPENAI_API_KEY=... and GITHUB_TOKEN=...
+  5. Run: mreviewer doctor
+  6. Preview a real PR safely:
+     mreviewer review --target <pr-or-mr-url> --dry-run -vv
 EOF

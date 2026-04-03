@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>mreviewer CLI Showcase</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0d12;
+      --panel: #0f1723;
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #e5eef8;
+      --muted: #94a3b8;
+      --accent: #5eead4;
+      --warn: #fbbf24;
+      --fail: #f87171;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top left, rgba(94, 234, 212, 0.08), transparent 38%),
+        radial-gradient(circle at bottom right, rgba(96, 165, 250, 0.12), transparent 42%),
+        linear-gradient(180deg, #0b0f16 0%, #06080d 100%);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 40px;
+    }
+
+    .frame {
+      width: 1240px;
+      border-radius: 22px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+      background: linear-gradient(180deg, rgba(15, 23, 35, 0.98), rgba(11, 17, 27, 0.98));
+    }
+
+    .bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .dots {
+      display: flex;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 999px;
+    }
+
+    .dot.red { background: #fb7185; }
+    .dot.yellow { background: #fbbf24; }
+    .dot.green { background: #34d399; }
+
+    .title {
+      font-size: 14px;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
+
+    .body {
+      padding: 28px 30px 32px;
+    }
+
+    .command {
+      margin: 0 0 18px;
+      color: var(--accent);
+      font: 600 18px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 16px/1.72 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: var(--text);
+    }
+
+    .hl-warn { color: var(--warn); }
+    .hl-fail { color: var(--fail); font-weight: 700; }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div class="bar">
+      <div class="dots">
+        <span class="dot red"></span>
+        <span class="dot yellow"></span>
+        <span class="dot green"></span>
+      </div>
+      <div class="title">mreviewer • first dry-run</div>
+      <div class="title">real output</div>
+    </div>
+    <div class="body">
+      <div class="command">$ mreviewer review --target https://github.com/fakechris/mreviewer/pull/65 --dry-run -vv</div>
+      <pre># Review Decision Brief
+
+## Final Verdict
+
+<span class="hl-fail">requested_changes</span>
+
+## What To Fix First
+
+- <span class="hl-fail">[critical]</span> FindUserByEmail存在SQL注入漏洞
+- <span class="hl-fail">[critical]</span> AdminDeleteProject存在SQL注入漏洞
+- <span class="hl-warn">[high]</span> SQL 注入漏洞：email 参数直接拼接入 SQL 字符串
+- <span class="hl-warn">[high]</span> SQL 注入漏洞：projectID 参数直接拼接入 DELETE SQL
+- [medium] 审计日志伪造风险：actor 来自不可信的用户输入
+
+<span class="muted">This is the actual mreviewer dry-run output rendered as a terminal card for the README.</span></pre>
+    </div>
+  </div>
+</body>
+</html>
