@@ -147,7 +147,7 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 					RawText:                  strings.TrimSpace(structuredMiss.rawResponse),
 					MissingStructuredOutput:  structuredMiss.cause,
 					MissingStructuredRawText: structuredMiss.rawResponse,
-				}, func(repairPayload string) (string, int64, time.Duration, error) {
+				}, func(ctx context.Context, repairPayload string) (string, int64, time.Duration, error) {
 					return p.callReviewTool(ctx, systemPrompt, repairPayload)
 				})
 				if harnessErr != nil {
@@ -174,7 +174,7 @@ func (p *MiniMaxProvider) ReviewWithSystemPrompt(ctx context.Context, request ct
 			}
 			continue
 		}
-		result, harnessErr := harness.Execute(ctx, request, StructuredOutputCandidate{RawText: raw}, func(repairPayload string) (string, int64, time.Duration, error) {
+		result, harnessErr := harness.Execute(ctx, request, StructuredOutputCandidate{RawText: raw}, func(ctx context.Context, repairPayload string) (string, int64, time.Duration, error) {
 			return p.callReviewTool(ctx, systemPrompt, repairPayload)
 		})
 		if harnessErr != nil {

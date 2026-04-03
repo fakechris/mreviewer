@@ -3939,6 +3939,34 @@ func TestBuildReviewRepairPayloadIncludesExplicitRepairGuidance(t *testing.T) {
 	}
 }
 
+func TestValidateReviewResultStrictIssuesRejectsTrailingJSON(t *testing.T) {
+	issues, err := validateReviewResultStrictIssues(`{"schema_version":"1.0","review_run_id":"rr-1","summary":"ok","findings":[]} {"extra":true}`)
+	if err == nil {
+		t.Fatal("expected trailing JSON error")
+	}
+	if len(issues) == 0 || issues[0].Path != "$" {
+		t.Fatalf("issues = %#v, want root trailing-content issue", issues)
+	}
+}
+
+func TestValidateReviewResultStrictIssuesRejectsFractionalIntegerFields(t *testing.T) {
+	raw := `{"schema_version":"1.0","review_run_id":"rr-1","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new_line","new_line":5.5}]}`
+	issues, err := validateReviewResultStrictIssues(raw)
+	if err == nil {
+		t.Fatal("expected strict validation error")
+	}
+	found := false
+	for _, issue := range issues {
+		if issue.Path == "$.findings[0].new_line" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected integer validation issue, got %#v", issues)
+	}
+}
+
 func TestRenderSummaryFromWalkthrough(t *testing.T) {
 	t.Run("full summary", func(t *testing.T) {
 		summary := SummaryResult{

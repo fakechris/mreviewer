@@ -43,12 +43,11 @@ type ReviewSchemaHarnessResult struct {
 	Latency       time.Duration
 }
 
-type ReviewRepairFunc func(string) (string, int64, time.Duration, error)
+type ReviewRepairFunc func(context.Context, string) (string, int64, time.Duration, error)
 
 type ReviewSchemaHarness struct{}
 
 func (ReviewSchemaHarness) Execute(ctx context.Context, request ctxpkg.ReviewRequest, candidate StructuredOutputCandidate, repair ReviewRepairFunc) (ReviewSchemaHarnessResult, error) {
-	_ = ctx
 	report := SchemaExecutionReport{}
 	if candidate.MissingStructuredOutput != nil {
 		report.Initial.MissingStructuredOutput = true
@@ -79,7 +78,7 @@ func (ReviewSchemaHarness) Execute(ctx context.Context, request ctxpkg.ReviewReq
 				schemaReport: &report,
 			}
 		}
-		return executeRepair(request, raw, candidate.MissingStructuredOutput, report.Initial.Issues, repair, report)
+		return executeRepair(ctx, request, raw, candidate.MissingStructuredOutput, report.Initial.Issues, repair, report)
 	}
 
 	initialIssues, initialErr := validateReviewResultStrictIssues(candidate.RawText)
@@ -111,11 +110,14 @@ func (ReviewSchemaHarness) Execute(ctx context.Context, request ctxpkg.ReviewReq
 			schemaReport: &report,
 		}
 	}
-	return executeRepair(request, candidate.RawText, initialErr, initialIssues, repair, report)
+	return executeRepair(ctx, request, candidate.RawText, initialErr, initialIssues, repair, report)
 }
 
-func executeRepair(request ctxpkg.ReviewRequest, raw string, repairReason error, repairIssues []SchemaIssue, repair ReviewRepairFunc, report SchemaExecutionReport) (ReviewSchemaHarnessResult, error) {
-	repairRaw, repairTokens, repairLatency, repairErr := repair(buildReviewRepairPayload(request, raw, repairReason, repairIssues))
+func executeRepair(ctx context.Context, request ctxpkg.ReviewRequest, raw string, repairReason error, repairIssues []SchemaIssue, repair ReviewRepairFunc, report SchemaExecutionReport) (ReviewSchemaHarnessResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ReviewSchemaHarnessResult{}, err
+	}
+	repairRaw, repairTokens, repairLatency, repairErr := repair(ctx, buildReviewRepairPayload(request, raw, repairReason, repairIssues))
 	report.RepairAttempted = true
 	if repairErr != nil {
 		return ReviewSchemaHarnessResult{}, &providerParseError{
@@ -183,10 +185,6 @@ func strictFailureCause(raw string, validationErr error) error {
 }
 
 func salvageStructuredMissRaw(raw string) (ReviewResult, string, bool) {
-	issues, err := validateReviewResultStrictIssues(raw)
-	if err != nil || len(issues) > 0 {
-		return ReviewResult{}, "", false
-	}
 	result, parseStage, parseErr := ParseReviewResult(raw)
 	if parseErr != nil {
 		return ReviewResult{}, "", false

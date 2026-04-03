@@ -394,7 +394,7 @@ func TestValidateReviewResultStrictJSONRejectsWrongOptionalFieldType(t *testing.
 	}
 }
 
-func TestOpenAIProviderMissingToolCallReturnsParserError(t *testing.T) {
+func TestOpenAIProviderMissingToolCallFallsBackWithSchemaReport(t *testing.T) {
 	transport := &captureTransport{responseBody: `{"choices":[{"message":{"content":"{\"schema_version\":\"1.0\",\"review_run_id\":\"123\",\"summary\":\"ok\",\"findings\":[]}"}}],"usage":{"completion_tokens":21}}`}
 	provider, err := NewProviderFromConfig(ProviderConfig{
 		Kind:       "openai",

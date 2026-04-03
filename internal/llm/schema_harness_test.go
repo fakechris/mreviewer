@@ -44,7 +44,7 @@ func TestReviewSchemaHarnessRepairsRecoverableStructuredMiss(t *testing.T) {
 	}
 
 	var repairPayload string
-	result, err := harness.Execute(context.Background(), request, candidate, func(payload string) (string, int64, time.Duration, error) {
+	result, err := harness.Execute(context.Background(), request, candidate, func(_ context.Context, payload string) (string, int64, time.Duration, error) {
 		repairPayload = payload
 		return `{"schema_version":"1.0","review_run_id":"rr-1","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","path":"main.go","anchor_kind":"new_line","new_line":5}]}`, 17, 3 * time.Millisecond, nil
 	})
@@ -82,7 +82,7 @@ func TestReviewSchemaHarnessRepairPayloadIncludesStructuredIssues(t *testing.T) 
 	}
 
 	var repairPayload map[string]any
-	_, err := harness.Execute(context.Background(), request, candidate, func(payload string) (string, int64, time.Duration, error) {
+	_, err := harness.Execute(context.Background(), request, candidate, func(_ context.Context, payload string) (string, int64, time.Duration, error) {
 		if unmarshalErr := json.Unmarshal([]byte(payload), &repairPayload); unmarshalErr != nil {
 			t.Fatalf("unmarshal repair payload: %v", unmarshalErr)
 		}
@@ -100,6 +100,53 @@ func TestReviewSchemaHarnessRepairPayloadIncludesStructuredIssues(t *testing.T) 
 	}
 }
 
+func TestReviewSchemaHarnessSalvagesQuotedJSONStringWithoutRepair(t *testing.T) {
+	harness := ReviewSchemaHarness{}
+	request := ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "rr-quoted"}
+	quoted := `"{\"schema_version\":\"1.0\",\"review_run_id\":\"rr-quoted\",\"summary\":\"ok\",\"findings\":[]}"`
+	candidate := StructuredOutputCandidate{
+		RawText:                  quoted,
+		MissingStructuredOutput:  errors.New("llm: missing tool_use block \"submit_review\""),
+		MissingStructuredRawText: quoted,
+	}
+
+	called := false
+	result, err := harness.Execute(context.Background(), request, candidate, func(_ context.Context, _ string) (string, int64, time.Duration, error) {
+		called = true
+		return "", 0, 0, errors.New("should not be called")
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if called {
+		t.Fatal("repair should not be called for salvageable quoted JSON")
+	}
+	if result.FallbackStage != "missing_tool_use_quoted_json_string" {
+		t.Fatalf("fallback stage = %q, want missing_tool_use_quoted_json_string", result.FallbackStage)
+	}
+	if !result.Report.FinalValid {
+		t.Fatal("expected final_valid=true")
+	}
+}
+
+func TestReviewSchemaHarnessStopsWhenContextCancelledBeforeRepair(t *testing.T) {
+	harness := ReviewSchemaHarness{}
+	request := ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "rr-cancel"}
+	candidate := StructuredOutputCandidate{
+		RawText: `{"schema_version":"1.0","review_run_id":"rr-cancel","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","path":"main.go","anchor_kind":"new_line","new_line":5}]}`,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := harness.Execute(ctx, request, candidate, func(_ context.Context, _ string) (string, int64, time.Duration, error) {
+		t.Fatal("repair should not be called after cancellation")
+		return "", 0, 0, nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
 func TestReviewSchemaHarnessReturnsStructuredFailureReportAfterInvalidRepair(t *testing.T) {
 	harness := ReviewSchemaHarness{}
 	request := ctxpkg.ReviewRequest{SchemaVersion: "1.0", ReviewRunID: "rr-2"}
@@ -107,7 +154,7 @@ func TestReviewSchemaHarnessReturnsStructuredFailureReportAfterInvalidRepair(t *
 		RawText: `{"schema_version":"1.0","review_run_id":"rr-2","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","anchor_kind":"new_line","new_line":5}]}`,
 	}
 
-	_, err := harness.Execute(context.Background(), request, candidate, func(string) (string, int64, time.Duration, error) {
+	_, err := harness.Execute(context.Background(), request, candidate, func(_ context.Context, _ string) (string, int64, time.Duration, error) {
 		return `{"schema_version":"1.0","review_run_id":"rr-2","summary":"ok","findings":[{"category":"bug","severity":"high","confidence":0.91,"title":"Issue","body_markdown":"body","anchor_kind":"new_line","new_line":5}]}`, 9, time.Millisecond, nil
 	})
 	if err == nil {

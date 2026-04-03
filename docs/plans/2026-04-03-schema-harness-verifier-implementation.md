@@ -1,12 +1,14 @@
 # Schema Harness Verifier Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> Execute this plan task-by-task using your team's standard implementation workflow.
 
 **Goal:** Turn the review structured-output schema into a first-class reusable harness, then add Wonder Verifier-style schema-accuracy benchmarking for provider routes such as Kimi Turbo, Doubao, and MiniMax.
 
 **Architecture:** Move the current review-output validation, repair, salvage, and reporting flow out of provider-specific code into a shared `internal/llm` schema harness. Providers should only fetch raw structured output and delegate all schema processing to the harness. Add a benchmark command that runs serialized `ReviewRequest` fixtures through configured routes and reports first-pass schema accuracy, repair rate, final success rate, and failure reasons.
 
 **Tech Stack:** Go, existing `internal/llm` provider abstractions, existing config/model route registry, current review JSON schema validator, JSONL fixtures, targeted `go test` plus optional live route checks.
+
+## Tasks
 
 ### Task 1: Introduce first-class schema harness types
 

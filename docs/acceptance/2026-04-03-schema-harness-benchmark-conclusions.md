@@ -77,8 +77,9 @@ The usable Doubao route for current testing is:
 
 We also confirmed that Doubao behavior is not identical to a clean OpenAI tool-call implementation. It can return valid JSON in assistant content without emitting a tool call. We added direct salvage for that path, which improved the 10-request run from:
 
-- `0.7 -> 0.8` initial/final success
-- `3 -> 2` missing-tool-use failures
+- `initial_schema_accuracy: 0.7 -> 0.8`
+- `final_success_rate: 0.7 -> 0.8`
+- `missing_tool_use` failures: `3 -> 2`
 
 ### 4. Kimi and MiniMax are currently better schema-harness fits than Doubao
 

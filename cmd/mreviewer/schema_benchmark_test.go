@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -93,5 +94,45 @@ models:
 	}
 	if _, ok := report["failure_reasons"]; !ok {
 		t.Fatalf("failure_reasons missing from report: %#v", report)
+	}
+}
+
+func TestLoadSchemaBenchmarkRequestsAcceptsLargeJSONLLines(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := filepath.Join(tmpDir, "requests.jsonl")
+	largePatch := strings.Repeat("x", 80*1024)
+	line := fmt.Sprintf("{\"schema_version\":\"1.0\",\"review_run_id\":\"rr-large\",\"changes\":[{\"path\":\"main.go\",\"status\":\"modified\",\"hunks\":[{\"patch\":%q}]}]}\n", largePatch)
+	if err := os.WriteFile(inputPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	requests, err := loadSchemaBenchmarkRequests(inputPath)
+	if err != nil {
+		t.Fatalf("loadSchemaBenchmarkRequests: %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("len(requests) = %d, want 1", len(requests))
+	}
+}
+
+func TestNormalizeFailureReason(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "empty", err: nil, want: "unknown_error"},
+		{name: "parser", err: errors.New("llm: strict validation failed: $.field is required"), want: "validation_error"},
+		{name: "missing tool use", err: errors.New("llm: missing tool_use block \"submit_review\""), want: "missing_tool_use"},
+		{name: "timeout", err: errors.New("provider timeout while calling route"), want: "timeout"},
+		{name: "unauthorized", err: errors.New("openai: status 401: unauthorized"), want: "unauthorized"},
+		{name: "other", err: errors.New("totally new failure"), want: "unknown_error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeFailureReason(tc.err); got != tc.want {
+				t.Fatalf("normalizeFailureReason(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
 	}
 }

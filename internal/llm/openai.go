@@ -221,7 +221,7 @@ func (p *OpenAIProvider) ReviewWithSystemPrompt(ctx context.Context, request ctx
 					RawText:                  strings.TrimSpace(structuredMiss.rawResponse),
 					MissingStructuredOutput:  structuredMiss.cause,
 					MissingStructuredRawText: structuredMiss.rawResponse,
-				}, func(repairPayload string) (string, int64, time.Duration, error) {
+				}, func(ctx context.Context, repairPayload string) (string, int64, time.Duration, error) {
 					repairedRaw, repairTokens, repairErr := p.call(ctx, p.requestPayloadWithUserContent(systemPrompt, repairPayload))
 					return repairedRaw, repairTokens, 0, repairErr
 				})
@@ -248,7 +248,7 @@ func (p *OpenAIProvider) ReviewWithSystemPrompt(ctx context.Context, request ctx
 			}
 			continue
 		}
-		result, harnessErr := harness.Execute(ctx, request, StructuredOutputCandidate{RawText: raw}, func(repairPayload string) (string, int64, time.Duration, error) {
+		result, harnessErr := harness.Execute(ctx, request, StructuredOutputCandidate{RawText: raw}, func(ctx context.Context, repairPayload string) (string, int64, time.Duration, error) {
 			repairedRaw, repairTokens, repairErr := p.call(ctx, p.requestPayloadWithUserContent(systemPrompt, repairPayload))
 			return repairedRaw, repairTokens, 0, repairErr
 		})

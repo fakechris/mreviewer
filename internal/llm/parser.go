@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
 	"sort"
@@ -781,7 +782,8 @@ func validateReviewResultStrictIssues(raw string) ([]SchemaIssue, error) {
 		wrapped := fmt.Errorf("llm: strict validation decode failed: %w", err)
 		return []SchemaIssue{{Path: "$", Message: wrapped.Error()}}, wrapped
 	}
-	if decoder.More() {
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
 		err := fmt.Errorf("llm: strict validation found trailing JSON content")
 		return []SchemaIssue{{Path: "$", Message: err.Error()}}, err
 	}
@@ -876,8 +878,11 @@ func validateValueAgainstSchema(value any, schema map[string]any, path string) [
 			return []string{fmt.Sprintf("%s must be number", path)}
 		}
 	case "integer":
-		switch value.(type) {
+		switch typed := value.(type) {
 		case json.Number, float64, float32, int, int32, int64:
+			if !isIntegralValue(typed) {
+				return []string{fmt.Sprintf("%s must be integer", path)}
+			}
 			return nil
 		default:
 			return []string{fmt.Sprintf("%s must be integer", path)}
@@ -888,6 +893,26 @@ func validateValueAgainstSchema(value any, schema map[string]any, path string) [
 		}
 	}
 	return nil
+}
+
+func isIntegralValue(value any) bool {
+	switch typed := value.(type) {
+	case int, int32, int64:
+		return true
+	case float32:
+		return math.Trunc(float64(typed)) == float64(typed)
+	case float64:
+		return math.Trunc(typed) == typed
+	case json.Number:
+		text := strings.TrimSpace(typed.String())
+		if text == "" {
+			return false
+		}
+		rat, ok := new(big.Rat).SetString(text)
+		return ok && rat.IsInt()
+	default:
+		return false
+	}
 }
 
 func schemaAllowsNull(schema map[string]any) bool {

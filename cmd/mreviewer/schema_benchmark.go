@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -121,11 +120,7 @@ Outputs Wonder Verifier-style summary metrics as JSON.
 				successCount++
 				continue
 			}
-			reason := strings.TrimSpace(reviewErr.Error())
-			if reason == "" {
-				reason = "unknown_error"
-			}
-			summary.FailureReasons[reason]++
+			summary.FailureReasons[normalizeFailureReason(reviewErr)]++
 		}
 
 		if summary.Requests > 0 {
@@ -153,22 +148,47 @@ func loadSchemaBenchmarkRequests(path string) ([]ctxpkg.ReviewRequest, error) {
 	defer file.Close()
 
 	var requests []ctxpkg.ReviewRequest
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
+	decoder := json.NewDecoder(file)
+	for {
 		var request ctxpkg.ReviewRequest
-		if err := json.Unmarshal([]byte(line), &request); err != nil {
+		if err := decoder.Decode(&request); err != nil {
+			if err == io.EOF {
+				break
+			}
 			return nil, fmt.Errorf("parse jsonl line: %w", err)
 		}
 		requests = append(requests, request)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
 	return requests, nil
+}
+
+func normalizeFailureReason(err error) string {
+	if err == nil {
+		return "unknown_error"
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case text == "":
+		return "unknown_error"
+	case strings.Contains(text, "missing tool_use"):
+		return "missing_tool_use"
+	case strings.Contains(text, "strict validation failed"):
+		return "validation_error"
+	case strings.Contains(text, "strict validation decode failed"):
+		return "validation_error"
+	case strings.Contains(text, "timeout"):
+		return "timeout"
+	case strings.Contains(text, "status 401"), strings.Contains(text, "unauthorized"):
+		return "unauthorized"
+	case strings.Contains(text, "status 429"), strings.Contains(text, "rate limit"):
+		return "rate_limited"
+	case strings.Contains(text, "status 5"):
+		return "upstream_5xx"
+	case strings.Contains(text, "parse response"):
+		return "response_parse_error"
+	default:
+		return "unknown_error"
+	}
 }
 
 func splitCSVArg(raw string) []string {
