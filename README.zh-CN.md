@@ -80,7 +80,7 @@ mreviewer init --provider openai
 mreviewer init --provider zhipuai
 ```
 
-对智谱 `GLM-5` / `GLM-5.1`，当前建议优先使用 `tool_call` 路径。`2026-04-10` 的 live probe 表明，这条 endpoint 上 `json_schema strict=true` 仍会出现 `429/code=1305` 拥挤，以及拿到 `200` 但返回非 schema 文本的情况，因此不适合作为首选生产路径。
+对智谱 `GLM-5` / `GLM-5.1`，当前建议优先使用 `tool_call` 路径。`2026-04-10` 的 live probe 表明，这条 endpoint 上 `json_schema strict=true` 仍会出现 `429/code=1305` 拥挤，以及拿到 `200` 但返回非 schema 文本的情况，因此不适合作为首选生产路径（见[验收探针记录](docs/acceptance/2026-04-10-zhipu-glm51-structured-output-probe.md)）。
 
 如果你只想先看生成出来的配置，不写文件：
 

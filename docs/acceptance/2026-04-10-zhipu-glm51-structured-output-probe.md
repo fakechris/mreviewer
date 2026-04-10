@@ -15,7 +15,8 @@ This note records a live probe against Zhipu's official coding endpoint:
 
 Raw benchmark artifact:
 
-- `/tmp/glm51_benchmark_2026-04-10.json`
+- local-only capture during the 2026-04-10 run: `/tmp/glm51_benchmark_2026-04-10.json`
+- repo-tracked canonical summary: this document
 
 ## Summary
 

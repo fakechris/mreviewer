@@ -4304,8 +4304,8 @@ func TestOpenAIProviderDeepSeekCompatMode(t *testing.T) {
 	if _, ok := payload["reasoning_effort"]; ok {
 		t.Fatal("compat mode should drop reasoning_effort")
 	}
-	if _, ok := payload["max_tokens"]; !ok {
-		t.Fatal("compat mode should use max_tokens")
+	if got := payload["max_tokens"]; got != int64(12000) {
+		t.Fatalf("max_tokens = %#v, want 12000", got)
 	}
 	if _, ok := payload["max_completion_tokens"]; ok {
 		t.Fatal("compat mode should not use max_completion_tokens")

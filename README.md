@@ -80,7 +80,7 @@ If you want to start with Zhipu GLM-5 instead of OpenAI:
 mreviewer init --provider zhipuai
 ```
 
-For Zhipu `GLM-5` / `GLM-5.1`, prefer `tool_call` routes. A live probe on 2026-04-10 showed intermittent `429/code=1305` congestion and non-schema responses under `json_schema strict=true`, so strict JSON-schema mode should not be treated as the primary production path on this endpoint.
+For Zhipu `GLM-5` / `GLM-5.1`, prefer `tool_call` routes. A live probe on 2026-04-10 showed intermittent `429/code=1305` congestion and non-schema responses under `json_schema strict=true`, so strict JSON-schema mode should not be treated as the primary production path on this endpoint (see [the acceptance probe](docs/acceptance/2026-04-10-zhipu-glm51-structured-output-probe.md)).
 
 If you want to preview the generated config without writing files:
 

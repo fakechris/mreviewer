@@ -183,8 +183,12 @@ func (p *OpenAIProvider) requestPayloadWithUserContent(systemPrompt string, user
 			"type":     "function",
 			"function": fnDef,
 		}}
-		if p.compat != nil && strings.TrimSpace(p.compat.ToolChoiceMode) != "" {
-			payload["tool_choice"] = strings.TrimSpace(p.compat.ToolChoiceMode)
+		toolChoiceMode := ""
+		if p.compat != nil {
+			toolChoiceMode = strings.TrimSpace(p.compat.ToolChoiceMode)
+		}
+		if toolChoiceMode != "" {
+			payload["tool_choice"] = toolChoiceMode
 		} else {
 			payload["tool_choice"] = map[string]any{
 				"type": "function",

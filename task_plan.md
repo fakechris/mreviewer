@@ -14,5 +14,5 @@ Run live GLM-5 provider checks against Zhipu's official endpoint, with emphasis 
 
 ## Output
 - Direct probe conclusion: `tool_call + auto` is usable on Zhipu's coding endpoint, but `json_schema strict=true` is not reliable enough to be the primary path.
-- Benchmark artifact: `/tmp/glm51_benchmark_2026-04-10.json`
+- Benchmark artifact: `/tmp/glm51_benchmark_2026-04-10.json` (local-only, not checked in)
 - Product-facing evidence doc: `docs/acceptance/2026-04-10-zhipu-glm51-structured-output-probe.md`

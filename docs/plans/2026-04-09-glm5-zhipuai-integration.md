@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Add Zhipu payload compatibility
+## Task 1: Add Zhipu payload compatibility
 
 **Files:**
 - Modify: `internal/llm/provider.go`
@@ -54,7 +54,7 @@ git add internal/llm/provider.go internal/llm/openai.go internal/llm/factory.go 
 git commit -m "feat: add zhipuai openai compat provider"
 ```
 
-### Task 2: Add personal CLI init support
+## Task 2: Add personal CLI init support
 
 **Files:**
 - Modify: `cmd/mreviewer/init_doctor.go`
@@ -94,7 +94,7 @@ git add cmd/mreviewer/init_doctor.go cmd/mreviewer/init_doctor_test.go cmd/mrevi
 git commit -m "feat: add zhipuai init template"
 ```
 
-### Task 3: Update sample config and docs
+## Task 3: Update sample config and docs
 
 **Files:**
 - Modify: `.env.example`
@@ -133,7 +133,7 @@ git add .env.example config.example.yaml README.md README.zh-CN.md
 git commit -m "docs: document glm-5 zhipuai setup"
 ```
 
-### Task 4: Final verification
+## Task 4: Final verification
 
 **Files:**
 - Modify: none
