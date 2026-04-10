@@ -4278,11 +4278,12 @@ func TestOpenAIProviderDefaultPayloadUsesDeveloperRole(t *testing.T) {
 
 func TestOpenAIProviderDeepSeekCompatMode(t *testing.T) {
 	p, err := NewOpenAIProvider(ProviderConfig{
-		BaseURL:         "https://api.deepseek.com/v1",
-		APIKey:          "test",
-		Model:           "deepseek-chat",
-		ReasoningEffort: "high",
-		CompatMode:      DeepSeekCompatMode(),
+		BaseURL:             "https://api.deepseek.com/v1",
+		APIKey:              "test",
+		Model:               "deepseek-chat",
+		MaxCompletionTokens: 12000,
+		ReasoningEffort:     "high",
+		CompatMode:          DeepSeekCompatMode(),
 	})
 	if err != nil {
 		t.Fatal(err)
