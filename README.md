@@ -74,6 +74,14 @@ mreviewer init --provider openai
 
 This writes `config.yaml`, creates `.mreviewer/state/`, and defaults to local SQLite. You do not need to hand-edit YAML to get started.
 
+If you want to start with Zhipu GLM-5 instead of OpenAI:
+
+```bash
+mreviewer init --provider zhipuai
+```
+
+For Zhipu `GLM-5` / `GLM-5.1`, prefer `tool_call` routes. A live probe on 2026-04-10 showed intermittent `429/code=1305` congestion and non-schema responses under `json_schema strict=true`, so strict JSON-schema mode should not be treated as the primary production path on this endpoint (see [the acceptance probe](docs/acceptance/2026-04-10-zhipu-glm51-structured-output-probe.md)).
+
 If you want to preview the generated config without writing files:
 
 ```bash
@@ -84,6 +92,13 @@ mreviewer init --provider openai --dry-run
 
 ```bash
 export OPENAI_API_KEY=...
+export GITHUB_TOKEN=...
+```
+
+For Zhipu GLM-5, export `ZHIPUAI_API_KEY` instead of `OPENAI_API_KEY`:
+
+```bash
+export ZHIPUAI_API_KEY=...
 export GITHUB_TOKEN=...
 ```
 
@@ -172,6 +187,12 @@ curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/in
 
 # generate config
 mreviewer init --provider openai
+
+# or use Zhipu GLM-5
+mreviewer init --provider zhipuai
+
+# Zhipu recommendation: keep output_mode=tool_call
+# strict json_schema is not yet reliable on this endpoint
 
 # validate setup
 mreviewer doctor

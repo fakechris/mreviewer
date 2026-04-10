@@ -45,6 +45,7 @@ func printTopLevelHelp(stdout io.Writer) {
 	_, _ = fmt.Fprintln(stdout)
 	_, _ = fmt.Fprintln(stdout, "Examples:")
 	_, _ = fmt.Fprintln(stdout, "  mreviewer init --provider openai")
+	_, _ = fmt.Fprintln(stdout, "  mreviewer init --provider zhipuai")
 	_, _ = fmt.Fprintln(stdout, "  mreviewer doctor --json")
 	_, _ = fmt.Fprintln(stdout, "  mreviewer review --target https://github.com/acme/repo/pull/17 --dry-run -vv")
 	_, _ = fmt.Fprintln(stdout, "  mreviewer serve --config config.yaml --dry-run")

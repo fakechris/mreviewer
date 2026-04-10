@@ -13,10 +13,10 @@ import (
 
 	"github.com/mreviewer/mreviewer/internal/config"
 	"github.com/mreviewer/mreviewer/internal/database"
+	"github.com/mreviewer/mreviewer/internal/gitlab"
 	"github.com/mreviewer/mreviewer/internal/llm"
 	"github.com/mreviewer/mreviewer/internal/logging"
 	platformgithub "github.com/mreviewer/mreviewer/internal/platform/github"
-	"github.com/mreviewer/mreviewer/internal/gitlab"
 )
 
 const (
@@ -115,7 +115,7 @@ Examples:
 `)
 	fs.StringVar(&opts.configPath, "config", defaultPersonalConfigPath, "Path to config file")
 	fs.BoolVar(&opts.force, "force", false, "Overwrite config file if it already exists")
-	fs.StringVar(&opts.provider, "provider", "openai", "Provider template to initialize: openai|minimax|anthropic")
+	fs.StringVar(&opts.provider, "provider", "openai", "Provider template to initialize: openai|minimax|anthropic|zhipuai")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "Render the config template without writing files")
 	fs.BoolVar(&opts.dryRun, "dryrun", false, "Alias for --dry-run")
 	if err := fs.Parse(cleanedArgs); err != nil {
@@ -169,6 +169,16 @@ func renderPersonalConfig(provider string) (string, error) {
 			BaseURL:   "https://api.anthropic.com",
 			APIKeyEnv: "${ANTHROPIC_API_KEY}",
 			Model:     "claude-sonnet-4-6",
+			Output:    "tool_call",
+			Tokens:    "max_tokens: 12000",
+		},
+		"zhipuai": {
+			ModelID:   "zhipuai_default",
+			ChainID:   "review_primary",
+			Provider:  "zhipuai",
+			BaseURL:   "https://open.bigmodel.cn/api/coding/paas/v4",
+			APIKeyEnv: "${ZHIPUAI_API_KEY}",
+			Model:     "glm-5",
 			Output:    "tool_call",
 			Tokens:    "max_tokens: 12000",
 		},

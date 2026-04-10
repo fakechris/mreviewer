@@ -150,6 +150,9 @@ type OpenAICompatMode struct {
 	DropReasoningEffort bool
 	// UseMaxTokens forces max_tokens instead of max_completion_tokens.
 	UseMaxTokens bool
+	// ToolChoiceMode overrides the default named-function tool_choice payload.
+	// Example: "auto" for providers that only support automatic tool selection.
+	ToolChoiceMode string
 }
 
 type ProviderConfig struct {

@@ -140,7 +140,9 @@ First run:
   1. Ensure ${install_dir} is in your PATH
   2. Run: mreviewer version
   3. Run: mreviewer init --provider openai
+     Or:  mreviewer init --provider zhipuai
   4. Export: OPENAI_API_KEY=... and GITHUB_TOKEN=...
+     Or:  ZHIPUAI_API_KEY=... and GITHUB_TOKEN=...
   5. Run: mreviewer doctor
   6. Preview a real PR safely:
      mreviewer review --target <pr-or-mr-url> --dry-run -vv

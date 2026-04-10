@@ -4278,11 +4278,12 @@ func TestOpenAIProviderDefaultPayloadUsesDeveloperRole(t *testing.T) {
 
 func TestOpenAIProviderDeepSeekCompatMode(t *testing.T) {
 	p, err := NewOpenAIProvider(ProviderConfig{
-		BaseURL:         "https://api.deepseek.com/v1",
-		APIKey:          "test",
-		Model:           "deepseek-chat",
-		ReasoningEffort: "high",
-		CompatMode:      DeepSeekCompatMode(),
+		BaseURL:             "https://api.deepseek.com/v1",
+		APIKey:              "test",
+		Model:               "deepseek-chat",
+		MaxCompletionTokens: 12000,
+		ReasoningEffort:     "high",
+		CompatMode:          DeepSeekCompatMode(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -4304,8 +4305,8 @@ func TestOpenAIProviderDeepSeekCompatMode(t *testing.T) {
 	if _, ok := payload["reasoning_effort"]; ok {
 		t.Fatal("compat mode should drop reasoning_effort")
 	}
-	if _, ok := payload["max_tokens"]; !ok {
-		t.Fatal("compat mode should use max_tokens")
+	if got := payload["max_tokens"]; got != int64(12000) {
+		t.Fatalf("max_tokens = %#v, want 12000", got)
 	}
 	if _, ok := payload["max_completion_tokens"]; ok {
 		t.Fatal("compat mode should not use max_completion_tokens")
@@ -4349,6 +4350,46 @@ func TestOpenAIProviderCompatModePreservesMaxCompletionTokensValue(t *testing.T)
 	}
 	if maxTokens != int64(12000) {
 		t.Fatalf("max_tokens = %v, want 12000 (from MaxCompletionTokens)", maxTokens)
+	}
+	if _, ok := payload["max_completion_tokens"]; ok {
+		t.Fatal("compat mode should not emit max_completion_tokens")
+	}
+}
+
+func TestOpenAIProviderZhipuAICompatMode(t *testing.T) {
+	p, err := NewOpenAIProvider(ProviderConfig{
+		BaseURL:             "https://open.bigmodel.cn/api/coding/paas/v4",
+		APIKey:              "test",
+		Model:               "glm-5",
+		MaxCompletionTokens: 12000,
+		ReasoningEffort:     "high",
+		CompatMode:          ZhipuAICompatMode(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := p.requestPayloadWithUserContent("system prompt", "user content")
+
+	msgs := payload["messages"].([]map[string]any)
+	if msgs[0]["role"] != "system" {
+		t.Fatalf("compat role = %q, want system", msgs[0]["role"])
+	}
+	if _, ok := payload["parallel_tool_calls"]; ok {
+		t.Fatal("compat mode should drop parallel_tool_calls")
+	}
+	tools := payload["tools"].([]map[string]any)
+	fn := tools[0]["function"].(map[string]any)
+	if _, ok := fn["strict"]; ok {
+		t.Fatal("compat mode should drop strict from tool function")
+	}
+	if _, ok := payload["reasoning_effort"]; ok {
+		t.Fatal("compat mode should drop reasoning_effort")
+	}
+	if got := payload["tool_choice"]; got != "auto" {
+		t.Fatalf("tool_choice = %#v, want auto", got)
+	}
+	if _, ok := payload["max_tokens"]; !ok {
+		t.Fatal("compat mode should use max_tokens")
 	}
 	if _, ok := payload["max_completion_tokens"]; ok {
 		t.Fatal("compat mode should not emit max_completion_tokens")
