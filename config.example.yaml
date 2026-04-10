@@ -41,6 +41,16 @@ models:
     max_completion_tokens: 12000
     reasoning_effort: medium
     temperature: 0.2
+  # Prefer tool_call for Zhipu GLM-5/GLM-5.1.
+  # 2026-04-10 live probes showed json_schema strict=true can still return plain text on this endpoint.
+  # zhipu_glm5:
+  #   provider: zhipuai
+  #   base_url: ${ZHIPUAI_BASE_URL}
+  #   api_key: ${ZHIPUAI_API_KEY}
+  #   model: glm-5
+  #   output_mode: tool_call
+  #   max_tokens: 12000
+  #   temperature: 0.2
   # doubao_turbo:
   #   provider: ark_openai
   #   base_url: https://ark.cn-beijing.volces.com/api/coding/v3

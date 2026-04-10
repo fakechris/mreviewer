@@ -4355,6 +4355,46 @@ func TestOpenAIProviderCompatModePreservesMaxCompletionTokensValue(t *testing.T)
 	}
 }
 
+func TestOpenAIProviderZhipuAICompatMode(t *testing.T) {
+	p, err := NewOpenAIProvider(ProviderConfig{
+		BaseURL:             "https://open.bigmodel.cn/api/coding/paas/v4",
+		APIKey:              "test",
+		Model:               "glm-5",
+		MaxCompletionTokens: 12000,
+		ReasoningEffort:     "high",
+		CompatMode:          ZhipuAICompatMode(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := p.requestPayloadWithUserContent("system prompt", "user content")
+
+	msgs := payload["messages"].([]map[string]any)
+	if msgs[0]["role"] != "system" {
+		t.Fatalf("compat role = %q, want system", msgs[0]["role"])
+	}
+	if _, ok := payload["parallel_tool_calls"]; ok {
+		t.Fatal("compat mode should drop parallel_tool_calls")
+	}
+	tools := payload["tools"].([]map[string]any)
+	fn := tools[0]["function"].(map[string]any)
+	if _, ok := fn["strict"]; ok {
+		t.Fatal("compat mode should drop strict from tool function")
+	}
+	if _, ok := payload["reasoning_effort"]; ok {
+		t.Fatal("compat mode should drop reasoning_effort")
+	}
+	if got := payload["tool_choice"]; got != "auto" {
+		t.Fatalf("tool_choice = %#v, want auto", got)
+	}
+	if _, ok := payload["max_tokens"]; !ok {
+		t.Fatal("compat mode should use max_tokens")
+	}
+	if _, ok := payload["max_completion_tokens"]; ok {
+		t.Fatal("compat mode should not emit max_completion_tokens")
+	}
+}
+
 func TestRecordProviderMetricsWithSubProviders(t *testing.T) {
 	reg := metrics.NewRegistry()
 	p := &Processor{metrics: reg}

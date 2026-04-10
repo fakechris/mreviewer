@@ -183,11 +183,15 @@ func (p *OpenAIProvider) requestPayloadWithUserContent(systemPrompt string, user
 			"type":     "function",
 			"function": fnDef,
 		}}
-		payload["tool_choice"] = map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name": reviewSubmitToolName,
-			},
+		if p.compat != nil && strings.TrimSpace(p.compat.ToolChoiceMode) != "" {
+			payload["tool_choice"] = strings.TrimSpace(p.compat.ToolChoiceMode)
+		} else {
+			payload["tool_choice"] = map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name": reviewSubmitToolName,
+				},
+			}
 		}
 	}
 	return payload
@@ -383,9 +387,27 @@ func ArkOpenAICompatMode() *OpenAICompatMode {
 	}
 }
 
+func ZhipuAICompatMode() *OpenAICompatMode {
+	return &OpenAICompatMode{
+		UseSystemRole:         true,
+		DropParallelToolCalls: true,
+		DropStrictSchema:      true,
+		DropReasoningEffort:   true,
+		UseMaxTokens:          true,
+		ToolChoiceMode:        "auto",
+	}
+}
+
 func NewArkOpenAIProvider(cfg ProviderConfig) (*OpenAIProvider, error) {
 	if cfg.CompatMode == nil {
 		cfg.CompatMode = ArkOpenAICompatMode()
+	}
+	return NewOpenAIProvider(cfg)
+}
+
+func NewZhipuAIProvider(cfg ProviderConfig) (*OpenAIProvider, error) {
+	if cfg.CompatMode == nil {
+		cfg.CompatMode = ZhipuAICompatMode()
 	}
 	return NewOpenAIProvider(cfg)
 }

@@ -74,6 +74,14 @@ mreviewer init --provider openai
 
 这会生成 `config.yaml`，并创建默认本地状态目录 `.mreviewer/state/`。第一次上手不需要手改 YAML。
 
+如果你想直接用智谱 `GLM-5`，可以改成：
+
+```bash
+mreviewer init --provider zhipuai
+```
+
+对智谱 `GLM-5` / `GLM-5.1`，当前建议优先使用 `tool_call` 路径。`2026-04-10` 的 live probe 表明，这条 endpoint 上 `json_schema strict=true` 仍会出现 `429/code=1305` 拥挤，以及拿到 `200` 但返回非 schema 文本的情况，因此不适合作为首选生产路径。
+
 如果你只想先看生成出来的配置，不写文件：
 
 ```bash
@@ -84,6 +92,13 @@ mreviewer init --provider openai --dry-run
 
 ```bash
 export OPENAI_API_KEY=...
+export GITHUB_TOKEN=...
+```
+
+如果使用智谱 `GLM-5`，把 `OPENAI_API_KEY` 换成 `ZHIPUAI_API_KEY`：
+
+```bash
+export ZHIPUAI_API_KEY=...
 export GITHUB_TOKEN=...
 ```
 
@@ -172,6 +187,12 @@ curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/in
 
 # 生成配置
 mreviewer init --provider openai
+
+# 或直接用智谱 GLM-5
+mreviewer init --provider zhipuai
+
+# 智谱当前建议保持 output_mode=tool_call
+# 不建议把 strict json_schema 作为主路径
 
 # 校验环境
 mreviewer doctor

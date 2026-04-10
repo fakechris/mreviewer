@@ -79,6 +79,22 @@ func TestNewProviderFromConfigSupportsKnownKinds(t *testing.T) {
 		}
 	})
 
+	t.Run("zhipuai", func(t *testing.T) {
+		provider, err := NewProviderFromConfig(ProviderConfig{
+			Kind:      "zhipuai",
+			BaseURL:   "https://open.bigmodel.cn/api/coding/paas/v4",
+			APIKey:    "secret",
+			Model:     "glm-5",
+			RouteName: "zhipuai",
+		})
+		if err != nil {
+			t.Fatalf("NewProviderFromConfig: %v", err)
+		}
+		if provider == nil {
+			t.Fatal("provider is nil")
+		}
+	})
+
 	t.Run("fireworks_router", func(t *testing.T) {
 		provider, err := NewProviderFromConfig(ProviderConfig{
 			Kind:      "fireworks_router",

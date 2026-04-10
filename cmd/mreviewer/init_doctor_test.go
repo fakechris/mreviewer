@@ -97,7 +97,7 @@ func TestRunDoctorCommandJSONReportsMissingPlatformTokens(t *testing.T) {
 	defer func() { _ = os.Chdir(wd) }()
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
-if err := os.WriteFile(configPath, []byte(`
+	if err := os.WriteFile(configPath, []byte(`
 app_env: development
 database_dsn: "file:.mreviewer/state/mreviewer.db?_pragma=busy_timeout(5000)"
 models:
@@ -162,6 +162,31 @@ func TestRenderPersonalConfigOmitsBlankOptionalLines(t *testing.T) {
 	}
 	if strings.Contains(content, "reasoning_effort:") {
 		t.Fatalf("config should omit empty reasoning stanza: %s", content)
+	}
+}
+
+func TestRenderPersonalConfigZhipuAI(t *testing.T) {
+	content, err := renderPersonalConfig("zhipuai")
+	if err != nil {
+		t.Fatalf("renderPersonalConfig: %v", err)
+	}
+	if !strings.Contains(content, "zhipuai_default:") {
+		t.Fatalf("config missing zhipuai model id: %s", content)
+	}
+	if !strings.Contains(content, "provider: zhipuai") {
+		t.Fatalf("config missing zhipuai provider: %s", content)
+	}
+	if !strings.Contains(content, "base_url: https://open.bigmodel.cn/api/coding/paas/v4") {
+		t.Fatalf("config missing zhipuai base url: %s", content)
+	}
+	if !strings.Contains(content, "api_key: ${ZHIPUAI_API_KEY}") {
+		t.Fatalf("config missing zhipuai api key env: %s", content)
+	}
+	if !strings.Contains(content, "model: glm-5") {
+		t.Fatalf("config missing glm-5 model: %s", content)
+	}
+	if !strings.Contains(content, "output_mode: tool_call") {
+		t.Fatalf("config missing tool_call mode: %s", content)
 	}
 }
 
