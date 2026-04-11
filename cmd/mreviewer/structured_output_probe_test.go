@@ -192,6 +192,15 @@ models:
 	}
 }
 
+func TestStripCodeFenceKeepsNonJSONLanguageTags(t *testing.T) {
+	text := "```jsonl\n{\"verdict\":\"pass\",\"score\":0.93}\n```"
+	got := stripCodeFence(text)
+	want := "{\"verdict\":\"pass\",\"score\":0.93}"
+	if got != want {
+		t.Fatalf("stripCodeFence(%q) = %q, want %q", text, got, want)
+	}
+}
+
 func TestStructuredOutputProbeWireAPIFireworksUsesAnthropic(t *testing.T) {
 	wireAPI, err := structuredOutputProbeWireAPI(llm.ProviderKindFireworksRouter)
 	if err != nil {

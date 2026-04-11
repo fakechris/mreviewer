@@ -542,10 +542,13 @@ func validateStructuredOutputProbeSchema(value map[string]any) []string {
 func stripCodeFence(text string) string {
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "```") && strings.HasSuffix(text, "```") {
-		text = strings.TrimPrefix(text, "```json")
-		text = strings.TrimPrefix(text, "```JSON")
-		text = strings.TrimPrefix(text, "```")
-		text = strings.TrimSuffix(text, "```")
+		inner := strings.TrimSuffix(text, "```")
+		if idx := strings.Index(inner, "\n"); idx >= 0 {
+			inner = inner[idx+1:]
+		} else {
+			inner = strings.TrimPrefix(inner, "```")
+		}
+		text = inner
 	}
 	return strings.TrimSpace(text)
 }
