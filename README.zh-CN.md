@@ -119,6 +119,16 @@ mreviewer doctor --json
 
 这一步会提前校验配置、数据库、模型路由和平台凭证。
 
+如果你准备把某条 route 切到 `output_mode: json_schema`，先用 live probe 验一下 provider 的真实行为：
+
+```bash
+mreviewer structured-output-probe --config config.yaml --route <configured-route> --mode tool --runs 10
+mreviewer structured-output-probe --config config.yaml --route <configured-route> --mode native --runs 5
+```
+
+只有当 provider-native 路径在这条 probe 下同时稳定满足 HTTP 成功、可解析、且本地 schema 校验通过时，才值得把它当成生产主路径。
+当前参考矩阵在 [docs/acceptance/2026-04-11-structured-output-probe-matrix.md](docs/acceptance/2026-04-11-structured-output-probe-matrix.md)。
+
 ### 5. 先预演，不写回任何结果
 
 ```bash
@@ -218,6 +228,7 @@ mreviewer review --target <pr-or-mr-url> --output both --publish artifact-only
 - `--publish`: `full-review-comments`、`summary-only` 或 `artifact-only`
 - `--reviewer-packs`: 逗号分隔的 reviewer pack 列表
 - `--route`: model 或 model chain override
+- `structured-output-probe`: 针对单条 route 的结构化输出 live probe
 - `--advisor-route`: 可选的更强 second opinion model / chain override
 - `--exit-mode`: `never` 或 `requested_changes`；最终 verdict 需要修改时返回退出码 `3`
 - `--compare-live`: 逗号分隔的已有 reviewer 标识

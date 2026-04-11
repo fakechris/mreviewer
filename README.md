@@ -119,6 +119,16 @@ mreviewer doctor --json
 
 This validates config, database, model routing, and platform credentials up front.
 
+If you want to verify a provider's structured-output contract before changing a route to `output_mode: json_schema`, run a live route probe first:
+
+```bash
+mreviewer structured-output-probe --config config.yaml --route <configured-route> --mode tool --runs 10
+mreviewer structured-output-probe --config config.yaml --route <configured-route> --mode native --runs 5
+```
+
+Treat `json_schema` as production-ready only after the provider-native route shows stable HTTP success, parse success, and local schema success under this probe.
+The current reference matrix is tracked in [docs/acceptance/2026-04-11-structured-output-probe-matrix.md](docs/acceptance/2026-04-11-structured-output-probe-matrix.md).
+
 ### 5. Preview the run before writing anything back
 
 ```bash
@@ -218,6 +228,7 @@ Key flags:
 - `--publish`: `full-review-comments`, `summary-only`, or `artifact-only`
 - `--reviewer-packs`: comma-separated reviewer packs
 - `--route`: model or model-chain override
+- `structured-output-probe`: live probe for route-level structured output behavior
 - `--advisor-route`: optional stronger second-opinion model or chain override
 - `--exit-mode`: `never` or `requested_changes`; returns exit code `3` when the final verdict requests changes
 - `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `reviewer-a,reviewer-b`
