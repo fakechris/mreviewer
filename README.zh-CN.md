@@ -228,11 +228,14 @@ mreviewer review --target <pr-or-mr-url> --output both --publish artifact-only
 - `--publish`: `full-review-comments`、`summary-only` 或 `artifact-only`
 - `--reviewer-packs`: 逗号分隔的 reviewer pack 列表
 - `--route`: model 或 model chain override
-- `structured-output-probe`: 针对单条 route 的结构化输出 live probe
 - `--advisor-route`: 可选的更强 second opinion model / chain override
 - `--exit-mode`: `never` 或 `requested_changes`；最终 verdict 需要修改时返回退出码 `3`
 - `--compare-live`: 逗号分隔的已有 reviewer 标识
 - `--compare-artifacts`: 逗号分隔的外部 JSON artifact 路径
+
+相关子命令：
+
+- `mreviewer structured-output-probe --route <configured-route> --mode tool --runs 10`：针对单条 route 的结构化输出 live probe
 
 JSON 输出包含：
 - `review_brief`

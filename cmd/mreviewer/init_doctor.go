@@ -356,7 +356,7 @@ func structuredOutputStrategyChecks(providerConfigs map[string]llm.ProviderConfi
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(cfg.Kind)) {
-		case llm.ProviderKindOpenAI, llm.ProviderKindZhipuAI, llm.ProviderKindArkOpenAI, llm.ProviderKindFireworksRouter:
+		case llm.ProviderKindOpenAI, llm.ProviderKindZhipuAI, llm.ProviderKindArkOpenAI:
 		default:
 			continue
 		}

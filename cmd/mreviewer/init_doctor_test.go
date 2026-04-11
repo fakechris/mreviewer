@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mreviewer/mreviewer/internal/llm"
 )
 
 func TestRunInitCommandWritesConfig(t *testing.T) {
@@ -345,5 +347,18 @@ review:
 	}
 	if !foundWarn {
 		t.Fatalf("expected structured_output_strategy warning: %+v", report.Checks)
+	}
+}
+
+func TestStructuredOutputStrategyChecksSkipsFireworksRouter(t *testing.T) {
+	checks := structuredOutputStrategyChecks(map[string]llm.ProviderConfig{
+		"fireworks_probe": {
+			Kind:       llm.ProviderKindFireworksRouter,
+			BaseURL:    "https://api.fireworks.ai/inference/v1",
+			OutputMode: "json_schema",
+		},
+	})
+	if len(checks) != 0 {
+		t.Fatalf("checks = %+v, want none", checks)
 	}
 }

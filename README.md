@@ -228,11 +228,14 @@ Key flags:
 - `--publish`: `full-review-comments`, `summary-only`, or `artifact-only`
 - `--reviewer-packs`: comma-separated reviewer packs
 - `--route`: model or model-chain override
-- `structured-output-probe`: live probe for route-level structured output behavior
 - `--advisor-route`: optional stronger second-opinion model or chain override
 - `--exit-mode`: `never` or `requested_changes`; returns exit code `3` when the final verdict requests changes
 - `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `reviewer-a,reviewer-b`
 - `--compare-artifacts`: comma-separated JSON artifact paths to compare against the current review bundle
+
+Related subcommand:
+
+- `mreviewer structured-output-probe --route <configured-route> --mode tool --runs 10`: live probe for route-level structured output behavior
 
 JSON output includes:
 - `review_brief`

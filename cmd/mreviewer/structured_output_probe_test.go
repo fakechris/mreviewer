@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mreviewer/mreviewer/internal/llm"
 )
 
 func TestRunCLIStructuredOutputProbeSubcommand(t *testing.T) {
@@ -187,6 +189,16 @@ models:
 	exitCode := runStructuredOutputProbeCommand([]string{"--config", configPath, "--route", "minimax_probe", "--mode", "native"}, &stdout, &stderr)
 	if exitCode != 2 {
 		t.Fatalf("exitCode = %d, want 2 (stderr=%s)", exitCode, stderr.String())
+	}
+}
+
+func TestStructuredOutputProbeWireAPIFireworksUsesAnthropic(t *testing.T) {
+	wireAPI, err := structuredOutputProbeWireAPI(llm.ProviderKindFireworksRouter)
+	if err != nil {
+		t.Fatalf("structuredOutputProbeWireAPI: %v", err)
+	}
+	if wireAPI != "anthropic" {
+		t.Fatalf("wireAPI = %q, want anthropic", wireAPI)
 	}
 }
 

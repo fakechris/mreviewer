@@ -243,9 +243,9 @@ Examples:
 
 func structuredOutputProbeWireAPI(kind string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case llm.ProviderKindMiniMax, llm.ProviderKindAnthropicCompatible, llm.ProviderKindAnthropic, llm.ProviderKindArkAnthropic:
+	case llm.ProviderKindMiniMax, llm.ProviderKindAnthropicCompatible, llm.ProviderKindAnthropic, llm.ProviderKindArkAnthropic, llm.ProviderKindFireworksRouter:
 		return "anthropic", nil
-	case llm.ProviderKindOpenAI, llm.ProviderKindZhipuAI, llm.ProviderKindArkOpenAI, llm.ProviderKindFireworksRouter:
+	case llm.ProviderKindOpenAI, llm.ProviderKindZhipuAI, llm.ProviderKindArkOpenAI:
 		return "openai", nil
 	default:
 		return "", fmt.Errorf("unsupported provider kind %q", kind)
