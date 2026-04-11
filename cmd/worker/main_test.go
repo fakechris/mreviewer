@@ -47,7 +47,7 @@ func TestProviderConfigsFromModelChainConfig(t *testing.T) {
 				BaseURL:             "https://api.openai.com/v1",
 				APIKey:              "openai-secret",
 				Model:               "gpt-5.4",
-				OutputMode:          "json_schema",
+				OutputMode:          "tool_call",
 				MaxCompletionTokens: 12000,
 				ReasoningEffort:     "medium",
 			},
@@ -80,8 +80,8 @@ func TestProviderConfigsFromModelChainConfig(t *testing.T) {
 	if routes["openai_backup"].Kind != "openai" {
 		t.Fatalf("fallback kind = %q, want openai", routes["openai_backup"].Kind)
 	}
-	if routes["openai_backup"].OutputMode != "json_schema" {
-		t.Fatalf("openai output_mode = %q, want json_schema", routes["openai_backup"].OutputMode)
+	if routes["openai_backup"].OutputMode != "tool_call" {
+		t.Fatalf("openai output_mode = %q, want tool_call", routes["openai_backup"].OutputMode)
 	}
 	if routes["openai_backup"].MaxCompletionTokens != 12000 {
 		t.Fatalf("openai max_completion_tokens = %d, want 12000", routes["openai_backup"].MaxCompletionTokens)

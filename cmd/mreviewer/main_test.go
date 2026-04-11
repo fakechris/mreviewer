@@ -205,7 +205,7 @@ func TestRunCLIShowsTopLevelHelpForEmptyArgs(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
 		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Commands: review, schema-benchmark, init, doctor, serve") {
+	if !strings.Contains(stdout.String(), "Commands: review, schema-benchmark, structured-output-probe, init, doctor, serve") {
 		t.Fatalf("stdout missing command list: %q", stdout.String())
 	}
 }
@@ -225,7 +225,7 @@ func TestRunCLIShowsTopLevelHelpForHelpFlag(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
 		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Commands: review, schema-benchmark, init, doctor, serve") {
+	if !strings.Contains(stdout.String(), "Commands: review, schema-benchmark, structured-output-probe, init, doctor, serve") {
 		t.Fatalf("stdout missing command list: %q", stdout.String())
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/mreviewer/mreviewer/internal/config"
@@ -148,7 +149,7 @@ func renderPersonalConfig(provider string) (string, error) {
 			BaseURL:   "https://api.openai.com/v1",
 			APIKeyEnv: "${OPENAI_API_KEY}",
 			Model:     "gpt-5.4",
-			Output:    "json_schema",
+			Output:    "tool_call",
 			Tokens:    "max_completion_tokens: 12000",
 			Reasoning: "reasoning_effort: medium",
 		},
@@ -310,6 +311,7 @@ func runDoctorCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 		return writeDoctorReport(stdout, report, opts.jsonOutput, 1)
 	}
 	report.Checks = append(report.Checks, doctorCheck{Name: "llm", Status: "pass", Message: fmt.Sprintf("default route %s with %d route(s)", defaultRoute, len(registry.Routes()))})
+	report.Checks = append(report.Checks, structuredOutputStrategyChecks(providerConfigs)...)
 
 	platformPasses := 0
 	if strings.TrimSpace(cfg.GitHubToken) != "" {
@@ -341,6 +343,38 @@ func runDoctorCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 	report.Checks = append(report.Checks, doctorCheck{Name: "platforms", Status: "pass", Message: fmt.Sprintf("%d platform client(s) configured", platformPasses)})
 	report.OK = true
 	return writeDoctorReport(stdout, report, opts.jsonOutput, 0)
+}
+
+func structuredOutputStrategyChecks(providerConfigs map[string]llm.ProviderConfig) []doctorCheck {
+	if len(providerConfigs) == 0 {
+		return nil
+	}
+	var risky []string
+	for route, cfg := range providerConfigs {
+		outputMode := strings.ToLower(strings.TrimSpace(cfg.OutputMode))
+		if outputMode != "json_schema" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(cfg.Kind)) {
+		case llm.ProviderKindOpenAI, llm.ProviderKindZhipuAI, llm.ProviderKindArkOpenAI:
+		default:
+			continue
+		}
+		baseURL := strings.ToLower(strings.TrimSpace(cfg.BaseURL))
+		if strings.Contains(baseURL, "api.openai.com") {
+			continue
+		}
+		risky = append(risky, fmt.Sprintf("%s(%s)", route, cfg.Kind))
+	}
+	if len(risky) == 0 {
+		return nil
+	}
+	sort.Strings(risky)
+	return []doctorCheck{{
+		Name:    "structured_output_strategy",
+		Status:  "warn",
+		Message: fmt.Sprintf("OpenAI-compatible routes using output_mode=json_schema should be locally validated; prefer tool_call by default for %s", strings.Join(risky, ", ")),
+	}}
 }
 
 func parseDoctorOptions(args []string, stderr io.Writer) (doctorOptions, error) {

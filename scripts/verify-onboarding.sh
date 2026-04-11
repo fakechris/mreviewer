@@ -202,7 +202,7 @@ models:
     base_url: https://api.openai.com/v1
     api_key: ${OPENAI_API_KEY}
     model: gpt-5.4
-    output_mode: json_schema
+    output_mode: tool_call
     max_completion_tokens: 12000
     reasoning_effort: medium
 model_chains:

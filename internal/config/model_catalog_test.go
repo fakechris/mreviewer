@@ -83,7 +83,7 @@ func TestResolveModelChainBuildsProviderConfigsFromCatalog(t *testing.T) {
 				BaseURL:             "https://api.openai.com/v1",
 				APIKey:              "openai-secret",
 				Model:               "gpt-5.4",
-				OutputMode:          "json_schema",
+				OutputMode:          "tool_call",
 				MaxCompletionTokens: 12000,
 				ReasoningEffort:     "medium",
 			},

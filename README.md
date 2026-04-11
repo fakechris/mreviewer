@@ -74,6 +74,8 @@ mreviewer init --provider openai
 
 This writes `config.yaml`, creates `.mreviewer/state/`, and defaults to local SQLite. You do not need to hand-edit YAML to get started.
 
+The generated OpenAI route defaults to `output_mode: tool_call`. `json_schema` is still available, but `tool_call` is the more robust default across OpenAI-compatible providers because the runtime already does local strict validation and one repair pass.
+
 If you want to start with Zhipu GLM-5 instead of OpenAI:
 
 ```bash
@@ -116,6 +118,16 @@ mreviewer doctor --json
 ```
 
 This validates config, database, model routing, and platform credentials up front.
+
+If you want to verify a provider's structured-output contract before changing a route to `output_mode: json_schema`, run a live route probe first:
+
+```bash
+mreviewer structured-output-probe --config config.yaml --route <configured-route> --mode tool --runs 10
+mreviewer structured-output-probe --config config.yaml --route <configured-route> --mode native --runs 5
+```
+
+Treat `json_schema` as production-ready only after the provider-native route shows stable HTTP success, parse success, and local schema success under this probe.
+The current reference matrix is tracked in [docs/acceptance/2026-04-11-structured-output-probe-matrix.md](docs/acceptance/2026-04-11-structured-output-probe-matrix.md).
 
 ### 5. Preview the run before writing anything back
 
@@ -220,6 +232,10 @@ Key flags:
 - `--exit-mode`: `never` or `requested_changes`; returns exit code `3` when the final verdict requests changes
 - `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `reviewer-a,reviewer-b`
 - `--compare-artifacts`: comma-separated JSON artifact paths to compare against the current review bundle
+
+Related subcommand:
+
+- `mreviewer structured-output-probe --route <configured-route> --mode tool --runs 10`: live probe for route-level structured output behavior
 
 JSON output includes:
 - `review_brief`
