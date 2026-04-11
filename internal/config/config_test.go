@@ -113,20 +113,20 @@ func TestConfigInvalidYAML(t *testing.T) {
 func TestConfigAllEnvVars(t *testing.T) {
 	clearConfigEnv(t)
 	envVals := map[string]string{
-		"APP_ENV":                 "test",
-		"MREVIEWER_ADMIN_TOKEN":   "admin-secret",
-		"PORT":                    "9999",
-		"MYSQL_DSN":               "test-dsn",
-		"REDIS_ADDR":              "test-redis",
-		"GITLAB_BASE_URL":         "https://test-gitlab",
-		"GITLAB_TOKEN":            "test-token",
-		"GITLAB_WEBHOOK_SECRET":   "test-secret",
-		"GITHUB_BASE_URL":         "https://api.github.com",
-		"GITHUB_TOKEN":            "github-token",
-		"GITHUB_WEBHOOK_SECRET":   "github-secret",
-		"REVIEW_MODEL_CHAIN":      "review_primary",
-		"REVIEW_ADVISOR_CHAIN":    "advisor_chain",
-		"REVIEW_PACKS":            "security,architecture,database",
+		"APP_ENV":                  "test",
+		"MREVIEWER_ADMIN_TOKEN":    "admin-secret",
+		"PORT":                     "9999",
+		"MYSQL_DSN":                "test-dsn",
+		"REDIS_ADDR":               "test-redis",
+		"GITLAB_BASE_URL":          "https://test-gitlab",
+		"GITLAB_TOKEN":             "test-token",
+		"GITLAB_WEBHOOK_SECRET":    "test-secret",
+		"GITHUB_BASE_URL":          "https://api.github.com",
+		"GITHUB_TOKEN":             "github-token",
+		"GITHUB_WEBHOOK_SECRET":    "github-secret",
+		"REVIEW_MODEL_CHAIN":       "review_primary",
+		"REVIEW_ADVISOR_CHAIN":     "advisor_chain",
+		"REVIEW_PACKS":             "security,architecture,database",
 		"REVIEW_COMPARE_REVIEWERS": "github:gemini,gitlab:coderabbit",
 	}
 	for k, v := range envVals {
@@ -186,7 +186,7 @@ func TestConfigExpandsEnvVarsInsideYAML(t *testing.T) {
     base_url: ${OPENAI_BASE_URL}
     api_key: ${OPENAI_API_KEY}
     model: gpt-5.4
-    output_mode: json_schema
+    output_mode: tool_call
 model_chains:
   review_primary:
     primary: openai_default

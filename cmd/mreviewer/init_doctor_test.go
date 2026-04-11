@@ -50,6 +50,9 @@ func TestRunInitCommandWritesConfig(t *testing.T) {
 	if !strings.Contains(content, "provider: openai") {
 		t.Fatalf("config missing provider stanza: %s", content)
 	}
+	if !strings.Contains(content, "output_mode: tool_call") {
+		t.Fatalf("config missing tool_call default: %s", content)
+	}
 	if _, err := os.Stat(filepath.Join(tmpDir, ".mreviewer/state")); err != nil {
 		t.Fatalf("expected state dir: %v", err)
 	}
@@ -80,6 +83,9 @@ func TestRunInitCommandDryRunPrintsConfigWithoutWriting(t *testing.T) {
 	if !strings.Contains(output, "app_env: development") {
 		t.Fatalf("dry-run output missing config body: %q", output)
 	}
+	if !strings.Contains(output, "output_mode: tool_call") {
+		t.Fatalf("dry-run output missing tool_call default: %q", output)
+	}
 	if !strings.Contains(output, "# dry-run: config was not written") {
 		t.Fatalf("dry-run output missing dry-run marker: %q", output)
 	}
@@ -106,7 +112,7 @@ models:
     api_key: "test-key"
     base_url: "https://api.openai.com/v1"
     model: "gpt-5.4"
-    output_mode: "json_schema"
+    output_mode: "tool_call"
     max_completion_tokens: 12000
 model_chains:
   review_primary:
@@ -253,7 +259,7 @@ models:
     api_key: "test-key"
     base_url: "https://api.openai.com/v1"
     model: "gpt-5.4"
-    output_mode: "json_schema"
+    output_mode: "tool_call"
     max_completion_tokens: 12000
 model_chains:
   review_primary:

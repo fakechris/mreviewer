@@ -148,7 +148,7 @@ func renderPersonalConfig(provider string) (string, error) {
 			BaseURL:   "https://api.openai.com/v1",
 			APIKeyEnv: "${OPENAI_API_KEY}",
 			Model:     "gpt-5.4",
-			Output:    "json_schema",
+			Output:    "tool_call",
 			Tokens:    "max_completion_tokens: 12000",
 			Reasoning: "reasoning_effort: medium",
 		},

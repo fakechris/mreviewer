@@ -44,7 +44,7 @@ models:
     base_url: ${OPENAI_BASE_URL}
     api_key: ${OPENAI_API_KEY}
     model: gpt-5.4
-    output_mode: json_schema
+    output_mode: tool_call
     max_completion_tokens: 12000
     reasoning_effort: medium
     temperature: 0.2
@@ -85,7 +85,7 @@ review:
 #     base_url: ${OPENAI_BASE_URL}
 #     api_key: ${OPENAI_API_KEY}
 #     model: gpt-5.4
-#     output_mode: json_schema
+#     output_mode: tool_call
 #     max_completion_tokens: 12000
 #     reasoning_effort: medium
 # model_chains:

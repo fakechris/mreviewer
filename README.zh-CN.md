@@ -74,6 +74,8 @@ mreviewer init --provider openai
 
 这会生成 `config.yaml`，并创建默认本地状态目录 `.mreviewer/state/`。第一次上手不需要手改 YAML。
 
+现在生成的 OpenAI route 默认使用 `output_mode: tool_call`。`json_schema` 仍然可选，但对 OpenAI-compatible provider 来说，默认走 `tool_call` 更稳，因为运行时本身已经有本地严格校验和一次 repair。
+
 如果你想直接用智谱 `GLM-5`，可以改成：
 
 ```bash

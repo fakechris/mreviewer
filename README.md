@@ -74,6 +74,8 @@ mreviewer init --provider openai
 
 This writes `config.yaml`, creates `.mreviewer/state/`, and defaults to local SQLite. You do not need to hand-edit YAML to get started.
 
+The generated OpenAI route defaults to `output_mode: tool_call`. `json_schema` is still available, but `tool_call` is the more robust default across OpenAI-compatible providers because the runtime already does local strict validation and one repair pass.
+
 If you want to start with Zhipu GLM-5 instead of OpenAI:
 
 ```bash
