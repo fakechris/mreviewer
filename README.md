@@ -1,6 +1,9 @@
 # mreviewer
 
-[![Docker Hub](https://img.shields.io/badge/docker-fakechris%2Fmreviewer-blue)](https://hub.docker.com/u/fakechris)
+[![CI](https://github.com/fakechris/mreviewer/actions/workflows/ci.yml/badge.svg)](https://github.com/fakechris/mreviewer/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/fakechris/mreviewer)](https://github.com/fakechris/mreviewer/releases)
+[![Docker Hub](https://img.shields.io/badge/docker-fakechris%2Fmreviewer-blue)](https://hub.docker.com/r/fakechris/mreviewer)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
 [中文文档](./README.zh-CN.md) | English
 
@@ -9,6 +12,8 @@ Multi-model AI code review for GitHub pull requests and GitLab merge requests.
 `mreviewer` is built for a very simple first experience: install one binary, point it at a real PR, and get back something you can act on.
 
 If you are trying it for the first time, start with the Personal CLI path. The goal is not to stand up infrastructure. The goal is to get one useful review in about five minutes.
+
+**Quick start**: install (`curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/install.sh | bash` or `brew install fakechris/mreviewer/mreviewer`) → `mreviewer init --provider openai` → export `OPENAI_API_KEY` + `GITHUB_TOKEN` → `mreviewer doctor --json` → run your first review. Full walkthrough below.
 
 ## What Your First Result Actually Is
 
