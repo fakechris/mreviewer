@@ -1,6 +1,9 @@
 # mreviewer
 
-[![Docker Hub](https://img.shields.io/badge/docker-fakechris%2Fmreviewer-blue)](https://hub.docker.com/u/fakechris)
+[![CI](https://github.com/fakechris/mreviewer/actions/workflows/ci.yml/badge.svg)](https://github.com/fakechris/mreviewer/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/fakechris/mreviewer)](https://github.com/fakechris/mreviewer/releases)
+[![Docker Hub](https://img.shields.io/badge/docker-fakechris%2Fmreviewer-blue)](https://hub.docker.com/r/fakechris/mreviewer)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
 [中文文档](./README.zh-CN.md) | English
 
@@ -9,6 +12,8 @@
 `mreviewer` 的第一体验目标很简单：装好一个二进制，指向一个真实 PR，然后拿到一份你真能用来改代码的 review。
 
 如果你第一次试这个产品，先走个人 CLI 这条路。别先搭系统，也别先配 Docker。先拿到一份有用的 review，通常五分钟内就够了。
+
+**快速开始**：安装（`curl -fsSL https://raw.githubusercontent.com/fakechris/mreviewer/main/scripts/install.sh | bash` 或 `brew install fakechris/mreviewer/mreviewer`）→ `mreviewer init --provider openai` → 导出 `OPENAI_API_KEY` + `GITHUB_TOKEN` → `mreviewer doctor --json` → 跑第一次 review。完整步骤见下文。
 
 ## 第一次结果到底是什么
 
