@@ -2,17 +2,17 @@
 
 ## LLM / Consensus
 
-### Unify Anthropic compact schema for consensus matching
+### Restore anchor_snippet / evidence in Anthropic compact schema
 
-**What:** Anthropic compact schema (`reviewResultSchemaAnthropicCompact()`) strips `canonical_key`, `symbol`, and line number fields that consensus matching depends on.
+**What:** `reviewFindingSchemaAnthropicCompact()` (parser.go:490) drops `anchor_snippet`, `evidence`, `range_*`, `suggested_patch`, `trigger_condition`, `impact`, `blind_spots`.
 
-**Why:** Without these fields, Anthropic provider responses cannot participate in cross-model consensus matching. The P2 multi-model consensus feature is broken for Anthropic providers.
+**Why:** `computeAnchorFingerprint()` (dedup.go:511) uses `anchor_snippet`, and `reviewcore.evidenceFingerprint` falls back to `evidence`. Both degrade on Anthropic routes.
 
-**Context:** Review analysis discovered this: `minimax.go:240-245` selects compact schema for Anthropic profile via `reviewResultSchemaForProfile()`. The compact schema omits fields that `computeSemanticFingerprint()` in `dedup.go:490-497` relies on. Either the compact schema needs to include these fields (may increase token cost), or a post-parse extraction step needs to normalize findings from Anthropic responses into full-schema format. Must be resolved before P2 consensus work begins.
+**Context (corrected 2026-10-07):** The earlier claim that compact schema strips `canonical_key`/`symbol`/line numbers was wrong; those fields are present, and `computeSemanticFingerprint()` (dedup.go:521) is unaffected. This no longer blocks consensus work. Amendment proposed on INV-329.
 
-**Effort:** M
-**Priority:** P0
-**Depends on:** None — blocks P2 consensus
+**Effort:** S
+**Priority:** P2
+**Depends on:** None
 
 ### Extend ProviderResponse for multi-provider observability
 
@@ -25,6 +25,7 @@
 **Effort:** S
 **Priority:** P1
 **Depends on:** ConsensusReviewService implementation
+**Status note (2026-10-07):** `ProviderResponse.SubProviderResults` already exists (provider.go:64); remaining work is audit/metrics consumption.
 
 ## Review Quality
 
@@ -36,9 +37,10 @@
 
 **Context:** CEO plan v1.1. Prompt skeleton: "Are these two code review findings describing the same issue? JSON: {same: bool, reason: string}". Failure fallback: treat as different issues (conservative). ~5h CC estimated.
 
-**Effort:** M
+**Effort:** S
 **Priority:** P2
 **Depends on:** P2 consensus rough matching
+**Status note (2026-10-07):** `LLMSemanticMatcher` exists in semantic_match.go but is only mountable via legacy `Processor.WithSemanticMatcher`; remaining work is wiring.
 
 ### Verify domestic model OpenAI compatibility
 
@@ -46,11 +48,37 @@
 
 **Why:** Prior review flagged that "zero code changes" is an unverified assumption. Many vendors only partially implement the OpenAI surface. If true, the domestic model moat is documentation; if false, adapter code is needed.
 
-**Context:** `openai.go:127-173` sends these vendor-specific fields. Test with actual DeepSeek V3/R1 API calls. Record which features work, which silently fail, which error. May need conditional field emission per vendor.
+**Context:** `openai.go:127-173` sends these vendor-specific fields; `DeepSeekCompatMode` exists (openai.go:371). 2026-10 vendor status: DeepSeek strict schema only via `/beta` base URL + tool strict mode (no `response_format: json_schema`); GLM-5 `json_schema` silently ignored; Kimi K2.7 and Qwen3.5 (部分模型) support `json_schema` strict. Extend matrix to DeepSeek V4 + Kimi K2.7 + Qwen3.5. Record which features work, which silently fail, which error. May need conditional field emission per vendor.
 
 **Effort:** S
 **Priority:** P1
 **Depends on:** None
+
+## Review Trustworthiness (proposed 2026-10-07, see docs/plans/2026-10-07-roadmap-refresh.md)
+
+### Finding line-anchor validation (INV-1018)
+Reject or downgrade findings whose line is not in a changed hunk or deletion anchor before publishing. Today only the platform API reports the failure.
+**Effort:** S **Priority:** P2
+
+### Coverage evidence and `incomplete` verdict (INV-1019)
+Expose which hunks/files were truncated or degraded in the brief and JSON; never emit `approved` below a coverage threshold.
+**Effort:** M **Priority:** P2
+
+### Local review-quality bench with LLM-as-judge (INV-1020)
+`mreviewer bench review` over SWR-Bench/CR-Bench samples plus Chinese samples; outputs F1 and Chinese naturalness. Replaces the two-engineer blind review in INV-334.
+**Effort:** M **Priority:** P2
+
+### Single-model N-pass majority-vote consensus (INV-1021)
+Bugbot-style N parallel passes with shuffled file order, grouped by the INV-331 rough matcher. First consumer of the consensus engine.
+**Effort:** M **Priority:** P2
+
+### Lens-style pluggable rule files (INV-1022)
+Markdown + frontmatter triggers (file globs, hunk regex) replacing Go-constant reviewer packs; repo-level `.mreviewer/lenses/` override.
+**Effort:** M **Priority:** P3
+
+### CI setup-go 1.21 vs go.mod 1.25 (INV-1016, bug)
+Use `go-version-file: go.mod` in ci.yml and release.yml.
+**Effort:** XS **Priority:** P3
 
 ## Completed
 
