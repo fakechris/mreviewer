@@ -3,6 +3,7 @@ package reviewcore
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -68,13 +69,14 @@ func (e *Engine) Run(ctx context.Context, input ReviewInput, opts RunOptions) (R
 			Body: decision.Summary,
 		})
 	}
+	lineIndex := buildChangedLineIndex(input.Request)
 	for _, finding := range decision.MergedFindings {
-		bundle.PublishCandidates = append(bundle.PublishCandidates, publishCandidateForFinding(input, finding))
+		bundle.PublishCandidates = append(bundle.PublishCandidates, publishCandidateForFinding(input, lineIndex, finding))
 	}
 	return bundle, nil
 }
 
-func publishCandidateForFinding(input ReviewInput, finding Finding) PublishCandidate {
+func publishCandidateForFinding(input ReviewInput, lineIndex changedLineIndex, finding Finding) PublishCandidate {
 	location := locationWithGitLabVersionMetadata(input, finding.Identity.Location)
 	if !locationSupportsInlineDiscussion(location) {
 		return PublishCandidate{
@@ -83,6 +85,21 @@ func publishCandidateForFinding(input ReviewInput, finding Finding) PublishCandi
 			Body:             summaryBodyFromFinding(finding.Title, finding.Body),
 			Severity:         finding.Severity,
 			PublishAsSummary: true,
+			Location:         location,
+		}
+	}
+	// INV-1018: an inline comment must land on a line this change touched.
+	// A hallucinated or drifted line number is published at file level with
+	// the original location kept for diagnostics, instead of failing at the
+	// platform API.
+	if lineIndex.verify(finding.Identity.Location) == locationOutOfDiff {
+		return PublishCandidate{
+			Kind:             "finding",
+			Title:            finding.Title,
+			Body:             outOfDiffBodyFromFinding(finding),
+			Severity:         finding.Severity,
+			PublishAsSummary: true,
+			OutOfDiff:        true,
 			Location:         location,
 		}
 	}
@@ -154,4 +171,16 @@ func summaryBodyFromFinding(title, body string) string {
 	default:
 		return title
 	}
+}
+
+func outOfDiffBodyFromFinding(finding Finding) string {
+	loc := finding.Identity.Location
+	where := strings.TrimSpace(loc.Path)
+	if loc.StartLine > 0 {
+		where += ":" + strconv.Itoa(loc.StartLine)
+		if loc.EndLine > loc.StartLine {
+			where += "-" + strconv.Itoa(loc.EndLine)
+		}
+	}
+	return summaryBodyFromFinding(finding.Title, finding.Body) + "\n\n_定位 " + where + " 不在本次改动范围内，已按文件级发布。_"
 }

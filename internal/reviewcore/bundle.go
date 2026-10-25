@@ -1,12 +1,15 @@
 package reviewcore
 
 type PublishCandidate struct {
-	Kind            string            `json:"kind"`
-	Body            string            `json:"body"`
-	Title           string            `json:"title,omitempty"`
-	Severity        string            `json:"severity,omitempty"`
-	PublishAsSummary bool             `json:"publish_as_summary,omitempty"`
-	Location        CanonicalLocation `json:"location,omitempty,omitzero"`
+	Kind             string `json:"kind"`
+	Body             string `json:"body"`
+	Title            string `json:"title,omitempty"`
+	Severity         string `json:"severity,omitempty"`
+	PublishAsSummary bool   `json:"publish_as_summary,omitempty"`
+	// OutOfDiff is set when the finding named a line the change did not touch;
+	// the candidate is then published at file/summary level instead of inline.
+	OutOfDiff bool              `json:"out_of_diff,omitempty"`
+	Location  CanonicalLocation `json:"location,omitempty,omitzero"`
 }
 
 type ReviewBundle struct {
