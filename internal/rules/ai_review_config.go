@@ -42,6 +42,49 @@ func (c *AIReviewConfig) UnknownFields() []string {
 
 const aiReviewYAMLPath = ".gitlab/ai-review.yaml"
 
+// hostOnlyAIReviewFields are ai-review.yaml keys that decide whether a change
+// passes the gate or which provider route pays for it. A merge request author
+// controls the repository files on their branch, so these keys are never
+// honoured from the repository; they belong to platform, group or project
+// policy. They stay in knownAIReviewFields so they do not surface as unknown.
+var hostOnlyAIReviewFields = []string{
+	"enabled",
+	"gate_mode",
+	"provider_route",
+	"severity_threshold",
+	"confidence_threshold",
+}
+
+// stripHostOnlyAIReviewFields clears host-only keys from cfg and returns the
+// names of the keys that were present, in hostOnlyAIReviewFields order.
+func stripHostOnlyAIReviewFields(cfg *AIReviewConfig) []string {
+	if cfg == nil {
+		return nil
+	}
+	var stripped []string
+	if cfg.Enabled != nil {
+		cfg.Enabled = nil
+		stripped = append(stripped, "enabled")
+	}
+	if cfg.GateMode != nil {
+		cfg.GateMode = nil
+		stripped = append(stripped, "gate_mode")
+	}
+	if cfg.ProviderRoute != nil {
+		cfg.ProviderRoute = nil
+		stripped = append(stripped, "provider_route")
+	}
+	if cfg.SeverityThreshold != nil {
+		cfg.SeverityThreshold = nil
+		stripped = append(stripped, "severity_threshold")
+	}
+	if cfg.ConfidenceThreshold != nil {
+		cfg.ConfidenceThreshold = nil
+		stripped = append(stripped, "confidence_threshold")
+	}
+	return stripped
+}
+
 // validSeverities is the set of recognised severity threshold values.
 var validSeverities = map[string]bool{
 	"low":    true,
@@ -186,12 +229,9 @@ func applyAIReviewConfig(effective *EffectivePolicy, cfg *AIReviewConfig) {
 	if cfg == nil {
 		return
 	}
-	if cfg.Enabled != nil && !*cfg.Enabled {
-		// If the repo explicitly disables ai-review, we still load defaults
-		// but mark a sentinel. Callers can check this. For now we just skip
-		// applying overrides, which effectively means defaults apply.
-		return
-	}
+	// `enabled` is host-only (see hostOnlyAIReviewFields) and has already been
+	// stripped by the loader; it never skipped a review, it only skipped the
+	// overrides below, so there is nothing to honour here.
 	if cfg.ConfidenceThreshold != nil {
 		effective.ConfidenceThreshold = *cfg.ConfidenceThreshold
 	}

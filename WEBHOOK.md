@@ -197,7 +197,4 @@ A: 这是 `latest-head-wins` 的预期行为。旧 run 会被标记为 supersede
 A: 打开 `/admin/`，或查询 `/admin/api/queue`。这里能直接看到 pending queue、retry-scheduled queue、以及近 24 小时 superseded run 数。
 
 ### Q: 如何禁用某个项目的 AI Review
-A: 在项目的 `.gitlab/ai-review.yaml` 中添加：
-```yaml
-enabled: false
-```
+A: 在 GitLab 项目的 Webhooks 设置中删除或停用指向 mreviewer 的 webhook。仓库内 `.gitlab/ai-review.yaml` 的 `enabled`、`gate_mode`、`provider_route`、`severity_threshold`、`confidence_threshold` 属于宿主独占字段，不会从仓库文件生效（否则 MR 作者可以在自己的分支里关掉门禁），这些设置请通过项目/群组策略配置。仓库文件可控的字段（include/exclude_paths、output_language、max_files 等）默认从目标分支（base）读取，可用 `review.config_ref: head` 切回旧行为。

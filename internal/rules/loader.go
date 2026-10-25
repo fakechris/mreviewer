@@ -29,7 +29,18 @@ type RepositoryRefFileReader interface {
 	GetRepositoryFileByRepositoryRef(ctx context.Context, repositoryRef, filePath, ref string) (string, error)
 }
 
+// ConfigRefBase and ConfigRefHead name the git ref the repository config
+// file (ai-review.yaml) is read from. Base is the target branch of the
+// change, so a merge request cannot rewrite its own review configuration.
+const (
+	ConfigRefBase = "base"
+	ConfigRefHead = "head"
+)
+
 type PlatformDefaults struct {
+	// ConfigRef selects which ref ai-review.yaml is read from: ConfigRefBase
+	// (default) or ConfigRefHead. REVIEW.md instructions always come from head.
+	ConfigRef           string
 	Instructions        string
 	ConfidenceThreshold float64
 	SeverityThreshold   string
@@ -72,9 +83,15 @@ type GroupPolicy struct {
 }
 
 type LoadInput struct {
-	ProjectID              int64
-	RepositoryRef          string
-	HeadSHA                string
+	ProjectID     int64
+	RepositoryRef string
+	HeadSHA       string
+	// BaseSHA is the target-branch commit the change is compared against.
+	// ai-review.yaml is read from it unless ConfigRef (or the platform
+	// default) selects head.
+	BaseSHA string
+	// ConfigRef overrides PlatformDefaults.ConfigRef for this load.
+	ConfigRef              string
 	GroupPolicy            *GroupPolicy
 	ProjectPolicy          *db.ProjectPolicy
 	ChangedPaths           []string
@@ -127,9 +144,16 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 	var warnings []string
 
 	// 2. Load and apply .gitlab/ai-review.yaml (above project policy, below REVIEW.md).
+	// The file is read from the base ref by default so the change under review
+	// cannot alter its own review configuration; host-only keys are ignored
+	// whichever ref it comes from.
 	if canFetchFiles {
+		configRef, refWarning := l.resolveConfigRef(input)
+		if refWarning != "" {
+			warnings = append(warnings, refWarning)
+		}
 		for _, configPath := range configuredInstructionPaths(input) {
-			aiBody, err := l.getRepositoryFile(ctx, input, configPath)
+			aiBody, err := l.getRepositoryFileAt(ctx, input, configPath, configRef)
 			if err != nil {
 				if !isFileNotFound(err) {
 					return LoadResult{}, fmt.Errorf("rules: load %s: %w", configPath, err)
@@ -144,6 +168,9 @@ func (l *Loader) Load(ctx context.Context, input LoadInput) (LoadResult, error) 
 			}
 			if cfg == nil {
 				continue
+			}
+			for _, field := range stripHostOnlyAIReviewFields(cfg) {
+				warnings = append(warnings, fmt.Sprintf("rules: %s: %q is host-only and was ignored; set it in platform, group or project policy", configPath, field))
 			}
 			applyAIReviewConfig(&effective, cfg)
 			break
@@ -203,7 +230,30 @@ func (l *Loader) getRepositoryFile(ctx context.Context, input LoadInput, filePat
 	if l == nil {
 		return "", ErrNoRepositoryReader
 	}
-	return loadRepositoryFile(ctx, l.files, input, filePath)
+	return loadRepositoryFile(ctx, l.files, input, filePath, input.HeadSHA)
+}
+
+func (l *Loader) getRepositoryFileAt(ctx context.Context, input LoadInput, filePath, ref string) (string, error) {
+	if l == nil {
+		return "", ErrNoRepositoryReader
+	}
+	return loadRepositoryFile(ctx, l.files, input, filePath, ref)
+}
+
+// resolveConfigRef returns the git ref ai-review.yaml is read from and a
+// warning when the requested base ref is unavailable and head is used instead.
+func (l *Loader) resolveConfigRef(input LoadInput) (string, string) {
+	mode := strings.ToLower(strings.TrimSpace(input.ConfigRef))
+	if mode == "" {
+		mode = strings.ToLower(strings.TrimSpace(l.platform.ConfigRef))
+	}
+	if mode == ConfigRefHead {
+		return input.HeadSHA, ""
+	}
+	if base := strings.TrimSpace(input.BaseSHA); base != "" {
+		return base, ""
+	}
+	return input.HeadSHA, "rules: base SHA unavailable, reading repository config from head"
 }
 
 func IsTrustedInstructionPath(path string) bool {
@@ -378,7 +428,7 @@ func loadDirectoryScopedReviews(ctx context.Context, files any, input LoadInput,
 			continue
 		}
 		reviewPath := dir + "/REVIEW.md"
-		body, err := loadRepositoryFile(ctx, files, input, reviewPath)
+		body, err := loadRepositoryFile(ctx, files, input, reviewPath, input.HeadSHA)
 		fetched[dir] = true
 		if err == nil && strings.TrimSpace(body) != "" {
 			cache[dir] = body
@@ -414,18 +464,18 @@ func loadDirectoryScopedReviews(ctx context.Context, files any, input LoadInput,
 	return result
 }
 
-func loadRepositoryFile(ctx context.Context, files any, input LoadInput, filePath string) (string, error) {
+func loadRepositoryFile(ctx context.Context, files any, input LoadInput, filePath, ref string) (string, error) {
 	if files == nil {
 		return "", ErrNoRepositoryReader
 	}
 	if input.ProjectID > 0 {
 		if reader, ok := files.(RepositoryFileReader); ok {
-			return reader.GetRepositoryFile(ctx, input.ProjectID, filePath, input.HeadSHA)
+			return reader.GetRepositoryFile(ctx, input.ProjectID, filePath, ref)
 		}
 	}
 	if repositoryRef := strings.TrimSpace(input.RepositoryRef); repositoryRef != "" {
 		if reader, ok := files.(RepositoryRefFileReader); ok {
-			return reader.GetRepositoryFileByRepositoryRef(ctx, repositoryRef, filePath, input.HeadSHA)
+			return reader.GetRepositoryFileByRepositoryRef(ctx, repositoryRef, filePath, ref)
 		}
 	}
 	return "", ErrNoRepositoryReader

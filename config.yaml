@@ -60,6 +60,12 @@ model_chains:
       - claude_backup
 
 review:
+  # Which git ref the repository's ai-review.yaml is read from.
+  # base (default): the target branch, so a merge request cannot rewrite its own
+  # review configuration. head: the change itself (legacy behaviour).
+  # gate_mode, enabled, provider_route, severity_threshold and confidence_threshold
+  # are never honoured from the repository file; set them in project/group policy.
+  config_ref: base
   model_chain: review_primary
   advisor_chain: advisor_primary
   packs:

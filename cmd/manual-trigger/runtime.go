@@ -52,7 +52,7 @@ func newDefaultRunProcessor(cfg *config.Config, sqlDB *sql.DB, client *legacygit
 
 	adapter := platformgitlab.NewAdapter(client)
 	inputBuilder := reviewinput.NewBuilder(
-		rules.NewLoader(client, manualPlatformDefaults(defaultRoute)),
+		rules.NewLoader(client, manualPlatformDefaults(defaultRoute, cfg.Review.ConfigRef)),
 		ctxpkg.NewAssembler(),
 		nil,
 	)
@@ -135,8 +135,9 @@ func renderManualJudgeSummary(decision judge.Decision) string {
 	return strings.Join(lines, "\n")
 }
 
-func manualPlatformDefaults(defaultRoute string) rules.PlatformDefaults {
+func manualPlatformDefaults(defaultRoute, configRef string) rules.PlatformDefaults {
 	return rules.PlatformDefaults{
+		ConfigRef:           configRef,
 		Instructions:        "Platform defaults: prioritize correctness, security, and least-privilege behavior.",
 		ConfidenceThreshold: 0.72,
 		SeverityThreshold:   "medium",

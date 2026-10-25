@@ -89,7 +89,7 @@ func defaultLoadInput(ctx context.Context, configPath string, target core.Review
 		}
 		adapter := platformgitlab.NewAdapter(client)
 		builder := reviewinput.NewBuilder(
-			rules.NewLoader(client, defaultPlatformDefaults(defaultRoute)),
+			rules.NewLoader(client, defaultPlatformDefaults(defaultRoute, cfg.Review.ConfigRef)),
 			ctxpkg.NewAssembler(),
 			nil,
 		)
@@ -108,7 +108,7 @@ func defaultLoadInput(ctx context.Context, configPath string, target core.Review
 		}
 		adapter := platformgithub.NewAdapter(client)
 		builder := reviewinput.NewBuilder(
-			rules.NewLoader(client, defaultPlatformDefaults(defaultRoute)),
+			rules.NewLoader(client, defaultPlatformDefaults(defaultRoute, cfg.Review.ConfigRef)),
 			ctxpkg.NewAssembler(),
 			nil,
 		)
@@ -511,8 +511,9 @@ type nilDiscardWriter struct{}
 
 func (nilDiscardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
-func defaultPlatformDefaults(defaultRoute string) rules.PlatformDefaults {
+func defaultPlatformDefaults(defaultRoute, configRef string) rules.PlatformDefaults {
 	return rules.PlatformDefaults{
+		ConfigRef:           configRef,
 		Instructions:        "Platform defaults: prioritize correctness, security, and least-privilege behavior.",
 		ConfidenceThreshold: 0.72,
 		SeverityThreshold:   "medium",

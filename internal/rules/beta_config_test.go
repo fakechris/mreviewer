@@ -49,11 +49,14 @@ context_lines_after: 15
 		}
 
 		ep := result.EffectivePolicy
-		if ep.ConfidenceThreshold != 0.85 {
-			t.Errorf("ConfidenceThreshold = %v, want 0.85", ep.ConfidenceThreshold)
+		// INV-1351: thresholds, gate and route are host-only; the repository
+		// file cannot change them, so platform defaults remain.
+		defaults := defaultPlatformDefaults()
+		if ep.ConfidenceThreshold != defaults.ConfidenceThreshold {
+			t.Errorf("ConfidenceThreshold = %v, want platform default %v", ep.ConfidenceThreshold, defaults.ConfidenceThreshold)
 		}
-		if ep.SeverityThreshold != "high" {
-			t.Errorf("SeverityThreshold = %q, want high", ep.SeverityThreshold)
+		if ep.SeverityThreshold != defaults.SeverityThreshold {
+			t.Errorf("SeverityThreshold = %q, want platform default %q", ep.SeverityThreshold, defaults.SeverityThreshold)
 		}
 		if !reflect.DeepEqual(ep.IncludePaths, []string{"cmd/**", "internal/**"}) {
 			t.Errorf("IncludePaths = %v, want [cmd/** internal/**]", ep.IncludePaths)
@@ -61,11 +64,11 @@ context_lines_after: 15
 		if !reflect.DeepEqual(ep.ExcludePaths, []string{"testdata/**"}) {
 			t.Errorf("ExcludePaths = %v, want [testdata/**]", ep.ExcludePaths)
 		}
-		if ep.GateMode != "external_status" {
-			t.Errorf("GateMode = %q, want external_status", ep.GateMode)
+		if ep.GateMode != defaults.GateMode {
+			t.Errorf("GateMode = %q, want platform default %q", ep.GateMode, defaults.GateMode)
 		}
-		if ep.ProviderRoute != "minimax-enterprise" {
-			t.Errorf("ProviderRoute = %q, want minimax-enterprise", ep.ProviderRoute)
+		if ep.ProviderRoute != defaults.ProviderRoute {
+			t.Errorf("ProviderRoute = %q, want platform default %q", ep.ProviderRoute, defaults.ProviderRoute)
 		}
 		if ep.OutputLanguage != "en-US" {
 			t.Errorf("OutputLanguage = %q, want en-US", ep.OutputLanguage)
@@ -103,7 +106,7 @@ context_lines_after: 15
 		}
 	})
 
-	t.Run("yaml_overrides_project_policy", func(t *testing.T) {
+	t.Run("yaml_cannot_override_project_policy_host_only_fields", func(t *testing.T) {
 		reader := stubFileReader{content: map[string]string{
 			".gitlab/ai-review.yaml@head-sha": "confidence_threshold: 0.95\nseverity_threshold: high\n",
 		}}
@@ -122,12 +125,22 @@ context_lines_after: 15
 			t.Fatalf("Load: %v", err)
 		}
 
-		// ai-review.yaml should override project policy.
-		if result.EffectivePolicy.ConfidenceThreshold != 0.95 {
-			t.Errorf("ConfidenceThreshold = %v, want 0.95 (from ai-review.yaml)", result.EffectivePolicy.ConfidenceThreshold)
+		// INV-1351: ai-review.yaml is repository-controlled, so it must not
+		// override host-only project policy fields.
+		if result.EffectivePolicy.ConfidenceThreshold != 0.80 {
+			t.Errorf("ConfidenceThreshold = %v, want 0.80 (project policy wins)", result.EffectivePolicy.ConfidenceThreshold)
 		}
-		if result.EffectivePolicy.SeverityThreshold != "high" {
-			t.Errorf("SeverityThreshold = %q, want high (from ai-review.yaml)", result.EffectivePolicy.SeverityThreshold)
+		if result.EffectivePolicy.SeverityThreshold != "medium" {
+			t.Errorf("SeverityThreshold = %q, want medium (project policy wins)", result.EffectivePolicy.SeverityThreshold)
+		}
+		hostOnlyWarned := false
+		for _, w := range result.Warnings {
+			if strings.Contains(w, "host-only") {
+				hostOnlyWarned = true
+			}
+		}
+		if !hostOnlyWarned {
+			t.Errorf("expected host-only warning, got %v", result.Warnings)
 		}
 	})
 
@@ -411,7 +424,7 @@ func TestConfigLayerPrecedence(t *testing.T) {
 	t.Run("full_precedence_chain", func(t *testing.T) {
 		// Setup: each layer overrides different values to verify ordering.
 		reader := stubFileReader{content: map[string]string{
-			".gitlab/ai-review.yaml@head-sha": "confidence_threshold: 0.95\ngate_mode: ci\n",
+			".gitlab/ai-review.yaml@head-sha": "max_files: 42\ngate_mode: ci\n",
 			"REVIEW.md@head-sha":              "# Final trusted instructions\n",
 		}}
 
@@ -452,9 +465,14 @@ func TestConfigLayerPrecedence(t *testing.T) {
 
 		ep := result.EffectivePolicy
 
-		// confidence_threshold: ai-review.yaml (0.95) > project (0.80) > group (0.70) > platform (0.60)
-		if ep.ConfidenceThreshold != 0.95 {
-			t.Errorf("ConfidenceThreshold = %v, want 0.95 (from ai-review.yaml)", ep.ConfidenceThreshold)
+		// confidence_threshold: project (0.80) > group (0.70) > platform (0.60);
+		// ai-review.yaml may not set it (host-only).
+		if ep.ConfidenceThreshold != 0.80 {
+			t.Errorf("ConfidenceThreshold = %v, want 0.80 (from project policy)", ep.ConfidenceThreshold)
+		}
+		// max_files: ai-review.yaml (42) is repository-controlled and applies.
+		if ep.MaxFiles != 42 {
+			t.Errorf("MaxFiles = %d, want 42 (from ai-review.yaml)", ep.MaxFiles)
 		}
 
 		// severity_threshold: project (high) > group (medium) > platform (low);
@@ -463,9 +481,10 @@ func TestConfigLayerPrecedence(t *testing.T) {
 			t.Errorf("SeverityThreshold = %q, want high (from project policy)", ep.SeverityThreshold)
 		}
 
-		// gate_mode: ai-review.yaml (ci) > project (unset) > group (threads_resolved) > platform (disabled)
-		if ep.GateMode != "ci" {
-			t.Errorf("GateMode = %q, want ci (from ai-review.yaml)", ep.GateMode)
+		// gate_mode: ai-review.yaml (ci) is host-only and ignored; project (unset) >
+		// group (threads_resolved) > platform (disabled).
+		if ep.GateMode != "threads_resolved" {
+			t.Errorf("GateMode = %q, want threads_resolved (from group; yaml gate_mode ignored)", ep.GateMode)
 		}
 
 		// provider_route: project (project-route) > group (group-route) > platform (platform-default);
@@ -564,7 +583,7 @@ func TestConfigLayerPrecedence(t *testing.T) {
 
 	t.Run("ai_review_yaml_overrides_project", func(t *testing.T) {
 		reader := stubFileReader{content: map[string]string{
-			".gitlab/ai-review.yaml@head-sha": "confidence_threshold: 0.99\n",
+			".gitlab/ai-review.yaml@head-sha": "max_files: 11\n",
 		}}
 		project := &db.ProjectPolicy{
 			ConfidenceThreshold: 0.80,
@@ -580,8 +599,12 @@ func TestConfigLayerPrecedence(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 
-		if result.EffectivePolicy.ConfidenceThreshold != 0.99 {
-			t.Errorf("ConfidenceThreshold = %v, want 0.99 (ai-review.yaml > project)", result.EffectivePolicy.ConfidenceThreshold)
+		// Repository-controlled fields from ai-review.yaml sit above project policy.
+		if result.EffectivePolicy.MaxFiles != 11 {
+			t.Errorf("MaxFiles = %d, want 11 (ai-review.yaml > project)", result.EffectivePolicy.MaxFiles)
+		}
+		if result.EffectivePolicy.ConfidenceThreshold != 0.80 {
+			t.Errorf("ConfidenceThreshold = %v, want 0.80 (project policy; yaml may not set it)", result.EffectivePolicy.ConfidenceThreshold)
 		}
 	})
 
@@ -643,8 +666,8 @@ func TestConfigLayerPrecedence(t *testing.T) {
 func TestConfigChangeAffectsNextRun(t *testing.T) {
 	t.Run("different_head_sha_loads_different_config", func(t *testing.T) {
 		reader := stubFileReader{content: map[string]string{
-			".gitlab/ai-review.yaml@sha-v1": "confidence_threshold: 0.70\n",
-			".gitlab/ai-review.yaml@sha-v2": "confidence_threshold: 0.95\n",
+			".gitlab/ai-review.yaml@sha-v1": "max_files: 70\n",
+			".gitlab/ai-review.yaml@sha-v2": "max_files: 95\n",
 			"REVIEW.md@sha-v1":              "# V1 review\n",
 			"REVIEW.md@sha-v2":              "# V2 review\n",
 		}}
@@ -668,13 +691,13 @@ func TestConfigChangeAffectsNextRun(t *testing.T) {
 			t.Fatalf("Load v2: %v", err)
 		}
 
-		// V1 should have 0.70.
-		if r1.EffectivePolicy.ConfidenceThreshold != 0.70 {
-			t.Errorf("v1 ConfidenceThreshold = %v, want 0.70", r1.EffectivePolicy.ConfidenceThreshold)
+		// V1 should have 70.
+		if r1.EffectivePolicy.MaxFiles != 70 {
+			t.Errorf("v1 MaxFiles = %d, want 70", r1.EffectivePolicy.MaxFiles)
 		}
-		// V2 should have 0.95.
-		if r2.EffectivePolicy.ConfidenceThreshold != 0.95 {
-			t.Errorf("v2 ConfidenceThreshold = %v, want 0.95", r2.EffectivePolicy.ConfidenceThreshold)
+		// V2 should have 95.
+		if r2.EffectivePolicy.MaxFiles != 95 {
+			t.Errorf("v2 MaxFiles = %d, want 95", r2.EffectivePolicy.MaxFiles)
 		}
 
 		// REVIEW.md content should differ.
@@ -765,8 +788,8 @@ func TestConfigChangeAffectsNextRun(t *testing.T) {
 
 	t.Run("loader_is_stateless_between_calls", func(t *testing.T) {
 		reader := stubFileReader{content: map[string]string{
-			".gitlab/ai-review.yaml@sha-a": "confidence_threshold: 0.55\n",
-			".gitlab/ai-review.yaml@sha-b": "confidence_threshold: 0.99\n",
+			".gitlab/ai-review.yaml@sha-a": "max_files: 55\n",
+			".gitlab/ai-review.yaml@sha-b": "max_files: 99\n",
 		}}
 		loader := NewLoader(reader, defaultPlatformDefaults())
 
@@ -777,14 +800,14 @@ func TestConfigChangeAffectsNextRun(t *testing.T) {
 		// Re-call with first SHA to prove no state leaks.
 		r3, _ := loader.Load(context.Background(), LoadInput{ProjectID: 1, HeadSHA: "sha-a"})
 
-		if r1.EffectivePolicy.ConfidenceThreshold != 0.55 {
-			t.Errorf("r1 = %v, want 0.55", r1.EffectivePolicy.ConfidenceThreshold)
+		if r1.EffectivePolicy.MaxFiles != 55 {
+			t.Errorf("r1 = %d, want 55", r1.EffectivePolicy.MaxFiles)
 		}
-		if r2.EffectivePolicy.ConfidenceThreshold != 0.99 {
-			t.Errorf("r2 = %v, want 0.99", r2.EffectivePolicy.ConfidenceThreshold)
+		if r2.EffectivePolicy.MaxFiles != 99 {
+			t.Errorf("r2 = %d, want 99", r2.EffectivePolicy.MaxFiles)
 		}
-		if r3.EffectivePolicy.ConfidenceThreshold != 0.55 {
-			t.Errorf("r3 = %v, want 0.55 (same as r1, no state leak)", r3.EffectivePolicy.ConfidenceThreshold)
+		if r3.EffectivePolicy.MaxFiles != 55 {
+			t.Errorf("r3 = %d, want 55 (same as r1, no state leak)", r3.EffectivePolicy.MaxFiles)
 		}
 	})
 }
@@ -1028,7 +1051,7 @@ func TestAIReviewConfigUnknownFieldWarning(t *testing.T) {
 
 	t.Run("warnings_surfaced_through_loader", func(t *testing.T) {
 		reader := stubFileReader{content: map[string]string{
-			".gitlab/ai-review.yaml@head-sha": "confidence_threshold: 0.85\nunknown_option: test\n",
+			".gitlab/ai-review.yaml@head-sha": "max_files: 85\nunknown_option: test\n",
 		}}
 		loader := NewLoader(reader, defaultPlatformDefaults())
 
@@ -1050,9 +1073,9 @@ func TestAIReviewConfigUnknownFieldWarning(t *testing.T) {
 		if !hasWarning {
 			t.Errorf("LoadResult.Warnings should contain unknown-field warning, got: %v", result.Warnings)
 		}
-		// Known field should still be applied.
-		if result.EffectivePolicy.ConfidenceThreshold != 0.85 {
-			t.Errorf("ConfidenceThreshold = %v, want 0.85", result.EffectivePolicy.ConfidenceThreshold)
+		// Known repository-controlled field should still be applied.
+		if result.EffectivePolicy.MaxFiles != 85 {
+			t.Errorf("MaxFiles = %d, want 85", result.EffectivePolicy.MaxFiles)
 		}
 	})
 }

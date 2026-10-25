@@ -62,6 +62,7 @@ func (b *Builder) Build(ctx context.Context, input BuildInput) (core.ReviewInput
 		ProjectID:              input.Snapshot.Change.ProjectID,
 		RepositoryRef:          input.Snapshot.Target.Repository,
 		HeadSHA:                input.Snapshot.Version.HeadSHA,
+		BaseSHA:                input.Snapshot.Version.BaseSHA,
 		ProjectPolicy:          input.ProjectPolicy,
 		ChangedPaths:           changedPaths,
 		InstructionConfigPaths: instructionConfigPaths(input.Snapshot.Target.Platform),

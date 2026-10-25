@@ -54,6 +54,9 @@ type ModelChainConfig struct {
 }
 
 type ReviewConfig struct {
+	// ConfigRef selects which git ref the repository ai-review.yaml is read
+	// from: "base" (default, the target branch) or "head" (the change itself).
+	ConfigRef        string   `yaml:"config_ref"`
 	ModelChain       string   `yaml:"model_chain"`
 	AdvisorChain     string   `yaml:"advisor_chain"`
 	Packs            []string `yaml:"packs"`
