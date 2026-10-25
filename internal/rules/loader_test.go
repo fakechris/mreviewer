@@ -551,3 +551,180 @@ func TestLoadPropagatesUnexpectedFileErrors(t *testing.T) {
 		t.Fatalf("Load error = %v, want boom", err)
 	}
 }
+
+// INV-1351: a merge request author controls the files on the head branch, so
+// ai-review.yaml is read from the base ref by default and host-only keys
+// (gate, thresholds, route, enabled) are never honoured from the repository.
+func TestRepositoryConfigHostOnlyFieldsIgnoredWithWarnings(t *testing.T) {
+	loader := NewLoader(stubRepositoryRefReader{
+		content: map[string]string{
+			"acme/repo:.gitlab/ai-review.yaml@base-sha": strings.Join([]string{
+				"enabled: false",
+				"gate_mode: disabled",
+				"provider_route: cheap-route",
+				"severity_threshold: high",
+				"confidence_threshold: 0.99",
+				"output_language: en-US",
+				"max_files: 7",
+			}, "\n") + "\n",
+		},
+	}, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{
+		RepositoryRef: "acme/repo",
+		HeadSHA:       "head-sha",
+		BaseSHA:       "base-sha",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	defaults := defaultPlatformDefaults()
+	if got := result.EffectivePolicy.GateMode; got != defaults.GateMode {
+		t.Fatalf("GateMode = %q, want platform default %q", got, defaults.GateMode)
+	}
+	if got := result.EffectivePolicy.ProviderRoute; got != defaults.ProviderRoute {
+		t.Fatalf("ProviderRoute = %q, want platform default %q", got, defaults.ProviderRoute)
+	}
+	if got := result.EffectivePolicy.SeverityThreshold; got != defaults.SeverityThreshold {
+		t.Fatalf("SeverityThreshold = %q, want platform default %q", got, defaults.SeverityThreshold)
+	}
+	if got := result.EffectivePolicy.ConfidenceThreshold; got != defaults.ConfidenceThreshold {
+		t.Fatalf("ConfidenceThreshold = %v, want platform default %v", got, defaults.ConfidenceThreshold)
+	}
+	// Repository-controlled keys still apply, and `enabled: false` no longer
+	// short-circuits them.
+	if got := result.EffectivePolicy.OutputLanguage; got != "en-US" {
+		t.Fatalf("OutputLanguage = %q, want en-US", got)
+	}
+	if got := result.EffectivePolicy.MaxFiles; got != 7 {
+		t.Fatalf("MaxFiles = %d, want 7", got)
+	}
+	for _, field := range hostOnlyAIReviewFields {
+		found := false
+		for _, w := range result.Warnings {
+			if strings.Contains(w, `"`+field+`"`) && strings.Contains(w, "host-only") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing host-only warning for %q in %v", field, result.Warnings)
+		}
+	}
+}
+
+func TestRepositoryConfigReadFromBaseRefByDefault(t *testing.T) {
+	loader := NewLoader(stubRepositoryRefReader{
+		content: map[string]string{
+			"acme/repo:.gitlab/ai-review.yaml@base-sha": "max_files: 3\n",
+			"acme/repo:.gitlab/ai-review.yaml@head-sha": "max_files: 999\nexclude_paths: ['**']\n",
+			"acme/repo:REVIEW.md@head-sha":              "# head review instructions\n",
+		},
+	}, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{
+		RepositoryRef: "acme/repo",
+		HeadSHA:       "head-sha",
+		BaseSHA:       "base-sha",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := result.EffectivePolicy.MaxFiles; got != 3 {
+		t.Fatalf("MaxFiles = %d, want 3 from base ref", got)
+	}
+	if got := result.EffectivePolicy.ExcludePaths; reflect.DeepEqual(got, []string{"**"}) {
+		t.Fatalf("head-branch exclude_paths must not apply, got %#v", got)
+	}
+	// Instructions still come from head.
+	if !strings.Contains(result.Trusted.ReviewMarkdown, "head review instructions") {
+		t.Fatalf("ReviewMarkdown = %q, want head REVIEW.md", result.Trusted.ReviewMarkdown)
+	}
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "base SHA unavailable") {
+			t.Fatalf("unexpected fallback warning: %v", result.Warnings)
+		}
+	}
+}
+
+func TestRepositoryConfigHeadRefOptIn(t *testing.T) {
+	content := map[string]string{
+		"acme/repo:.gitlab/ai-review.yaml@base-sha": "max_files: 3\n",
+		"acme/repo:.gitlab/ai-review.yaml@head-sha": "max_files: 9\n",
+	}
+	for name, input := range map[string]LoadInput{
+		"per-load override": {RepositoryRef: "acme/repo", HeadSHA: "head-sha", BaseSHA: "base-sha", ConfigRef: ConfigRefHead},
+	} {
+		t.Run(name, func(t *testing.T) {
+			loader := NewLoader(stubRepositoryRefReader{content: content}, defaultPlatformDefaults())
+			result, err := loader.Load(context.Background(), input)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := result.EffectivePolicy.MaxFiles; got != 9 {
+				t.Fatalf("MaxFiles = %d, want 9 from head ref", got)
+			}
+		})
+	}
+	t.Run("platform default", func(t *testing.T) {
+		defaults := defaultPlatformDefaults()
+		defaults.ConfigRef = ConfigRefHead
+		loader := NewLoader(stubRepositoryRefReader{content: content}, defaults)
+		result, err := loader.Load(context.Background(), LoadInput{RepositoryRef: "acme/repo", HeadSHA: "head-sha", BaseSHA: "base-sha"})
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got := result.EffectivePolicy.MaxFiles; got != 9 {
+			t.Fatalf("MaxFiles = %d, want 9 from head ref", got)
+		}
+	})
+}
+
+func TestRepositoryConfigFallsBackToHeadWhenBaseMissing(t *testing.T) {
+	loader := NewLoader(stubRepositoryRefReader{
+		content: map[string]string{
+			"acme/repo:.gitlab/ai-review.yaml@head-sha": "max_files: 5\n",
+		},
+	}, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{RepositoryRef: "acme/repo", HeadSHA: "head-sha"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := result.EffectivePolicy.MaxFiles; got != 5 {
+		t.Fatalf("MaxFiles = %d, want 5", got)
+	}
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "base SHA unavailable") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected fallback warning, got %v", result.Warnings)
+	}
+}
+
+func TestProjectPolicyStillSetsHostOnlyFields(t *testing.T) {
+	loader := NewLoader(stubRepositoryRefReader{
+		content: map[string]string{
+			"acme/repo:.gitlab/ai-review.yaml@base-sha": "gate_mode: disabled\nprovider_route: cheap-route\n",
+		},
+	}, defaultPlatformDefaults())
+
+	result, err := loader.Load(context.Background(), LoadInput{
+		RepositoryRef: "acme/repo",
+		HeadSHA:       "head-sha",
+		BaseSHA:       "base-sha",
+		ProjectPolicy: &db.ProjectPolicy{GateMode: "external_status", ProviderRoute: "minimax-enterprise"},
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := result.EffectivePolicy.GateMode; got != "external_status" {
+		t.Fatalf("GateMode = %q, want project policy external_status", got)
+	}
+	if got := result.EffectivePolicy.ProviderRoute; got != "minimax-enterprise" {
+		t.Fatalf("ProviderRoute = %q, want project policy minimax-enterprise", got)
+	}
+}

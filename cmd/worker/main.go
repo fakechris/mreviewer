@@ -79,6 +79,7 @@ func run() int {
 	}
 
 	rulesLoader := rules.NewLoader(repositoryRulesClient, rules.PlatformDefaults{
+		ConfigRef:           cfg.Review.ConfigRef,
 		Instructions:        "Platform defaults: prioritize correctness, security, and least-privilege behavior.",
 		ConfidenceThreshold: 0.72,
 		SeverityThreshold:   "medium",

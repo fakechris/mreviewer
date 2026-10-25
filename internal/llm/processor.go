@@ -147,7 +147,7 @@ func (p *Processor) ProcessRun(ctx context.Context, run db.ReviewRun) (scheduler
 		}
 	}
 
-	ruleResult, err := p.rulesLoader.Load(rulesCtx, rules.LoadInput{ProjectID: project.GitlabProjectID, HeadSHA: snapshot.Version.HeadSHA, ProjectPolicy: policyPtr, ChangedPaths: changedPaths})
+	ruleResult, err := p.rulesLoader.Load(rulesCtx, rules.LoadInput{ProjectID: project.GitlabProjectID, HeadSHA: snapshot.Version.HeadSHA, BaseSHA: snapshot.Version.BaseSHA, ProjectPolicy: policyPtr, ChangedPaths: changedPaths})
 	endRulesLoad()
 	if err != nil {
 		return scheduler.ProcessOutcome{}, scheduler.NewTerminalError(providerRequestFailedCode, fmt.Errorf("llm: load rules: %w", err))
