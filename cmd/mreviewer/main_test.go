@@ -1162,3 +1162,58 @@ func TestFinalStatusStateTreatsSummaryStyledFindingAsBlocking(t *testing.T) {
 		t.Fatalf("blockingFindings = %d, want 1", got)
 	}
 }
+
+func TestIncompleteVerdictMapsToPendingStatusAndExitCodes(t *testing.T) {
+	bundle := core.ReviewBundle{Verdict: core.VerdictIncomplete}
+	if got := finalStatusState(bundle); got != "pending" {
+		t.Fatalf("finalStatusState = %q, want pending", got)
+	}
+	if got := exitCodeForResult("never", bundle); got != 0 {
+		t.Fatalf("exit(never) = %d, want 0", got)
+	}
+	if got := exitCodeForResult("requested_changes", bundle); got != 0 {
+		t.Fatalf("exit(requested_changes) on incomplete = %d, want 0", got)
+	}
+	if got := exitCodeForResult("incomplete", bundle); got != 2 {
+		t.Fatalf("exit(incomplete) = %d, want 2", got)
+	}
+	if got := exitCodeForResult("incomplete", core.ReviewBundle{Verdict: "requested_changes"}); got != 3 {
+		t.Fatalf("exit(incomplete) on requested_changes = %d, want 3", got)
+	}
+}
+
+func TestParseOptionsAcceptsIncompleteExitModeAndCoverageThreshold(t *testing.T) {
+	opts, err := parseOptions([]string{"--target", "https://github.com/acme/repo/pull/1", "--exit-mode", "incomplete", "--coverage-threshold", "0.9"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("parseOptions: %v", err)
+	}
+	if opts.exitMode != "incomplete" || opts.coverageThreshold != 0.9 {
+		t.Fatalf("opts = %+v", opts)
+	}
+	if _, err := parseOptions([]string{"--target", "https://github.com/acme/repo/pull/1", "--coverage-threshold", "1.5"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("expected error for coverage threshold > 1")
+	}
+}
+
+func TestDecisionBriefRendersCoverageSection(t *testing.T) {
+	bundle := core.ReviewBundle{
+		Verdict: core.VerdictIncomplete,
+		Coverage: &core.CoverageSummary{
+			TotalChangedLines: 100, ReviewedChangedLines: 40, HunksTotal: 10, HunksInPrompt: 4,
+			Ratio: 0.4, Threshold: 0.8, Incomplete: true,
+			Skipped: []core.SkippedScope{{Path: "big/gen.go", Reason: "scope_limit", ChangedLines: 60}},
+		},
+	}
+	out := renderDecisionBriefMarkdown(bundle, nil)
+	for _, want := range []string{"## Coverage", "Reviewed 40/100 changed lines (40%), 4/10 hunks; threshold 80%", "Verdict is incomplete", "`big/gen.go` (scope_limit, 60 changed lines)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("brief missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(renderDecisionBriefMarkdown(core.ReviewBundle{Verdict: "pass"}, nil), "## What To Fix First") {
+		t.Fatal("brief without coverage should still render")
+	}
+	if strings.Contains(renderDecisionBriefMarkdown(core.ReviewBundle{Verdict: "pass"}, nil), "## Coverage") {
+		t.Fatal("brief without coverage must not render a Coverage section")
+	}
+}

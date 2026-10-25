@@ -146,6 +146,7 @@ func (b *Builder) Build(ctx context.Context, input BuildInput) (core.ReviewInput
 		Snapshot:        input.Snapshot,
 		Request:         assembled.Request,
 		EffectivePolicy: loadResult.EffectivePolicy,
+		Coverage:        assembled.Coverage,
 		Warnings:        loadResult.Warnings,
 		Metadata:        metadata,
 		Policy:          policy,

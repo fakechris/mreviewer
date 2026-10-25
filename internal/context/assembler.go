@@ -36,10 +36,10 @@ const (
 type PRSizeCategory string
 
 const (
-	PRSizeSmall  PRSizeCategory = "small"   // < 100 changed lines
-	PRSizeMedium PRSizeCategory = "medium"  // 100-500 changed lines
-	PRSizeLarge  PRSizeCategory = "large"   // 500-2500 changed lines
-	PRSizeXLarge PRSizeCategory = "xlarge"  // > 2500 changed lines
+	PRSizeSmall  PRSizeCategory = "small"  // < 100 changed lines
+	PRSizeMedium PRSizeCategory = "medium" // 100-500 changed lines
+	PRSizeLarge  PRSizeCategory = "large"  // 500-2500 changed lines
+	PRSizeXLarge PRSizeCategory = "xlarge" // > 2500 changed lines
 )
 
 type PRSizeStrategy struct {
@@ -100,7 +100,7 @@ type ReviewRequest struct {
 	Version           VersionContext      `json:"version"`
 	Rules             TrustedRules        `json:"rules"`
 	Changes           []Change            `json:"changes,omitempty"`
-	HistoricalContext HistoricalContext    `json:"historical_context,omitempty"`
+	HistoricalContext HistoricalContext   `json:"historical_context,omitempty"`
 	IncrementalState  IncrementalState    `json:"incremental_state,omitempty"`
 }
 
@@ -206,7 +206,40 @@ type CoverageReport struct {
 	SkippedFiles  int      `json:"skipped_files,omitempty"`
 	SkippedLines  int      `json:"skipped_lines,omitempty"`
 	Summary       string   `json:"summary,omitempty"`
+
+	// Mode mirrors AssemblyResult.Mode so consumers that only receive the
+	// report still know whether the review was full scope, truncated or
+	// degraded.
+	Mode ReviewMode `json:"mode,omitempty"`
+	// TotalChangedLines counts every changed line in the merge request,
+	// including files that were excluded or truncated.
+	TotalChangedLines int `json:"total_changed_lines"`
+	// ReviewedChangedLines counts the changed lines that made it into the
+	// prompt.
+	ReviewedChangedLines int `json:"reviewed_changed_lines"`
+	// HunksTotal and HunksInPrompt count diff hunks the same way; a truncated
+	// hunk still counts as in prompt because the reviewer saw part of it.
+	HunksTotal    int `json:"hunks_total"`
+	HunksInPrompt int `json:"hunks_in_prompt"`
+	// Ratio is ReviewedChangedLines / TotalChangedLines, 1 when nothing
+	// changed.
+	Ratio float64 `json:"ratio"`
+	// Skipped lists every file, or part of a file, the reviewer did not see,
+	// with the reason and how many changed lines were left out.
+	Skipped []SkippedScope `json:"skipped,omitempty"`
 }
+
+// SkippedScope is one file (or the truncated tail of one file) the review did
+// not cover.
+type SkippedScope struct {
+	Path         string `json:"path"`
+	Reason       string `json:"reason"`
+	ChangedLines int    `json:"changed_lines,omitempty"`
+}
+
+// ExcludedReasonTruncated marks a file whose later hunks were cut by
+// max_changed_lines; the file itself is still in the request.
+const ExcludedReasonTruncated = "truncated"
 
 type PolicySettings struct {
 	IncludePaths       []string `json:"include_paths,omitempty"`
@@ -379,12 +412,16 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 		if path == "" {
 			continue
 		}
-		result.Coverage.SkippedLines += countChangedLines(diff.Diff)
+		fileChangedLines := countChangedLines(diff.Diff)
+		result.Coverage.SkippedLines += fileChangedLines
+		result.Coverage.TotalChangedLines += fileChangedLines
+		result.Coverage.HunksTotal += countHunks(diff.Diff)
 
 		reason := excludedReason(path, diff, settings)
 		if reason != "" {
 			result.Excluded = append(result.Excluded, ExcludedFile{Path: path, Reason: reason})
 			result.Coverage.SkippedFiles++
+			result.Coverage.Skipped = append(result.Coverage.Skipped, SkippedScope{Path: path, Reason: reason, ChangedLines: fileChangedLines})
 			continue
 		}
 
@@ -393,6 +430,7 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 			result.Mode = ReviewModeDegradation
 			result.Excluded = append(result.Excluded, ExcludedFile{Path: path, Reason: ExcludedReasonScopeLimit})
 			result.Coverage.SkippedFiles++
+			result.Coverage.Skipped = append(result.Coverage.Skipped, SkippedScope{Path: path, Reason: ExcludedReasonScopeLimit, ChangedLines: fileChangedLines})
 			continue
 		}
 
@@ -459,6 +497,7 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 			if change.Truncated {
 				result.Excluded = append(result.Excluded, ExcludedFile{Path: path, Reason: ExcludedReasonScopeLimit})
 				result.Coverage.SkippedFiles++
+				result.Coverage.Skipped = append(result.Coverage.Skipped, SkippedScope{Path: path, Reason: ExcludedReasonScopeLimit, ChangedLines: fileChangedLines})
 			}
 			continue
 		}
@@ -466,6 +505,11 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 		result.Request.Changes = append(result.Request.Changes, change)
 		result.Coverage.ReviewedPaths = append(result.Coverage.ReviewedPaths, change.Path)
 		result.Coverage.SkippedLines -= change.ChangedLines
+		result.Coverage.ReviewedChangedLines += change.ChangedLines
+		result.Coverage.HunksInPrompt += len(change.Hunks)
+		if change.Truncated && fileChangedLines > change.ChangedLines {
+			result.Coverage.Skipped = append(result.Coverage.Skipped, SkippedScope{Path: path, Reason: ExcludedReasonTruncated, ChangedLines: fileChangedLines - change.ChangedLines})
+		}
 	}
 
 	if a.retriever != nil && len(result.Request.Changes) > 0 {
@@ -492,6 +536,11 @@ func (a *Assembler) Assemble(input AssembleInput) (AssemblyResult, error) {
 		default:
 			result.Mode = ReviewModeFullScope
 		}
+	}
+	result.Coverage.Mode = result.Mode
+	result.Coverage.Ratio = 1
+	if result.Coverage.TotalChangedLines > 0 {
+		result.Coverage.Ratio = float64(result.Coverage.ReviewedChangedLines) / float64(result.Coverage.TotalChangedLines)
 	}
 	result.Coverage.Summary = summarizeCoverage(result)
 	return result, nil
@@ -876,6 +925,16 @@ func formatHunkHeader(oldStart, oldLines, newStart, newLines int, trailer string
 
 func isChangeLine(line string) bool {
 	return strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-")
+}
+
+// countHunks returns the number of hunk headers in a unified diff. A diff
+// that fails to parse counts as zero hunks, matching countChangedLines.
+func countHunks(diffText string) int {
+	hunks, err := parseHunks(diffText)
+	if err != nil {
+		return 0
+	}
+	return len(hunks)
 }
 
 func countChangedLines(diffText string) int {

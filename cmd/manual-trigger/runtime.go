@@ -77,7 +77,7 @@ func newDefaultRunProcessor(cfg *config.Config, sqlDB *sql.DB, client *legacygit
 	engine := core.NewEngine(runners, manualJudgeAdapter{inner: judge.New()})
 	runtimeWriter := platformgitlab.NewRuntimeWriteback(client, writer.NewSQLStore(sqlDB))
 
-	return reviewrun.NewEngineProcessor(sqlDB, inputLoader, engine).WithWriteback(runtimeWriter), nil
+	return reviewrun.NewEngineProcessor(sqlDB, inputLoader, engine).WithWriteback(runtimeWriter).WithCoverageThreshold(cfg.Review.CoverageThreshold), nil
 }
 
 func buildManualGitLabReviewInput(ctx context.Context, target core.ReviewTarget, fetcher *platformgitlab.Adapter, builder *reviewinput.Builder) (core.ReviewInput, error) {

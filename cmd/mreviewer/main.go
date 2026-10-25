@@ -56,6 +56,7 @@ type cliOptions struct {
 	outputMode           OutputMode
 	publishMode          PublishMode
 	exitMode             string
+	coverageThreshold    float64
 	reviewerPacks        []string
 	routeOverride        string
 	advisorRoute         string
@@ -198,11 +199,12 @@ func runWithDeps(args []string, deps runtimeDeps) int {
 
 		cliTracef(deps.stderr, opts.verbose, 2, "cli: running review engine (route=%s advisor=%s packs=%s publish=%s)", opts.routeOverride, opts.advisorRoute, strings.Join(opts.reviewerPacks, ","), opts.publishMode)
 		bundle, err := deps.newEngine(opts.configPath).Run(context.Background(), input, core.RunOptions{
-			OutputMode:    string(opts.outputMode),
-			PublishMode:   string(opts.publishMode),
-			ReviewerPacks: opts.reviewerPacks,
-			RouteOverride: opts.routeOverride,
-			AdvisorRoute:  opts.advisorRoute,
+			OutputMode:        string(opts.outputMode),
+			PublishMode:       string(opts.publishMode),
+			ReviewerPacks:     opts.reviewerPacks,
+			RouteOverride:     opts.routeOverride,
+			AdvisorRoute:      opts.advisorRoute,
+			CoverageThreshold: opts.coverageThreshold,
 		})
 		if err != nil {
 			if deps.status != nil && !opts.dryRun {
@@ -315,6 +317,9 @@ func finalStatusState(bundle core.ReviewBundle) string {
 	switch strings.ToLower(strings.TrimSpace(bundle.Verdict)) {
 	case "failed", "request_changes", "requested_changes":
 		return "failed"
+	case core.VerdictIncomplete:
+		// The reviewer did not see enough of the change: never report success.
+		return "pending"
 	default:
 		if blockingFindings(bundle) > 0 {
 			return "failed"
@@ -348,10 +353,11 @@ type multiRunOutput struct {
 }
 
 type reviewBrief struct {
-	Verdict           string           `json:"verdict,omitempty"`
-	ActionItems       []briefAction    `json:"action_items,omitempty"`
-	SpecialistSignals []briefSignal    `json:"specialist_signals,omitempty"`
-	Comparison        *briefComparison `json:"comparison,omitempty"`
+	Verdict           string                `json:"verdict,omitempty"`
+	ActionItems       []briefAction         `json:"action_items,omitempty"`
+	SpecialistSignals []briefSignal         `json:"specialist_signals,omitempty"`
+	Comparison        *briefComparison      `json:"comparison,omitempty"`
+	Coverage          *core.CoverageSummary `json:"coverage,omitempty"`
 }
 
 type briefAction struct {
@@ -515,7 +521,8 @@ Examples:
 	fs.StringVar(&opts.configPath, "config", "config.yaml", "Path to config file")
 	fs.StringVar(&output, "output", output, "markdown|json|both")
 	fs.StringVar(&publish, "publish", publish, "full-review-comments|summary-only|artifact-only")
-	fs.StringVar(&opts.exitMode, "exit-mode", "never", "never|requested_changes")
+	fs.StringVar(&opts.exitMode, "exit-mode", "never", "never|requested_changes|incomplete")
+	fs.Float64Var(&opts.coverageThreshold, "coverage-threshold", 0, "minimum share (0-1] of changed lines the reviewer must see for a passing verdict; 0 uses the default 0.8")
 	fs.StringVar(&packs, "reviewer-packs", "", "comma separated reviewer packs")
 	fs.StringVar(&opts.routeOverride, "route", "", "model or model-chain override")
 	fs.StringVar(&opts.advisorRoute, "advisor-route", "", "optional stronger second-opinion model or model-chain override")
@@ -559,9 +566,12 @@ Examples:
 		opts.publishMode = PublishModeArtifactOnly
 	}
 	switch strings.TrimSpace(opts.exitMode) {
-	case "never", "requested_changes":
+	case "never", "requested_changes", "incomplete":
 	default:
-		return cliOptions{}, fmt.Errorf("--exit-mode must be one of never, requested_changes")
+		return cliOptions{}, fmt.Errorf("--exit-mode must be one of never, requested_changes, incomplete")
+	}
+	if opts.coverageThreshold < 0 || opts.coverageThreshold > 1 {
+		return cliOptions{}, fmt.Errorf("--coverage-threshold must be between 0 and 1")
 	}
 	if packs != "" {
 		for _, part := range strings.Split(packs, ",") {
@@ -591,12 +601,20 @@ Examples:
 	return opts, nil
 }
 
+// exitCodeForResult maps the verdict to a process exit code. Mode
+// "requested_changes" returns 3 for a blocking verdict; mode "incomplete" does
+// the same and additionally returns 2 when the reviewer did not see enough of
+// the change.
 func exitCodeForResult(mode string, bundle core.ReviewBundle) int {
+	verdict := strings.ToLower(strings.TrimSpace(bundle.Verdict))
 	switch strings.TrimSpace(mode) {
-	case "requested_changes":
-		switch strings.ToLower(strings.TrimSpace(bundle.Verdict)) {
+	case "requested_changes", "incomplete":
+		switch verdict {
 		case "requested_changes", "request_changes", "failed":
 			return 3
+		}
+		if mode == "incomplete" && verdict == core.VerdictIncomplete {
+			return 2
 		}
 	}
 	return 0
@@ -613,7 +631,7 @@ func bundlePayloadMap(bundle core.ReviewBundle) map[string]any {
 }
 
 func buildReviewBrief(bundle core.ReviewBundle, comparison *comparepkg.Report) reviewBrief {
-	brief := reviewBrief{Verdict: bundle.Verdict}
+	brief := reviewBrief{Verdict: bundle.Verdict, Coverage: bundle.Coverage}
 	for _, candidate := range bundle.PublishCandidates {
 		if candidate.Kind != "finding" {
 			continue
@@ -676,6 +694,25 @@ func renderDecisionBriefMarkdown(bundle core.ReviewBundle, comparison *comparepk
 	} else {
 		out.WriteString(brief.Verdict)
 		out.WriteString("\n")
+	}
+	if brief.Coverage != nil {
+		out.WriteString("\n## Coverage\n\n")
+		out.WriteString(fmt.Sprintf("- Reviewed %d/%d changed lines (%d%%), %d/%d hunks; threshold %d%%\n",
+			brief.Coverage.ReviewedChangedLines, brief.Coverage.TotalChangedLines, int(brief.Coverage.Ratio*100+0.5),
+			brief.Coverage.HunksInPrompt, brief.Coverage.HunksTotal, int(brief.Coverage.Threshold*100+0.5)))
+		if brief.Coverage.Incomplete {
+			out.WriteString("- Verdict is incomplete: the reviewer did not see enough of the change to vouch for it.\n")
+		}
+		if len(brief.Coverage.Skipped) > 0 {
+			out.WriteString("- Not reviewed:\n")
+			for _, skipped := range brief.Coverage.Skipped {
+				line := "  - `" + skipped.Path + "` (" + skipped.Reason
+				if skipped.ChangedLines > 0 {
+					line += fmt.Sprintf(", %d changed lines", skipped.ChangedLines)
+				}
+				out.WriteString(line + ")\n")
+			}
+		}
 	}
 	out.WriteString("\n## What To Fix First\n\n")
 	if len(brief.ActionItems) == 0 {

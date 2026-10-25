@@ -40,6 +40,7 @@ type EngineProcessor struct {
 	writeback            RunWriteback
 	defaultReviewerPacks []string
 	defaultAdvisorRoute  string
+	coverageThreshold    float64
 }
 
 func NewEngineProcessor(sqlDB *sql.DB, loadInput ReviewInputLoader, engine ReviewEngine) *EngineProcessor {
@@ -70,6 +71,15 @@ func (p *EngineProcessor) WithWriteback(writeback RunWriteback) *EngineProcessor
 
 func (p *EngineProcessor) WithDefaultReviewerPacks(packIDs []string) *EngineProcessor {
 	p.defaultReviewerPacks = append([]string(nil), packIDs...)
+	return p
+}
+
+// WithCoverageThreshold sets the minimum reviewed-lines ratio for a passing
+// verdict; zero keeps the engine default.
+func (p *EngineProcessor) WithCoverageThreshold(threshold float64) *EngineProcessor {
+	if p != nil {
+		p.coverageThreshold = threshold
+	}
 	return p
 }
 
@@ -123,11 +133,12 @@ func (p *EngineProcessor) ProcessRun(ctx context.Context, run db.ReviewRun) (sch
 	}
 
 	bundle, err := p.engine.Run(ctx, input, core.RunOptions{
-		OutputMode:    "both",
-		PublishMode:   "full-review-comments",
-		ReviewerPacks: append([]string(nil), p.defaultReviewerPacks...),
-		RouteOverride: providerRoute,
-		AdvisorRoute:  p.defaultAdvisorRoute,
+		OutputMode:        "both",
+		PublishMode:       "full-review-comments",
+		ReviewerPacks:     append([]string(nil), p.defaultReviewerPacks...),
+		RouteOverride:     providerRoute,
+		AdvisorRoute:      p.defaultAdvisorRoute,
+		CoverageThreshold: p.coverageThreshold,
 	})
 	if err != nil {
 		return scheduler.ProcessOutcome{}, fmt.Errorf("reviewrun: run review engine: %w", err)

@@ -234,7 +234,8 @@ Key flags:
 - `--reviewer-packs`: comma-separated reviewer packs
 - `--route`: model or model-chain override
 - `--advisor-route`: optional stronger second-opinion model or chain override
-- `--exit-mode`: `never` or `requested_changes`; returns exit code `3` when the final verdict requests changes
+- `--exit-mode`: `never`, `requested_changes`, or `incomplete`; returns exit code `3` when the final verdict requests changes, and with `incomplete` also exit code `2` when the reviewer saw less of the change than `--coverage-threshold` (default 0.8) allows
+- `--coverage-threshold`: minimum share (0-1] of changed lines that must reach the reviewer for a passing verdict; below it the verdict is `incomplete`, the commit status is `pending`, and the brief lists the unreviewed files
 - `--compare-live`: comma-separated reviewer IDs/kinds already present on the target PR/MR, for example `reviewer-a,reviewer-b`
 - `--compare-artifacts`: comma-separated JSON artifact paths to compare against the current review bundle
 

@@ -21,7 +21,10 @@ type ReviewInput struct {
 	Snapshot        PlatformSnapshot      `json:"snapshot"`
 	Request         ctxpkg.ReviewRequest  `json:"request"`
 	EffectivePolicy rules.EffectivePolicy `json:"effective_policy"`
-	Warnings        []string              `json:"warnings,omitempty"`
+	// Coverage is the assembler's account of which changed lines reached the
+	// prompt; zero value means the loader did not report it.
+	Coverage ctxpkg.CoverageReport `json:"coverage,omitempty,omitzero"`
+	Warnings []string              `json:"warnings,omitempty"`
 
 	Metadata       map[string]string    `json:"metadata,omitempty"`
 	Policy         map[string]any       `json:"policy,omitempty"`
