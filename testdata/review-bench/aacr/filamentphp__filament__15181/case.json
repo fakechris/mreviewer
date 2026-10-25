@@ -1,0 +1,72 @@
+{
+ "id": "aacr/filamentphp__filament__15181",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/filamentphp/filament/pull/15181",
+  "owner": "filamentphp",
+  "repo": "filament",
+  "number": 15181,
+  "base_sha": "753ceeac007a0d0aa4423971b01d651288720873",
+  "head_sha": "77874d0c3782a257101c3fb578144a6950f3dc9c",
+  "title": "Fix: Add conditions to DISTINCT and modify reorder conditions in PostgreSQL",
+  "description": "\r\n\r\n<!-- FILL OUT ALL RELEVANT SECTIONS, OR THE PULL REQUEST WILL BE CLOSED. -->\r\n\r\n## Description\r\nThis is a fix for issue #14814.\r\n\r\nThe problem was that in PostgreSQL, the results were always ordered by `id`. I added a condition to sort by the value specified on the screen if sorting is applied; otherwise, the results will fall back to sorting by `id`.\r\n\r\nAdditionally, the `DISTINCT` clause was always applied to `id`. A condition was added to handle cases where sorting is based on id.\r\n<!-- Describe the addressed issue or the need for the new or updated functionality. -->\r\n\r\n## Visual changes\r\n\r\n<!-- Add screenshots/recordings of before and after. -->\r\n\r\n## Functional changes\r\n\r\n- [x] Code style has been fixed by running the `composer cs` command.\r\n- [ ] Changes have been tested to not break existing functionality.\r\n- [ ] Documentation is up-to-date.\r\n",
+  "language": "PHP",
+  "category": "Bug Fix",
+  "changed_lines": 14
+ },
+ "diffs": [
+  {
+   "old_path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+   "new_path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+   "diff": "@@ -69,13 +69,18 @@ public function handle(): void\n \n         if ($databaseConnection->getDriverName() === 'pgsql') {\n             $originalOrders = collect($query->getQuery()->orders)\n-                ->reject(fn (array $order): bool => in_array($order['column'] ?? null, [$keyName, $qualifiedKeyName]))\n+                ->reject(fn (array $order): bool => in_array($order['column'] ?? null, [$qualifiedKeyName]))\n                 ->unique('column');\n \n             /** @var array<string, mixed> $originalBindings */\n             $originalBindings = $query->getRawBindings();\n \n-            $query->reorder($qualifiedKeyName);\n+            if (! empty($originalOrders->all())) {\n+                $query->reorder($originalOrders[0]['column'], $originalOrders[0]['direction']);\n+                $originalOrders->forget(0);\n+            } else {\n+                $query->reorder($qualifiedKeyName);\n+            }\n \n             foreach ($originalOrders as $order) {\n                 if (blank($order['column'] ?? null) || blank($order['direction'] ?? null)) {\n@@ -144,7 +149,10 @@ public function handle(): void\n         $chunkKeySize = $this->chunkSize * 10;\n \n         $baseQuery = $query->toBase();\n-        $baseQuery->distinct($qualifiedKeyName);\n+\n+        if (in_array($query->getQuery()->orders[0]['column'] ?? null, [$keyName, $qualifiedKeyName])) {\n+            $baseQuery->distinct($qualifiedKeyName);\n+        }\n \n         /** @phpstan-ignore-next-line */\n         $baseQueryOrders = $baseQuery->orders ?? [];",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+   "side": "left",
+   "from_line": 72,
+   "to_line": 72,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The removal of the primary key column rejection logic causes the original descending order on the non-qualified primary key (`id`) to persist after reapplying the ascending order via `reorder()`, resulting in unexpected sort behavior where records are incorrectly ordered within date groups. Specifically, the conflict between preserved `id DESC` and enforced `qualifiedKeyName ASC` produces non-sequential ID sequences like 100→99→...→1 followed by 150→149 in the output.",
+   "source": "human"
+  },
+  {
+   "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+   "side": "right",
+   "from_line": 72,
+   "to_line": 72,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `in_array` check for a single column name should be replaced with direct equality (`===`) to prevent type juggling issues and improve efficiency.",
+   "source": "human"
+  },
+  {
+   "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+   "side": "right",
+   "from_line": 78,
+   "to_line": 80,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Using array index access [0] on a Collection object is not recommended. Use Collection methods like first() and shift() instead for better readability and safety.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+   "side": "right",
+   "from_line": 153,
+   "to_line": 155,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential runtime error: The code accesses `$query->getQuery()->orders[0]` without first checking if the `orders` array exists or is non-empty. If `orders` is null or an empty array, this will cause an \"Undefined array key 0\" error or \"Attempt to read property on null\" error. Consider checking if orders exist and have at least one element before accessing index 0, similar to how `$baseQueryOrders` is handled on line 158.\n",
+   "source": "GLM-4.7"
+  }
+ ],
+ "negatives": []
+}

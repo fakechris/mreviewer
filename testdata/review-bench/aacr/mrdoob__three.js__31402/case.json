@@ -1,0 +1,167 @@
+{
+ "id": "aacr/mrdoob__three.js__31402",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/mrdoob/three.js/pull/31402",
+  "owner": "mrdoob",
+  "repo": "three.js",
+  "number": 31402,
+  "base_sha": "de413e2112ff1ae80599f145b101354a1476976c",
+  "head_sha": "b55b9e97f6d0f5829e4d8fc364949e72b0d9e98c",
+  "title": "TSL: Introduce `computeKernel()`",
+  "description": "Related issue: #31393\r\n\r\nSo far, the workgroup for the compute shader consists of a scalar and the dispatchSize always uses dispatch.x up to ```device.limits.maxComputeWorkgroupsPerDimension``` before dispatch.y is used. The default workgroup is now [ 64, 1, 1 ] instead of [ 64 ]. This ensures that all previous examples are treated as before.\r\n\r\nExample on webgpu_compute_particles_rain, usual usage:\r\n```\r\ncomputeParticles = computeUpdate().compute( maxParticleCount );\r\nrenderer.compute( computeParticles );\r\n```\r\n\r\nUse with workgroup and dispatchSize\r\n```\r\ncomputeParticles = computeUpdate().computeKernel( [ 16, 16, 1 ] );\r\nrenderer.compute( computeParticles, [ 10, 10, 1 ] );\r\n```\r\n\r\nSince the instanceCount in the example is 25,000, workgroup = [ 16, 16, 1 ] and dispatchSize = [ 10, 10, 1 ] = 16 * 10 * 16 * 10 * 1 = 25,600 threads, enough to cover everything. If you choose smaller values for dispatchSize, e.g., [ 9, 9, 1 ], you would see that not all raindrops are computed.\r\n\r\nYou now have full control over the thread distribution for the GPU, which was not possible.\r\nI'm setting the PR to draft for now, even though it works, because I might think of a few more things I'd like to add. Maybe warnings if you enter something incorrectly.\r\n",
+  "language": "JavaScript",
+  "category": "New Feature Additions",
+  "changed_lines": 210
+ },
+ "diffs": [
+  {
+   "old_path": "src/nodes/gpgpu/ComputeNode.js",
+   "new_path": "src/nodes/gpgpu/ComputeNode.js",
+   "diff": "@@ -20,9 +20,9 @@ class ComputeNode extends Node {\n \t *\n \t * @param {Node} computeNode - TODO\n \t * @param {number} count - TODO.\n-\t * @param {Array<number>} [workgroupSize=[64]] - TODO.\n+\t * @param {Array<number>} [workgroupSize = [ 64, 1, 1 ]]\n \t */\n-\tconstructor( computeNode, count, workgroupSize = [ 64 ] ) {\n+\tconstructor( computeNode, count, workgroupSize = [ 64, 1, 1 ] ) {\n \n \t\tsuper( 'void' );\n \n@@ -53,7 +53,7 @@ class ComputeNode extends Node {\n \t\t * TODO\n \t\t *\n \t\t * @type {Array<number>}\n-\t\t * @default [64]\n+\t\t * @default [ 64, 1, 1 ]\n \t\t */\n \t\tthis.workgroupSize = workgroupSize;\n \n@@ -219,10 +219,23 @@ export default ComputeNode;\n  * @tsl\n  * @function\n  * @param {Node} node - TODO\n- * @param {number} count - TODO.\n- * @param {Array<number>} [workgroupSize=[64]] - TODO.\n+ * @param {number} countOrWorkgroupSize - TODO.\n+ * @param {Array<number>} [workgroupSize=[ 64, 1, 1 ]]\n  * @returns {AtomicFunctionNode}\n  */\n-export const compute = ( node, count, workgroupSize ) => nodeObject( new ComputeNode( nodeObject( node ), count, workgroupSize ) );\n+export const compute = ( node, countOrWorkgroupSize, workgroupSize ) => {\n+\n+\tlet count = countOrWorkgroupSize;\n+\n+\tif ( Array.isArray( countOrWorkgroupSize ) ) {\n+\n+\t\tworkgroupSize = countOrWorkgroupSize;\n+\t\tcount = null;\n+\n+\t}\n+\n+\treturn nodeObject( new ComputeNode( nodeObject( node ), count, workgroupSize ) );\n+\n+};\n \n addMethodChaining( 'compute', compute );",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderers/common/Renderer.js",
+   "new_path": "src/renderers/common/Renderer.js",
+   "diff": "@@ -2308,9 +2308,10 @@ class Renderer {\n \t * if the renderer has been initialized.\n \t *\n \t * @param {Node|Array<Node>} computeNodes - The compute node(s).\n+\t * @param {Array<number>} dispatchSize - Array with [ x,y,z ] values for dispatch.\n \t * @return {Promise|undefined} A Promise that resolve when the compute has finished. Only returned when the renderer has not been initialized.\n \t */\n-\tcompute( computeNodes ) {\n+\tcompute( computeNodes, dispatchSize = [ 0, 0, 0 ] ) {\n \n \t\tif ( this._isDeviceLost === true ) return;\n \n@@ -2389,7 +2390,7 @@ class Renderer {\n \t\t\tconst computeBindings = bindings.getForCompute( computeNode );\n \t\t\tconst computePipeline = pipelines.getForCompute( computeNode, computeBindings );\n \n-\t\t\tbackend.compute( computeNodes, computeNode, computeBindings, computePipeline );\n+\t\t\tbackend.compute( computeNodes, computeNode, computeBindings, computePipeline, dispatchSize );\n \n \t\t}\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderers/webgpu/WebGPUBackend.js",
+   "new_path": "src/renderers/webgpu/WebGPUBackend.js",
+   "diff": "@@ -1318,10 +1318,15 @@ class WebGPUBackend extends Backend {\n \t * @param {Node} computeNode - The compute node.\n \t * @param {Array<BindGroup>} bindings - The bindings.\n \t * @param {ComputePipeline} pipeline - The compute pipeline.\n+\t * @param {Array<number>} dispatchSize - Array with [x,y,z] values for dispatch.\n \t */\n-\tcompute( computeGroup, computeNode, bindings, pipeline ) {\n+\tcompute( computeGroup, computeNode, bindings, pipeline, dispatchSize ) {\n \n+\t\tconst computeNodeData = this.get( computeNode );\n \t\tconst { passEncoderGPU } = this.get( computeGroup );\n+\t\tconst isValid = dispatchSize[ 0 ] > 0 && dispatchSize[ 1 ] > 0 && dispatchSize[ 2 ] > 0;\n+\n+\t\tdispatchSize = isValid ? dispatchSize : computeNodeData;\n \n \t\t// pipeline\n \n@@ -1340,30 +1345,38 @@ class WebGPUBackend extends Backend {\n \n \t\t}\n \n-\t\tconst maxComputeWorkgroupsPerDimension = this.device.limits.maxComputeWorkgroupsPerDimension;\n+\t\tif ( isValid ) {\n \n-\t\tconst computeNodeData = this.get( computeNode );\n+\t\t\tpassEncoderGPU.dispatchWorkgroups(\n+\t\t\t\tdispatchSize[ 0 ],\n+\t\t\t\tdispatchSize[ 1 ],\n+\t\t\t\tdispatchSize[ 2 ]\n+\t\t\t);\n \n-\t\tif ( computeNodeData.dispatchSize === undefined ) computeNodeData.dispatchSize = { x: 0, y: 1, z: 1 };\n+\t\t} else {\n \n-\t\tconst { dispatchSize } = computeNodeData;\n+\t\t\tconst maxComputeWorkgroupsPerDimension = this.device.limits.maxComputeWorkgroupsPerDimension;\n \n-\t\tif ( computeNode.dispatchCount > maxComputeWorkgroupsPerDimension ) {\n+\t\t\tif ( computeNodeData.dispatchSize === undefined ) computeNodeData.dispatchSize = { x: 0, y: 1, z: 1 };\n \n-\t\t\tdispatchSize.x = Math.min( computeNode.dispatchCount, maxComputeWorkgroupsPerDimension );\n-\t\t\tdispatchSize.y = Math.ceil( computeNode.dispatchCount / maxComputeWorkgroupsPerDimension );\n+\t\t\tif ( computeNode.dispatchCount > maxComputeWorkgroupsPerDimension ) {\n \n-\t\t} else {\n+\t\t\t\tdispatchSize.x = Math.min( computeNode.dispatchCount, maxComputeWorkgroupsPerDimension );\n+\t\t\t\tdispatchSize.y = Math.ceil( computeNode.dispatchCount / maxComputeWorkgroupsPerDimension );\n+\n+\t\t\t} else {\n \n-\t\t\tdispatchSize.x = computeNode.dispatchCount;\n+\t\t\t\tdispatchSize.x = computeNode.dispatchCount;\n \n-\t\t}\n+\t\t\t}\n \n-\t\tpassEncoderGPU.dispatchWorkgroups(\n-\t\t\tdispatchSize.x,\n-\t\t\tdispatchSize.y,\n-\t\t\tdispatchSize.z\n-\t\t);\n+\t\t\tpassEncoderGPU.dispatchWorkgroups(\n+\t\t\t\tdispatchSize.x,\n+\t\t\t\tdispatchSize.y,\n+\t\t\t\tdispatchSize.z\n+\t\t\t);\n+\n+\t\t}\n \n \t}\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderers/webgpu/nodes/WGSLNodeBuilder.js",
+   "new_path": "src/renderers/webgpu/nodes/WGSLNodeBuilder.js",
+   "diff": "@@ -1898,7 +1898,11 @@ ${ flowData.code }\n \n \t\t} else {\n \n-\t\t\tthis.computeShader = this._getWGSLComputeCode( shadersData.compute, ( this.object.workgroupSize || [ 64 ] ).join( ', ' ) );\n+\t\t\tconst workgroupSize = this.object.workgroupSize || [ 64, 1, 1 ];\n+\n+\t\t\tif ( workgroupSize.length !== 3 ) throw new Error( 'workgroupSize must have 3 elements' );\n+\n+\t\t\tthis.computeShader = this._getWGSLComputeCode( shadersData.compute, workgroupSize );\n \n \t\t}\n \n@@ -2103,6 +2107,8 @@ fn main( ${shaderData.varyings} ) -> ${shaderData.returnType} {\n \t */\n \t_getWGSLComputeCode( shaderData, workgroupSize ) {\n \n+\t\tconst [ workgroupSizeX, workgroupSizeY, workgroupSizeZ ] = workgroupSize;\n+\n \t\treturn `${ this.getSignature() }\n // directives\n ${shaderData.directives}\n@@ -2122,11 +2128,13 @@ ${shaderData.uniforms}\n // codes\n ${shaderData.codes}\n \n-@compute @workgroup_size( ${workgroupSize} )\n+@compute @workgroup_size( ${workgroupSizeX}, ${workgroupSizeY}, ${workgroupSizeZ} )\n fn main( ${shaderData.attributes} ) {\n \n \t// system\n-\tinstanceIndex = globalId.x + globalId.y * numWorkgroups.x * u32(${workgroupSize}) + globalId.z * numWorkgroups.x * numWorkgroups.y * u32(${workgroupSize});\n+\tinstanceIndex = globalId.x\n+    + globalId.y * (${workgroupSizeX} * numWorkgroups.x)\n+    + globalId.z * (${workgroupSizeX} * numWorkgroups.x) * (${workgroupSizeY} * numWorkgroups.y);\n \n \t// vars\n \t${shaderData.vars}",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/nodes/gpgpu/ComputeNode.js",
+   "side": "right",
+   "from_line": 222,
+   "to_line": 222,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The `countOrWorkgroupSize` parameter can be a number or an array (workgroup size), as handled in the implementation. The JSDoc type should be updated to reflect this union type.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/nodes/gpgpu/ComputeNode.js",
+   "side": "right",
+   "from_line": 226,
+   "to_line": 235,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Setting `count` to `null` when `countOrWorkgroupSize` is an array will cause a runtime error in `updateDispatchCount()`. The method performs `count / size` (line 110), which results in `NaN` when `count` is `null`, leading to `this.dispatchCount = NaN`. This will break the compute dispatch functionality. Consider either: 1) Providing a default count value (e.g., 0), 2) Calculating count from workgroupSize, or 3) Adding null handling in `updateDispatchCount()`.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/renderers/common/Renderer.js",
+   "side": "right",
+   "from_line": 2314,
+   "to_line": 2314,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The default value `[0, 0, 0]` for `dispatchSize` is problematic. Looking at the WebGPUBackend implementation, the validation checks `dispatchSize[0] > 0 && dispatchSize[1] > 0 && dispatchSize[2] > 0`, which will always fail with this default value. This means the parameter will never actually use the default value and will always fall back to `computeNodeData`. Consider using `null` as the default value to make the intent clearer, or remove the default value entirely if the parameter should be required.\n\n```suggestion\n compute( computeNodes, dispatchSize = null ) {\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/renderers/common/Renderer.js",
+   "side": "right",
+   "from_line": 2322,
+   "to_line": 2322,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The `dispatchSize` parameter is lost when delegating to `computeAsync`. `computeAsync` should also accept `dispatchSize` and pass it back to `compute` after initialization.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/renderers/webgpu/WebGPUBackend.js",
+   "side": "right",
+   "from_line": 1327,
+   "to_line": 1329,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The dispatchSize validation incorrectly requires three positive values, but should accept arrays of length 1 or 2 by defaulting missing dimensions to 1 per WebGPU dispatch conventions. Current implementation fails for valid ergonomic inputs like [16] which should equate to [16,1,1].",
+   "source": "human"
+  },
+  {
+   "path": "src/renderers/webgpu/WebGPUBackend.js",
+   "side": "right",
+   "from_line": 1348,
+   "to_line": 1356,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The new \"fast path\" dispatch uses the provided `dispatchSize` directly and bypasses the previous clamping/check against `maxComputeWorkgroupsPerDimension`. If the caller passes values above device limits, `dispatchWorkgroups` may fail validation. Consider reusing the same limit checks for both paths (or at least clamp/throw with a clear message).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/renderers/webgpu/WebGPUBackend.js",
+   "side": "right",
+   "from_line": 1367,
+   "to_line": 1377,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential runtime error: In the else branch, when computeNode.dispatchCount <= maxComputeWorkgroupsPerDimension, only dispatchSize.x is set but dispatchSize.y and dispatchSize.z remain undefined. This will cause dispatchWorkgroups() to receive undefined values for y and z parameters, which may lead to runtime errors. Need to initialize all components of dispatchSize.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/renderers/webgpu/nodes/WGSLNodeBuilder.js",
+   "side": "right",
+   "from_line": 1903,
+   "to_line": 1903,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The current implementation incorrectly requires `workgroupSize` to have exactly 3 elements; the WebGPU specification allows 1, 2, or 3 elements (with missing dimensions defaulting to 1), so arrays of length 1 or 2 should be accepted and padded.",
+   "source": "human"
+  },
+  {
+   "path": "src/renderers/webgpu/nodes/WGSLNodeBuilder.js",
+   "side": "right",
+   "from_line": 2105,
+   "to_line": 2105,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Outdated JSDoc: the workgroupSize parameter type is documented as 'string' but it's now an Array<number>. Please update the JSDoc to reflect the actual type.\n",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/renderers/webgpu/nodes/WGSLNodeBuilder.js",
+   "side": "right",
+   "from_line": 2131,
+   "to_line": 2137,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`workgroupSizeX/Y/Z` are interpolated into WGSL without explicit `u32()` casts. If these values can be non-integers or expressions, WGSL may reject the shader. Consider ensuring they are integers in JS (see previous comment) and/or wrapping with `u32(...)` in the generated WGSL for the `instanceIndex` math to match `globalId`/`numWorkgroups` types.\n\n```suggestion\n@compute @workgroup_size( ${workgroupSizeX}, ${workgroupSizeY}, ${workgroupSizeZ} )\nfn main( ${shaderData.attributes} ) {\n\n\t// system\n\tinstanceIndex = globalId.x\n\t\t+ globalId.y * ( u32(${workgroupSizeX}) * numWorkgroups.x )\n\t\t+ globalId.z * ( u32(${workgroupSizeX}) * numWorkgroups.x ) * ( u32(${workgroupSizeY}) * numWorkgroups.y );\n```",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "src/nodes/gpgpu/ComputeNode.js",
+   "side": "right",
+   "from_line": 228,
+   "to_line": 235,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Deprecate the old parameter usage pattern by adding a deprecation warning when `countOrWorkgroupSize` is a number.",
+   "source": "human"
+  }
+ ]
+}

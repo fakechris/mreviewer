@@ -1,0 +1,365 @@
+{
+ "id": "aacr/unionlabs__union__3414",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/unionlabs/union/pull/3414",
+  "owner": "unionlabs",
+  "repo": "union",
+  "number": 3414,
+  "base_sha": "efab2bedc6beb4e1bb01906cba9e0dabd3072f13",
+  "head_sha": "d840723278f1d4cecc02ac540385725a1c54ca84",
+  "title": "feat(voyager): replace u64 timestamp with Timestamp type across modules",
+  "description": "closes #3388\r\n\r\nThis PR implements new Timestamp type under voyager core, unifying types that express time as nanoseconds",
+  "language": "Rust",
+  "category": "Code Refactoring / Architectural Improvement",
+  "changed_lines": 213
+ },
+ "diffs": [
+  {
+   "old_path": "lib/voyager-core/src/lib.rs",
+   "new_path": "lib/voyager-core/src/lib.rs",
+   "diff": "@@ -276,7 +276,7 @@ pub struct ClientStateMeta {\n pub struct ConsensusStateMeta {\n     /// The timestamp of the counterparty at the height represented by this\n     /// consensus state.\n-    pub timestamp_nanos: u64,\n+    pub timestamp_nanos: Timestamp,\n }\n \n #[model]\n@@ -325,6 +325,32 @@ impl FromStr for QueryHeight {\n     }\n }\n \n+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]\n+pub struct Timestamp(u64);\n+impl Timestamp {\n+    pub fn from_nanos(nanos: u64) -> Self {\n+        Timestamp(nanos)\n+    }\n+\n+    pub fn from_secs(secs: u64) -> Self {\n+        Timestamp(secs * 1_000_000_000)\n+    }\n+\n+    pub fn as_nanos(&self) -> u64 {\n+        self.0\n+    }\n+\n+    pub fn as_secs(&self) -> u64 {\n+        self.0 / 1_000_000_000\n+    }\n+}\n+\n+impl fmt::Display for Timestamp {\n+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n+        write!(f, \"{}\", self.0)\n+    }\n+}\n+\n macro_rules! str_newtype {\n     (\n         $(#[doc = $doc:literal])+",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "lib/voyager-message/src/call.rs",
+   "new_path": "lib/voyager-message/src/call.rs",
+   "diff": "@@ -3,7 +3,7 @@ use macros::model;\n use serde::de::DeserializeOwned;\n use tracing::{debug, error, info, instrument};\n use unionlabs::{ibc::core::client::height::Height, traits::Member};\n-use voyager_core::{ClientType, IbcSpecId, QueryHeight};\n+use voyager_core::{ClientType, IbcSpecId, QueryHeight, Timestamp};\n use voyager_vm::{call, defer, noop, now, seq, CallT, Op, QueueError};\n \n use crate::{\n@@ -120,8 +120,7 @@ pub struct WaitForHeight {\n #[model]\n pub struct WaitForTimestamp {\n     pub chain_id: ChainId,\n-    /// THIS IS NANOSECONDS\n-    pub timestamp: i64,\n+    pub timestamp: Timestamp,\n     pub finalized: bool,\n }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "lib/voyager-message/src/module.rs",
+   "new_path": "lib/voyager-message/src/module.rs",
+   "diff": "@@ -5,7 +5,7 @@ use macros::model;\n use schemars::JsonSchema;\n use serde_json::Value;\n use unionlabs::{bytes::Bytes, ibc::core::client::height::Height, traits::Member};\n-use voyager_core::{ConsensusType, IbcSpecId};\n+use voyager_core::{ConsensusType, IbcSpecId, Timestamp};\n use voyager_vm::{pass::PassResult, BoxDynError, Op};\n \n use crate::{\n@@ -440,7 +440,7 @@ pub trait ConsensusModule {\n     /// Query the latest finalized timestamp of this chain.\n     #[method(name = \"queryLatestTimestamp\", with_extensions)]\n     // TODO: Make this return a better type than i64\n-    async fn query_latest_timestamp(&self, finalized: bool) -> RpcResult<i64>;\n+    async fn query_latest_timestamp(&self, finalized: bool) -> RpcResult<Timestamp>;\n }\n \n /// Client bootstrap modules provide the initial client and consensus states for a client. This is notably separate from the [`ConsensusModule`], since it is possible for different client types (with different state types) to track the same consensus.",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "lib/voyager-message/src/rpc.rs",
+   "new_path": "lib/voyager-message/src/rpc.rs",
+   "diff": "@@ -8,7 +8,7 @@ use macros::model;\n use serde::de::DeserializeOwned;\n use serde_json::{json, Value};\n use unionlabs::{bytes::Bytes, ibc::core::client::height::Height, ErrorReporter};\n-use voyager_core::IbcSpecId;\n+use voyager_core::{IbcSpecId, Timestamp};\n \n use crate::{\n     context::LoadedModulesInfo,\n@@ -39,7 +39,11 @@ pub trait VoyagerRpc {\n \n     #[method(name = \"queryLatestTimestamp\")]\n     // TODO: Make this return a better type than i64\n-    async fn query_latest_timestamp(&self, chain_id: ChainId, finalized: bool) -> RpcResult<i64>;\n+    async fn query_latest_timestamp(\n+        &self,\n+        chain_id: ChainId,\n+        finalized: bool,\n+    ) -> RpcResult<Timestamp>;\n \n     // =================\n     // IBC state queries",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "lib/voyager-message/src/rpc/server.rs",
+   "new_path": "lib/voyager-message/src/rpc/server.rs",
+   "diff": "@@ -10,7 +10,7 @@ use jsonrpsee::{\n use serde_json::Value;\n use tracing::{debug, info_span, instrument, trace};\n use unionlabs::{bytes::Bytes, ibc::core::client::height::Height, ErrorReporter};\n-use voyager_core::IbcSpecId;\n+use voyager_core::{IbcSpecId, Timestamp};\n use voyager_vm::ItemId;\n \n // use valuable::Valuable;\n@@ -159,7 +159,7 @@ impl Server {\n         &self,\n         chain_id: &ChainId,\n         finalized: bool,\n-    ) -> RpcResult<i64> {\n+    ) -> RpcResult<Timestamp> {\n         self.span()\n             .in_scope(|| async {\n                 trace!(\"querying latest timestamp\");\n@@ -174,7 +174,10 @@ impl Server {\n                     .await\n                     .map_err(json_rpc_error_to_error_object)?;\n \n-                trace!(latest_timestamp, \"queried latest timestamp\");\n+                trace!(\n+                    latest_timestamp = latest_timestamp.as_nanos(),\n+                    \"queried latest timestamp\"\n+                );\n \n                 Ok(latest_timestamp)\n             })\n@@ -537,7 +540,11 @@ impl VoyagerRpcServer for Server {\n         self.query_latest_height(&chain_id, finalized).await\n     }\n \n-    async fn query_latest_timestamp(&self, chain_id: ChainId, finalized: bool) -> RpcResult<i64> {\n+    async fn query_latest_timestamp(\n+        &self,\n+        chain_id: ChainId,\n+        finalized: bool,\n+    ) -> RpcResult<Timestamp> {\n         self.query_latest_timestamp(&chain_id, finalized).await\n     }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/modules/client/cometbls/src/main.rs",
+   "new_path": "voyager/modules/client/cometbls/src/main.rs",
+   "diff": "@@ -22,7 +22,7 @@ use unionlabs::{\n use voyager_message::{\n     core::{\n         ChainId, ClientStateMeta, ClientType, ConsensusStateMeta, ConsensusType,\n-        IbcGo08WasmClientMetadata, IbcInterface,\n+        IbcGo08WasmClientMetadata, IbcInterface, Timestamp,\n     },\n     module::{ClientModuleInfo, ClientModuleServer},\n     ClientModule, FATAL_JSONRPC_ERROR_CODE,\n@@ -190,7 +190,7 @@ impl ClientModuleServer for Module {\n         let cs = self.decode_consensus_state(&consensus_state)?;\n \n         Ok(ConsensusStateMeta {\n-            timestamp_nanos: cs.timestamp,\n+            timestamp_nanos: Timestamp::from_nanos(cs.timestamp),\n         })\n     }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/modules/client/ethereum/src/main.rs",
+   "new_path": "voyager/modules/client/ethereum/src/main.rs",
+   "diff": "@@ -16,7 +16,10 @@ use unionlabs::{\n     ErrorReporter,\n };\n use voyager_message::{\n-    core::{ChainId, ClientStateMeta, ClientType, ConsensusStateMeta, ConsensusType, IbcInterface},\n+    core::{\n+        ChainId, ClientStateMeta, ClientType, ConsensusStateMeta, ConsensusType, IbcInterface,\n+        Timestamp,\n+    },\n     module::{ClientModuleInfo, ClientModuleServer},\n     ClientModule, FATAL_JSONRPC_ERROR_CODE,\n };\n@@ -105,7 +108,7 @@ impl ClientModuleServer for Module {\n         let cs = Module::decode_consensus_state(&consensus_state)?;\n \n         Ok(ConsensusStateMeta {\n-            timestamp_nanos: cs.timestamp,\n+            timestamp_nanos: Timestamp::from_nanos(cs.timestamp),\n         })\n     }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/modules/client/movement/src/main.rs",
+   "new_path": "voyager/modules/client/movement/src/main.rs",
+   "diff": "@@ -17,7 +17,10 @@ use unionlabs::{\n     ErrorReporter,\n };\n use voyager_message::{\n-    core::{ChainId, ClientStateMeta, ClientType, ConsensusStateMeta, ConsensusType, IbcInterface},\n+    core::{\n+        ChainId, ClientStateMeta, ClientType, ConsensusStateMeta, ConsensusType, IbcInterface,\n+        Timestamp,\n+    },\n     module::{ClientModuleInfo, ClientModuleServer},\n     ClientModule, FATAL_JSONRPC_ERROR_CODE,\n };\n@@ -102,7 +105,7 @@ impl ClientModuleServer for Module {\n         let cs = Module::decode_consensus_state(&consensus_state)?;\n \n         Ok(ConsensusStateMeta {\n-            timestamp_nanos: cs.timestamp,\n+            timestamp_nanos: Timestamp::from_nanos(cs.timestamp),\n         })\n     }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/modules/client/tendermint/src/main.rs",
+   "new_path": "voyager/modules/client/tendermint/src/main.rs",
+   "diff": "@@ -16,7 +16,10 @@ use unionlabs::{\n     ErrorReporter,\n };\n use voyager_message::{\n-    core::{ChainId, ClientStateMeta, ClientType, ConsensusStateMeta, ConsensusType, IbcInterface},\n+    core::{\n+        ChainId, ClientStateMeta, ClientType, ConsensusStateMeta, ConsensusType, IbcInterface,\n+        Timestamp,\n+    },\n     module::{ClientModuleInfo, ClientModuleServer},\n     ClientModule, FATAL_JSONRPC_ERROR_CODE,\n };\n@@ -141,7 +144,7 @@ impl ClientModuleServer for Module {\n         let cs = self.decode_consensus_state(&consensus_state)?;\n \n         Ok(ConsensusStateMeta {\n-            timestamp_nanos: cs.timestamp.as_unix_nanos(),\n+            timestamp_nanos: Timestamp::from_nanos(cs.timestamp.as_unix_nanos()),\n         })\n     }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/modules/consensus/cometbls/src/main.rs",
+   "new_path": "voyager/modules/consensus/cometbls/src/main.rs",
+   "diff": "@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};\n use tracing::{debug, error, instrument};\n use unionlabs::{bech32::Bech32, hash::H256, ibc::core::client::height::Height, traits::Member};\n use voyager_message::{\n-    core::{ChainId, ConsensusType},\n+    core::{ChainId, ConsensusType, Timestamp},\n     module::{ConsensusModuleInfo, ConsensusModuleServer},\n     rpc::json_rpc_error_to_error_object,\n     ConsensusModule,\n@@ -129,7 +129,11 @@ impl ConsensusModuleServer for Module {\n     /// Query the latest finalized timestamp of this chain.\n     // TODO: Use a better timestamp type here\n     #[instrument(skip_all, fields(chain_id = %self.chain_id))]\n-    async fn query_latest_timestamp(&self, _: &Extensions, finalized: bool) -> RpcResult<i64> {\n+    async fn query_latest_timestamp(\n+        &self,\n+        _: &Extensions,\n+        finalized: bool,\n+    ) -> RpcResult<Timestamp> {\n         let mut commit_response = self\n             .tm_client\n             .commit(None)\n@@ -161,12 +165,10 @@ impl ConsensusModuleServer for Module {\n             }\n         }\n \n-        Ok(commit_response\n-            .signed_header\n-            .header\n-            .time\n-            .as_unix_nanos()\n-            .try_into()\n-            .expect(\"should be fine\"))\n+        Ok(\n+            Timestamp::from_nanos(commit_response.signed_header.header.time.as_unix_nanos())\n+                .try_into()\n+                .expect(\"should be fine\"),\n+        )\n     }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/modules/consensus/ethereum/src/main.rs",
+   "new_path": "voyager/modules/consensus/ethereum/src/main.rs",
+   "diff": "@@ -19,7 +19,7 @@ use unionlabs::{\n     ErrorReporter,\n };\n use voyager_message::{\n-    core::{ChainId, ConsensusType},\n+    core::{ChainId, ConsensusType, Timestamp},\n     module::{ConsensusModuleInfo, ConsensusModuleServer},\n     ConsensusModule,\n };\n@@ -158,33 +158,41 @@ impl ConsensusModuleServer for Module {\n     /// Query the latest finalized timestamp of this chain.\n     // TODO: Use a better timestamp type here\n     #[instrument(skip_all, fields(chain_id = %self.chain_id, finalized))]\n-    async fn query_latest_timestamp(&self, _: &Extensions, finalized: bool) -> RpcResult<i64> {\n+    async fn query_latest_timestamp(\n+        &self,\n+        _: &Extensions,\n+        finalized: bool,\n+    ) -> RpcResult<Timestamp> {\n         if finalized {\n-            Ok(self\n-                .beacon_api_client\n-                .finality_update()\n-                .await\n-                .map_err(|err| ErrorObject::owned(-1, ErrorReporter(err).to_string(), None::<()>))?\n-                .data\n-                .finalized_header\n-                .execution\n-                .timestamp\n-                .try_into()\n-                .unwrap())\n+            Ok(Timestamp::from_nanos(\n+                self.beacon_api_client\n+                    .finality_update()\n+                    .await\n+                    .map_err(|err| {\n+                        ErrorObject::owned(-1, ErrorReporter(err).to_string(), None::<()>)\n+                    })?\n+                    .data\n+                    .finalized_header\n+                    .execution\n+                    .timestamp,\n+            )\n+            .try_into()\n+            .unwrap())\n         } else {\n-            Ok(self\n-                .provider\n-                .get_block(\n-                    BlockNumberOrTag::Latest.into(),\n-                    BlockTransactionsKind::Hashes,\n-                )\n-                .await\n-                .unwrap()\n-                .unwrap()\n-                .header\n-                .timestamp\n-                .try_into()\n-                .unwrap())\n+            Ok(Timestamp::from_nanos(\n+                self.provider\n+                    .get_block(\n+                        BlockNumberOrTag::Latest.into(),\n+                        BlockTransactionsKind::Hashes,\n+                    )\n+                    .await\n+                    .unwrap()\n+                    .unwrap()\n+                    .header\n+                    .timestamp\n+                    .try_into()\n+                    .unwrap(),\n+            ))\n         }\n     }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/modules/consensus/movement/src/main.rs",
+   "new_path": "voyager/modules/consensus/movement/src/main.rs",
+   "diff": "@@ -16,7 +16,7 @@ use unionlabs::{\n     ErrorReporter,\n };\n use voyager_message::{\n-    core::{ChainId, ConsensusType},\n+    core::{ChainId, ConsensusType, Timestamp},\n     module::{ConsensusModuleInfo, ConsensusModuleServer},\n     ConsensusModule,\n };\n@@ -145,7 +145,11 @@ impl ConsensusModuleServer for Module {\n \n     /// Query the latest finalized timestamp of this chain.\n     // TODO: Make this return a better type than i64\n-    async fn query_latest_timestamp(&self, ext: &Extensions, finalized: bool) -> RpcResult<i64> {\n+    async fn query_latest_timestamp(\n+        &self,\n+        ext: &Extensions,\n+        finalized: bool,\n+    ) -> RpcResult<Timestamp> {\n         let latest_height = self.query_latest_height(ext, finalized).await?;\n \n         match self\n@@ -158,7 +162,7 @@ impl ConsensusModuleServer for Module {\n \n                 debug!(%timestamp, %latest_height, \"latest timestamp\");\n \n-                Ok(timestamp.try_into().unwrap())\n+                Ok(Timestamp::from_nanos(timestamp).try_into().unwrap())\n             }\n             Err(err) => Err(ErrorObject::owned(\n                 -1,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/modules/consensus/tendermint/src/main.rs",
+   "new_path": "voyager/modules/consensus/tendermint/src/main.rs",
+   "diff": "@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};\n use tracing::{debug, error, instrument};\n use unionlabs::{ibc::core::client::height::Height, ErrorReporter};\n use voyager_message::{\n-    core::{ChainId, ConsensusType},\n+    core::{ChainId, ConsensusType, Timestamp},\n     module::{ConsensusModuleInfo, ConsensusModuleServer},\n     rpc::json_rpc_error_to_error_object,\n     ConsensusModule,\n@@ -122,7 +122,11 @@ impl ConsensusModuleServer for Module {\n     /// Query the latest finalized timestamp of this chain.\n     // TODO: Use a better timestamp type here\n     #[instrument(skip_all, fields(chain_id = %self.chain_id))]\n-    async fn query_latest_timestamp(&self, _: &Extensions, finalized: bool) -> RpcResult<i64> {\n+    async fn query_latest_timestamp(\n+        &self,\n+        _: &Extensions,\n+        finalized: bool,\n+    ) -> RpcResult<Timestamp> {\n         let mut commit_response = self\n             .tm_client\n             .commit(None)\n@@ -154,12 +158,10 @@ impl ConsensusModuleServer for Module {\n             }\n         }\n \n-        Ok(commit_response\n-            .signed_header\n-            .header\n-            .time\n-            .as_unix_nanos()\n-            .try_into()\n-            .expect(\"should be fine\"))\n+        Ok(\n+            Timestamp::from_nanos(commit_response.signed_header.header.time.as_unix_nanos())\n+                .try_into()\n+                .expect(\"should be fine\"),\n+        )\n     }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/modules/state/movement/src/main.rs",
+   "new_path": "voyager/modules/state/movement/src/main.rs",
+   "diff": "@@ -23,7 +23,7 @@ use unionlabs::{\n     ErrorReporter,\n };\n use voyager_message::{\n-    core::{ChainId, ClientInfo, ClientType, IbcInterface},\n+    core::{ChainId, ClientInfo, ClientType, IbcInterface, Timestamp},\n     into_value,\n     module::{StateModuleInfo, StateModuleServer},\n     StateModule,\n@@ -132,7 +132,7 @@ impl Module {\n     /// Query the latest finalized timestamp of this chain.\n     // TODO: Use a better timestamp type here\n     #[instrument(skip_all, fields(chain_id = %self.chain_id))]\n-    pub async fn query_latest_timestamp(&self, e: &Extensions) -> RpcResult<i64> {\n+    pub async fn query_latest_timestamp(&self, e: &Extensions) -> RpcResult<Timestamp> {\n         let latest_height = self.query_latest_height(e).await?;\n \n         match self\n@@ -145,7 +145,7 @@ impl Module {\n \n                 debug!(%timestamp, %latest_height, \"latest timestamp\");\n \n-                Ok(timestamp.try_into().unwrap())\n+                Ok(Timestamp::from_nanos(timestamp).try_into().unwrap())\n             }\n             Err(err) => Err(ErrorObject::owned(\n                 -1,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "voyager/plugins/client-update/ethereum/src/main.rs",
+   "new_path": "voyager/plugins/client-update/ethereum/src/main.rs",
+   "diff": "@@ -32,7 +32,7 @@ use unionlabs::{\n };\n use voyager_message::{\n     call::{Call, FetchUpdateHeaders, WaitForTimestamp},\n-    core::{ChainId, ClientType},\n+    core::{ChainId, ClientType, Timestamp},\n     data::{Data, DecodedHeaderMeta, OrderedHeaders},\n     hook::UpdateHook,\n     into_value,\n@@ -536,12 +536,10 @@ impl Module {\n             call(WaitForTimestamp {\n                 chain_id: counterparty_chain_id.clone(),\n                 // we wait for one more block just to be sure the counterparty's block time has caught up\n-                timestamp: i64::try_from(\n+                timestamp: Timestamp::from_secs(\n                     (genesis.genesis_time + (last_update_signature_slot * spec.seconds_per_slot))\n                         + spec.seconds_per_slot,\n-                )\n-                .expect(\"if this fails good luck\")\n-                    * NANOS_PER_SECOND as i64,\n+                ),\n                 finalized: false,\n             }),\n             voyager_vm::data(OrderedHeaders {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "lib/voyager-core/src/lib.rs",
+   "side": "right",
+   "from_line": 328,
+   "to_line": 329,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Consider deriving `Copy` and `Default` for `Timestamp` since it wraps a primitive `u64`. This improves ergonomics by allowing copy semantics and default initialization.\n\nAdditionally, adding `#[serde(transparent)]` is recommended to ensure the struct is serialized exactly as the underlying `u64`. This guarantees wire compatibility with the previous implementation where the field was a raw `u64`, preventing potential serialization issues (e.g., being serialized as a tuple/list in some formats).\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "lib/voyager-core/src/lib.rs",
+   "side": "right",
+   "from_line": 330,
+   "to_line": 333,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider implementing standard traits like `From<u64>` and `Into<u64>` for better Rust idiomaticity. This would allow more natural conversions: `Timestamp::from(nanos)` and `timestamp.into()`.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "lib/voyager-core/src/lib.rs",
+   "side": "right",
+   "from_line": 335,
+   "to_line": 337,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `from_secs` method performs multiplication `secs * 1_000_000_000` without overflow checking. This can overflow for large values (e.g., if `secs` > 18,446,744,073). In debug builds this wraps silently (producing incorrect results), while in release builds with overflow checking enabled it will panic. Consider using `checked_mul`, `saturating_mul`, or documenting the valid range of input values.\n",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "lib/voyager-message/src/module.rs",
+   "side": "right",
+   "from_line": 442,
+   "to_line": 443,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The return type has been updated to `Timestamp`, so this TODO comment is now obsolete and should be removed.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "lib/voyager-message/src/module.rs",
+   "side": "right",
+   "from_line": 443,
+   "to_line": 443,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "RPC return type change here is likely breaking and may also change units/signing:\n- Previously `i64` (often used for seconds) could represent negative values; `Timestamp` is `u64` and stores **nanoseconds** (`from_secs` multiplies by 1e9). Any existing clients expecting `i64` seconds/millis will misinterpret the value.\n- `Timestamp` currently derives `Serialize/Deserialize` but does **not** appear to be `#[serde(transparent)]` or `JsonSchema`-derived, so the JSON shape/schema may differ from what RPC consumers/tools expect.\nSuggestions: keep RPC boundary as a primitive (e.g., `u64` nanos or `i64` secs) and convert internally, or introduce a new versioned RPC method (e.g., `queryLatestTimestampV2`) while keeping the old one for compatibility. If keeping `Timestamp` on the wire, consider `#[serde(transparent)]` + `#[cfg_attr(feature=\"schemars\", derive(JsonSchema))]` on `Timestamp` and clearly document units (nanos).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "lib/voyager-message/src/rpc.rs",
+   "side": "right",
+   "from_line": 41,
+   "to_line": 41,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Remove the TODO comment for the `queryLatestTimestamp` method return type as it is non-actionable and should be addressed or deleted.",
+   "source": "human"
+  },
+  {
+   "path": "lib/voyager-message/src/rpc.rs",
+   "side": "right",
+   "from_line": 42,
+   "to_line": 46,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Changing `queryLatestTimestamp` return type from `i64` to `Timestamp` changes the JSON-RPC wire format (was a JSON number; now a newtype that serializes as a bare `u64` or potentially as an object depending on serde settings). This is a breaking API change for existing clients and can also change signedness (no negatives). Consider: (1) confirm `Timestamp` serializes to the same JSON primitive expected by clients; (2) if backward compatibility is needed, introduce a new RPC method name (e.g., `queryLatestTimestampV2`) or keep returning `i64` and add a separate typed variant; (3) document whether the unit is nanos and ensure consistency with other endpoints.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "lib/voyager-message/src/rpc/server.rs",
+   "side": "right",
+   "from_line": 177,
+   "to_line": 180,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The trace logging for `latest_timestamp` correctly uses `as_nanos()` to display the underlying u64 value. However, since `Timestamp` implements `Display`, you could also consider using `latest_timestamp` directly in the trace message for simpler logging, as the Display implementation already formats the value correctly.\n\nCurrent approach is fine, but if you prefer simpler logging without explicit conversion:\n```rust\ntrace!(latest_timestamp = %latest_timestamp, \"queried latest timestamp\");\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "voyager/modules/consensus/cometbls/src/main.rs",
+   "side": "right",
+   "from_line": 168,
+   "to_line": 172,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The `Timestamp::from_nanos` method returns `Timestamp` directly (not a `Result`), so chaining `.try_into().expect(...)` is redundant and incorrect. The `try_into()` call is unnecessary here since `from_nanos` already produces the correct type.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "voyager/modules/consensus/cometbls/src/main.rs",
+   "side": "right",
+   "from_line": 168,
+   "to_line": 171,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Using `.expect()` for timestamp conversion could cause runtime panics if the conversion fails. Consider using proper error handling instead of panicking, especially for RPC methods that should return errors gracefully.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "voyager/modules/consensus/ethereum/src/main.rs",
+   "side": "right",
+   "from_line": 167,
+   "to_line": 180,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Using .unwrap() after conversions can cause panics if the conversion fails. Consider using proper error handling with ? operator or providing more descriptive error messages.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "voyager/modules/consensus/movement/src/main.rs",
+   "side": "right",
+   "from_line": 147,
+   "to_line": 147,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Remove the TODO comment suggesting a better return type than i64 as it is unnecessary and should be deleted.",
+   "source": "human"
+  },
+  {
+   "path": "voyager/modules/consensus/movement/src/main.rs",
+   "side": "right",
+   "from_line": 165,
+   "to_line": 165,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "There appears to be an unnecessary double conversion here. After creating a Timestamp with `Timestamp::from_nanos(timestamp)`, applying `.try_into().unwrap()` seems redundant. Consider removing the extra conversion if Timestamp::from_nanos already produces the desired type.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "voyager/modules/consensus/tendermint/src/main.rs",
+   "side": "right",
+   "from_line": 162,
+   "to_line": 164,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Using `expect(\"should be fine\")` is not proper error handling. If the conversion fails, it will panic and crash the application. Consider using proper error handling with `map_err()` to convert the error to an appropriate RPC error instead of panicking.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "voyager/modules/state/movement/src/main.rs",
+   "side": "right",
+   "from_line": 148,
+   "to_line": 148,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `.try_into().unwrap()` call is unnecessary here. `Timestamp::from_nanos(timestamp)` already returns a `Timestamp` type directly, which matches the function's return type `RpcResult<Timestamp>`. The additional conversion attempt serves no purpose and adds unnecessary runtime overhead with an unwrap that could panic if the conversion fails.\n\n```suggestion\n                Ok(Timestamp::from_nanos(timestamp))\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "voyager/modules/state/movement/src/main.rs",
+   "side": "right",
+   "from_line": 148,
+   "to_line": 148,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Aptos timestamps are typically in microseconds (as seen in `hubble/src/indexer/aptos/block_handle.rs`), but `Timestamp::from_nanos` expects nanoseconds. This will result in a timestamp that is 1000x smaller than expected. You should multiply `timestamp` by 1000.\n\nAlso, `Timestamp::from_nanos` returns a `Timestamp`, so the `.try_into().unwrap()` call appears to be redundant and likely a leftover from when the return type was `i64`.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "voyager/modules/state/movement/src/main.rs",
+   "side": "right",
+   "from_line": 148,
+   "to_line": 148,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`Timestamp` is a `u64` nanoseconds newtype. Here `timestamp` comes from `latest_timestamp(...)` as a raw integer—please ensure the RPC contract guarantees this value is **nanoseconds**, otherwise wrapping with `Timestamp::from_nanos` will skew time. Consider renaming the variable to `timestamp_nanos` or adding an explicit conversion based on the RPC's unit.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "voyager/plugins/client-update/ethereum/src/main.rs",
+   "side": "right",
+   "from_line": 28,
+   "to_line": 28,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "The `NANOS_PER_SECOND` import is no longer used after refactoring to use `Timestamp::from_secs()`. Consider removing this unused import from line 28.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "lib/voyager-message/src/rpc/server.rs",
+   "side": "right",
+   "from_line": 162,
+   "to_line": 162,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The TODO comment about returning a better type than i64 should be removed since this change has already addressed it by using the Timestamp type.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "voyager/modules/client/ethereum/src/main.rs",
+   "side": "right",
+   "from_line": 111,
+   "to_line": 111,
+   "category": "Security Vulnerability",
+   "context": "File Level",
+   "note": "`Timestamp::from_nanos` is a simple newtype wrapper (no unit conversion/validation). Please ensure `cs.timestamp` is already **unix nanos** for the Ethereum consensus state. If `cs.timestamp` can be malformed/untrusted, consider adding basic sanity checks (e.g., non-zero, reasonable upper bound) before wrapping to avoid propagating nonsense timestamps.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "voyager/modules/consensus/tendermint/src/main.rs",
+   "side": "right",
+   "from_line": 123,
+   "to_line": 123,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The TODO comment indicates the timestamp type for the latest finalized timestamp query is inadequate; replace it with a more appropriate type.",
+   "source": "human"
+  },
+  {
+   "path": "voyager/modules/consensus/tendermint/src/main.rs",
+   "side": "right",
+   "from_line": 161,
+   "to_line": 165,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The code incorrectly calls `.try_into().expect()` on `Timestamp::from_nanos()` result. `Timestamp::from_nanos()` returns `Timestamp` directly (not a `Result`), so calling `.try_into()` on it will cause a compilation error. The `try_into()` should be called on the `i64` value from `as_unix_nanos()` to convert it to `u64` before passing to `from_nanos()`.",
+   "source": "GLM-4.7"
+  }
+ ]
+}

@@ -1,0 +1,367 @@
+{
+ "id": "aacr/keycloak__keycloak__40283",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/keycloak/keycloak/pull/40283",
+  "owner": "keycloak",
+  "repo": "keycloak",
+  "number": 40283,
+  "base_sha": "ad511cbc538f1d9727d17cc423420abc50367af4",
+  "head_sha": "04ad5d530007517b60e2bf8706542556078d17f7",
+  "title": "Add clustering tests to new test framework",
+  "description": "Closes #39962\r\n\r\nThis is a replacement PR for https://github.com/keycloak/keycloak/pull/40127\r\n\r\nI am sorry for confusion, I didn't realize I won't be able to push to that PR if I open it from Pedro's fork. \r\n\r\n<!---\r\nPlease read https://github.com/keycloak/keycloak/blob/main/CONTRIBUTING.md and follow these guidelines when contributing to Keycloak\r\n-->\r\n",
+  "language": "Java",
+  "category": "Test Suite / CI Enhancements",
+  "changed_lines": 596
+ },
+ "diffs": [
+  {
+   "old_path": "quarkus/tests/junit5/src/main/java/org/keycloak/it/utils/DockerKeycloakDistribution.java",
+   "new_path": "quarkus/tests/junit5/src/main/java/org/keycloak/it/utils/DockerKeycloakDistribution.java",
+   "diff": "@@ -2,6 +2,7 @@\n \n import com.github.dockerjava.api.DockerClient;\n import com.github.dockerjava.api.exception.NotFoundException;\n+import io.quarkus.bootstrap.utils.BuildToolHelper;\n import io.restassured.RestAssured;\n import org.jboss.logging.Logger;\n import org.keycloak.common.Version;\n@@ -16,8 +17,11 @@\n import org.testcontainers.images.builder.ImageFromDockerfile;\n import org.testcontainers.utility.DockerImageName;\n import org.testcontainers.utility.LazyFuture;\n+import org.testcontainers.utility.MountableFile;\n \n-import java.io.File;\n+import java.nio.file.Files;\n+import java.nio.file.Path;\n+import java.nio.file.Paths;\n import java.time.Duration;\n import java.util.HashMap;\n import java.util.List;\n@@ -33,9 +37,16 @@ private static class BackupConsumer implements Consumer<OutputFrame> {\n \n         final ToStringConsumer stdOut = new ToStringConsumer();\n         final ToStringConsumer stdErr = new ToStringConsumer();\n+        final Consumer<OutputFrame> customLogConsumer;\n+        public BackupConsumer(Consumer<OutputFrame> customLogConsumer) {\n+            this.customLogConsumer = customLogConsumer;\n+        }\n \n         @Override\n         public void accept(OutputFrame t) {\n+            if (customLogConsumer != null) {\n+                customLogConsumer.accept(t);\n+            }\n             if (t.getType() == OutputType.STDERR) {\n                 stdErr.accept(t);\n             } else if (t.getType() == OutputType.STDOUT) {\n@@ -55,29 +66,50 @@ public void accept(OutputFrame t) {\n \n     private String stdout = \"\";\n     private String stderr = \"\";\n-    private BackupConsumer backupConsumer = new BackupConsumer();\n-    private final File dockerScriptFile = new File(\"../../container/ubi-null.sh\");\n-\n+    private BackupConsumer backupConsumer;\n+    private Consumer<OutputFrame> customLogConsumer;\n     private GenericContainer<?> keycloakContainer = null;\n     private String containerId = null;\n \n     private final Executor parallelReaperExecutor = Executors.newSingleThreadExecutor();\n     private final Map<String, String> envVars = new HashMap<>();\n+    private final LazyFuture<String> image;\n+\n+    private final Map<MountableFile, String> copyToContainer = new HashMap<>();\n \n     public DockerKeycloakDistribution(boolean debug, boolean manualStop, int requestPort, int[] exposedPorts) {\n+        this(debug, manualStop, requestPort, exposedPorts, null);\n+    }\n+\n+    public DockerKeycloakDistribution(boolean debug, boolean manualStop, int requestPort, int[] exposedPorts, LazyFuture<String> image) {\n         this.debug = debug;\n         this.manualStop = manualStop;\n         this.requestPort = requestPort;\n         this.exposedPorts = IntStream.of(exposedPorts).boxed().toArray(Integer[]::new);\n+        this.image = image == null ? createImage(BuildToolHelper.getProjectDir(Paths.get(\"\")).getParent().getParent(), false) : image;\n     }\n \n     @Override\n     public void setEnvVar(String name, String value) {\n         this.envVars.put(name, value);\n     }\n \n+    public void setCustomLogConsumer(Consumer<OutputFrame> customLogConsumer) {\n+        this.customLogConsumer = customLogConsumer;\n+    }\n+\n     private GenericContainer<?> getKeycloakContainer() {\n-        File distributionFile = new File(\"../../dist/\" + File.separator + \"target\" + File.separator + \"keycloak-\" + Version.VERSION + \".tar.gz\");\n+        return new GenericContainer<>(image)\n+                .withEnv(envVars)\n+                .withExposedPorts(exposedPorts)\n+                .withStartupAttempts(1)\n+                .withStartupTimeout(Duration.ofSeconds(120))\n+                .waitingFor(Wait.forListeningPorts(8080));\n+    }\n+\n+    public static LazyFuture<String> createImage(Path quarkusModule, boolean failIfDockerFileMissing) {\n+        var distributionFile = quarkusModule.resolve(Path.of(\"dist\", \"target\", \"keycloak-\" + Version.VERSION + \".tar.gz\"))\n+                .toFile();\n \n         if (!distributionFile.exists()) {\n             distributionFile = Maven.resolveArtifact(\"org.keycloak\", \"keycloak-quarkus-dist\").toFile();\n@@ -86,27 +118,25 @@ private GenericContainer<?> getKeycloakContainer() {\n         if (!distributionFile.exists()) {\n             throw new RuntimeException(\"Distribution archive \" + distributionFile.getAbsolutePath() +\" doesn't exist\");\n         }\n+        LOGGER.infof(\"Building a new docker image from distribution: %s\", distributionFile.getAbsoluteFile());\n \n-        File dockerFile = new File(\"../../container/Dockerfile\");\n-        LazyFuture<String> image;\n+        var dockerFile = quarkusModule.resolve(Path.of(\"container\", \"Dockerfile\"))\n+                .toFile();\n+        var ubiNullScript = quarkusModule.resolve(Path.of(\"container\", \"ubi-null.sh\"))\n+                .toFile();\n \n         if (dockerFile.exists()) {\n-            image = new ImageFromDockerfile(\"keycloak-under-test\", false)\n+            return new ImageFromDockerfile(\"keycloak-under-test\", false)\n                     .withFileFromFile(\"keycloak.tar.gz\", distributionFile)\n-                    .withFileFromFile(\"ubi-null.sh\", dockerScriptFile)\n+                    .withFileFromFile(\"ubi-null.sh\", ubiNullScript)\n                     .withFileFromFile(\"Dockerfile\", dockerFile)\n                     .withBuildArg(\"KEYCLOAK_DIST\", \"keycloak.tar.gz\");\n-            toString();\n         } else {\n-            image = new RemoteDockerImage(DockerImageName.parse(\"quay.io/keycloak/keycloak\"));\n+            if (failIfDockerFileMissing) {\n+                throw new RuntimeException(\"Docker file %s not found\".formatted(dockerFile.getAbsolutePath()));\n+            }\n+            return new RemoteDockerImage(DockerImageName.parse(\"quay.io/keycloak/keycloak\"));\n         }\n-\n-        return new GenericContainer<>(image)\n-                .withEnv(envVars)\n-                .withExposedPorts(exposedPorts)\n-                .withStartupAttempts(1)\n-                .withStartupTimeout(Duration.ofSeconds(120))\n-                .waitingFor(Wait.forListeningPorts(8080));\n     }\n \n     @Override\n@@ -117,10 +147,12 @@ public CLIResult run(List<String> arguments) {\n             this.stdout = \"\";\n             this.stderr = \"\";\n             this.containerId = null;\n-            this.backupConsumer = new BackupConsumer();\n+            this.backupConsumer = new BackupConsumer(customLogConsumer);\n \n             keycloakContainer = getKeycloakContainer();\n \n+            copyToContainer.forEach(keycloakContainer::withCopyFileToContainer);\n+\n             keycloakContainer\n                     .withLogConsumer(backupConsumer)\n                     .withCommand(arguments.toArray(new String[0]))\n@@ -158,6 +190,19 @@ public void setRequestPort(int port) {\n         }\n     }\n \n+    public void copyProvider(String groupId, String artifactId) {\n+        Path providerPath = Maven.resolveArtifact(groupId, artifactId);\n+        if (!Files.isRegularFile(providerPath)) {\n+            throw new RuntimeException(\"Failed to copy JAR file to 'providers' directory; \" + providerPath + \" is not a file\");\n+        }\n+\n+        copyToContainer.put(MountableFile.forHostPath(providerPath), \"/opt/keycloak/providers/\" + providerPath.getFileName());\n+    }\n+\n+    public void copyConfigFile(Path configFilePath) {\n+        copyToContainer.put(MountableFile.forHostPath(configFilePath), \"/opt/keycloak/conf/\" + configFilePath.getFileName());\n+    }\n+\n     // After the web server is responding we are still producing some logs that got checked in the tests\n     private void waitForStableOutput() {\n         int retry = 10;\n@@ -292,4 +337,8 @@ public void clearEnv() {\n         this.envVars.clear();\n     }\n \n+    public int getMappedPort(int port) {\n+        return keycloakContainer.getMappedPort(port);\n+    }\n+\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/bom/pom.xml",
+   "new_path": "test-framework/bom/pom.xml",
+   "diff": "@@ -105,6 +105,12 @@\n                 <version>${project.version}</version>\n                 <scope>test</scope>\n             </dependency>\n+            <dependency>\n+                <groupId>org.keycloak.testframework</groupId>\n+                <artifactId>keycloak-test-framework-clustering</artifactId>\n+                <version>${project.version}</version>\n+                <scope>test</scope>\n+            </dependency>\n         </dependencies>\n     </dependencyManagement>\n </project>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/clustering/pom.xml",
+   "new_path": "test-framework/clustering/pom.xml",
+   "diff": "@@ -0,0 +1,22 @@\n+<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n+<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\n+         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n+         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd\">\n+    <parent>\n+        <groupId>org.keycloak.testframework</groupId>\n+        <artifactId>keycloak-test-framework-parent</artifactId>\n+        <version>999.0.0-SNAPSHOT</version>\n+        <relativePath>../pom.xml</relativePath>\n+    </parent>\n+    <modelVersion>4.0.0</modelVersion>\n+\n+    <artifactId>keycloak-test-framework-clustering</artifactId>\n+\n+    <dependencies>\n+        <dependency>\n+            <groupId>org.keycloak.testframework</groupId>\n+            <artifactId>keycloak-test-framework-core</artifactId>\n+            <version>${project.version}</version>\n+        </dependency>\n+    </dependencies>\n+</project>\n\\ No newline at end of file",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/ClusteringTestFrameworkExtension.java",
+   "new_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/ClusteringTestFrameworkExtension.java",
+   "diff": "@@ -0,0 +1,15 @@\n+package org.keycloak.testframework;\n+\n+import org.keycloak.testframework.clustering.LoadBalancerSupplier;\n+import org.keycloak.testframework.injection.Supplier;\n+import org.keycloak.testframework.server.ClusteredKeycloakServerSupplier;\n+\n+import java.util.List;\n+\n+public class ClusteringTestFrameworkExtension implements TestFrameworkExtension {\n+\n+    @Override\n+    public List<Supplier<?, ?>> suppliers() {\n+        return List.of(new ClusteredKeycloakServerSupplier(), new LoadBalancerSupplier());\n+    }\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/annotations/InjectLoadBalancer.java",
+   "new_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/annotations/InjectLoadBalancer.java",
+   "diff": "@@ -0,0 +1,11 @@\n+package org.keycloak.testframework.annotations;\n+\n+import java.lang.annotation.ElementType;\n+import java.lang.annotation.Retention;\n+import java.lang.annotation.RetentionPolicy;\n+import java.lang.annotation.Target;\n+\n+@Retention(RetentionPolicy.RUNTIME)\n+@Target(ElementType.FIELD)\n+public @interface InjectLoadBalancer {\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancer.java",
+   "new_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancer.java",
+   "diff": "@@ -0,0 +1,26 @@\n+package org.keycloak.testframework.clustering;\n+\n+import org.keycloak.testframework.server.ClusteredKeycloakServer;\n+import org.keycloak.testframework.server.KeycloakUrls;\n+\n+import java.util.HashMap;\n+\n+public class LoadBalancer {\n+    private final ClusteredKeycloakServer server;\n+    private final HashMap<Integer, KeycloakUrls> urls = new HashMap<>();\n+\n+    public LoadBalancer(ClusteredKeycloakServer server) {\n+        this.server = server;\n+    }\n+\n+    public KeycloakUrls node(int nodeIndex) {\n+        if (nodeIndex >= server.clusterSize()) {\n+            throw new IllegalArgumentException(\"Node index out of bounds. Requested nodeIndex: %d, cluster size: %d\".formatted(server.clusterSize(), nodeIndex));\n+        }\n+        return urls.computeIfAbsent(nodeIndex, i -> new KeycloakUrls(server.getBaseUrl(i), server.getManagementBaseUrl(i)));\n+    }\n+\n+    public int clusterSize() {\n+        return server.clusterSize();\n+    }\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancerSupplier.java",
+   "new_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancerSupplier.java",
+   "diff": "@@ -0,0 +1,27 @@\n+package org.keycloak.testframework.clustering;\n+\n+import org.keycloak.testframework.annotations.InjectLoadBalancer;\n+import org.keycloak.testframework.injection.InstanceContext;\n+import org.keycloak.testframework.injection.RequestedInstance;\n+import org.keycloak.testframework.injection.Supplier;\n+import org.keycloak.testframework.server.ClusteredKeycloakServer;\n+import org.keycloak.testframework.server.KeycloakServer;\n+\n+public class LoadBalancerSupplier implements Supplier<LoadBalancer, InjectLoadBalancer> {\n+\n+    @Override\n+    public LoadBalancer getValue(InstanceContext<LoadBalancer, InjectLoadBalancer> instanceContext) {\n+        KeycloakServer server = instanceContext.getDependency(KeycloakServer.class);\n+\n+        if (!(server instanceof ClusteredKeycloakServer)) {\n+            throw new IllegalStateException(\"Load balancer can only be used with ClusteredKeycloakServer\");\n+        }\n+\n+        return new LoadBalancer((ClusteredKeycloakServer) server);\n+    }\n+\n+    @Override\n+    public boolean compatible(InstanceContext<LoadBalancer, InjectLoadBalancer> a, RequestedInstance<LoadBalancer, InjectLoadBalancer> b) {\n+        return true;\n+    }\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java",
+   "new_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java",
+   "diff": "@@ -0,0 +1,151 @@\n+/*\n+ * Copyright 2025 Red Hat, Inc. and/or its affiliates\n+ * and other contributors as indicated by the @author tags.\n+ *\n+ * Licensed under the Apache License, Version 2.0 (the \"License\");\n+ * you may not use this file except in compliance with the License.\n+ * You may obtain a copy of the License at\n+ *\n+ * http://www.apache.org/licenses/LICENSE-2.0\n+ *\n+ * Unless required by applicable law or agreed to in writing, software\n+ * distributed under the License is distributed on an \"AS IS\" BASIS,\n+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n+ * See the License for the specific language governing permissions and\n+ * limitations under the License.\n+ */\n+\n+package org.keycloak.testframework.server;\n+\n+import java.net.URISyntaxException;\n+import java.nio.file.Path;\n+import java.nio.file.Paths;\n+import java.util.Arrays;\n+import java.util.Objects;\n+\n+import io.quarkus.bootstrap.utils.BuildToolHelper;\n+import org.jboss.logging.Logger;\n+import org.keycloak.it.utils.DockerKeycloakDistribution;\n+import org.keycloak.testframework.database.JBossLogConsumer;\n+import org.testcontainers.images.RemoteDockerImage;\n+import org.testcontainers.utility.DockerImageName;\n+import org.testcontainers.utility.LazyFuture;\n+\n+public class ClusteredKeycloakServer implements KeycloakServer {\n+\n+    private static final boolean MANUAL_STOP = true;\n+    private static final int REQUEST_PORT = 8080;\n+    private static final int MANAGEMENT_PORT = 9000;\n+    public static final String SNAPSHOT_IMAGE = \"-\";\n+\n+    private final DockerKeycloakDistribution[] containers;\n+    private final String images;\n+\n+    private static LazyFuture<String> defaultImage() {\n+        Path classPathDir;\n+        try {\n+            classPathDir = Paths.get(Thread.currentThread().getContextClassLoader().getResource(\".\").toURI());\n+        } catch (URISyntaxException e) {\n+            throw new RuntimeException(e);\n+        }\n+        var quarkusModule = BuildToolHelper.getProjectDir(classPathDir).getParent().getParent().resolve(\"quarkus\");\n+        return DockerKeycloakDistribution.createImage(quarkusModule,true);\n+    }\n+\n+    public ClusteredKeycloakServer(int mumServers, String images) {\n+        containers = new DockerKeycloakDistribution[mumServers];\n+        this.images = images;\n+    }\n+\n+    @Override\n+    public void start(KeycloakServerConfigBuilder configBuilder) {\n+        String[] imagePeServer = null;\n+        if (images == null || images.isEmpty() || (imagePeServer = images.split(\",\")).length == 1) {\n+            startContainersWithSameImage(configBuilder, imagePeServer == null ? SNAPSHOT_IMAGE : imagePeServer[0]);\n+        } else {\n+            startContainersWithMixedImage(configBuilder, imagePeServer);\n+        }\n+    }\n+\n+    private void startContainersWithMixedImage(KeycloakServerConfigBuilder configBuilder, String[] imagePeServer) {\n+        assert imagePeServer != null;\n+        if (containers.length != imagePeServer.length) {\n+            throw new IllegalArgumentException(\"The number of containers and the number of images must match\");\n+        }\n+        int[] exposedPorts = new int[]{REQUEST_PORT, MANAGEMENT_PORT};\n+        LazyFuture<String> snapshotImage = null;\n+        for (int i = 0; i < containers.length; ++i) {\n+            LazyFuture<String> resolvedImage;\n+            if (SNAPSHOT_IMAGE.equals(imagePeServer[i])) {\n+                if (snapshotImage == null) {\n+                    snapshotImage = defaultImage();\n+                }\n+                resolvedImage = snapshotImage;\n+            } else {\n+                resolvedImage = new RemoteDockerImage(DockerImageName.parse(imagePeServer[i]));\n+            }\n+            var container = new DockerKeycloakDistribution(false, MANUAL_STOP, REQUEST_PORT, exposedPorts, resolvedImage);\n+            containers[i] = container;\n+\n+            copyProvidersAndConfigs(container, configBuilder);\n+\n+            container.setCustomLogConsumer(new JBossLogConsumer(Logger.getLogger(\"managed.keycloak.\" + i)));\n+            container.run(configBuilder.toArgs());\n+        }\n+    }\n+\n+    private void startContainersWithSameImage(KeycloakServerConfigBuilder configBuilder, String image) {\n+        int[] exposedPorts = new int[]{REQUEST_PORT, MANAGEMENT_PORT};\n+        LazyFuture<String> imageFuture = image == null || SNAPSHOT_IMAGE.equals(image) ?\n+                defaultImage() :\n+                new RemoteDockerImage(DockerImageName.parse(image));\n+        for (int i = 0; i < containers.length; ++i) {\n+            var container = new DockerKeycloakDistribution(false, MANUAL_STOP, REQUEST_PORT, exposedPorts, imageFuture);\n+            containers[i] = container;\n+\n+            copyProvidersAndConfigs(container, configBuilder);\n+\n+            container.setCustomLogConsumer(new JBossLogConsumer(Logger.getLogger(\"managed.keycloak.\" + i)));\n+            container.run(configBuilder.toArgs());\n+        }\n+    }\n+\n+    private void copyProvidersAndConfigs(DockerKeycloakDistribution container, KeycloakServerConfigBuilder configBuilder) {\n+        for (var dependency : configBuilder.toDependencies()) {\n+            container.copyProvider(dependency.getGroupId(), dependency.getArtifactId());\n+        }\n+\n+        for(var config : configBuilder.toConfigFiles()) {\n+            container.copyConfigFile(config);\n+        }\n+    }\n+\n+    @Override\n+    public void stop() {\n+        Arrays.stream(containers)\n+                .filter(Objects::nonNull)\n+                .forEach(DockerKeycloakDistribution::stop);\n+    }\n+\n+    @Override\n+    public String getBaseUrl() {\n+        return getBaseUrl(0);\n+    }\n+\n+    @Override\n+    public String getManagementBaseUrl() {\n+        return getManagementBaseUrl(0);\n+    }\n+\n+    public String getBaseUrl(int index) {\n+        return \"http://localhost:%d\".formatted(containers[index].getMappedPort(REQUEST_PORT));\n+    }\n+\n+    public String getManagementBaseUrl(int index) {\n+        return \"http://localhost:%d\".formatted(containers[index].getMappedPort(MANAGEMENT_PORT));\n+    }\n+\n+    public int clusterSize() {\n+        return containers.length;\n+    }\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServerSupplier.java",
+   "new_path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServerSupplier.java",
+   "diff": "@@ -0,0 +1,42 @@\n+package org.keycloak.testframework.server;\n+\n+import org.eclipse.microprofile.config.inject.ConfigProperty;\n+import org.jboss.logging.Logger;\n+\n+public class ClusteredKeycloakServerSupplier extends AbstractKeycloakServerSupplier {\n+\n+    private static final Logger LOGGER = Logger.getLogger(ClusteredKeycloakServerSupplier.class);\n+\n+    @ConfigProperty(name = \"numContainer\", defaultValue = \"2\")\n+    int numContainers = 2;\n+\n+    @ConfigProperty(name = \"images\", defaultValue = ClusteredKeycloakServer.SNAPSHOT_IMAGE)\n+    String images = ClusteredKeycloakServer.SNAPSHOT_IMAGE;\n+\n+    @Override\n+    public KeycloakServer getServer() {\n+        return new ClusteredKeycloakServer(numContainers, images);\n+    }\n+\n+    @Override\n+    public boolean requiresDatabase() {\n+        return true;\n+    }\n+\n+    @Override\n+    public String getAlias() {\n+        return \"cluster\";\n+    }\n+\n+    @Override\n+    public Logger getLogger() {\n+        return LOGGER;\n+    }\n+\n+    @Override\n+    protected String cache() {\n+        return \"ispn\";\n+    }\n+\n+\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/clustering/src/main/resources/META-INF/services/org.keycloak.testframework.TestFrameworkExtension",
+   "new_path": "test-framework/clustering/src/main/resources/META-INF/services/org.keycloak.testframework.TestFrameworkExtension",
+   "diff": "@@ -0,0 +1 @@\n+org.keycloak.testframework.ClusteringTestFrameworkExtension\n\\ No newline at end of file",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/core/src/main/java/org/keycloak/testframework/database/AbstractContainerTestDatabase.java",
+   "new_path": "test-framework/core/src/main/java/org/keycloak/testframework/database/AbstractContainerTestDatabase.java",
+   "diff": "@@ -12,11 +12,13 @@\n public abstract class AbstractContainerTestDatabase implements TestDatabase {\n \n     protected boolean reuse;\n+    protected boolean internal;\n \n     protected JdbcDatabaseContainer<?> container;\n \n     public AbstractContainerTestDatabase() {\n         reuse = Config.getValueTypeConfig(TestDatabase.class, \"reuse\", false, Boolean.class);\n+        internal = Config.getValueTypeConfig(TestDatabase.class, \"internal\", false, Boolean.class);\n     }\n \n     public void start() {\n@@ -80,7 +82,12 @@ public String getPassword() {\n     }\n \n     public String getJdbcUrl() {\n-        return container.getJdbcUrl();\n+        var url = container.getJdbcUrl();\n+        if (internal) {\n+            var ip = container.getContainerInfo().getNetworkSettings().getNetworks().values().iterator().next().getIpAddress();\n+            return url.replace(container.getHost() + \":\" + container.getFirstMappedPort(), ip + \":\" + container.getExposedPorts().get(0));\n+        }\n+        return url;\n     }\n \n     public abstract String getDatabaseVendor();",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/core/src/main/java/org/keycloak/testframework/server/AbstractKeycloakServerSupplier.java",
+   "new_path": "test-framework/core/src/main/java/org/keycloak/testframework/server/AbstractKeycloakServerSupplier.java",
+   "diff": "@@ -21,7 +21,7 @@ public KeycloakServer getValue(InstanceContext<KeycloakServer, KeycloakIntegrati\n         KeycloakServerConfig serverConfig = SupplierHelpers.getInstance(annotation.config());\n \n         KeycloakServerConfigBuilder command = KeycloakServerConfigBuilder.startDev()\n-                .cache(\"local\")\n+                .cache(cache())\n                 .bootstrapAdminClient(Config.getAdminClientId(), Config.getAdminClientSecret())\n                 .bootstrapAdminUser(Config.getAdminUsername(), Config.getAdminPassword());\n \n@@ -74,6 +74,10 @@ public void close(InstanceContext<KeycloakServer, KeycloakIntegrationTest> insta\n \n     public abstract Logger getLogger();\n \n+    protected String cache() {\n+        return \"local\";\n+    }\n+\n     @Override\n     public int order() {\n         return SupplierOrder.KEYCLOAK_SERVER;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "test-framework/pom.xml",
+   "new_path": "test-framework/pom.xml",
+   "diff": "@@ -47,6 +47,7 @@\n         <module>remote</module>\n         <module>remote-providers</module>\n         <module>ui</module>\n+        <module>clustering</module>\n     </modules>\n \n </project>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/base/pom.xml",
+   "new_path": "tests/base/pom.xml",
+   "diff": "@@ -88,6 +88,11 @@\n             <groupId>org.keycloak.testframework</groupId>\n             <artifactId>keycloak-test-framework-remote</artifactId>\n         </dependency>\n+        <dependency>\n+            <groupId>org.keycloak.testframework</groupId>\n+            <artifactId>keycloak-test-framework-clustering</artifactId>\n+            <version>999.0.0-SNAPSHOT</version>\n+        </dependency>\n         <dependency>\n             <groupId>org.keycloak.tests</groupId>\n             <artifactId>keycloak-tests-utils</artifactId>\n@@ -131,4 +136,16 @@\n         </plugins>\n     </build>\n \n+    <profiles>\n+        <profile>\n+            <id>mixed-cluster</id>\n+            <activation>\n+                <activeByDefault>false</activeByDefault>\n+            </activation>\n+            <properties>\n+                <kc.test.server>cluster</kc.test.server>\n+            </properties>\n+        </profile>\n+    </profiles>\n+\n </project>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/clustering/README.md",
+   "new_path": "tests/clustering/README.md",
+   "diff": "@@ -0,0 +1,23 @@\n+# Running clustering tests\n+\n+## Mixed cluster\n+\n+KC_TEST_SERVER_IMAGES   -> if empty, uses the built distribution archive from quarkus/dist directory in all containers\n+-> if single value, uses that value in all the containers\n+-> if comma separated value (\"imageA,imageB\"), each container will use the image specified from the list. The number of items must match the cluster size.\n+-> \"-\" special keyword to use the built distribution archive\n+KC_TEST_SERVER=cluster  -> enables cluster mode (configured by default in clustering module)\n+KC_TEST_DATABASE_INTERNAL=true -> configure keycloak with the internal database container IP instead of localhost (configured by default in clustering module)\n+\n+Example, 2 node cluster, the first using the distribution archive and the second the nightly image\n+KC_TEST_DATABASE=postgres KC_TEST_SERVER_IMAGES=-,quay.io/keycloak/keycloak:nightly mvn verify -pl tests/clustering/  -Dtest=MixedVersionClusterTest\n+\n+Using a mixed cluster with 26.2.3 and 26.2.4\n+KC_TEST_DATABASE=postgres KC_TEST_SERVER_IMAGES=quay.io/keycloak/keycloak:26.2.3,quay.io/keycloak/keycloak:26.2.4 mvn verify -pl tests/clustering/  -Dtest=MixedVersionClusterTest\n+\n+The test has some println to check the state. Example:\n+\n+```\n+url0->http://localhost:32889\n+url1->http://localhost:32891\n+```\n\\ No newline at end of file",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/clustering/pom.xml",
+   "new_path": "tests/clustering/pom.xml",
+   "diff": "@@ -0,0 +1,45 @@\n+<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n+<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\n+         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n+         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd\">\n+    <modelVersion>4.0.0</modelVersion>\n+    <parent>\n+        <groupId>org.keycloak.tests</groupId>\n+        <artifactId>keycloak-tests-parent</artifactId>\n+        <version>999.0.0-SNAPSHOT</version>\n+        <relativePath>../pom.xml</relativePath>\n+    </parent>\n+\n+    <artifactId>keycloak-tests-clustering</artifactId>\n+\n+    <dependencyManagement>\n+        <dependencies>\n+            <dependency>\n+                <groupId>org.keycloak.testframework</groupId>\n+                <artifactId>keycloak-test-framework-bom</artifactId>\n+                <version>${project.version}</version>\n+                <scope>import</scope>\n+                <type>pom</type>\n+            </dependency>\n+        </dependencies>\n+    </dependencyManagement>\n+\n+    <dependencies>\n+        <dependency>\n+            <groupId>org.keycloak.testframework</groupId>\n+            <artifactId>keycloak-test-framework-core</artifactId>\n+        </dependency>\n+        <dependency>\n+            <groupId>org.keycloak.testframework</groupId>\n+            <artifactId>keycloak-test-framework-junit5-config</artifactId>\n+        </dependency>\n+        <dependency>\n+            <groupId>org.keycloak.testframework</groupId>\n+            <artifactId>keycloak-test-framework-clustering</artifactId>\n+        </dependency>\n+        <dependency>\n+            <groupId>org.keycloak.testframework</groupId>\n+            <artifactId>keycloak-test-framework-db-postgres</artifactId>\n+        </dependency>\n+    </dependencies>\n+</project>\n\\ No newline at end of file",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/clustering/src/test/java/org/keycloak/tests/compatibility/MixedVersionClusterTest.java",
+   "new_path": "tests/clustering/src/test/java/org/keycloak/tests/compatibility/MixedVersionClusterTest.java",
+   "diff": "@@ -0,0 +1,42 @@\n+/*\n+ * Copyright 2025 Red Hat, Inc. and/or its affiliates\n+ * and other contributors as indicated by the @author tags.\n+ *\n+ * Licensed under the Apache License, Version 2.0 (the \"License\");\n+ * you may not use this file except in compliance with the License.\n+ * You may obtain a copy of the License at\n+ *\n+ * http://www.apache.org/licenses/LICENSE-2.0\n+ *\n+ * Unless required by applicable law or agreed to in writing, software\n+ * distributed under the License is distributed on an \"AS IS\" BASIS,\n+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n+ * See the License for the specific language governing permissions and\n+ * limitations under the License.\n+ */\n+\n+package org.keycloak.tests.compatibility;\n+\n+import java.util.concurrent.TimeUnit;\n+\n+import org.junit.jupiter.api.Assumptions;\n+import org.junit.jupiter.api.Test;\n+import org.keycloak.testframework.annotations.InjectLoadBalancer;\n+import org.keycloak.testframework.annotations.KeycloakIntegrationTest;\n+import org.keycloak.testframework.clustering.LoadBalancer;\n+\n+@KeycloakIntegrationTest\n+public class MixedVersionClusterTest {\n+\n+    @InjectLoadBalancer\n+    LoadBalancer loadBalancer;\n+\n+    @Test\n+    public void testUrls() throws InterruptedException {\n+        // TODO annotation based to skip if running in non-clustered mode.\n+        Assumptions.assumeTrue(loadBalancer.clusterSize() == 2);\n+        System.out.println(\"url0->\" + loadBalancer.node(0).getBaseUrl());\n+        System.out.println(\"url1->\" + loadBalancer.node(1).getBaseUrl());\n+        Thread.sleep(TimeUnit.MINUTES.toMillis(1));\n+    }\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/clustering/src/test/resources/keycloak-test.properties",
+   "new_path": "tests/clustering/src/test/resources/keycloak-test.properties",
+   "diff": "@@ -0,0 +1,13 @@\n+kc.test.server=cluster\n+kc.test.database.internal=true\n+\n+kc.test.log.level=WARN\n+\n+kc.test.log.filter=true\n+\n+kc.test.log.category.\"org.keycloak.tests\".level=INFO\n+\n+kc.test.log.category.\"testinfo\".level=INFO\n+kc.test.log.category.\"org.keycloak\".level=WARN\n+kc.test.log.category.\"managed.keycloak\".level=WARN\n+kc.test.log.category.\"managed.db\".level=WARN\n\\ No newline at end of file",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/pom.xml",
+   "new_path": "tests/pom.xml",
+   "diff": "@@ -37,6 +37,7 @@\n         <module>utils</module>\n         <module>utils-shared</module>\n         <module>custom-providers</module>\n+        <module>clustering</module>\n     </modules>\n \n     <profiles>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancer.java",
+   "side": "right",
+   "from_line": 10,
+   "to_line": 10,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "If `LoadBalancer` instances are shared across multiple tests running in parallel (which is suggested by `compatible` returning `true` in `LoadBalancerSupplier`), `HashMap` is not thread-safe. Consider using `ConcurrentHashMap` to safely handle concurrent calls to `node()`.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancer.java",
+   "side": "right",
+   "from_line": 18,
+   "to_line": 18,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The parameters in the formatted error message are in the wrong order. The message expects 'nodeIndex' first and 'cluster size' second, but the arguments passed are `server.clusterSize()` first and `nodeIndex` second. This will confuse users debugging the error.\n\n```suggestion\n            throw new IllegalArgumentException(\"Node index out of bounds. Requested nodeIndex: %d, cluster size: %d\".formatted(nodeIndex, server.clusterSize()));\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancerSupplier.java",
+   "side": "right",
+   "from_line": 14,
+   "to_line": 20,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Dependency resolution/diagnostics: `getDependency(KeycloakServer.class)` delegates to `Registry#getDependency(...)` and may return null or throw (depending on Registry implementation). As written, a null server will fail the `instanceof` check and throw a slightly misleading message (\"only be used with ClusteredKeycloakServer\"). Consider explicitly handling `server == null` and include actual type in the error message to aid debugging.\n\n```suggestion\n        KeycloakServer server = instanceContext.getDependency(KeycloakServer.class);\n        if (server == null) {\n            throw new IllegalStateException(\"@InjectLoadBalancer requires a KeycloakServer dependency\");\n        }\n        if (!(server instanceof ClusteredKeycloakServer clustered)) {\n            throw new IllegalStateException(\"Load balancer requires ClusteredKeycloakServer, got: \" + server.getClass().getName());\n        }\n        return new LoadBalancer(clustered);\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancerSupplier.java",
+   "side": "right",
+   "from_line": 16,
+   "to_line": 20,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Use Java's pattern matching for instanceof to streamline the ClusteredKeycloakServer type check and eliminate the explicit cast.",
+   "source": "human"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancerSupplier.java",
+   "side": "right",
+   "from_line": 23,
+   "to_line": 26,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`compatible(...)` always returns `true`, which is likely too permissive given other suppliers implement compatibility based on annotation/config equality (see `AbstractKeycloakServerSupplier`). If the registry reuses instances when compatible, this can incorrectly reuse a `LoadBalancer` across different clustered server configurations/refs.\n\nSuggestion: base compatibility on `@InjectLoadBalancer` attributes (e.g., `ref`, lifecycle) and/or the relevant clustered server config (probably via the Keycloak server annotation/config). If there is no meaningful discriminator, returning `false` is safer than `true` to avoid cross-test leakage.\n\n```suggestion\n    @Override\n    public boolean compatible(InstanceContext<LoadBalancer, InjectLoadBalancer> a,\n                              RequestedInstance<LoadBalancer, InjectLoadBalancer> b) {\n        // Prefer a real compatibility check to avoid reusing across different contexts\n        return a.getRef() != null ? a.getRef().equals(b.getRef()) : b.getRef() == null;\n    }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java",
+   "side": "right",
+   "from_line": 47,
+   "to_line": 47,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential NPE when resolving classpath dir: `getResource(\".\")` can return null depending on classloader/environment (e.g., certain test runners). Consider null-checking and throwing a clearer exception.\nAlso, `getProjectDir(...).getParent().getParent()` assumes at least two parent levels; if structure differs, this can throw NPE. Consider validating these paths and failing with an actionable message.\n\n```suggestion\n            var resource = Thread.currentThread().getContextClassLoader().getResource(\".\");\n            if (resource == null) {\n                throw new IllegalStateException(\"Unable to resolve classpath root (classloader resource '.' is null)\");\n            }\n            classPathDir = Paths.get(resource.toURI());\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java",
+   "side": "right",
+   "from_line": 55,
+   "to_line": 55,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Typo: 'mumServers' should be 'numServers' to match the naming convention used in the calling code (ClusteredKeycloakServerSupplier uses 'numContainers').\n\n```suggestion\n    public ClusteredKeycloakServer(int numServers, String images) {\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java",
+   "side": "right",
+   "from_line": 71,
+   "to_line": 71,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Avoid relying on Java `assert` for runtime validation. Assertions are typically disabled in production/test runs unless explicitly enabled, so this check may not execute. If the method can be called with null, prefer an explicit `Objects.requireNonNull(imagePeServer, ...)` or make the parameter non-null by construction.\n\n```suggestion\n        Objects.requireNonNull(imagePeServer, \"imagePeServer must not be null\");\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java",
+   "side": "right",
+   "from_line": 140,
+   "to_line": 142,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Missing bounds checking for index parameter. If index is out of bounds, this will throw ArrayIndexOutOfBoundsException.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServerSupplier.java",
+   "side": "right",
+   "from_line": 10,
+   "to_line": 11,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Inconsistent naming: The configuration property name 'numContainer' (singular) doesn't match the field name 'numContainers' (plural). Since this field represents a count of multiple containers, the property name should be 'numContainers' for consistency.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServerSupplier.java",
+   "side": "right",
+   "from_line": 17,
+   "to_line": 19,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Consider guarding against invalid config values before constructing the server. If `numContainers <= 0` or `images` is null/blank, failures will likely surface later and be harder to diagnose. A small validation with an actionable message improves debuggability.\n\n```suggestion\n    public KeycloakServer getServer() {\n        if (numContainers <= 0) {\n            throw new IllegalArgumentException(\"cluster.numContainers must be > 0\");\n        }\n        if (images == null || images.isBlank()) {\n            throw new IllegalArgumentException(\"cluster.images must be set\");\n        }\n        return new ClusteredKeycloakServer(numContainers, images);\n    }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "test-framework/clustering/src/main/resources/META-INF/services/org.keycloak.testframework.TestFrameworkExtension",
+   "side": "right",
+   "from_line": 1,
+   "to_line": 1,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The file is missing a newline character at the end of the file. While this won't affect functionality, it's a common best practice to end text files with a newline character for better compatibility with various tools and editors.\n\n```suggestion\norg.keycloak.testframework.ClusteringTestFrameworkExtension\\n\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "test-framework/core/src/main/java/org/keycloak/testframework/database/AbstractContainerTestDatabase.java",
+   "side": "right",
+   "from_line": 86,
+   "to_line": 89,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential NPE and NoSuchElementException risks: The chained method calls on line 87 could fail in multiple scenarios:\n1. `getContainerInfo()` might return null if container is not started\n2. `getNetworkSettings()` might return null\n3. `getNetworks().values()` could be empty, causing `iterator().next()` to throw NoSuchElementException\n4. `getExposedPorts().get(0)` could throw IndexOutOfBoundsException if no exposed ports exist\n\nConsider adding null checks and bounds validation, or use safer methods like `getFirstMappedPort()` consistently.\n\n```suggestion\n        if (internal) {\n            var containerInfo = container.getContainerInfo();\n            if (containerInfo != null && containerInfo.getNetworkSettings() != null) {\n                var networks = containerInfo.getNetworkSettings().getNetworks();\n                if (networks != null && !networks.values().isEmpty()) {\n                    var ip = networks.values().iterator().next().getIpAddress();\n                    var exposedPorts = container.getExposedPorts();\n                    if (!exposedPorts.isEmpty()) {\n                        return url.replace(container.getHost() + \":\" + container.getFirstMappedPort(), ip + \":\" + exposedPorts.get(0));\n                    }\n                }\n            }\n            return url; // Fallback to original URL if internal network resolution fails\n        }\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "test-framework/core/src/main/java/org/keycloak/testframework/server/AbstractKeycloakServerSupplier.java",
+   "side": "right",
+   "from_line": 24,
+   "to_line": 24,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "`cache()` is now an override point (e.g., clustered returns \"ispn\"). Consider enforcing/clarifying a non-null, non-blank contract here; otherwise a subclass could accidentally return null/\"\" and cause `KeycloakServerConfigBuilder.cache(...)` to fail later (NPE/invalid args) with a less obvious error. Suggest `Objects.requireNonNull(cache(), \"cache\")` and optionally defaulting when blank.\n\n```suggestion\n                .cache(java.util.Objects.requireNonNull(cache(), \"cache\"))\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "tests/base/pom.xml",
+   "side": "right",
+   "from_line": 91,
+   "to_line": 95,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The added keycloak-test-framework-clustering dependency (999.0.0-SNAPSHOT) was unintentional and must be removed as it was overlooked during cleanup.",
+   "source": "human"
+  },
+  {
+   "path": "tests/base/pom.xml",
+   "side": "right",
+   "from_line": 93,
+   "to_line": 93,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The version `999.0.0-SNAPSHOT` is hardcoded here. Should this use `${project.version}` instead for consistency with other dependencies in the project?",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "tests/base/pom.xml",
+   "side": "right",
+   "from_line": 139,
+   "to_line": 150,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The added 'mixed-cluster' Maven profile is an unintentional leftover from a POC and should be removed, as the project standard requires using environment variables (e.g., `KC_TEST_SERVER=cluster`) for test configuration instead of Maven profiles.",
+   "source": "human"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/annotations/InjectLoadBalancer.java",
+   "side": "right",
+   "from_line": 8,
+   "to_line": 11,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "This annotation matches the existing convention in the codebase (e.g., InjectRealm) of @Retention(RUNTIME) + @Target(FIELD). One minor improvement: consider adding @Documented so it appears in generated Javadoc and IDE tooling, consistent with common Java annotation practice. No functional impact, but improves usability for test authors.\n\n```suggestion\nimport java.lang.annotation.Documented;\n\n@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.FIELD)\n@Documented\npublic @interface InjectLoadBalancer {\n}\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "test-framework/core/src/main/java/org/keycloak/testframework/database/AbstractContainerTestDatabase.java",
+   "side": "right",
+   "from_line": 21,
+   "to_line": 21,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The configurable `internal` flag should be replaced by automatic container context detection to determine the appropriate JDBC URL, eliminating manual configuration. Current implementation relies on a static `Config` value instead of runtime environment awareness.",
+   "source": "human"
+  }
+ ]
+}

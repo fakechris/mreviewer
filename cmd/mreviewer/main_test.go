@@ -205,7 +205,7 @@ func TestRunCLIShowsTopLevelHelpForEmptyArgs(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
 		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Commands: review, schema-benchmark, structured-output-probe, init, doctor, serve") {
+	if !strings.Contains(stdout.String(), "Commands: review, bench, schema-benchmark, structured-output-probe, init, doctor, serve") {
 		t.Fatalf("stdout missing command list: %q", stdout.String())
 	}
 }
@@ -225,7 +225,7 @@ func TestRunCLIShowsTopLevelHelpForHelpFlag(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage: mreviewer <command> [options]") {
 		t.Fatalf("stdout missing top-level usage: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Commands: review, schema-benchmark, structured-output-probe, init, doctor, serve") {
+	if !strings.Contains(stdout.String(), "Commands: review, bench, schema-benchmark, structured-output-probe, init, doctor, serve") {
 		t.Fatalf("stdout missing command list: %q", stdout.String())
 	}
 }
@@ -1215,5 +1215,30 @@ func TestDecisionBriefRendersCoverageSection(t *testing.T) {
 	}
 	if strings.Contains(renderDecisionBriefMarkdown(core.ReviewBundle{Verdict: "pass"}, nil), "## Coverage") {
 		t.Fatal("brief without coverage must not render a Coverage section")
+	}
+}
+
+func TestBenchPlatformDefaultsDoNotFilterByIncludePaths(t *testing.T) {
+	defaults := benchPlatformDefaults("route-x")
+	if len(defaults.IncludePaths) != 0 {
+		t.Fatalf("bench defaults must not carry include paths, got %v", defaults.IncludePaths)
+	}
+	if defaults.ProviderRoute != "route-x" || defaults.GateMode == "" {
+		t.Fatalf("bench defaults = %+v", defaults)
+	}
+}
+
+func TestBenchCommandUsageAndHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := runBenchCommand([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "bench review") {
+		t.Fatalf("help: code=%d out=%q", code, stdout.String())
+	}
+	stdout.Reset()
+	if code := runBenchCommand([]string{"nope"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("unknown subcommand code = %d", code)
+	}
+	stderr.Reset()
+	if code := runBenchCommand([]string{"review", "--cases-dir", t.TempDir()}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "no cases") {
+		t.Fatalf("empty corpus: code=%d err=%q", code, stderr.String())
 	}
 }

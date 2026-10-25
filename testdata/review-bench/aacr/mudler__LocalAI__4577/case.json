@@ -1,0 +1,415 @@
+{
+ "id": "aacr/mudler__LocalAI__4577",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/mudler/LocalAI/pull/4577",
+  "owner": "mudler",
+  "repo": "LocalAI",
+  "number": 4577,
+  "base_sha": "78533d7230bdb5e352e325c15d0d53f38428b08e",
+  "head_sha": "e466450c007539a2b1e4d2951c6756ff004a2b52",
+  "title": "feat: add machine tag and inference timings",
+  "description": "**Description**\r\nFor my P2P endeavors i need to measure inference time and get exactly from which machine the request was sent    \r\nSince the #3687 is unfinished and didn't even connected to the routers, as well as it didn't provide enough control in P2P environment i created opt-in extension to the OpenAI response with included timings data in ms (given token count and duration in ms is enough to get the other data like tokens per second which is calculated on grpc-server.cpp glue backend just for printing out the timings)    \r\nAlso there is header with machine hostname or opt-in custom tag is specified, which is useful when roaming through rent machines on services like vast.ai to get the static identifier for them    \r\n\r\n\r\nI'm still not sure about naming and putting into Reply protobuf packet two more doubles, so i'm waiting for feedback\r\n\r\n\r\n**[Signed commits](../CONTRIBUTING.md#signing-off-on-commits-developer-certificate-of-origin)**\r\n- [x] Yes, I signed my commits.\r\n \r\n<!--\r\nThank you for contributing to LocalAI! \r\n\r\nContributing Conventions\r\n-------------------------\r\n\r\nThe draft above helps to give a quick overview of your PR.\r\n\r\nRemember to remove this comment and to at least:\r\n\r\n1. Include descriptive PR titles with [<component-name>] prepended. We use [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/).\r\n2. Build and test your changes before submitting a PR (`make build`). \r\n3. Sign your commits\r\n4. **Tag maintainer:** for a quicker response, tag the relevant maintainer (see below).\r\n5. **X/Twitter handle:** we announce bigger features on X/Twitter. If your PR gets announced, and you'd like a mention, we'll gladly shout you out!\r\n\r\nBy following the community's contribution conventions upfront, the review process will \r\nbe accelerated and your PR merged more quickly.\r\n\r\nIf no one reviews your PR within a few days, please @-mention @mudler.\r\n-->",
+  "language": "Go",
+  "category": "New Feature Additions",
+  "changed_lines": 185
+ },
+ "diffs": [
+  {
+   "old_path": "backend/backend.proto",
+   "new_path": "backend/backend.proto",
+   "diff": "@@ -159,6 +159,8 @@ message Reply {\n   bytes message = 1;\n   int32 tokens = 2;\n   int32 prompt_tokens = 3;\n+  double timing_prompt_processing = 4;\n+  double timing_token_generation = 5;\n }\n \n message ModelOptions {\n@@ -348,4 +350,4 @@ message StatusResponse {\n message Message {\n   string role = 1;\n   string content = 2;\n-}\n\\ No newline at end of file\n+}",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "backend/cpp/llama/grpc-server.cpp",
+   "new_path": "backend/cpp/llama/grpc-server.cpp",
+   "diff": "@@ -2414,6 +2414,13 @@ class BackendServiceImpl final : public backend::Backend::Service {\n                 int32_t tokens_evaluated = result.result_json.value(\"tokens_evaluated\", 0);\n                 reply.set_prompt_tokens(tokens_evaluated);\n \n+                if (result.result_json.contains(\"timings\")) {\n+                    double timing_prompt_processing = result.result_json.at(\"timings\").value(\"prompt_ms\", 0.0);\n+                    reply.set_timing_prompt_processing(timing_prompt_processing);\n+                    double timing_token_generation = result.result_json.at(\"timings\").value(\"predicted_ms\", 0.0);\n+                    reply.set_timing_token_generation(timing_token_generation);\n+                }\n+                \n                 // Log Request Correlation Id\n                 LOG_VERBOSE(\"correlation:\", {\n                     { \"id\", data[\"correlation_id\"] }\n@@ -2454,6 +2461,13 @@ class BackendServiceImpl final : public backend::Backend::Service {\n             reply->set_prompt_tokens(tokens_evaluated);\n             reply->set_tokens(tokens_predicted);\n             reply->set_message(completion_text);\n+\n+            if (result.result_json.contains(\"timings\")) {\n+                double timing_prompt_processing = result.result_json.at(\"timings\").value(\"prompt_ms\", 0.0);\n+                reply->set_timing_prompt_processing(timing_prompt_processing);\n+                double timing_token_generation = result.result_json.at(\"timings\").value(\"predicted_ms\", 0.0);\n+                reply->set_timing_token_generation(timing_token_generation);\n+            }\n         }\n         else\n         {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/backend/llm.go",
+   "new_path": "core/backend/llm.go",
+   "diff": "@@ -27,8 +27,10 @@ type LLMResponse struct {\n }\n \n type TokenUsage struct {\n-\tPrompt     int\n-\tCompletion int\n+\tPrompt                 int\n+\tCompletion             int\n+\tTimingPromptProcessing float64\n+\tTimingTokenGeneration  float64\n }\n \n func ModelInference(ctx context.Context, s string, messages []schema.Message, images, videos, audios []string, loader *model.ModelLoader, c config.BackendConfig, o *config.ApplicationConfig, tokenCallback func(string, TokenUsage) bool) (func() (LLMResponse, error), error) {\n@@ -123,6 +125,8 @@ func ModelInference(ctx context.Context, s string, messages []schema.Message, im\n \n \t\t\t\ttokenUsage.Prompt = int(reply.PromptTokens)\n \t\t\t\ttokenUsage.Completion = int(reply.Tokens)\n+\t\t\t\ttokenUsage.TimingTokenGeneration = reply.TimingTokenGeneration\n+\t\t\t\ttokenUsage.TimingPromptProcessing = reply.TimingPromptProcessing\n \n \t\t\t\tfor len(partialRune) > 0 {\n \t\t\t\t\tr, size := utf8.DecodeRune(partialRune)\n@@ -157,6 +161,10 @@ func ModelInference(ctx context.Context, s string, messages []schema.Message, im\n \t\t\tif tokenUsage.Completion == 0 {\n \t\t\t\ttokenUsage.Completion = int(reply.Tokens)\n \t\t\t}\n+\n+\t\t\ttokenUsage.TimingTokenGeneration = reply.TimingTokenGeneration\n+\t\t\ttokenUsage.TimingPromptProcessing = reply.TimingPromptProcessing\n+\n \t\t\treturn LLMResponse{\n \t\t\t\tResponse: string(reply.Message),\n \t\t\t\tUsage:    tokenUsage,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/cli/run.go",
+   "new_path": "core/cli/run.go",
+   "diff": "@@ -71,6 +71,7 @@ type RunCMD struct {\n \tFederated                          bool     `env:\"LOCALAI_FEDERATED,FEDERATED\" help:\"Enable federated instance\" group:\"federated\"`\n \tDisableGalleryEndpoint             bool     `env:\"LOCALAI_DISABLE_GALLERY_ENDPOINT,DISABLE_GALLERY_ENDPOINT\" help:\"Disable the gallery endpoints\" group:\"api\"`\n \tLoadToMemory                       []string `env:\"LOCALAI_LOAD_TO_MEMORY,LOAD_TO_MEMORY\" help:\"A list of models to load into memory at startup\" group:\"models\"`\n+\tMachineTag                         string   `env:\"LOCALAI_MACHINE_TAG\" help:\"TODO: write a help string\"`\n }\n \n func (r *RunCMD) Run(ctx *cliContext.Context) error {\n@@ -107,6 +108,7 @@ func (r *RunCMD) Run(ctx *cliContext.Context) error {\n \t\tconfig.WithHttpGetExemptedEndpoints(r.HttpGetExemptedEndpoints),\n \t\tconfig.WithP2PNetworkID(r.Peer2PeerNetworkID),\n \t\tconfig.WithLoadToMemory(r.LoadToMemory),\n+\t\tconfig.WithMachineTag(r.MachineTag),\n \t}\n \n \tif r.DisableMetricsEndpoint {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/config/application_config.go",
+   "new_path": "core/config/application_config.go",
+   "diff": "@@ -4,6 +4,7 @@ import (\n \t\"context\"\n \t\"embed\"\n \t\"encoding/json\"\n+\t\"os\"\n \t\"regexp\"\n \t\"time\"\n \n@@ -65,6 +66,8 @@ type ApplicationConfig struct {\n \tModelsURL []string\n \n \tWatchDogBusyTimeout, WatchDogIdleTimeout time.Duration\n+\n+\tMachineTag string\n }\n \n type AppOption func(*ApplicationConfig)\n@@ -94,6 +97,16 @@ func WithModelPath(path string) AppOption {\n \t}\n }\n \n+func WithMachineTag(tag string) AppOption {\n+\treturn func(o *ApplicationConfig) {\n+\t\tif tag == \"\" {\n+\t\t\thostname, _ := os.Hostname()\n+\t\t\ttag = hostname\n+\t\t}\n+\t\to.MachineTag = tag\n+\t}\n+}\n+\n func WithCors(b bool) AppOption {\n \treturn func(o *ApplicationConfig) {\n \t\to.CORS = b",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/jina/rerank.go",
+   "new_path": "core/http/endpoints/jina/rerank.go",
+   "diff": "@@ -19,6 +19,8 @@ import (\n // @Router /v1/rerank [post]\n func JINARerankEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n+\n \t\treq := new(schema.JINARerankRequest)\n \t\tif err := c.BodyParser(req); err != nil {\n \t\t\treturn c.Status(fiber.StatusBadRequest).JSON(fiber.Map{",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/localai/tts.go",
+   "new_path": "core/http/endpoints/localai/tts.go",
+   "diff": "@@ -24,6 +24,7 @@ import (\n //\t\t@Router\t\t/tts [post]\n func TTSEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \n \t\tinput := new(schema.TTSRequest)\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/localai/vad.go",
+   "new_path": "core/http/endpoints/localai/vad.go",
+   "diff": "@@ -19,6 +19,7 @@ import (\n // @Router\t\t/vad [post]\n func VADEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \n \t\tinput := new(schema.VADRequest)\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/assistant.go",
+   "new_path": "core/http/endpoints/openai/assistant.go",
+   "diff": "@@ -76,6 +76,7 @@ type AssistantRequest struct {\n // @Router /v1/assistants [post]\n func CreateAssistantEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\trequest := new(AssistantRequest)\n \t\tif err := c.BodyParser(request); err != nil {\n \t\t\tlog.Warn().AnErr(\"Unable to parse AssistantRequest\", err)\n@@ -137,6 +138,7 @@ func generateRandomID() int64 {\n // @Router /v1/assistants [get]\n func ListAssistantsEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\t// Because we're altering the existing assistants list we should just duplicate it for now.\n \t\treturnAssistants := Assistants\n \t\t// Parse query parameters\n@@ -246,6 +248,7 @@ func modelExists(cl *config.BackendConfigLoader, ml *model.ModelLoader, modelNam\n // @Router /v1/assistants/{assistant_id} [delete]\n func DeleteAssistantEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tassistantID := c.Params(\"assistant_id\")\n \t\tif assistantID == \"\" {\n \t\t\treturn c.Status(fiber.StatusBadRequest).SendString(\"parameter assistant_id is required\")\n@@ -278,6 +281,7 @@ func DeleteAssistantEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoad\n // @Router /v1/assistants/{assistant_id} [get]\n func GetAssistantEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tassistantID := c.Params(\"assistant_id\")\n \t\tif assistantID == \"\" {\n \t\t\treturn c.Status(fiber.StatusBadRequest).SendString(\"parameter assistant_id is required\")\n@@ -307,6 +311,7 @@ var (\n \n func CreateAssistantFileEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\trequest := new(schema.AssistantFileRequest)\n \t\tif err := c.BodyParser(request); err != nil {\n \t\t\treturn c.Status(fiber.StatusBadRequest).JSON(fiber.Map{\"error\": \"Cannot parse JSON\"})\n@@ -353,6 +358,7 @@ func ListAssistantFilesEndpoint(cl *config.BackendConfigLoader, ml *model.ModelL\n \t}\n \n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tassistantID := c.Params(\"assistant_id\")\n \t\tif assistantID == \"\" {\n \t\t\treturn c.Status(fiber.StatusBadRequest).SendString(\"parameter assistant_id is required\")\n@@ -410,6 +416,7 @@ func ListAssistantFilesEndpoint(cl *config.BackendConfigLoader, ml *model.ModelL\n \n func ModifyAssistantEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\trequest := new(AssistantRequest)\n \t\tif err := c.BodyParser(request); err != nil {\n \t\t\tlog.Warn().AnErr(\"Unable to parse AssistantRequest\", err)\n@@ -449,6 +456,7 @@ func ModifyAssistantEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoad\n \n func DeleteAssistantFileEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tassistantID := c.Params(\"assistant_id\")\n \t\tfileId := c.Params(\"file_id\")\n \t\tif assistantID == \"\" {\n@@ -503,6 +511,7 @@ func DeleteAssistantFileEndpoint(cl *config.BackendConfigLoader, ml *model.Model\n \n func GetAssistantFileEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tassistantID := c.Params(\"assistant_id\")\n \t\tfileId := c.Params(\"file_id\")\n \t\tif assistantID == \"\" {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/chat.go",
+   "new_path": "core/http/endpoints/openai/chat.go",
+   "diff": "@@ -30,7 +30,7 @@ func ChatEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \tvar id, textContentToReturn string\n \tvar created int\n \n-\tprocess := func(s string, req *schema.OpenAIRequest, config *config.BackendConfig, loader *model.ModelLoader, responses chan schema.OpenAIResponse) {\n+\tprocess := func(s string, req *schema.OpenAIRequest, config *config.BackendConfig, loader *model.ModelLoader, responses chan schema.OpenAIResponse, extraUsage bool) {\n \t\tinitialMessage := schema.OpenAIResponse{\n \t\t\tID:      id,\n \t\t\tCreated: created,\n@@ -40,26 +40,32 @@ func ChatEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \t\t}\n \t\tresponses <- initialMessage\n \n-\t\tComputeChoices(req, s, config, startupOptions, loader, func(s string, c *[]schema.Choice) {}, func(s string, usage backend.TokenUsage) bool {\n+\t\tComputeChoices(req, s, config, startupOptions, loader, func(s string, c *[]schema.Choice) {}, func(s string, tokenUsage backend.TokenUsage) bool {\n+\t\t\tusage := schema.OpenAIUsage{\n+\t\t\t\tPromptTokens:     tokenUsage.Prompt,\n+\t\t\t\tCompletionTokens: tokenUsage.Completion,\n+\t\t\t\tTotalTokens:      tokenUsage.Prompt + tokenUsage.Completion,\n+\t\t\t}\n+\t\t\tif extraUsage {\n+\t\t\t\tusage.TimingTokenGeneration = tokenUsage.TimingTokenGeneration\n+\t\t\t\tusage.TimingPromptProcessing = tokenUsage.TimingPromptProcessing\n+\t\t\t}\n+\n \t\t\tresp := schema.OpenAIResponse{\n \t\t\t\tID:      id,\n \t\t\t\tCreated: created,\n \t\t\t\tModel:   req.Model, // we have to return what the user sent here, due to OpenAI spec.\n \t\t\t\tChoices: []schema.Choice{{Delta: &schema.Message{Content: &s}, Index: 0}},\n \t\t\t\tObject:  \"chat.completion.chunk\",\n-\t\t\t\tUsage: schema.OpenAIUsage{\n-\t\t\t\t\tPromptTokens:     usage.Prompt,\n-\t\t\t\t\tCompletionTokens: usage.Completion,\n-\t\t\t\t\tTotalTokens:      usage.Prompt + usage.Completion,\n-\t\t\t\t},\n+\t\t\t\tUsage:   usage,\n \t\t\t}\n \n \t\t\tresponses <- resp\n \t\t\treturn true\n \t\t})\n \t\tclose(responses)\n \t}\n-\tprocessTools := func(noAction string, prompt string, req *schema.OpenAIRequest, config *config.BackendConfig, loader *model.ModelLoader, responses chan schema.OpenAIResponse) {\n+\tprocessTools := func(noAction string, prompt string, req *schema.OpenAIRequest, config *config.BackendConfig, loader *model.ModelLoader, responses chan schema.OpenAIResponse, extraUsage bool) {\n \t\tresult := \"\"\n \t\t_, tokenUsage, _ := ComputeChoices(req, prompt, config, startupOptions, loader, func(s string, c *[]schema.Choice) {}, func(s string, usage backend.TokenUsage) bool {\n \t\t\tresult += s\n@@ -90,18 +96,23 @@ func ChatEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \t\t\t\tlog.Error().Err(err).Msg(\"error handling question\")\n \t\t\t\treturn\n \t\t\t}\n+\t\t\tusage := schema.OpenAIUsage{\n+\t\t\t\tPromptTokens:     tokenUsage.Prompt,\n+\t\t\t\tCompletionTokens: tokenUsage.Completion,\n+\t\t\t\tTotalTokens:      tokenUsage.Prompt + tokenUsage.Completion,\n+\t\t\t}\n+\t\t\tif extraUsage {\n+\t\t\t\tusage.TimingTokenGeneration = tokenUsage.TimingTokenGeneration\n+\t\t\t\tusage.TimingPromptProcessing = tokenUsage.TimingPromptProcessing\n+\t\t\t}\n \n \t\t\tresp := schema.OpenAIResponse{\n \t\t\t\tID:      id,\n \t\t\t\tCreated: created,\n \t\t\t\tModel:   req.Model, // we have to return what the user sent here, due to OpenAI spec.\n \t\t\t\tChoices: []schema.Choice{{Delta: &schema.Message{Content: &result}, Index: 0}},\n \t\t\t\tObject:  \"chat.completion.chunk\",\n-\t\t\t\tUsage: schema.OpenAIUsage{\n-\t\t\t\t\tPromptTokens:     tokenUsage.Prompt,\n-\t\t\t\t\tCompletionTokens: tokenUsage.Completion,\n-\t\t\t\t\tTotalTokens:      tokenUsage.Prompt + tokenUsage.Completion,\n-\t\t\t\t},\n+\t\t\t\tUsage:   usage,\n \t\t\t}\n \n \t\t\tresponses <- resp\n@@ -160,6 +171,8 @@ func ChatEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \t}\n \n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", startupOptions.MachineTag)\n+\n \t\ttextContentToReturn = \"\"\n \t\tid = uuid.New().String()\n \t\tcreated = int(time.Now().Unix())\n@@ -170,6 +183,9 @@ func ChatEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \t\t}\n \t\tc.Set(\"X-Correlation-ID\", correlationID)\n \n+\t\t// Opt-in extra usage flag\n+\t\textraUsage := c.Get(\"LocalAI-Extra-Usage\", \"\") != \"\"\n+\n \t\tmodelFile, input, err := readRequest(c, cl, ml, startupOptions, true)\n \t\tif err != nil {\n \t\t\treturn fmt.Errorf(\"failed reading parameters from request:%w\", err)\n@@ -311,6 +327,7 @@ func ChatEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \t\t\tc.Context().SetContentType(\"text/event-stream\")\n \t\t\t//c.Response().Header.SetContentType(fiber.MIMETextHTMLCharsetUTF8)\n \t\t\t//\tc.Set(\"Content-Type\", \"text/event-stream\")\n+\t\t\tc.Set(\"LocalAI-Machine-Tag\", startupOptions.MachineTag)\n \t\t\tc.Set(\"Cache-Control\", \"no-cache\")\n \t\t\tc.Set(\"Connection\", \"keep-alive\")\n \t\t\tc.Set(\"Transfer-Encoding\", \"chunked\")\n@@ -319,9 +336,9 @@ func ChatEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \t\t\tresponses := make(chan schema.OpenAIResponse)\n \n \t\t\tif !shouldUseFn {\n-\t\t\t\tgo process(predInput, input, config, ml, responses)\n+\t\t\t\tgo process(predInput, input, config, ml, responses, extraUsage)\n \t\t\t} else {\n-\t\t\t\tgo processTools(noActionName, predInput, input, config, ml, responses)\n+\t\t\t\tgo processTools(noActionName, predInput, input, config, ml, responses, extraUsage)\n \t\t\t}\n \n \t\t\tc.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {\n@@ -449,18 +466,23 @@ func ChatEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \t\t\tif err != nil {\n \t\t\t\treturn err\n \t\t\t}\n+\t\t\tusage := schema.OpenAIUsage{\n+\t\t\t\tPromptTokens:     tokenUsage.Prompt,\n+\t\t\t\tCompletionTokens: tokenUsage.Completion,\n+\t\t\t\tTotalTokens:      tokenUsage.Prompt + tokenUsage.Completion,\n+\t\t\t}\n+\t\t\tif extraUsage {\n+\t\t\t\tusage.TimingTokenGeneration = tokenUsage.TimingTokenGeneration\n+\t\t\t\tusage.TimingPromptProcessing = tokenUsage.TimingPromptProcessing\n+\t\t\t}\n \n \t\t\tresp := &schema.OpenAIResponse{\n \t\t\t\tID:      id,\n \t\t\t\tCreated: created,\n \t\t\t\tModel:   input.Model, // we have to return what the user sent here, due to OpenAI spec.\n \t\t\t\tChoices: result,\n \t\t\t\tObject:  \"chat.completion\",\n-\t\t\t\tUsage: schema.OpenAIUsage{\n-\t\t\t\t\tPromptTokens:     tokenUsage.Prompt,\n-\t\t\t\t\tCompletionTokens: tokenUsage.Completion,\n-\t\t\t\t\tTotalTokens:      tokenUsage.Prompt + tokenUsage.Completion,\n-\t\t\t\t},\n+\t\t\t\tUsage:   usage,\n \t\t\t}\n \t\t\trespData, _ := json.Marshal(resp)\n \t\t\tlog.Debug().Msgf(\"Response: %s\", respData)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/completion.go",
+   "new_path": "core/http/endpoints/openai/completion.go",
+   "diff": "@@ -30,8 +30,17 @@ func CompletionEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, e\n \tid := uuid.New().String()\n \tcreated := int(time.Now().Unix())\n \n-\tprocess := func(s string, req *schema.OpenAIRequest, config *config.BackendConfig, loader *model.ModelLoader, responses chan schema.OpenAIResponse) {\n-\t\tComputeChoices(req, s, config, appConfig, loader, func(s string, c *[]schema.Choice) {}, func(s string, usage backend.TokenUsage) bool {\n+\tprocess := func(s string, req *schema.OpenAIRequest, config *config.BackendConfig, loader *model.ModelLoader, responses chan schema.OpenAIResponse, extraUsage bool) {\n+\t\tComputeChoices(req, s, config, appConfig, loader, func(s string, c *[]schema.Choice) {}, func(s string, tokenUsage backend.TokenUsage) bool {\n+\t\t\tusage := schema.OpenAIUsage{\n+\t\t\t\tPromptTokens:     tokenUsage.Prompt,\n+\t\t\t\tCompletionTokens: tokenUsage.Completion,\n+\t\t\t\tTotalTokens:      tokenUsage.Prompt + tokenUsage.Completion,\n+\t\t\t}\n+\t\t\tif extraUsage {\n+\t\t\t\tusage.TimingTokenGeneration = tokenUsage.TimingTokenGeneration\n+\t\t\t\tusage.TimingPromptProcessing = tokenUsage.TimingPromptProcessing\n+\t\t\t}\n \t\t\tresp := schema.OpenAIResponse{\n \t\t\t\tID:      id,\n \t\t\t\tCreated: created,\n@@ -43,11 +52,7 @@ func CompletionEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, e\n \t\t\t\t\t},\n \t\t\t\t},\n \t\t\t\tObject: \"text_completion\",\n-\t\t\t\tUsage: schema.OpenAIUsage{\n-\t\t\t\t\tPromptTokens:     usage.Prompt,\n-\t\t\t\t\tCompletionTokens: usage.Completion,\n-\t\t\t\t\tTotalTokens:      usage.Prompt + usage.Completion,\n-\t\t\t\t},\n+\t\t\t\tUsage:  usage,\n \t\t\t}\n \t\t\tlog.Debug().Msgf(\"Sending goroutine: %s\", s)\n \n@@ -58,8 +63,13 @@ func CompletionEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, e\n \t}\n \n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\t// Add Correlation\n \t\tc.Set(\"X-Correlation-ID\", id)\n+\n+\t\t// Opt-in extra usage flag\n+\t\textraUsage := c.Get(\"LocalAI-Extra-Usage\", \"\") != \"\"\n+\n \t\tmodelFile, input, err := readRequest(c, cl, ml, appConfig, true)\n \t\tif err != nil {\n \t\t\treturn fmt.Errorf(\"failed reading parameters from request:%w\", err)\n@@ -113,7 +123,7 @@ func CompletionEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, e\n \n \t\t\tresponses := make(chan schema.OpenAIResponse)\n \n-\t\t\tgo process(predInput, input, config, ml, responses)\n+\t\t\tgo process(predInput, input, config, ml, responses, extraUsage)\n \n \t\t\tc.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {\n \n@@ -170,23 +180,28 @@ func CompletionEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, e\n \t\t\t\treturn err\n \t\t\t}\n \n-\t\t\ttotalTokenUsage.Prompt += tokenUsage.Prompt\n-\t\t\ttotalTokenUsage.Completion += tokenUsage.Completion\n+\t\t\ttotalTokenUsage.TimingTokenGeneration += tokenUsage.TimingTokenGeneration\n+\t\t\ttotalTokenUsage.TimingPromptProcessing += tokenUsage.TimingPromptProcessing\n \n \t\t\tresult = append(result, r...)\n \t\t}\n+\t\tusage := schema.OpenAIUsage{\n+\t\t\tPromptTokens:     totalTokenUsage.Prompt,\n+\t\t\tCompletionTokens: totalTokenUsage.Completion,\n+\t\t\tTotalTokens:      totalTokenUsage.Prompt + totalTokenUsage.Completion,\n+\t\t}\n+\t\tif extraUsage {\n+\t\t\tusage.TimingTokenGeneration = totalTokenUsage.TimingTokenGeneration\n+\t\t\tusage.TimingPromptProcessing = totalTokenUsage.TimingPromptProcessing\n+\t\t}\n \n \t\tresp := &schema.OpenAIResponse{\n \t\t\tID:      id,\n \t\t\tCreated: created,\n \t\t\tModel:   input.Model, // we have to return what the user sent here, due to OpenAI spec.\n \t\t\tChoices: result,\n \t\t\tObject:  \"text_completion\",\n-\t\t\tUsage: schema.OpenAIUsage{\n-\t\t\t\tPromptTokens:     totalTokenUsage.Prompt,\n-\t\t\t\tCompletionTokens: totalTokenUsage.Completion,\n-\t\t\t\tTotalTokens:      totalTokenUsage.Prompt + totalTokenUsage.Completion,\n-\t\t\t},\n+\t\t\tUsage:   usage,\n \t\t}\n \n \t\tjsonResult, _ := json.Marshal(resp)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/edit.go",
+   "new_path": "core/http/endpoints/openai/edit.go",
+   "diff": "@@ -25,6 +25,11 @@ import (\n func EditEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluator *templates.Evaluator, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n+\n+\t\t// Opt-in extra usage flag\n+\t\textraUsage := c.Get(\"LocalAI-Extra-Usage\", \"\") != \"\"\n+\n \t\tmodelFile, input, err := readRequest(c, cl, ml, appConfig, true)\n \t\tif err != nil {\n \t\t\treturn fmt.Errorf(\"failed reading parameters from request:%w\", err)\n@@ -61,8 +66,20 @@ func EditEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \t\t\ttotalTokenUsage.Prompt += tokenUsage.Prompt\n \t\t\ttotalTokenUsage.Completion += tokenUsage.Completion\n \n+\t\t\ttotalTokenUsage.TimingTokenGeneration += tokenUsage.TimingTokenGeneration\n+\t\t\ttotalTokenUsage.TimingPromptProcessing += tokenUsage.TimingPromptProcessing\n+\n \t\t\tresult = append(result, r...)\n \t\t}\n+\t\tusage := schema.OpenAIUsage{\n+\t\t\tPromptTokens:     totalTokenUsage.Prompt,\n+\t\t\tCompletionTokens: totalTokenUsage.Completion,\n+\t\t\tTotalTokens:      totalTokenUsage.Prompt + totalTokenUsage.Completion,\n+\t\t}\n+\t\tif extraUsage {\n+\t\t\tusage.TimingTokenGeneration = totalTokenUsage.TimingTokenGeneration\n+\t\t\tusage.TimingPromptProcessing = totalTokenUsage.TimingPromptProcessing\n+\t\t}\n \n \t\tid := uuid.New().String()\n \t\tcreated := int(time.Now().Unix())\n@@ -72,11 +89,7 @@ func EditEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, evaluat\n \t\t\tModel:   input.Model, // we have to return what the user sent here, due to OpenAI spec.\n \t\t\tChoices: result,\n \t\t\tObject:  \"edit\",\n-\t\t\tUsage: schema.OpenAIUsage{\n-\t\t\t\tPromptTokens:     totalTokenUsage.Prompt,\n-\t\t\t\tCompletionTokens: totalTokenUsage.Completion,\n-\t\t\t\tTotalTokens:      totalTokenUsage.Prompt + totalTokenUsage.Completion,\n-\t\t\t},\n+\t\t\tUsage:   usage,\n \t\t}\n \n \t\tjsonResult, _ := json.Marshal(resp)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/embeddings.go",
+   "new_path": "core/http/endpoints/openai/embeddings.go",
+   "diff": "@@ -23,6 +23,7 @@ import (\n // @Router /v1/embeddings [post]\n func EmbeddingsEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tmodel, input, err := readRequest(c, cl, ml, appConfig, true)\n \t\tif err != nil {\n \t\t\treturn fmt.Errorf(\"failed reading parameters from request:%w\", err)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/files.go",
+   "new_path": "core/http/endpoints/openai/files.go",
+   "diff": "@@ -23,6 +23,7 @@ const UploadedFilesFile = \"uploadedFiles.json\"\n // UploadFilesEndpoint https://platform.openai.com/docs/api-reference/files/create\n func UploadFilesEndpoint(cm *config.BackendConfigLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tfile, err := c.FormFile(\"file\")\n \t\tif err != nil {\n \t\t\treturn err\n@@ -82,6 +83,7 @@ func getNextFileId() int64 {\n func ListFilesEndpoint(cm *config.BackendConfigLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tvar listFiles schema.ListFiles\n \n \t\tpurpose := c.Query(\"purpose\")\n@@ -120,6 +122,7 @@ func getFileFromRequest(c *fiber.Ctx) (*schema.File, error) {\n // @Router /v1/files/{file_id} [get]\n func GetFilesEndpoint(cm *config.BackendConfigLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tfile, err := getFileFromRequest(c)\n \t\tif err != nil {\n \t\t\treturn c.Status(fiber.StatusInternalServerError).SendString(bluemonday.StrictPolicy().Sanitize(err.Error()))\n@@ -142,6 +145,7 @@ type DeleteStatus struct {\n func DeleteFilesEndpoint(cm *config.BackendConfigLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tfile, err := getFileFromRequest(c)\n \t\tif err != nil {\n \t\t\treturn c.Status(fiber.StatusInternalServerError).SendString(bluemonday.StrictPolicy().Sanitize(err.Error()))\n@@ -179,6 +183,7 @@ func DeleteFilesEndpoint(cm *config.BackendConfigLoader, appConfig *config.Appli\n // GetFilesContentsEndpoint\n func GetFilesContentsEndpoint(cm *config.BackendConfigLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tfile, err := getFileFromRequest(c)\n \t\tif err != nil {\n \t\t\treturn c.Status(fiber.StatusInternalServerError).SendString(bluemonday.StrictPolicy().Sanitize(err.Error()))",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/image.go",
+   "new_path": "core/http/endpoints/openai/image.go",
+   "diff": "@@ -66,6 +66,7 @@ func downloadFile(url string) (string, error) {\n // @Router /v1/images/generations [post]\n func ImageEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tm, input, err := readRequest(c, cl, ml, appConfig, false)\n \t\tif err != nil {\n \t\t\treturn fmt.Errorf(\"failed reading parameters from request:%w\", err)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/inference.go",
+   "new_path": "core/http/endpoints/openai/inference.go",
+   "diff": "@@ -52,6 +52,8 @@ func ComputeChoices(\n \n \t\ttokenUsage.Prompt += prediction.Usage.Prompt\n \t\ttokenUsage.Completion += prediction.Usage.Completion\n+\t\ttokenUsage.TimingPromptProcessing += prediction.Usage.TimingPromptProcessing\n+\t\ttokenUsage.TimingTokenGeneration += prediction.Usage.TimingTokenGeneration\n \n \t\tfinetunedResponse := backend.Finetune(*config, predInput, prediction.Response)\n \t\tcb(finetunedResponse, &result)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/list.go",
+   "new_path": "core/http/endpoints/openai/list.go",
+   "diff": "@@ -12,8 +12,10 @@ import (\n // @Summary List and describe the various models available in the API.\n // @Success 200 {object} schema.ModelsDataResponse \"Response\"\n // @Router /v1/models [get]\n-func ListModelsEndpoint(bcl *config.BackendConfigLoader, ml *model.ModelLoader) func(ctx *fiber.Ctx) error {\n+func ListModelsEndpoint(bcl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(ctx *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n+\n \t\t// If blank, no filter is applied.\n \t\tfilter := c.Query(\"filter\")\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/endpoints/openai/transcription.go",
+   "new_path": "core/http/endpoints/openai/transcription.go",
+   "diff": "@@ -25,6 +25,7 @@ import (\n // @Router /v1/audio/transcriptions [post]\n func TranscriptEndpoint(cl *config.BackendConfigLoader, ml *model.ModelLoader, appConfig *config.ApplicationConfig) func(c *fiber.Ctx) error {\n \treturn func(c *fiber.Ctx) error {\n+\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n \t\tm, input, err := readRequest(c, cl, ml, appConfig, false)\n \t\tif err != nil {\n \t\t\treturn fmt.Errorf(\"failed reading parameters from request:%w\", err)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/http/routes/openai.go",
+   "new_path": "core/http/routes/openai.go",
+   "diff": "@@ -130,6 +130,6 @@ func RegisterOpenAIRoutes(app *fiber.App,\n \t}\n \n \t// List models\n-\tapp.Get(\"/v1/models\", openai.ListModelsEndpoint(application.BackendLoader(), application.ModelLoader()))\n-\tapp.Get(\"/models\", openai.ListModelsEndpoint(application.BackendLoader(), application.ModelLoader()))\n+\tapp.Get(\"/v1/models\", openai.ListModelsEndpoint(application.BackendLoader(), application.ModelLoader(), application.ApplicationConfig()))\n+\tapp.Get(\"/models\", openai.ListModelsEndpoint(application.BackendLoader(), application.ModelLoader(), application.ApplicationConfig()))\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/schema/openai.go",
+   "new_path": "core/schema/openai.go",
+   "diff": "@@ -23,6 +23,9 @@ type OpenAIUsage struct {\n \tPromptTokens     int `json:\"prompt_tokens\"`\n \tCompletionTokens int `json:\"completion_tokens\"`\n \tTotalTokens      int `json:\"total_tokens\"`\n+\t// Extra timing data, disabled by default as is't not a part of OpenAI specification\n+\tTimingPromptProcessing float64 `json:\"timing_prompt_processing,omitempty\"`\n+\tTimingTokenGeneration  float64 `json:\"timing_token_generation,omitempty\"`\n }\n \n type Item struct {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "backend/backend.proto",
+   "side": "right",
+   "from_line": 162,
+   "to_line": 163,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "It would be beneficial to add a comment specifying the unit of measurement (milliseconds) for these timing fields to avoid ambiguity for future consumers of this API.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "backend/cpp/llama/grpc-server.cpp",
+   "side": "right",
+   "from_line": 2417,
+   "to_line": 2422,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider defining a helper function to extract and assign timing metrics to avoid duplicating this block in both streaming and unary handlers.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "backend/cpp/llama/grpc-server.cpp",
+   "side": "right",
+   "from_line": 2417,
+   "to_line": 2422,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Avoid redundant map lookups for \"timings\". Retrieving the reference once using `const auto&` improves performance and readability.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "backend/cpp/llama/grpc-server.cpp",
+   "side": "right",
+   "from_line": 2417,
+   "to_line": 2422,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`contains(\"timings\")` only checks the key exists; it does not guarantee the value is an object. Using `at(\"timings\")` can throw if `timings` is null/non-object, potentially aborting the whole RPC. Prefer `find()` + `is_object()` (and reuse the reference) to make this robust and avoid double lookup.\n\n```suggestion\n                const auto it = result.result_json.find(\"timings\");\n                if (it != result.result_json.end() && it->is_object()) {\n                    const auto& timings = *it;\n                    reply.set_timing_prompt_processing(timings.value(\"prompt_ms\", 0.0));\n                    reply.set_timing_token_generation(timings.value(\"predicted_ms\", 0.0));\n                }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "backend/cpp/llama/grpc-server.cpp",
+   "side": "right",
+   "from_line": 2465,
+   "to_line": 2470,
+   "category": "Performance",
+   "context": "File Level",
+   "note": "Similarly here, avoid redundant lookups by capturing the \"timings\" object reference.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "backend/cpp/llama/grpc-server.cpp",
+   "side": "right",
+   "from_line": 2465,
+   "to_line": 2470,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Same issue here: `.at(\"timings\")` may throw even when `contains()` is true (e.g., `timings: null`). Use `find()` + `is_object()` and reuse the JSON object reference for exception safety and clarity.\n\n```suggestion\n            const auto it = result.result_json.find(\"timings\");\n            if (it != result.result_json.end() && it->is_object()) {\n                const auto& timings = *it;\n                reply->set_timing_prompt_processing(timings.value(\"prompt_ms\", 0.0));\n                reply->set_timing_token_generation(timings.value(\"predicted_ms\", 0.0));\n            }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "core/cli/run.go",
+   "side": "right",
+   "from_line": 74,
+   "to_line": 74,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Help string contains a placeholder/todo note intended for internal tracking rather than final user consumption.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "core/config/application_config.go",
+   "side": "right",
+   "from_line": 103,
+   "to_line": 103,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Error from os.Hostname() is being ignored. If hostname retrieval fails, MachineTag will be empty which might affect downstream systems expecting this header. Consider handling the error case appropriately, perhaps by using a default value or logging the error.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "core/http/endpoints/jina/rerank.go",
+   "side": "right",
+   "from_line": 22,
+   "to_line": 22,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "New line unconditionally dereferences `appConfig` (`appConfig.MachineTag`). If `appConfig` can ever be nil (e.g., miswired endpoint, tests, older call sites), this will panic and break the endpoint. Consider guarding `appConfig != nil` and optionally skipping the header when MachineTag is empty to avoid sending an empty header value.\n\n```suggestion\n\t\tif appConfig != nil && appConfig.MachineTag != \"\" {\n\t\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n\t\t}\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "core/http/endpoints/localai/vad.go",
+   "side": "right",
+   "from_line": 22,
+   "to_line": 22,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential nil-deref: if `appConfig` can be nil (e.g., endpoint wired without full ApplicationConfig), this will panic. Consider guarding with `if appConfig != nil { ... }` or ensuring VADEndpoint always receives a non-nil config.\n\nAlso double-check the intended header direction: `c.Set` sets a *response* header in Fiber. If the goal is to forward MachineTag to the backend/upstream request, it should be set on the outgoing client request instead, not on the response.\n\n```suggestion\n\t\tif appConfig != nil {\n\t\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n\t\t}\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "core/http/endpoints/openai/chat.go",
+   "side": "right",
+   "from_line": 174,
+   "to_line": 174,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "**Issue: Header set multiple times**\n\nThe `LocalAI-Machine-Tag` header is set here at line 174, and then again at line 330 for streaming responses. This is redundant - the header set at line 174 applies to all response types.\n\n**Suggestion:** Remove the duplicate header setting at line 330 to avoid confusion and keep the code DRY.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "core/http/endpoints/openai/chat.go",
+   "side": "right",
+   "from_line": 186,
+   "to_line": 187,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The logic `c.Get(\"LocalAI-Extra-Usage\", \"\") != \"\"` evaluates to `true` for any non-empty value, including \"false\" or \"0\". This means a user trying to explicitly disable the feature by sending `LocalAI-Extra-Usage: false` will unintentionally enable it. \n\nConsider parsing the boolean value properly. Since `strings` is imported, you could use `strings.EqualFold(c.Get(\"LocalAI-Extra-Usage\"), \"true\")` or similar logic to ensure it only enables when intended.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "core/http/endpoints/openai/completion.go",
+   "side": "right",
+   "from_line": 183,
+   "to_line": 184,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "It appears that the accumulation of `Prompt` and `Completion` tokens was accidentally removed when adding the timing usage accumulation. This will cause the final response to report 0 tokens for prompt and completion. You should restore the addition of `Prompt` and `Completion` fields.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "core/http/endpoints/openai/edit.go",
+   "side": "right",
+   "from_line": 30,
+   "to_line": 31,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The opt-in flag check may have a logic issue. Currently, any non-empty value (including 'false', '0', 'no') will be treated as true. Consider checking for specific truthy values like 'true' or '1' instead. For example: `extraUsage := c.Get(\"LocalAI-Extra-Usage\", \"\") == \"true\"` or use a helper function to parse boolean values properly.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "core/http/endpoints/openai/embeddings.go",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 26,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential nil dereference: `appConfig` is used without a nil check. If `EmbeddingsEndpoint` can ever be constructed/called with `appConfig == nil` (e.g., tests or partial wiring), this will panic before request parsing. Consider guarding or enforcing a non-nil invariant. Also consider whether to skip setting the header when `MachineTag` is empty.\n\n```suggestion\n\t\tif appConfig != nil && appConfig.MachineTag != \"\" {\n\t\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n\t\t}\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "core/http/endpoints/openai/files.go",
+   "side": "right",
+   "from_line": 86,
+   "to_line": 86,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The 'LocalAI-Machine-Tag' header is being set directly in the ListFilesEndpoint instead of a shared middleware, risking inconsistent application across all responses. Move this header assignment to a global middleware for uniform response handling.",
+   "source": "human"
+  },
+  {
+   "path": "core/http/endpoints/openai/files.go",
+   "side": "right",
+   "from_line": 125,
+   "to_line": 125,
+   "category": "Security Vulnerability",
+   "context": "File Level",
+   "note": "The unconditional inclusion of the `LocalAI-Machine-Tag` header in all responses risks exposing sensitive machine information; this behavior must be made opt-in via a configuration flag.",
+   "source": "human"
+  },
+  {
+   "path": "core/http/endpoints/openai/image.go",
+   "side": "right",
+   "from_line": 69,
+   "to_line": 69,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "New line sets a **response** header via `c.Set`. If the intent is to tag downstream backend requests, this won’t have any effect (would need to set header on the outbound request instead). If it is intended to expose to clients, consider not emitting the header when `appConfig.MachineTag` is empty to avoid sending empty headers.\n\nNo merge conflict markers spotted.\n\n```suggestion\n  if appConfig.MachineTag != \"\" {\n  \tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n  }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "core/http/endpoints/openai/list.go",
+   "side": "right",
+   "from_line": 17,
+   "to_line": 17,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential panic: `appConfig` is dereferenced without a nil-check. If the caller passes nil (e.g., endpoint wiring not updated everywhere), this will crash the request handler. Consider guarding it and/or only setting the header when MachineTag is non-empty.\n\n```suggestion\n\t\tif appConfig != nil && appConfig.MachineTag != \"\" {\n\t\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n\t\t}\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "core/http/endpoints/openai/transcription.go",
+   "side": "right",
+   "from_line": 28,
+   "to_line": 28,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "New line can panic: `appConfig` is a pointer and is dereferenced without a nil check. If `TranscriptEndpoint` is ever wired with `appConfig == nil` (tests/alternate setup), this will crash. Consider guarding. Also double-check intent: `c.Set` sets a *response* header; if the goal is to propagate machine tag to the backend call, it should be attached to the outbound backend request instead (not the client response).\n\n```suggestion\n\t\tif appConfig != nil && appConfig.MachineTag != \"\" {\n\t\t\tc.Set(\"LocalAI-Machine-Tag\", appConfig.MachineTag)\n\t\t}\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "core/schema/openai.go",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 26,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "There's a typo in the comment: 'is't' should be 'it's' or 'it is' for proper grammar\n",
+   "source": "Deepseek-V3.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "core/http/endpoints/openai/completion.go",
+   "side": "right",
+   "from_line": 40,
+   "to_line": 43,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Consider validating that `TimingTokenGeneration` and `TimingPromptProcessing` fields exist before assigning them directly without checks.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "core/http/endpoints/openai/files.go",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 26,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "**Question: Is MachineTag header needed for file endpoints?**\n\nThe `LocalAI-Machine-Tag` header is being added to all file-related endpoints (upload, list, get, delete, get contents). \n\nWhile this makes sense for inference endpoints (chat, completion, edit) where you need to know which machine processed the request, it's less clear why this is needed for file management operations.\n\n**Question:** Is this intentional? Do file operations need to expose the machine tag, or should this only be on inference endpoints?",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ]
+}

@@ -1,0 +1,52 @@
+{
+ "id": "zh/java-kucun-tx",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/java-kucun-tx",
+  "owner": "zh",
+  "repo": "java-kucun-tx",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "库存扣减：下单时锁定库存",
+  "description": "",
+  "language": "Java",
+  "category": "self-built",
+  "changed_lines": 18
+ },
+ "diffs": [
+  {
+   "old_path": "src/main/java/com/example/kucun/KuCunService.java",
+   "new_path": "src/main/java/com/example/kucun/KuCunService.java",
+   "diff": "@@ -20,6 +20,25 @@ public class KuCunService {\n         this.kuCunMapper = kuCunMapper;\n     }\n \n+    /**\n+     * 扣减库存并写一条流水。库存不足时抛出业务异常。\n+     */\n+    public void kouJian(Long shangPinId, int shuLiang) {\n+        KuCun kuCun = kuCunMapper.selectById(shangPinId);\n+        if (kuCun.getKeYong() < shuLiang) {\n+            throw new YeWuException(\"库存不足，商品 \" + shangPinId);\n+        }\n+        kuCun.setKeYong(kuCun.getKeYong() - shuLiang);\n+        kuCunMapper.updateById(kuCun);\n+\n+        LiuShui liuShui = new LiuShui();\n+        liuShui.setShangPinId(shangPinId);\n+        liuShui.setBianDong(-shuLiang);\n+        liuShuiMapper.insert(liuShui);\n+        // TODO 后面补上事务\n+        log.info(\"扣减库存成功: {} -{}\", shangPinId, shuLiang);\n+    }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/main/java/com/example/kucun/KuCunService.java",
+   "side": "right",
+   "from_line": 27,
+   "to_line": 32,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "先查再改的“读-改-写”没有加锁也没加事务，两个请求同时扣减会把库存扣成负数（超卖）。应该用 `UPDATE ... SET ke_yong = ke_yong - ? WHERE id = ? AND ke_yong >= ?` 一条语句扣减并判断影响行数，再加 `@Transactional` 把流水一起写。",
+   "source": "human"
+  },
+  {
+   "path": "src/main/java/com/example/kucun/KuCunService.java",
+   "side": "right",
+   "from_line": 23,
+   "to_line": 24,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`selectById` 查不到时返回 null，紧接着 `kuCun.getKeYong()` 会 NPE，给调用方的会是 500 而不是“商品不存在”的业务错误。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

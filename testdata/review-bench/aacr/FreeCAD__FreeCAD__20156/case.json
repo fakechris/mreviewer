@@ -1,0 +1,333 @@
+{
+ "id": "aacr/FreeCAD__FreeCAD__20156",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/FreeCAD/FreeCAD/pull/20156",
+  "owner": "FreeCAD",
+  "repo": "FreeCAD",
+  "number": 20156,
+  "base_sha": "382720b82e4c6c81f7e1cdd3a33272047d7a3642",
+  "head_sha": "699b45c086f53858897aa8c688bbedaf570c644f",
+  "title": "FreeCAD: Compiler warning fixes",
+  "description": "These are all based on compiling using MSVC with the following warning settings:\r\n```\r\n-DCMAKE_CXX_FLAGS=\"-DFC_DEBUG /W3 /w14189 /w14062 /w14264 /w14296 /w14289 /w14388 /w14774 /w14777 /w15038 /w15041 /w15042 /w15233 /w15259 /w15263 /w15264 /w15266\"\r\n```\r\n",
+  "language": "C++",
+  "category": "Code Style, Linting, Formatting Fixes",
+  "changed_lines": 56
+ },
+ "diffs": [
+  {
+   "old_path": "src/Base/StackWalker.cpp",
+   "new_path": "src/Base/StackWalker.cpp",
+   "diff": "@@ -810,6 +810,8 @@ class StackWalkerInternal\n                     case 8:  // SymVirtual:\r\n                         szSymType = \"Virtual\";\r\n                         break;\r\n+                    case NumSymTypes:  // Not a real option, should never hit\r\n+                        break;\r\n                 }\r\n             }\r\n             LPCSTR pdbName = Module.LoadedImageName;\r\n@@ -1468,7 +1470,7 @@ void StackWalker::OnLoadModule(LPCSTR img,\n     if (fileVersion == 0) {\r\n         _snprintf_s(buffer,\r\n                     maxLen,\r\n-                    \"%s:%s (%p), size: %d (result: %d), SymType: '%s', PDB: '%s'\\n\",\r\n+                    \"%s:%s (%p), size: %ld (result: %ld), SymType: '%s', PDB: '%s'\\n\",\r\n                     img,\r\n                     mod,\r\n                     (LPVOID)baseAddr,\r\n@@ -1484,8 +1486,8 @@ void StackWalker::OnLoadModule(LPCSTR img,\n         DWORD v1 = (DWORD)((fileVersion >> 48) & 0xFFFF);\r\n         _snprintf_s(buffer,\r\n                     maxLen,\r\n-                    \"%s:%s (%p), size: %d (result: %d), SymType: '%s', PDB: '%s', fileVersion: \"\r\n-                    \"%d.%d.%d.%d\\n\",\r\n+                    \"%s:%s (%p), size: %ld (result: %ld), SymType: '%s', PDB: '%s', fileVersion: \"\r\n+                    \"%ld.%ld.%ld.%ld\\n\",\r\n                     img,\r\n                     mod,\r\n                     (LPVOID)baseAddr,\r\n@@ -1535,7 +1537,7 @@ void StackWalker::OnCallstackEntry(CallstackEntryType eType, CallstackEntry& ent\n         else {\r\n             _snprintf_s(buffer,\r\n                         maxLen,\r\n-                        \"%s (%d): %s\\n\",\r\n+                        \"%s (%ld): %s\\n\",\r\n                         entry.lineFileName,\r\n                         entry.lineNumber,\r\n                         entry.name);\r\n@@ -1554,7 +1556,7 @@ void StackWalker::OnDbgHelpErr(LPCSTR szFuncName, DWORD gle, DWORD64 addr)\n #endif\r\n     _snprintf_s(buffer,\r\n                 maxLen,\r\n-                \"ERROR: %s, GetLastError: %d (Address: %p)\\n\",\r\n+                \"ERROR: %s, GetLastError: %ld (Address: %p)\\n\",\r\n                 szFuncName,\r\n                 gle,\r\n                 (LPVOID)addr);\r\n@@ -1571,7 +1573,7 @@ void StackWalker::OnSymInit(LPCSTR szSearchPath, DWORD symOptions, LPCSTR szUser\n #endif\r\n     _snprintf_s(buffer,\r\n                 maxLen,\r\n-                \"SymInit: Symbol-SearchPath: '%s', symOptions: %d, UserName: '%s'\\n\",\r\n+                \"SymInit: Symbol-SearchPath: '%s', symOptions: %ld, UserName: '%s'\\n\",\r\n                 szSearchPath,\r\n                 symOptions,\r\n                 szUserName);\r\n@@ -1604,7 +1606,7 @@ void StackWalker::OnSymInit(LPCSTR szSearchPath, DWORD symOptions, LPCSTR szUser\n     if (GetVersionExA((OSVERSIONINFOA*)&ver) != FALSE) {\r\n         _snprintf_s(buffer,\r\n                     maxLen,\r\n-                    \"OS-Version: %d.%d.%d (%s) 0x%x-0x%x\\n\",\r\n+                    \"OS-Version: %ld.%ld.%ld (%s) 0x%x-0x%x\\n\",\r\n                     ver.dwMajorVersion,\r\n                     ver.dwMinorVersion,\r\n                     ver.dwBuildNumber,\r",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Base/Tools.h",
+   "new_path": "src/Base/Tools.h",
+   "diff": "@@ -145,7 +145,7 @@ inline T toDegrees(T r)\n \r\n inline float fromPercent(const long value)\r\n {\r\n-    return std::roundf(value) / 100.0F;\r\n+    return std::roundf(static_cast<float>(value)) / 100.0F;\r\n }\r\n \r\n inline long toPercent(float value)\r",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Gui/DAGView/DAGRectItem.cpp",
+   "new_path": "src/Gui/DAGView/DAGRectItem.cpp",
+   "diff": "@@ -64,7 +64,7 @@ void RectItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option,\n         styleOption.state |= QStyle::State_Selected;\n         QPalette palette = styleOption.palette;\n         QColor tempColor = palette.color(QPalette::Active, QPalette::Highlight);\n-        tempColor.setAlphaF(0.15);\n+        tempColor.setAlphaF(0.15f);\n         palette.setColor(QPalette::Inactive, QPalette::Highlight, tempColor);\n         styleOption.palette = palette;\n       }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Gui/Dialogs/DlgPreferencePackManagementImp.cpp",
+   "new_path": "src/Gui/Dialogs/DlgPreferencePackManagementImp.cpp",
+   "diff": "@@ -126,7 +126,7 @@ void DlgPreferencePackManagementImp::addTreeNode(const std::string &name, const\n             else\n                 button->setIcon(iconIsInvisible);\n             button->setToolTip(tr(\"Toggle visibility of built-in preference pack '%1'\").arg(item->text(0)));\n-            connect(button, &QPushButton::clicked, [this, name, item]() {\n+            connect(button, &QPushButton::clicked, [this, item]() {\n                 this->hideBuiltInPack(item->text(0).toStdString());\n                 });\n         break; case TreeWidgetType::USER:",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Gui/SoDatumLabel.cpp",
+   "new_path": "src/Gui/SoDatumLabel.cpp",
+   "diff": "@@ -81,7 +81,7 @@ void glDrawLine(const SbVec3f& p1, const SbVec3f& p2){\n void glDrawArc(const SbVec3f& center, float radius, float startAngle=0., float endAngle=2.0*M_PI, int countSegments=0){\n     float range = endAngle - startAngle;\n     if (range < 0.) {\n-        range += 2.0 * M_PI;\n+        range += 2.0 * static_cast<float>(M_PI);\n     }\n \n     if (countSegments == 0){\n@@ -549,7 +549,7 @@ class DatumLabelBox\n         float startangle = atan2f(vc1[1], vc1[0]);\n         float endangle = atan2f(vc2[1], vc2[0]);\n         if (endangle < startangle) {\n-            endangle += 2. * M_PI;\n+            endangle += 2. * static_cast<float>(M_PI);\n         }\n \n         SbVec3f textCenter;\n@@ -692,7 +692,7 @@ SbVec3f SoDatumLabel::getLabelTextCenterArcLength(const SbVec3f& ctr, const SbVe\n     float endangle = atan2f(vc2[1], vc2[0]);\n \n     if (endangle < startangle) {\n-        endangle += 2. * M_PI;\n+        endangle += 2. * static_cast<float>(M_PI);\n     }\n \n     // Text location",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Gui/View3DInventor.cpp",
+   "new_path": "src/Gui/View3DInventor.cpp",
+   "diff": "@@ -791,7 +791,7 @@ RayPickInfo View3DInventor::getObjInfoRay(Base::Vector3d* startvec, Base::Vector\n     vdy = dirvec->y;\r\n     vdz = dirvec->z;\r\n     // near plane clipping is required to avoid false intersections\r\n-    float nearClippingPlane = 0.1;\r\n+    float nearClippingPlane = 0.1f;\r\n \r\n     RayPickInfo ret = {false,\r\n                        Base::Vector3d(),\r",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Gui/View3DInventorViewer.cpp",
+   "new_path": "src/Gui/View3DInventorViewer.cpp",
+   "diff": "@@ -454,9 +454,9 @@ void View3DInventorViewer::init()\n     fillLight = new SoDirectionalLight();\n     fillLight->ref();\n     fillLight->setName(\"filllight\");\n-    fillLight->direction.setValue(-0.60, -0.35, -0.79);\n-    fillLight->intensity.setValue(0.6);\n-    fillLight->color.setValue(0.95, 0.95, 1.0);\n+    fillLight->direction.setValue(-0.60f, -0.35f, -0.79f);\n+    fillLight->intensity.setValue(0.6f);\n+    fillLight->color.setValue(0.95f, 0.95f, 1.0f);\n     fillLight->on.setValue(false); // by default off\n \n     // Set up background scenegraph with image in it.",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Gui/ViewProviderPlane.cpp",
+   "new_path": "src/Gui/ViewProviderPlane.cpp",
+   "diff": "@@ -135,7 +135,7 @@ void ViewProviderPlane::attach(App::DocumentObject * obj) {\n     faceSeparator->addChild(faceSet);\n \n     auto textTranslation = new SoTranslation();\n-    SbVec3f centeringVec = size * SbVec3f(0.36, 0.49, 0);  // NOLINT\n+    SbVec3f centeringVec = size * SbVec3f(0.36f, 0.49f, 0.0f);  // NOLINT\n     textTranslation->translation.setValue(centeringVec);\n     sep->addChild(textTranslation);\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Mod/CAM/libarea/pyarea.cpp",
+   "new_path": "src/Mod/CAM/libarea/pyarea.cpp",
+   "diff": "@@ -48,7 +48,7 @@ static void print_curve(const CCurve& c)\n #if defined SIZEOF_SIZE_T && SIZEOF_SIZE_T == 4\n     printf(\"number of vertices = %d\\n\", nvertices);\n #elif defined(_WIN32)\n-    printf(\"number of vertices = %Iu\\n\", nvertices);\n+    printf(\"number of vertices = %zu\\n\", nvertices);\n #else\n     printf(\"number of vertices = %lu\\n\", nvertices);\n #endif",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Mod/Fem/App/FemVTKTools.cpp",
+   "new_path": "src/Mod/Fem/App/FemVTKTools.cpp",
+   "diff": "@@ -1485,7 +1485,7 @@ void readResults(std::ifstream& ifstr,\n     std::vector<double> scaValues;\n     std::vector<int> nodes;\n     int countNodes = 0;\n-    int countScaPos;\n+    size_t countScaPos;\n     // result block could have both vector/matrix and scalar components\n     // save each scalars entity in his own array\n     auto scalarPos = identifyScalarEntities(entityTypes);\n@@ -1542,7 +1542,7 @@ void readResults(std::ifstream& ifstr,\n                     }\n                 }\n             }\n-            catch (const std::out_of_range& ex) {\n+            catch (const std::out_of_range&) {\n                 Base::Console().Warning(\"Invalid node: %d\\n\", node);\n             }\n             ++countNodes;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Mod/Mesh/App/Core/MeshKernel.cpp",
+   "new_path": "src/Mod/Mesh/App/Core/MeshKernel.cpp",
+   "diff": "@@ -194,7 +194,7 @@ unsigned long MeshKernel::AddFacets(const std::vector<MeshFacet>& rclFAry, bool\n {\r\n     // Build map of edges of the referencing facets we want to append\r\n #ifdef FC_DEBUG\r\n-    unsigned long countPoints = CountPoints();\r\n+    [[maybe_unused]] unsigned long countPoints = CountPoints();\r\n #endif\r\n \r\n     // if the manifold check shouldn't be done then just add all faces\r",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Mod/Spreadsheet/App/PropertySheet.cpp",
+   "new_path": "src/Mod/Spreadsheet/App/PropertySheet.cpp",
+   "diff": "@@ -2300,7 +2300,7 @@ void PropertySheet::getLinksTo(std::vector<App::ObjectIdentifier>& identifiers,\n             const auto [docObj, depsList] = *it;\n             for (auto& [depName, paths] : depsList) {\n                 if (!subname) {\n-                    identifiers.emplace_back(owner, cellName.toString().c_str());\n+                    identifiers.emplace_back(owner, cellName.toString());\n                     break;\n                 }\n                 if (std::any_of(paths.begin(),\n@@ -2314,7 +2314,7 @@ void PropertySheet::getLinksTo(std::vector<App::ObjectIdentifier>& identifiers,\n                                     return (sobjT.getSubObject() == subObject\n                                             && sobjT.getOldElementName() == subElement);\n                                 })) {\n-                    identifiers.emplace_back(owner, cellName.toString().c_str());\n+                    identifiers.emplace_back(owner, cellName.toString());\n                 }\n             }\n         }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Mod/TechDraw/App/Geometry.cpp",
+   "new_path": "src/Mod/TechDraw/App/Geometry.cpp",
+   "diff": "@@ -1715,7 +1715,7 @@ TopoDS_Face GeometryUtils::makePerforatedFace(FacePtr bigCheese,  const std::vec\n     try {\n         faceShape = Part::FaceMakerCheese::makeFace(cheeseIngredients);\n     }\n-    catch (const Standard_Failure &e) {\n+    catch (const Standard_Failure&) {\n         Base::Console().Warning(\"Area - could not make holes in face\\n\");\n         return flippedFace;\n     }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Mod/TechDraw/Gui/DimensionValidators.cpp",
+   "new_path": "src/Mod/TechDraw/Gui/DimensionValidators.cpp",
+   "diff": "@@ -744,6 +744,8 @@ long int TechDraw::mapGeometryTypeToDimType(long int dimType, DimensionGeometry\n                 return DrawViewDimension::Angle;\n             case DimensionGeometry::isAngle3Pt:\n                 return DrawViewDimension::Angle3Pt;\n+            default:\n+                break;  // For all other cases, return dimType\n         }\n     } else if (geometry2d != DimensionGeometry::isViewReference) {\n         switch (geometry2d) {\n@@ -757,6 +759,8 @@ long int TechDraw::mapGeometryTypeToDimType(long int dimType, DimensionGeometry\n                 return DrawViewDimension::Angle;\n             case DimensionGeometry::isAngle3Pt:\n                 return DrawViewDimension::Angle3Pt;\n+            default:\n+                break;  // For all other cases, return dimType\n         }\n     }\n     return dimType;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/src/Base/Reader.cpp",
+   "new_path": "tests/src/Base/Reader.cpp",
+   "diff": "@@ -23,7 +23,7 @@ static std::string random_string(size_t length)\n \n     std::random_device rd;\n     std::mt19937 gen(rd());\n-    std::uniform_int_distribution<> dis(0, digits.size() - 1);\n+    std::uniform_int_distribution<> dis(0, static_cast<int>(digits.size()) - 1);\n \n     std::string result;\n     for (size_t i = 0; i < length; ++i) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/src/Mod/Part/App/FuzzyBoolean.cpp",
+   "new_path": "tests/src/Mod/Part/App/FuzzyBoolean.cpp",
+   "diff": "@@ -114,7 +114,7 @@ TEST_F(FuzzyBooleanTest, testFailsTooSmallFuzzy)\n     double oldFuzzy = Part::FuzzyHelper::getBooleanFuzzy();\n     Part::FuzzyHelper::setBooleanFuzzy(0.01);\n     _fuse->execute();\n-    EXPECT_FLOAT_EQ(Part::FuzzyHelper::getBooleanFuzzy(), 0.01);\n+    EXPECT_DOUBLE_EQ(Part::FuzzyHelper::getBooleanFuzzy(), 0.01);\n     Part::FuzzyHelper::setBooleanFuzzy(oldFuzzy);\n \n     // Verify",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/Base/StackWalker.cpp",
+   "side": "right",
+   "from_line": 813,
+   "to_line": 813,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `NumSymTypes` case in the symbol type switch should implement `assert(false && \"Unreachable\")` to explicitly enforce unreachable semantics and facilitate future C++23 migration to `std::unreachable()`.",
+   "source": "human"
+  },
+  {
+   "path": "src/Base/StackWalker.cpp",
+   "side": "right",
+   "from_line": 1473,
+   "to_line": 1473,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Format specifier mismatch: `size` and `result` are `DWORD` (unsigned 32-bit), but `%ld` is for `long` (signed). Use `%lu` for unsigned types to avoid potential undefined behavior with large values. Same issue applies to other DWORD variables throughout the file.\n\n```suggestion\n                    \"%s:%s (%p), size: %lu (result: %lu), SymType: '%s', PDB: '%s'\\n\",\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Base/StackWalker.cpp",
+   "side": "right",
+   "from_line": 1490,
+   "to_line": 1490,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Format specifier mismatch: `v1`, `v2`, `v3`, `v4` are `DWORD` (unsigned), but `%ld` is for signed `long`. Use `%lu` for unsigned types.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Base/StackWalker.cpp",
+   "side": "right",
+   "from_line": 1540,
+   "to_line": 1540,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Format specifier mismatch: `entry.lineNumber` is `DWORD` (unsigned), but `%ld` is for signed `long`. Use `%lu` for unsigned types.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Base/StackWalker.cpp",
+   "side": "right",
+   "from_line": 1559,
+   "to_line": 1559,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Format specifier mismatch: `gle` is `DWORD` (unsigned), but `%ld` is for signed `long`. Use `%lu` for unsigned types.\n\n```suggestion\n                \"ERROR: %s, GetLastError: %lu (Address: %p)\\n\",\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Base/StackWalker.cpp",
+   "side": "right",
+   "from_line": 1576,
+   "to_line": 1576,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Format specifier mismatch: `symOptions` is `DWORD` (unsigned), but `%ld` is for signed `long`. Use `%lu` for unsigned types.\n\n```suggestion\n                \"SymInit: Symbol-SearchPath: '%s', symOptions: %lu, UserName: '%s'\\n\",\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Base/StackWalker.cpp",
+   "side": "right",
+   "from_line": 1609,
+   "to_line": 1609,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Format specifier mismatch: `ver.dwMajorVersion`, `ver.dwMinorVersion`, `ver.dwBuildNumber` are `DWORD` (unsigned), but `%ld` is for signed `long`. Use `%lu` for unsigned types.\n\n```suggestion\n                    \"OS-Version: %lu.%lu.%lu (%s) 0x%x-0x%x\\n\",\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Base/Tools.h",
+   "side": "right",
+   "from_line": 148,
+   "to_line": 148,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Logic issue: Using std::roundf on an integer value (after casting to float) is redundant. Since 'value' is already a 'long' (integer type), it doesn't need rounding. The std::roundf call serves no purpose here and should be removed.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Base/Tools.h",
+   "side": "right",
+   "from_line": 148,
+   "to_line": 148,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`std::roundf` already takes a floating-point argument; casting `value` to `float` is fine but consider whether the intent is to avoid `long`->`float` narrowing for large `value` (precision loss). If exact percent conversion is required for large integers, prefer doing the division in integer/long double domain (e.g., `static_cast<float>(value) / 100.0f` without rounding, or use `std::round(static_cast<double>(value))` / `100.0`), depending on expected semantics.\n\n```suggestion\n    // If rounding to nearest integer percent is intended, keep but consider double for range:\n    return static_cast<float>(std::round(static_cast<double>(value))) / 100.0F;\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Gui/DAGView/DAGRectItem.cpp",
+   "side": "right",
+   "from_line": 67,
+   "to_line": 67,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "The 'f' suffix is unnecessary here. QColor::setAlphaF() expects a qreal parameter (typically double on most platforms). Using '0.15f' (float literal) instead of '0.15' (double literal) introduces an unnecessary implicit conversion from float to double. The original code without the 'f' suffix was more appropriate.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Gui/SoDatumLabel.cpp",
+   "side": "right",
+   "from_line": 84,
+   "to_line": 84,
+   "category": "Performance",
+   "context": "File Level",
+   "note": "For consistency and to fully benefit from float arithmetic, consider using float literal `2.0f` instead of double literal `2.0`. The current code still performs double arithmetic (2.0 * float) before adding to the float variable.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Gui/SoDatumLabel.cpp",
+   "side": "right",
+   "from_line": 552,
+   "to_line": 552,
+   "category": "Performance",
+   "context": "File Level",
+   "note": "For consistency and to fully benefit from float arithmetic, consider using float literal `2.0f` instead of double literal `2.`. The current code still performs double arithmetic (2. * float) before adding to the float variable.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Gui/View3DInventor.cpp",
+   "side": "right",
+   "from_line": 794,
+   "to_line": 794,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The variable `nearClippingPlane` is initialized but never modified. Consider marking it as `const` to improve const correctness and make the intent clearer.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Mod/CAM/libarea/pyarea.cpp",
+   "side": "right",
+   "from_line": 51,
+   "to_line": 51,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "On Windows/MSVC, `%zu` support depends on compiler/CRT version; older MSVC historically required `%Iu` for `size_t`. If this project still targets older MSVC toolchains, consider using a portable macro (e.g., `%zu` guarded by `_MSC_VER`/UCRT), `PRIuPTR` with a cast to `uintptr_t`, or `std::cout` to avoid format-specifier portability issues. Also ensure `nvertices` is actually `size_t`; otherwise `%zu` will be UB.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Mod/TechDraw/App/Geometry.cpp",
+   "side": "right",
+   "from_line": 1718,
+   "to_line": 1719,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Consider including exception details in the warning message for better diagnostics. Although the exception object is unused, its message might provide valuable context.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Mod/TechDraw/Gui/DimensionValidators.cpp",
+   "side": "right",
+   "from_line": 747,
+   "to_line": 748,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "The default case silently falls through to return `dimType` for unhandled enum values. Based on the codebase, `DimensionGeometry` has many other values not handled here (e.g., `isCircle`, `isEllipse`, `isMultiEdge`, `isBSpline`, `isFace`, `isHybrid`). These valid geometry types would be silently ignored without any warning. Consider adding a log/warning statement to help identify when unhandled geometry types are encountered, or explicitly handle these cases if they should map to specific dimension types.",
+   "source": "GLM-4.7"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "src/Gui/Dialogs/DlgPreferencePackManagementImp.cpp",
+   "side": "right",
+   "from_line": 129,
+   "to_line": 131,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Lambda capture was changed from `[this, name, item]` to `[this, item]`. If this was to fix an unused-capture warning, it’s fine. However, please confirm `name` is not needed for correctness (e.g., if `item->text(0)` can change later due to UI edits/renames). If the intent is to use the original `name` passed into `addTreeNode`, consider capturing a stable copy like `const std::string packName = name;` and using that in the slot instead of reading from the widget at click time.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Mod/TechDraw/Gui/DimensionValidators.cpp",
+   "side": "right",
+   "from_line": 747,
+   "to_line": 748,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Adding a 'default: break;' statement here may obscure the intent. Since the function ultimately returns 'dimType', consider removing this redundant default case to enhance clarity.\n",
+   "source": "Qwen-Coder-480B"
+  }
+ ]
+}

@@ -1,0 +1,42 @@
+{
+ "id": "zh/go-huancun-lock",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/go-huancun-lock",
+  "owner": "zh",
+  "repo": "go-huancun-lock",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "本地缓存：支持过期时间",
+  "description": "",
+  "language": "Go",
+  "category": "self-built",
+  "changed_lines": 19
+ },
+ "diffs": [
+  {
+   "old_path": "pkg/huancun/cache.go",
+   "new_path": "pkg/huancun/cache.go",
+   "diff": "@@ -5,18 +5,30 @@ import (\n type Cache struct {\n \tmu    sync.RWMutex\n \titems map[string]item\n+\t// 默认过期时间，0 表示永不过期\n+\tmoRenGuoQi time.Duration\n }\n \n+type item struct {\n+\tvalue    any\n+\tguoQiShi time.Time // 过期时间点\n+}\n+\n func (c *Cache) Get(key string) (any, bool) {\n \tc.mu.RLock()\n-\tdefer c.mu.RUnlock()\n \tit, ok := c.items[key]\n-\treturn it.value, ok\n+\tc.mu.RUnlock()\n+\tif !ok {\n+\t\treturn nil, false\n+\t}\n+\t// 已过期的条目顺手删掉，避免内存一直涨\n+\tif !it.guoQiShi.IsZero() && time.Now().After(it.guoQiShi) {\n+\t\tdelete(c.items, key)\n+\t\treturn nil, false\n+\t}\n+\treturn it.value, true\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "pkg/huancun/cache.go",
+   "side": "right",
+   "from_line": 27,
+   "to_line": 28,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`delete(c.items, key)` 在没有持有写锁的情况下修改 map，和并发的 `Get`/`Set` 一起跑会触发 `concurrent map writes` 直接 panic。删除前要 `c.mu.Lock()`，或者把过期清理交给单独的 goroutine。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

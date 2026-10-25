@@ -1,0 +1,93 @@
+{
+ "id": "aacr/PowerShell__PowerShell__24910",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/PowerShell/PowerShell/pull/24910",
+  "owner": "PowerShell",
+  "repo": "PowerShell",
+  "number": 24910,
+  "base_sha": "2259f56c0786574cbde8624d031e778028352372",
+  "head_sha": "ec952ce3b70c87885ed756ffca2bec128f07c51b",
+  "title": "Filter out the nested modules of `PSReadLine` from module name tab completion",
+  "description": "<!-- Anything that looks like this is a comment and can't be seen after the Pull Request is created. -->\r\n\r\n## PR Summary\r\n\r\nWhen doing module name completion such as `Get-Module mic<tab>` or `Get-Module psr<tab>`, you will see `Microsoft.PowerShell.PSReadLine2` as the result of completion. `Microsoft.PowerShell.PSReadLine2` is a nested module of `PSReadLine`, which shouldn't be returned by completion. It's returned because the completion happens in PSReadLine's context (using PSReadLine's `SessionState` as the `EngineSessionState`) and hence its nested modules are visible to the tab completion.\r\n\r\n![completion](https://github.com/user-attachments/assets/92f4c264-3c76-4d6d-a74e-a00839ca8a00)\r\n\r\nThis PR filters out the nested modules of `PSReadLine` from the tab completion results. It's intentional to not hard code the name 'PSReadLine' in the change, so that in case the tab completion is triggered from within a different module, its nested modules can also be filtered out.\r\n\r\n## PR Checklist\r\n\r\n- [x] [PR has a meaningful title](https://github.com/PowerShell/PowerShell/blob/master/.github/CONTRIBUTING.md#pull-request---submission)\r\n  - Use the present tense and imperative mood when describing your changes\r\n- [x] [Summarized changes](https://github.com/PowerShell/PowerShell/blob/master/.github/CONTRIBUTING.md#pull-request---submission)\r\n- [x] [Make sure all `.h`, `.cpp`, `.cs`, `.ps1` and `.psm1` files have the correct copyright header](https://github.com/PowerShell/PowerShell/blob/master/.github/CONTRIBUTING.md#pull-request---submission)\r\n- [x] This PR is ready to merge and is not [Work in Progress](https://github.com/PowerShell/PowerShell/blob/master/.github/CONTRIBUTING.md#pull-request---work-in-progress).\r\n  - If the PR is work in progress, please add the prefix `WIP:` or `[ WIP ]` to the beginning of the title (the `WIP` bot will keep its status check at `Pending` while the prefix is present) and remove the prefix when the PR is ready.\r\n- **[Breaking changes](htt",
+  "language": "C#",
+  "category": "Bug Fix",
+  "changed_lines": 23
+ },
+ "diffs": [
+  {
+   "old_path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+   "new_path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+   "diff": "@@ -466,6 +466,18 @@ internal static List<CompletionResult> CompleteModuleName(CompletionContext cont\n \n             if (psObjects != null)\n             {\n+                // When PowerShell is used interactively, completion is usually triggered by PSReadLine, with PSReadLine's SessionState\n+                // as the engine session state. In that case, results from the module search may contain a nested module of PSReadLine,\n+                // which should be filtered out below.\n+                // When the completion is triggered from global session state, such as when running 'TabExpansion2' from command line,\n+                // the module associated with engine session state will be null.\n+                HashSet<PSModuleInfo> nestedModulesToFilterOut = null;\n+                PSModuleInfo curModule = context.ExecutionContext.EngineSessionState.Module;\n+                if (loadedModulesOnly && curModule?.NestedModules.Count > 0)\n+                {\n+                    nestedModulesToFilterOut = new(curModule.NestedModules);\n+                }\n+\n                 foreach (PSObject item in psObjects)\n                 {\n                     var moduleInfo = (PSModuleInfo)item.BaseObject;\n@@ -475,6 +487,14 @@ internal static List<CompletionResult> CompleteModuleName(CompletionContext cont\n                         && completionText.Contains('.')\n                         && !shortNamePattern.IsMatch(completionText.Substring(completionText.LastIndexOf('.') + 1))\n                         && !shortNamePattern.IsMatch(completionText))\n+                    {\n+                        // This check is to make sure we don't return a module whose name only matches the user specified word in the middle.\n+                        // For example, when user completes with 'gmo power', we should not return 'Microsoft.PowerShell.Utility'.\n+                        continue;\n+                    }\n+\n+                    if (nestedModulesToFilterOut is not null\n+                        && nestedModulesToFilterOut.Contains(moduleInfo))\n                     {\n                         continue;\n                     }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+   "side": "right",
+   "from_line": 474,
+   "to_line": 474,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The comment for nested module filtering incorrectly implies PSReadLine-specific behavior; update to explicitly state the logic applies to any module triggering completion.",
+   "source": "human"
+  },
+  {
+   "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+   "side": "right",
+   "from_line": 474,
+   "to_line": 479,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The HashSet is initialized with PSModuleInfo objects from `curModule.NestedModules`, but since PSModuleInfo doesn't override Equals/GetHashCode, the HashSet uses reference equality for the Contains check. The `Get-Module` command results may contain different PSModuleInfo instances (different object references) for the same logical module, causing the Contains check to fail even when the module should be filtered out.\n\nConsider using the existing `PSModuleInfoComparer` class or comparing by module name/path to ensure proper filtering:\n\n```csharp\nnestedModulesToFilterOut = new HashSet<PSModuleInfo>(curModule.NestedModules, PSModuleInfoComparer.Instance);\n```\n\nOr if `PSModuleInfoComparer` doesn't have a singleton instance, create a new instance:\n```csharp\nnestedModulesToFilterOut = new HashSet<PSModuleInfo>(curModule.NestedModules, new PSModuleInfoComparer());\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+   "side": "right",
+   "from_line": 475,
+   "to_line": 479,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`curModule` is derived from `context.ExecutionContext.EngineSessionState.Module`, but the comment says PSReadLine’s SessionState is often the engine session state. If this assumption is wrong for some invocation paths (e.g., different host / runspace), this could filter out unrelated nested modules. Consider tightening the condition (e.g., only apply when `curModule.Name` equals `PSReadLine` or when the module search provider indicates the originating session state) or add a targeted test to cover both PSReadLine-triggered completion and global `TabExpansion2` completion.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+   "side": "right",
+   "from_line": 478,
+   "to_line": 478,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "**Issue: Potential null reference exception**\n\nThe code accesses `curModule.NestedModules.Count` without checking if `NestedModules` itself is null. While the null-conditional operator `?.` protects against `curModule` being null, if `curModule` is not null but `NestedModules` is null, this will throw a NullReferenceException.\n\n**Recommendation:** Add a null check for `NestedModules`:\n```csharp\nif (loadedModulesOnly && curModule?.NestedModules is { Count: > 0 })\n{\n    nestedModulesToFilterOut = new(curModule.NestedModules);\n}\n```\n\nThis uses pattern matching to check both that `NestedModules` is not null and has a count greater than 0.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+   "side": "right",
+   "from_line": 489,
+   "to_line": 489,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "**Code structure issue: Unnecessary nested continue statement**\n\nThe restructured code creates an unnecessary nesting level. The original code had a single condition with a `continue` statement. Now there's an outer `if` with a `continue`, followed by an inner `if` with another `continue`. This makes the code harder to follow.\n\n**Recommendation:** Combine both conditions using the logical AND operator to maintain a flat structure:\n```csharp\nif ((completionText.Contains('.')\n    && !shortNamePattern.IsMatch(completionText.Substring(completionText.LastIndexOf('.') + 1))\n    && !shortNamePattern.IsMatch(completionText))\n    || (nestedModulesToFilterOut is not null && nestedModulesToFilterOut.Contains(moduleInfo)))\n{\n    continue;\n}\n```\n\nOr keep them as separate if statements at the same level without the extra braces.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+   "side": "right",
+   "from_line": 496,
+   "to_line": 500,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "`nestedModulesToFilterOut.Contains(moduleInfo)` relies on `PSModuleInfo` reference equality. If the module objects coming from `psObjects` are not the same instances as those in `curModule.NestedModules`, the filter won’t work (or may behave inconsistently). Consider filtering by a stable identity (e.g., `moduleInfo.Path`, `moduleInfo.Name` + `Guid`, or `moduleInfo.ModuleBase`), or build the `HashSet` with an explicit comparer that matches how `PSModuleInfo` should be identified here.",
+   "source": "GPT-5.2"
+  }
+ ]
+}

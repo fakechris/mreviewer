@@ -1,0 +1,307 @@
+{
+ "id": "aacr/mpv-player__mpv__16090",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/mpv-player/mpv/pull/16090",
+  "owner": "mpv-player",
+  "repo": "mpv",
+  "number": 16090,
+  "base_sha": "5ba7ee513751dd005379a06fb627303e6fe1b3dd",
+  "head_sha": "ff45a8103e3c5ec3e786b950b4852c2750de936f",
+  "title": "filters: automatically flip video if displaymatrix indicates so",
+  "description": "Currently we check AV_FRAME_DATA_DISPLAYMATRIX for its rotation factor but not for its flip factor, which could happen with some input files. This commit adds and autovflip filter, which is applied before the autorotate filter to flip vertically before rotating. It also changes the displaymatrix reading code to output to mp_image->params.vflip so it can be autoinserted as necessary.\r\n",
+  "language": "C",
+  "category": "Bug Fix",
+  "changed_lines": 185
+ },
+ "diffs": [
+  {
+   "old_path": "filters/f_auto_filters.c",
+   "new_path": "filters/f_auto_filters.c",
+   "diff": "@@ -332,6 +332,127 @@ struct mp_filter *mp_autorotate_create(struct mp_filter *parent)\n     return f;\n }\n \n+struct vflip_priv {\n+    struct mp_subfilter sub;\n+    int prev_vflip;\n+    int prev_imgfmt;\n+    int target_vflip;\n+};\n+\n+static void vflip_process(struct mp_filter *f)\n+{\n+    struct vflip_priv *p = f->priv;\n+\n+    if (!mp_subfilter_read(&p->sub))\n+        return;\n+\n+    struct mp_frame frame = p->sub.frame;\n+\n+    if (mp_frame_is_signaling(frame)) {\n+        mp_subfilter_continue(&p->sub);\n+        return;\n+    }\n+\n+    if (frame.type != MP_FRAME_VIDEO) {\n+        MP_ERR(f, \"video input required!\\n\");\n+        return;\n+    }\n+\n+    struct mp_image *img = frame.data;\n+\n+    if (img->params.vflip == p->prev_vflip &&\n+        img->imgfmt == p->prev_imgfmt)\n+    {\n+        img->params.vflip = p->target_vflip;\n+        mp_subfilter_continue(&p->sub);\n+        return;\n+    }\n+\n+    if (!mp_subfilter_drain_destroy(&p->sub))\n+        return;\n+\n+    mp_assert(!p->sub.filter);\n+\n+    int vflip = p->prev_vflip = img->params.vflip;\n+    p->target_vflip = vflip;\n+    p->prev_imgfmt = img->imgfmt;\n+\n+    struct mp_stream_info *info = mp_filter_find_stream_info(f);\n+    if (!vflip || (info && info->vflip)) {\n+        mp_subfilter_continue(&p->sub);\n+        return;\n+    }\n+\n+    if (!mp_sws_supports_input(img->imgfmt)) {\n+        MP_ERR(f, \"Video vflip with this format not supported\\n\");\n+        mp_subfilter_continue(&p->sub);\n+        return;\n+    }\n+\n+    char *args[] = {NULL};\n+\n+    p->sub.filter = mp_create_user_filter(f, MP_OUTPUT_CHAIN_VIDEO, \"vflip\", args);\n+\n+    if (p->sub.filter) {\n+        MP_INFO(f, \"Inserting vflip filter.\\n\");\n+        p->target_vflip = 0;\n+    } else {\n+        MP_ERR(f, \"could not create vflip filter\\n\");\n+    }\n+\n+    mp_subfilter_continue(&p->sub);\n+}\n+\n+static void vflip_reset(struct mp_filter *f)\n+{\n+    struct vflip_priv *p = f->priv;\n+\n+    mp_subfilter_reset(&p->sub);\n+}\n+\n+static void vflip_destroy(struct mp_filter *f)\n+{\n+    struct vflip_priv *p = f->priv;\n+\n+    mp_subfilter_reset(&p->sub);\n+    TA_FREEP(&p->sub.filter);\n+}\n+\n+static bool vflip_command(struct mp_filter *f, struct mp_filter_command *cmd)\n+{\n+    struct vflip_priv *p = f->priv;\n+\n+    if (cmd->type == MP_FILTER_COMMAND_IS_ACTIVE) {\n+        cmd->is_active = !!p->sub.filter;\n+        return true;\n+    }\n+    return false;\n+}\n+\n+static const struct mp_filter_info vflip_filter = {\n+    .name = \"autovflip\",\n+    .priv_size = sizeof(struct vflip_priv),\n+    .command = vflip_command,\n+    .process = vflip_process,\n+    .reset = vflip_reset,\n+    .destroy = vflip_destroy,\n+};\n+\n+struct mp_filter *mp_autovflip_create(struct mp_filter *parent)\n+{\n+    struct mp_filter *f = mp_filter_create(parent, &vflip_filter);\n+    if (!f)\n+        return NULL;\n+\n+    struct vflip_priv *p = f->priv;\n+    p->prev_vflip = -1;\n+\n+    p->sub.in = mp_filter_add_pin(f, MP_PIN_IN, \"in\");\n+    p->sub.out = mp_filter_add_pin(f, MP_PIN_OUT, \"out\");\n+\n+    return f;\n+}\n+\n struct aspeed_priv {\n     struct mp_subfilter sub;\n     double cur_speed, cur_speed_drop;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "filters/f_auto_filters.h",
+   "new_path": "filters/f_auto_filters.h",
+   "diff": "@@ -6,6 +6,9 @@\n // hardware decode mode and the deinterlace user option.\n struct mp_filter *mp_deint_create(struct mp_filter *parent);\n \n+// Flip according to mp_image.vflip\n+struct mp_filter *mp_autovflip_create(struct mp_filter *parent);\n+\n // Rotate according to mp_image.rotate and VO capabilities.\n struct mp_filter *mp_autorotate_create(struct mp_filter *parent);\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "filters/f_output_chain.c",
+   "new_path": "filters/f_output_chain.c",
+   "diff": "@@ -376,6 +376,7 @@ void mp_output_chain_set_vo(struct mp_output_chain *c, struct vo *vo)\n \n     p->stream_info.hwdec_devs = vo ? vo->hwdec_devs : NULL;\n     p->stream_info.osd = vo ? vo->osd : NULL;\n+    p->stream_info.vflip = vo ? vo->driver->caps & VO_CAP_VFLIP : false;\n     p->stream_info.rotate90 = vo ? vo->driver->caps & VO_CAP_ROTATE90 : false;\n     p->stream_info.dr_vo = vo;\n     p->vo = vo;\n@@ -652,6 +653,13 @@ static void create_video_things(struct chain *p)\n         abort();\n     MP_TARRAY_APPEND(p, p->pre_filters, p->num_pre_filters, f);\n \n+    f = create_wrapper_filter(p);\n+    f->name = \"autovflip\";\n+    f->f = mp_autovflip_create(f->wrapper);\n+    if (!f->f)\n+        abort();\n+    MP_TARRAY_APPEND(p, p->post_filters, p->num_post_filters, f);\n+\n     f = create_wrapper_filter(p);\n     f->name = \"autorotate\";\n     f->f = mp_autorotate_create(f->wrapper);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "filters/filter.h",
+   "new_path": "filters/filter.h",
+   "diff": "@@ -405,6 +405,7 @@ struct mp_stream_info {\n \n     struct mp_hwdec_devices *hwdec_devs;\n     struct osd_state *osd;\n+    bool vflip;\n     bool rotate90;\n     struct vo *dr_vo; // for calling vo_get_image()\n };",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/mp_image.c",
+   "new_path": "video/mp_image.c",
+   "diff": "@@ -1095,9 +1095,15 @@ struct mp_image *mp_image_from_av_frame(struct AVFrame *src)\n \n     sd = av_frame_get_side_data(src, AV_FRAME_DATA_DISPLAYMATRIX);\n     if (sd) {\n-        double r = av_display_rotation_get((int32_t *)(sd->data));\n-        if (!isnan(r))\n+        int32_t *matrix = (int32_t *) sd->data;\n+        // determinant\n+        int vflip = ((int64_t)matrix[0] * (int64_t)matrix[4]\n+                    - (int64_t)matrix[1] * (int64_t)matrix[3]) < 0;\n+        double r = av_display_rotation_get(matrix);\n+        if (!isnan(r)) {\n             dst->params.rotate = (((int)(-r) % 360) + 360) % 360;\n+            dst->params.vflip = vflip;\n+        }\n     }\n \n     sd = av_frame_get_side_data(src, AV_FRAME_DATA_ICC_PROFILE);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/mp_image.h",
+   "new_path": "video/mp_image.h",
+   "diff": "@@ -57,6 +57,8 @@ struct mp_image_params {\n \n     enum mp_csp_light light;\n     enum pl_chroma_location chroma_location;\n+    // The image should be flipped vertically before rotating\n+    int vflip;\n     // The image should be rotated clockwise (0-359 degrees).\n     int rotate;\n     enum mp_stereo3d_mode stereo3d; // image is encoded with this mode",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/out/gpu/libmpv_gpu.c",
+   "new_path": "video/out/gpu/libmpv_gpu.c",
+   "diff": "@@ -89,7 +89,7 @@ static int init(struct render_backend *ctx, mpv_render_param *params)\n \n     ctx->hwdec_devs = hwdec_devices_create();\n     gl_video_init_hwdecs(p->renderer, p->context->ra_ctx, ctx->hwdec_devs, true);\n-    ctx->driver_caps = VO_CAP_ROTATE90;\n+    ctx->driver_caps = VO_CAP_ROTATE90 | VO_CAP_VFLIP;\n     return 0;\n }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/out/gpu/video.c",
+   "new_path": "video/out/gpu/video.c",
+   "diff": "@@ -3737,6 +3737,7 @@ static bool pass_upload_image(struct gl_video *p, struct mp_image *mpi, uint64_t\n                     .w = mp_image_plane_w(&layout, n),\n                     .h = mp_image_plane_h(&layout, n),\n                     .tex = tex[n],\n+                    .flipped = layout.params.vflip,\n                 };\n             }\n         } else {\n@@ -3750,6 +3751,10 @@ static bool pass_upload_image(struct gl_video *p, struct mp_image *mpi, uint64_t\n     mp_assert(mpi->num_planes == p->plane_count);\n \n     timer_pool_start(p->upload_timer);\n+\n+    if (mpi->params.vflip)\n+        mp_image_vflip(mpi);\n+\n     for (int n = 0; n < p->plane_count; n++) {\n         struct texplane *plane = &vimg->planes[n];\n         if (!plane->tex) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/out/vo.c",
+   "new_path": "video/out/vo.c",
+   "diff": "@@ -579,6 +579,9 @@ static void check_vo_caps(struct vo *vo)\n                    \"video output does not support this.\\n\", rot);\n         }\n     }\n+    if (vo->params->vflip && !(vo->driver->caps & VO_CAP_VFLIP))\n+        MP_WARN(vo, \"Video is flagged as vertically flipped, but the \"\n+                    \"video output does not support this.\\n\");\n }\n \n static void run_reconfig(void *p)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/out/vo.h",
+   "new_path": "video/out/vo.h",
+   "diff": "@@ -206,6 +206,8 @@ enum {\n     VO_CAP_UNTIMED      = 1 << 4,\n     // VO is responsible for freeing frames.\n     VO_CAP_FRAMEOWNER   = 1 << 5,\n+    // VO does handle mp_image_params.vflip\n+    VO_CAP_VFLIP        = 1 << 6,\n };\n \n enum {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/out/vo_dmabuf_wayland.c",
+   "new_path": "video/out/vo_dmabuf_wayland.c",
+   "diff": "@@ -541,6 +541,7 @@ static void resize(struct vo *vo)\n     vo->target_params->w = mp_rect_w(dst);\n     vo->target_params->h = mp_rect_h(dst);\n     vo->target_params->rotate = (vo->params->rotate % 90) * 90;\n+    vo->target_params->vflip = vo->params->vflip;\n     mp_mutex_unlock(&vo->params_mutex);\n }\n \n@@ -709,7 +710,7 @@ static int reconfig(struct vo *vo, struct mp_image *img)\n     vo->target_params = &p->target_params;\n     mp_mutex_unlock(&vo->params_mutex);\n \n-    wl_surface_set_buffer_transform(vo->wl->video_surface, img->params.rotate / 90);\n+    wl_surface_set_buffer_transform(vo->wl->video_surface, img->params.rotate / 90 + 4 * !!img->params.vflip);\n \n     // Immediately destroy all buffers if params change.\n     destroy_buffers(vo);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/out/vo_gpu.c",
+   "new_path": "video/out/vo_gpu.c",
+   "diff": "@@ -327,7 +327,7 @@ static int preinit(struct vo *vo)\n const struct vo_driver video_out_gpu = {\n     .description = \"Shader-based GPU Renderer\",\n     .name = \"gpu\",\n-    .caps = VO_CAP_ROTATE90,\n+    .caps = VO_CAP_ROTATE90 | VO_CAP_VFLIP,\n     .preinit = preinit,\n     .query_format = query_format,\n     .reconfig = reconfig,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/out/vo_gpu_next.c",
+   "new_path": "video/out/vo_gpu_next.c",
+   "diff": "@@ -920,6 +920,12 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)\n     if (frame->still)\n         params.frame_mixer = NULL;\n \n+    if (frame->current->params.vflip) {\n+        pl_matrix2x2 m = { .m = {{1, 0}, {0, -1}}, };\n+        pars->distort_params.transform.mat = m;\n+        params.distort_params = &pars->distort_params;\n+    }\n+\n     // pl_queue advances its internal virtual PTS and culls available frames\n     // based on this value and the VPS/FPS ratio. Requesting a non-monotonic PTS\n     // is an invalid use of pl_queue. Reset it if this happens in an attempt to\n@@ -2344,6 +2350,7 @@ const struct vo_driver video_out_gpu_next = {\n     .name = \"gpu-next\",\n     .caps = VO_CAP_ROTATE90 |\n             VO_CAP_FILM_GRAIN |\n+            VO_CAP_VFLIP |\n             0x0,\n     .preinit = preinit,\n     .query_format = query_format,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "video/out/vo_libmpv.c",
+   "new_path": "video/out/vo_libmpv.c",
+   "diff": "@@ -744,7 +744,7 @@ static int preinit(struct vo *vo)\n const struct vo_driver video_out_libmpv = {\n     .description = \"render API for libmpv\",\n     .name = \"libmpv\",\n-    .caps = VO_CAP_ROTATE90,\n+    .caps = VO_CAP_ROTATE90 | VO_CAP_VFLIP,\n     .preinit = preinit,\n     .query_format = query_format,\n     .reconfig = reconfig,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "filters/f_auto_filters.c",
+   "side": "right",
+   "from_line": 356,
+   "to_line": 359,
+   "category": "Performance",
+   "context": "File Level",
+   "note": "Returning here without forwarding or releasing the frame causes a memory leak (the frame remains in `p->sub.frame`). It is recommended to forward the frame using `mp_subfilter_continue(&p->sub)` to allow non-video frames (like audio) to pass through, or explicitly unreference it if dropping is intended.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "filters/f_auto_filters.c",
+   "side": "right",
+   "from_line": 396,
+   "to_line": 403,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "In this initialization path, `img->params.vflip` is not updated to `p->target_vflip`. If the vflip filter is successfully inserted, `p->target_vflip` becomes 0, but the current frame retains the original vflip flag. This may cause the first frame to be flipped twice (once by the filter and once by the display/VO). It is recommended to update `img->params.vflip` here, consistent with the fast path logic.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "filters/f_auto_filters.c",
+   "side": "right",
+   "from_line": 413,
+   "to_line": 419,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Memory management: `vflip_destroy()` calls both `mp_subfilter_reset(&p->sub);` and `TA_FREEP(&p->sub.filter);`. If `mp_subfilter_reset()` already releases/destroys `sub.filter`, this can become a double-free. Verify ownership: either let `mp_subfilter_reset()` manage the subfilter’s internal filter pointer, or remove the extra `TA_FREEP` and rely on reset. At minimum, confirm `mp_subfilter_reset()` does not free `sub.filter` (or that it sets it to NULL).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "filters/f_output_chain.c",
+   "side": "right",
+   "from_line": 379,
+   "to_line": 379,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "`p->stream_info.vflip` is a `bool` (see filters/filter.h). Here it is assigned `vo->driver->caps & VO_CAP_VFLIP` which is an integer bitmask. While it will usually coerce to bool, it’s clearer/safer to normalize with `!!(...)`.\n\nMore importantly, this dereferences `vo->driver` without checking it. If `vo` can be non-NULL while `vo->driver` is NULL during init/teardown, this will crash. Consider guarding with `vo && vo->driver` (consistent with robust capability queries).\n\n```suggestion\n    p->stream_info.vflip = (vo && vo->driver) ? !!(vo->driver->caps & VO_CAP_VFLIP)\n                                             : false;\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "video/mp_image.h",
+   "side": "right",
+   "from_line": 60,
+   "to_line": 61,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "`vflip` is documented as a boolean-like flag (\"should be flipped\"), but it is declared as `int`. This increases the risk of inconsistent semantics (e.g., using degrees, -1/1, or other values) and accidental inverted checks. Prefer `bool vflip;` (and initialize/copy accordingly) unless non-boolean values are explicitly required.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "video/out/gpu/video.c",
+   "side": "right",
+   "from_line": 3739,
+   "to_line": 3740,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Vflip handling is inconsistent between hwdec and sw paths: hwdec sets `plane->flipped` from `layout.params.vflip`, while sw path flips `mpi` in-place (`mp_image_vflip`) and then derives `plane->flipped` from negative stride. This can lead to divergent behavior (and potential double-flip if both metadata and in-memory layout are flipped). Suggest making vflip handled in exactly one way across both paths (either via metadata/texture coords using `.flipped`, or by normalizing the image/stride), and ensure `layout.params.vflip` corresponds to the actual mapped texture orientation.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "video/out/gpu/video.c",
+   "side": "right",
+   "from_line": 3755,
+   "to_line": 3756,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Inconsistent vertical flip handling between hardware and software decoding paths. Hardware path stores layout.params.vflip but doesn't flip the image, while software path flips based on mpi->params.vflip but doesn't store the state. This could lead to different behavior between decoding modes.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "video/out/gpu/video.c",
+   "side": "right",
+   "from_line": 3755,
+   "to_line": 3756,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potentially unsafe mutation of caller-owned `mpi`: `mp_image_vflip(mpi)` changes the image in-place. If `mpi` is reused elsewhere (or shared via refcount), this can cause surprising behavior or data races. Also, earlier in this function you already propagate `layout.params.vflip` into per-plane `.flipped`; flipping the image here may double-apply or conflict with that flag. Consider keeping `mpi` immutable here: either handle vflip purely via metadata/texture coords, or clone/copy the image before flipping (e.g., `mp_image_new_ref`/deep copy depending on semantics), and ensure only one vflip path is applied.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "video/out/vo.c",
+   "side": "right",
+   "from_line": 582,
+   "to_line": 584,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential null-deref risk: this new check assumes `vo->params` is always non-NULL. If `check_vo_caps()` can be called before params are initialized (or during teardown), `vo->params->vflip` would crash. Consider guarding with `if (vo->params && vo->params->vflip ...)` or ensuring via an assertion/invariant in the call path. Also consider mirroring the style of the rotation check (which uses `vo->params` too) to keep consistency.\n\n```suggestion\n    if (vo->params && vo->params->vflip && !(vo->driver->caps & VO_CAP_VFLIP))\n        MP_WARN(vo, \"Video is flagged as vertically flipped, but the \"\n                    \"video output does not support this.\\n\");\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "video/out/vo_dmabuf_wayland.c",
+   "side": "right",
+   "from_line": 713,
+   "to_line": 713,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`wl_surface_set_buffer_transform()` expects a `wl_output_transform` enum. Encoding vflip via `+ 4 * !!img->params.vflip` is a magic-number approach and risks breaking if enum values differ or if rotate is not normalized to {0,1,2,3}. Consider using the named Wayland constants (e.g., `WL_OUTPUT_TRANSFORM_*`) and explicitly mapping (rotate,vflip) to the correct enum, with clamping for unexpected rotate values.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "video/out/vo_gpu_next.c",
+   "side": "right",
+   "from_line": 923,
+   "to_line": 923,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential null pointer dereference: `frame->current` can be null during video output changes. Add null check before accessing `frame->current->params.vflip`.",
+   "source": "human"
+  },
+  {
+   "path": "video/out/vo_gpu_next.c",
+   "side": "right",
+   "from_line": 923,
+   "to_line": 927,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The vertical flip transformation is applied when vflip is true, but there's no code to reset it when vflip is false. This could cause the flip to persist for frames that don't need it. Consider resetting the distort_params when vflip is false to ensure proper behavior for all frames.\n",
+   "source": "Deepseek-V3.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "video/mp_image.c",
+   "side": "right",
+   "from_line": 1103,
+   "to_line": 1103,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `vflip` assignment is placed inside the `if (!isnan(r))` block, meaning it's only set when the rotation value is valid. However, the `vflip` calculation is based on the matrix determinant (independent of rotation), and could still be valid even when `r` is NaN. Consider setting `vflip` outside the rotation check to preserve valid flip information when rotation is invalid, or clarify if vflip should only be applied when rotation is also valid.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "video/mp_image.c",
+   "side": "right",
+   "from_line": 1116,
+   "to_line": 1116,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The new vflip parameter introduced in display matrix handling is not propagated by mp_image_copy_attributes and not validated in mp_image_params_equal, causing incomplete state management during image attribute operations.",
+   "source": "human"
+  },
+  {
+   "path": "video/out/vo_dmabuf_wayland.c",
+   "side": "right",
+   "from_line": 713,
+   "to_line": 713,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Setting VO_CAP_VFLIP capability would delegate vertical flipping to the compositor, eliminating the need for manual transform adjustment in `wl_surface_set_buffer_transform`.",
+   "source": "human"
+  },
+  {
+   "path": "video/out/vo_dmabuf_wayland.c",
+   "side": "right",
+   "from_line": 713,
+   "to_line": 713,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The `vflip` parameter in `mp_image_params` typically represents a vertical flip. However, adding 4 to the Wayland transform corresponds to `WL_OUTPUT_TRANSFORM_FLIPPED`, which is a horizontal flip (around the vertical axis). \n\nIf `vflip` is indeed a vertical flip, the logic should likely be adjusted. A vertical flip is equivalent to a horizontal flip combined with a 180-degree rotation. For `rotate=0`, you would expect `WL_OUTPUT_TRANSFORM_FLIPPED_180` (6) instead of `WL_OUTPUT_TRANSFORM_FLIPPED` (4).\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "video/out/vo_gpu.c",
+   "side": "right",
+   "from_line": 330,
+   "to_line": 330,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "VO_CAP_VFLIP advertises that this VO natively handles mp_image_params.vflip. In this patchset, vflip is also handled generically via the new autovflip filter (inserted when the VO lacks VO_CAP_VFLIP). Please double-check that vo_gpu actually renders vflipped frames correctly without relying on that filter (e.g., texture upload path, FBO blits, screenshots/DR paths). If vo_gpu does not handle vflip end-to-end, consider removing VO_CAP_VFLIP here so autovflip is used, or implement explicit vflip handling in vo_gpu.",
+   "source": "GPT-5.2"
+  }
+ ]
+}

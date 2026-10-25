@@ -1,0 +1,171 @@
+{
+ "id": "aacr/infiniflow__ragflow__7151",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/infiniflow/ragflow/pull/7151",
+  "owner": "infiniflow",
+  "repo": "ragflow",
+  "number": 7151,
+  "base_sha": "8362ab405c35d260dd2328dc207aefcf30778f66",
+  "head_sha": "f189316eae1c199a5891f7a8bc47d53bb1b5c818",
+  "title": "Fix: whole knowledge graph lost after removing any document in the knowledge base",
+  "description": "### What problem does this PR solve?\r\n\r\nWhen you removed any document in a knowledge base using knowledge graph, the graph's `removed_kwd` is set to \"Y\".  \r\nHowever, in the function `graphrag.utils.get_gaph`, `rebuild_graph` method is passed and directly return `None` while `removed_kwd=Y`, making residual part of the graph abandoned (but old entity data still exist in db).\r\n\r\nBesides, infinity instance actually pass deleting graph components' `source_id` when removing document. It may cause wrong graph after rebuild.\r\n\r\n### Type of change\r\n\r\n- [x] Bug Fix (non-breaking change which fixes an issue)",
+  "language": "Python",
+  "category": "Bug Fix",
+  "changed_lines": 207
+ },
+ "diffs": [
+  {
+   "old_path": "graphrag/utils.py",
+   "new_path": "graphrag/utils.py",
+   "diff": "@@ -414,16 +414,15 @@ async def get_graph(tenant_id, kb_id):\n         \"knowledge_graph_kwd\": [\"graph\"]\n     }\n     res = await trio.to_thread.run_sync(lambda: settings.retrievaler.search(conds, search.index_name(tenant_id), [kb_id]))\n-    if res.total == 0:\n-        return None\n-    for id in res.ids:\n-        try:\n-            g = json_graph.node_link_graph(json.loads(res.field[id][\"content_with_weight\"]), edges=\"edges\")\n-            if \"source_id\" not in g.graph:\n-                g.graph[\"source_id\"] = res.field[id][\"source_id\"]\n-            return g\n-        except Exception:\n-            continue\n+    if not res.total == 0:\n+        for id in res.ids:\n+            try:\n+                g = json_graph.node_link_graph(json.loads(res.field[id][\"content_with_weight\"]), edges=\"edges\")\n+                if \"source_id\" not in g.graph:\n+                    g.graph[\"source_id\"] = res.field[id][\"source_id\"]\n+                return g\n+            except Exception:\n+                continue\n     result = await rebuild_graph(tenant_id, kb_id)\n     return result\n \n@@ -566,16 +565,18 @@ async def rebuild_graph(tenant_id, kb_id):\n                                  OrderByExpr(),\n                                  i, bs, search.index_name(tenant_id), [kb_id]\n                                  ))\n-        tot = settings.docStoreConn.getTotal(es_res)\n-        if tot == 0:\n+        # tot = settings.docStoreConn.getTotal(es_res)\n+        es_res = settings.docStoreConn.getFields(es_res, flds)\n+\n+        if len(es_res) == 0:\n             break\n \n-        es_res = settings.docStoreConn.getFields(es_res, flds)\n         for id, d in es_res.items():\n-            assert d[\"knowledge_graph_kwd\"] == \"relation\"\n+            assert d[\"knowledge_graph_kwd\"] == \"entity\"\n             src_ids.update(d.get(\"source_id\", []))\n-            attrs = json.load(d[\"content_with_weight\"])\n-            graph.add_node(d[\"entity_kwd\"], **attrs)\n+            attrs = json.loads(d[\"content_with_weight\"])\n+            entity_kwd = d[\"entity_kwd\"][0] if isinstance(d[\"entity_kwd\"], list) else d[\"entity_kwd\"]   # judge infinity or es output\n+            graph.add_node(entity_kwd, **attrs)\n \n     for i in range(0, 1024*bs, bs):\n         es_res = await trio.to_thread.run_sync(lambda: settings.docStoreConn.search(flds, [],\n@@ -584,18 +585,23 @@ async def rebuild_graph(tenant_id, kb_id):\n                                  OrderByExpr(),\n                                  i, bs, search.index_name(tenant_id), [kb_id]\n                                  ))\n-        tot = settings.docStoreConn.getTotal(es_res)\n-        if tot == 0:\n-            return None\n-\n+        # tot = settings.docStoreConn.getTotal(es_res)\n         es_res = settings.docStoreConn.getFields(es_res, flds)\n+\n+        if len(es_res) == 0:\n+            break\n+\n         for id, d in es_res.items():\n             assert d[\"knowledge_graph_kwd\"] == \"relation\"\n             src_ids.update(d.get(\"source_id\", []))\n-            if graph.has_node(d[\"from_entity_kwd\"]) and graph.has_node(d[\"to_entity_kwd\"]):\n-                attrs = json.load(d[\"content_with_weight\"])\n-                graph.add_edge(d[\"from_entity_kwd\"], d[\"to_entity_kwd\"], **attrs)\n+            from_entity_kwd = d[\"from_entity_kwd\"][0] if isinstance(d[\"from_entity_kwd\"], list) else d[\"from_entity_kwd\"]\n+            to_entity_kwd = d[\"to_entity_kwd\"][0] if isinstance(d[\"to_entity_kwd\"], list) else d[\"to_entity_kwd\"]\n+            if graph.has_node(from_entity_kwd) and graph.has_node(to_entity_kwd):\n+                attrs = json.loads(d[\"content_with_weight\"])\n+                graph.add_edge(from_entity_kwd, to_entity_kwd, **attrs)\n \n+    if len(graph.nodes) == 0:\n+        return None\n     src_ids = sorted(src_ids)\n     graph.graph[\"source_id\"] = src_ids\n     return graph",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "rag/utils/infinity_conn.py",
+   "new_path": "rag/utils/infinity_conn.py",
+   "diff": "@@ -42,6 +42,11 @@\n \n logger = logging.getLogger('ragflow.infinity_conn')\n \n+def field_keyword(field_name: str):\n+        # The \"docnm_kwd\" field is always a string, not list.\n+        if field_name == \"source_id\" or (field_name.endswith(\"_kwd\") and field_name != \"docnm_kwd\" and field_name != \"knowledge_graph_kwd\"):\n+            return True\n+        return False\n \n def equivalent_condition_to_str(condition: dict, table_instance=None) -> str | None:\n     assert \"_id\" not in condition\n@@ -64,7 +69,20 @@ def exists(cln):\n     for k, v in condition.items():\n         if not isinstance(k, str) or k in [\"kb_id\"] or not v:\n             continue\n-        if isinstance(v, list):\n+        if field_keyword(k):\n+            if isinstance(v, list):\n+                inCond = list()\n+                for item in v:\n+                    if isinstance(item, str):\n+                        item = item.replace(\"'\",\"''\")\n+                    inCond.append(f\"filter_fulltext('{k}', '{item}')\")\n+                if inCond:\n+                    strInCond = \" or \".join(inCond)\n+                    strInCond = f\"({strInCond})\"\n+                    cond.append(strInCond)\n+            else:\n+                cond.append(f\"filter_fulltext('{k}', '{v}')\")\n+        elif isinstance(v, list):\n             inCond = list()\n             for item in v:\n                 if isinstance(item, str):\n@@ -173,12 +191,6 @@ def _migrate_db(self, inf_conn):\n                     ConflictType.Ignore,\n                 )\n \n-    def field_keyword(self, field_name: str):\n-        # The \"docnm_kwd\" field is always a string, not list.\n-        if field_name == \"source_id\" or (field_name.endswith(\"_kwd\") and field_name != \"docnm_kwd\" and field_name != \"knowledge_graph_kwd\"):\n-            return True\n-        return False\n-\n     \"\"\"\n     Database operations\n     \"\"\"\n@@ -487,7 +499,7 @@ def insert(\n             assert \"_id\" not in d\n             assert \"id\" in d\n             for k, v in d.items():\n-                if self.field_keyword(k):\n+                if field_keyword(k):\n                     if isinstance(v, list):\n                         d[k] = \"###\".join(v)\n                     else:\n@@ -534,9 +546,15 @@ def update(\n         table_instance = db_instance.get_table(table_name)\n         #if \"exists\" in condition:\n         #    del condition[\"exists\"]\n+        \n+        clmns = {}\n+        if table_instance:\n+            for n, ty, de, _ in table_instance.show_columns().rows():\n+                clmns[n] = (ty, de)\n         filter = equivalent_condition_to_str(condition, table_instance)\n+        removeValue = {}\n         for k, v in list(newValue.items()):\n-            if self.field_keyword(k):\n+            if field_keyword(k):\n                 if isinstance(v, list):\n                     newValue[k] = \"###\".join(v)\n                 else:\n@@ -554,13 +572,40 @@ def update(\n                 assert isinstance(v, list)\n                 newValue[k] = \"_\".join(f\"{num:08x}\" for num in v)\n             elif k == \"remove\":\n-                del newValue[k]\n-                if v in [PAGERANK_FLD]:\n-                    newValue[v] = 0\n+                if isinstance(v, str):\n+                    ty, de = clmns[v]\n+                    if ty.lower().find(\"cha\"):\n+                        if not de:\n+                            de = \"\"\n+                    newValue[v] = de\n+                else:\n+                    for kk, vv in v.items():\n+                        removeValue[kk] = vv\n+                    del newValue[k]\n             else:\n                 newValue[k] = v\n+                \n+        remove_opt = {}     # \"[k,new_value]\": [id_to_update, ...]\n+        if removeValue:\n+            col_to_remove = list(removeValue.keys())\n+            row_to_opt = table_instance.output(col_to_remove + ['id']).filter(filter).to_df()\n+            row_to_opt = self.getFields(row_to_opt, col_to_remove)\n+            for id, old_v in row_to_opt.items():\n+                for k, remove_v in removeValue.items():\n+                    if remove_v in old_v[k]:\n+                        new_v = old_v[k].copy()\n+                        new_v.remove(remove_v)\n+                        kv_key = json.dumps([k, new_v])\n+                        if not kv_key in remove_opt:\n+                            remove_opt[kv_key] = [id]\n+                        else:\n+                            remove_opt[kv_key].append(id)\n \n         logger.debug(f\"INFINITY update table {table_name}, filter {filter}, newValue {newValue}.\")\n+        for update_kv, ids in remove_opt.items():\n+            k, v = json.loads(update_kv)\n+            table_instance.update(filter + \" AND id in ({0})\".format(\",\".join([f\"'{id}'\" for id in ids])), {k:\"###\".join(v)})\n+                \n         table_instance.update(filter, newValue)\n         self.connPool.release_conn(inf_conn)\n         return True\n@@ -613,7 +658,7 @@ def getFields(self, res: tuple[pd.DataFrame, int] | pd.DataFrame, fields: list[s\n \n         for column in res2.columns:\n             k = column.lower()\n-            if self.field_keyword(k):\n+            if field_keyword(k):\n                 res2[column] = res2[column].apply(lambda v:[kwd for kwd in v.split(\"###\") if kwd])\n             elif k == \"position_int\":\n                 def to_position_int(v):",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "graphrag/utils.py",
+   "side": "right",
+   "from_line": 417,
+   "to_line": 417,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The condition 'if not res.total == 0:' is logically correct but could be misinterpreted. Consider using 'if res.total != 0:' for better clarity.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "graphrag/utils.py",
+   "side": "right",
+   "from_line": 417,
+   "to_line": 417,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "**Critical Logic Error**: This condition is inverted and will cause incorrect behavior.\n\nThe code changes from:\n```python\nif res.total == 0:\n    return None\n```\n\nto:\n```python\nif not res.total == 0:\n```\n\nThis means \"if total is NOT zero, then iterate through results\", but the for loop that follows is NOT inside an else block. This will cause the code to:\n1. When `res.total == 0`: Skip the condition and execute the for loop on empty results\n2. When `res.total != 0`: Enter the condition block (which has no body now) and still execute the for loop\n\n**Suggested fix:**\n```python\nif res.total == 0:\n    return None\n# Keep the for loop here (unindented)\n```\n\nOr if you want to keep the inverted logic:\n```python\nif res.total > 0:\n    for id in res.ids:\n        # ... rest of the code indented inside this block\n```",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "graphrag/utils.py",
+   "side": "right",
+   "from_line": 568,
+   "to_line": 572,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Switching from getTotal() to len(es_res) might introduce logical issues if these don't return the same value. The getTotal() method might return the total number of matching documents across all pages, while len(es_res) only counts the documents in the current page. This could cause premature termination of the loop.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "rag/utils/infinity_conn.py",
+   "side": "right",
+   "from_line": 45,
+   "to_line": 49,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Inconsistent indentation - this function uses 8 spaces instead of 4 spaces like the rest of the code\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "rag/utils/infinity_conn.py",
+   "side": "right",
+   "from_line": 83,
+   "to_line": 84,
+   "category": "Security Vulnerability",
+   "context": "File Level",
+   "note": "SQL injection vulnerability: Single quotes in `v` are not escaped here, unlike list items on line 73. If `v` contains a single quote, it will break the SQL syntax. Add the same escaping: `v.replace(\"'\", \"''\")`\n\n```suggestion\n            else:\n                v = v.replace(\"'\", \"''\") if isinstance(v, str) else v\n                cond.append(f\"filter_fulltext('{k}', '{v}')\")\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "rag/utils/infinity_conn.py",
+   "side": "right",
+   "from_line": 577,
+   "to_line": 577,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The code accesses `clmns[v]` without verifying `v` exists as a key, risking KeyError during 'remove' handling when `v` is a string.",
+   "source": "human"
+  },
+  {
+   "path": "rag/utils/infinity_conn.py",
+   "side": "right",
+   "from_line": 581,
+   "to_line": 584,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Logic error: `del newValue[k]` is only executed in the `else` block. If `v` is a string (the `if` block), the \"remove\" key remains in `newValue`, causing the subsequent `update` call to try updating a non-existent column named \"remove\".\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "rag/utils/infinity_conn.py",
+   "side": "right",
+   "from_line": 588,
+   "to_line": 602,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Severe: likely runtime exception when `table_instance` is None. `remove_opt` computation unconditionally uses `table_instance.output(...)` if `removeValue` is set, but `table_instance` can be None (you only guard it when building `clmns`). Add a guard or fail fast before using `table_instance`.\n\nAdditionally, `old_v[k]` is assumed to be a list with `.copy()` and `.remove()`. If stored as string/None, this will fail; consider normalizing/validating type first.\n\n```suggestion\n        remove_opt = {}     # \"[k,new_value]\": [id_to_update, ...]\n        if removeValue:\n            if table_instance is None:\n                raise RuntimeError(\"table_instance is None; cannot apply removeValue updates\")\n            col_to_remove = list(removeValue.keys())\n            row_to_opt = table_instance.output(col_to_remove + ['id']).filter(filter).to_df()\n            row_to_opt = self.getFields(row_to_opt, col_to_remove)\n            for id, old_v in row_to_opt.items():\n                for k, remove_v in removeValue.items():\n                    cur = old_v.get(k)\n                    if not isinstance(cur, list):\n                        continue\n                    if remove_v in cur:\n                        new_v = cur.copy()\n                        new_v.remove(remove_v)\n                        kv_key = json.dumps([k, new_v])\n                        remove_opt.setdefault(kv_key, []).append(id)\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "rag/utils/infinity_conn.py",
+   "side": "right",
+   "from_line": 605,
+   "to_line": 607,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential syntax error: If `filter` is an empty string (which happens if `condition` is empty), the resulting string will start with `\" AND ...\"`, which is likely invalid syntax.\n\nSuggestion: Handle the empty filter case.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "rag/utils/infinity_conn.py",
+   "side": "right",
+   "from_line": 607,
+   "to_line": 607,
+   "category": "Security Vulnerability",
+   "context": "Repo Level",
+   "note": "SQL injection vulnerability - concatenating user input directly into SQL query. This is extremely dangerous and should use parameterized queries.\n",
+   "source": "Deepseek-V3.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "graphrag/utils.py",
+   "side": "right",
+   "from_line": 575,
+   "to_line": 575,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The assertion changed from 'relation' to 'entity' but the field being checked is still 'knowledge_graph_kwd'. This might be incorrect if the field should contain 'relation' for this part of the code.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "graphrag/utils.py",
+   "side": "right",
+   "from_line": 577,
+   "to_line": 577,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "**Typo**: `json.load` should be `json.loads`\n\nChanged from:\n```python\nattrs = json.load(d[\"content_with_weight\"])\n```\n\nto:\n```python\nattrs = json.loads(d[\"content_with_weight\"])\n```\n\nGood fix! `json.load()` is for file objects, while `json.loads()` is for strings.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "rag/utils/infinity_conn.py",
+   "side": "right",
+   "from_line": 550,
+   "to_line": 550,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Variable name 'clmns' appears to be a typo for 'columns'\n",
+   "source": "Deepseek-V3.2"
+  }
+ ]
+}

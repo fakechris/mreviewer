@@ -1,0 +1,239 @@
+{
+ "id": "aacr/openai__codex__3212",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/openai/codex/pull/3212",
+  "owner": "openai",
+  "repo": "codex",
+  "number": 3212,
+  "base_sha": "d6182becbe155776b159270fe4a5e88d607f0c5e",
+  "head_sha": "8c952af20fe791cc0c5d0a59089d3329968b4373",
+  "title": "Never store requests",
+  "description": "When item ids are sent to Responses API it will load them from the database ignoring the provided values. This adds extra latency. \r\n\r\nNot having the mode to store requests also allows us to simplify the code.\r\n\r\n## Breaking change\r\n\r\nThe `disable_response_storage` configuration option is removed.",
+  "language": "Rust",
+  "category": "Bug Fix",
+  "changed_lines": 130
+ },
+ "diffs": [
+  {
+   "old_path": "codex-rs/core/src/client.rs",
+   "new_path": "codex-rs/core/src/client.rs",
+   "diff": "@@ -157,14 +157,6 @@ impl ModelClient {\n \n         let auth_manager = self.auth_manager.clone();\n \n-        let auth_mode = auth_manager\n-            .as_ref()\n-            .and_then(|m| m.auth())\n-            .as_ref()\n-            .map(|a| a.mode);\n-\n-        let store = prompt.store && auth_mode != Some(AuthMode::ChatGPT);\n-\n         let full_instructions = prompt.get_full_instructions(&self.config.model_family);\n         let tools_json = create_tools_json_for_responses_api(&prompt.tools)?;\n         let reasoning = create_reasoning_param_for_request(\n@@ -173,9 +165,8 @@ impl ModelClient {\n             self.summary,\n         );\n \n-        // Request encrypted COT if we are not storing responses,\n-        // otherwise reasoning items will be referenced by ID\n-        let include: Vec<String> = if !store && reasoning.is_some() {\n+        // Always request encrypted COT to avoid ID references in reasoning content.\n+        let include: Vec<String> = if reasoning.is_some() {\n             vec![\"reasoning.encrypted_content\".to_string()]\n         } else {\n             vec![]\n@@ -204,7 +195,7 @@ impl ModelClient {\n             tool_choice: \"auto\",\n             parallel_tool_calls: false,\n             reasoning,\n-            store,\n+            store: false,\n             stream: true,\n             include,\n             prompt_cache_key: Some(self.session_id.to_string()),",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/core/src/client_common.rs",
+   "new_path": "codex-rs/core/src/client_common.rs",
+   "diff": "@@ -25,9 +25,6 @@ pub struct Prompt {\n     /// Conversation context input items.\n     pub input: Vec<ResponseItem>,\n \n-    /// Whether to store response on server side (disable_response_storage = !store).\n-    pub store: bool,\n-\n     /// Tools available to the model, including additional tools sourced from\n     /// external MCP servers.\n     pub(crate) tools: Vec<OpenAiTool>,\n@@ -128,7 +125,6 @@ pub(crate) struct ResponsesApiRequest<'a> {\n     pub(crate) tool_choice: &'static str,\n     pub(crate) parallel_tool_calls: bool,\n     pub(crate) reasoning: Option<Reasoning>,\n-    /// true when using the Responses API.\n     pub(crate) store: bool,\n     pub(crate) stream: bool,\n     pub(crate) include: Vec<String>,\n@@ -199,7 +195,6 @@ mod tests {\n             tool_choice: \"auto\",\n             parallel_tool_calls: false,\n             reasoning: None,\n-            store: true,\n             stream: true,\n             include: vec![],\n             prompt_cache_key: None,\n@@ -229,7 +224,6 @@ mod tests {\n             tool_choice: \"auto\",\n             parallel_tool_calls: false,\n             reasoning: None,\n-            store: true,\n             stream: true,\n             include: vec![],\n             prompt_cache_key: None,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/core/src/codex.rs",
+   "new_path": "codex-rs/core/src/codex.rs",
+   "diff": "@@ -184,7 +184,6 @@ impl Codex {\n             base_instructions: config.base_instructions.clone(),\n             approval_policy: config.approval_policy,\n             sandbox_policy: config.sandbox_policy.clone(),\n-            disable_response_storage: config.disable_response_storage,\n             notify: config.notify.clone(),\n             cwd: config.cwd.clone(),\n         };\n@@ -301,7 +300,6 @@ pub(crate) struct TurnContext {\n     pub(crate) approval_policy: AskForApproval,\n     pub(crate) sandbox_policy: SandboxPolicy,\n     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,\n-    pub(crate) disable_response_storage: bool,\n     pub(crate) tools_config: ToolsConfig,\n }\n \n@@ -334,8 +332,6 @@ struct ConfigureSession {\n     approval_policy: AskForApproval,\n     /// How to sandbox commands executed in the system\n     sandbox_policy: SandboxPolicy,\n-    /// Disable server-side response storage (send full context each request)\n-    disable_response_storage: bool,\n \n     /// Optional external notifier command tokens. Present only when the\n     /// client wants the agent to spawn a program after each completed\n@@ -370,7 +366,6 @@ impl Session {\n             base_instructions,\n             approval_policy,\n             sandbox_policy,\n-            disable_response_storage,\n             notify,\n             cwd,\n         } = configure_session;\n@@ -462,7 +457,6 @@ impl Session {\n             sandbox_policy,\n             shell_environment_policy: config.shell_environment_policy.clone(),\n             cwd,\n-            disable_response_storage,\n         };\n         let sess = Arc::new(Session {\n             session_id,\n@@ -1117,7 +1111,6 @@ async fn submission_loop(\n                     sandbox_policy: new_sandbox_policy.clone(),\n                     shell_environment_policy: prev.shell_environment_policy.clone(),\n                     cwd: new_cwd.clone(),\n-                    disable_response_storage: prev.disable_response_storage,\n                 };\n \n                 // Install the new persistent context for subsequent tasks/turns.\n@@ -1199,7 +1192,6 @@ async fn submission_loop(\n                         sandbox_policy,\n                         shell_environment_policy: turn_context.shell_environment_policy.clone(),\n                         cwd,\n-                        disable_response_storage: turn_context.disable_response_storage,\n                     };\n                     // TODO: record the new environment context in the conversation history\n                     // no current task, spawn a new one with the per‑turn context\n@@ -1604,7 +1596,6 @@ async fn run_turn(\n \n     let prompt = Prompt {\n         input,\n-        store: !turn_context.disable_response_storage,\n         tools,\n         base_instructions_override: turn_context.base_instructions.clone(),\n     };\n@@ -1858,7 +1849,6 @@ async fn run_compact_task(\n \n     let prompt = Prompt {\n         input: turn_input,\n-        store: !turn_context.disable_response_storage,\n         tools: Vec::new(),\n         base_instructions_override: Some(compact_instructions.clone()),\n     };",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/core/src/config.rs",
+   "new_path": "codex-rs/core/src/config.rs",
+   "diff": "@@ -78,11 +78,7 @@ pub struct Config {\n     /// Defaults to `false`.\n     pub show_raw_agent_reasoning: bool,\n \n-    /// Disable server-side response storage (sends the full conversation\n-    /// context with every request). Currently necessary for OpenAI customers\n-    /// who have opted into Zero Data Retention (ZDR).\n-    pub disable_response_storage: bool,\n-\n+    // Removed: server-side response storage control. Responses are never stored.\n     /// User-provided instructions from AGENTS.md.\n     pub user_instructions: Option<String>,\n \n@@ -417,11 +413,7 @@ pub struct ConfigToml {\n     /// Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`.\n     pub sandbox_workspace_write: Option<SandboxWorkspaceWrite>,\n \n-    /// Disable server-side response storage (sends the full conversation\n-    /// context with every request). Currently necessary for OpenAI customers\n-    /// who have opted into Zero Data Retention (ZDR).\n-    pub disable_response_storage: Option<bool>,\n-\n+    // Removed: disable_response_storage. Responses are never stored.\n     /// Optional external command to spawn for end-user notifications.\n     #[serde(default)]\n     pub notify: Option<Vec<String>>,\n@@ -640,7 +632,6 @@ pub struct ConfigOverrides {\n     pub include_plan_tool: Option<bool>,\n     pub include_apply_patch_tool: Option<bool>,\n     pub include_view_image_tool: Option<bool>,\n-    pub disable_response_storage: Option<bool>,\n     pub show_raw_agent_reasoning: Option<bool>,\n     pub tools_web_search_request: Option<bool>,\n }\n@@ -668,7 +659,6 @@ impl Config {\n             include_plan_tool,\n             include_apply_patch_tool,\n             include_view_image_tool,\n-            disable_response_storage,\n             show_raw_agent_reasoning,\n             tools_web_search_request: override_tools_web_search_request,\n         } = overrides;\n@@ -802,11 +792,6 @@ impl Config {\n                 .unwrap_or_else(AskForApproval::default),\n             sandbox_policy,\n             shell_environment_policy,\n-            disable_response_storage: config_profile\n-                .disable_response_storage\n-                .or(cfg.disable_response_storage)\n-                .or(disable_response_storage)\n-                .unwrap_or(false),\n             notify: cfg.notify,\n             user_instructions,\n             base_instructions,\n@@ -1071,7 +1056,6 @@ exclude_slash_tmp = true\n         let toml = r#\"\n model = \"o3\"\n approval_policy = \"untrusted\"\n-disable_response_storage = false\n \n # Can be used to determine which profile to use if not specified by\n # `ConfigOverrides`.\n@@ -1101,7 +1085,6 @@ model_provider = \"openai-chat-completions\"\n model = \"o3\"\n model_provider = \"openai\"\n approval_policy = \"on-failure\"\n-disable_response_storage = true\n \n [profiles.gpt5]\n model = \"gpt-5\"\n@@ -1199,7 +1182,6 @@ model_verbosity = \"high\"\n                 approval_policy: AskForApproval::Never,\n                 sandbox_policy: SandboxPolicy::new_read_only_policy(),\n                 shell_environment_policy: ShellEnvironmentPolicy::default(),\n-                disable_response_storage: false,\n                 user_instructions: None,\n                 notify: None,\n                 cwd: fixture.cwd(),\n@@ -1257,7 +1239,6 @@ model_verbosity = \"high\"\n             approval_policy: AskForApproval::UnlessTrusted,\n             sandbox_policy: SandboxPolicy::new_read_only_policy(),\n             shell_environment_policy: ShellEnvironmentPolicy::default(),\n-            disable_response_storage: false,\n             user_instructions: None,\n             notify: None,\n             cwd: fixture.cwd(),\n@@ -1330,7 +1311,6 @@ model_verbosity = \"high\"\n             approval_policy: AskForApproval::OnFailure,\n             sandbox_policy: SandboxPolicy::new_read_only_policy(),\n             shell_environment_policy: ShellEnvironmentPolicy::default(),\n-            disable_response_storage: true,\n             user_instructions: None,\n             notify: None,\n             cwd: fixture.cwd(),\n@@ -1389,7 +1369,6 @@ model_verbosity = \"high\"\n             approval_policy: AskForApproval::OnFailure,\n             sandbox_policy: SandboxPolicy::new_read_only_policy(),\n             shell_environment_policy: ShellEnvironmentPolicy::default(),\n-            disable_response_storage: false,\n             user_instructions: None,\n             notify: None,\n             cwd: fixture.cwd(),",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/core/src/config_profile.rs",
+   "new_path": "codex-rs/core/src/config_profile.rs",
+   "diff": "@@ -15,7 +15,6 @@ pub struct ConfigProfile {\n     /// [`ModelProviderInfo`] to use.\n     pub model_provider: Option<String>,\n     pub approval_policy: Option<AskForApproval>,\n-    pub disable_response_storage: Option<bool>,\n     pub model_reasoning_effort: Option<ReasoningEffort>,\n     pub model_reasoning_summary: Option<ReasoningSummary>,\n     pub model_verbosity: Option<Verbosity>,\n@@ -29,7 +28,6 @@ impl From<ConfigProfile> for codex_protocol::mcp_protocol::Profile {\n             model: config_profile.model,\n             model_provider: config_profile.model_provider,\n             approval_policy: config_profile.approval_policy,\n-            disable_response_storage: config_profile.disable_response_storage,\n             model_reasoning_effort: config_profile.model_reasoning_effort,\n             model_reasoning_summary: config_profile.model_reasoning_summary,\n             model_verbosity: config_profile.model_verbosity,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/core/tests/suite/client.rs",
+   "new_path": "codex-rs/core/tests/suite/client.rs",
+   "diff": "@@ -224,19 +224,16 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {\n     let expected_input = serde_json::json!([\n         {\n             \"type\": \"message\",\n-            \"id\": null,\n             \"role\": \"user\",\n             \"content\": [{ \"type\": \"input_text\", \"text\": \"resumed user message\" }]\n         },\n         {\n             \"type\": \"message\",\n-            \"id\": null,\n             \"role\": \"assistant\",\n             \"content\": [{ \"type\": \"output_text\", \"text\": \"resumed assistant message\" }]\n         },\n         {\n             \"type\": \"message\",\n-            \"id\": null,\n             \"role\": \"user\",\n             \"content\": [{ \"type\": \"input_text\", \"text\": \"hello\" }]\n         }\n@@ -496,7 +493,6 @@ async fn chatgpt_auth_sends_correct_request() {\n         \"Bearer Access Token\"\n     );\n     assert_eq!(request_chatgpt_account_id.to_str().unwrap(), \"account_id\");\n-    assert!(!request_body[\"store\"].as_bool().unwrap());\n     assert!(request_body[\"stream\"].as_bool().unwrap());\n     assert_eq!(\n         request_body[\"include\"][0].as_str().unwrap(),\n@@ -582,10 +578,7 @@ async fn prefers_chatgpt_token_when_config_prefers_chatgpt() {\n     // verify request body flags\n     let request = &server.received_requests().await.unwrap()[0];\n     let request_body = request.body_json::<serde_json::Value>().unwrap();\n-    assert!(\n-        !request_body[\"store\"].as_bool().unwrap(),\n-        \"store should be false for ChatGPT auth\"\n-    );\n+    // store flag removed; responses are never stored.\n }\n \n #[tokio::test(flavor = \"multi_thread\", worker_threads = 2)]\n@@ -666,10 +659,7 @@ async fn prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens() {\n     // verify request body flags\n     let request = &server.received_requests().await.unwrap()[0];\n     let request_body = request.body_json::<serde_json::Value>().unwrap();\n-    assert!(\n-        request_body[\"store\"].as_bool().unwrap(),\n-        \"store should be true for API key auth\"\n-    );\n+    // store flag removed; responses are never stored.\n }\n \n #[tokio::test(flavor = \"multi_thread\", worker_threads = 2)]\n@@ -990,31 +980,26 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {\n     let r3_tail_expected = serde_json::json!([\n         {\n             \"type\": \"message\",\n-            \"id\": null,\n             \"role\": \"user\",\n             \"content\": [{\"type\":\"input_text\",\"text\":\"U1\"}]\n         },\n         {\n             \"type\": \"message\",\n-            \"id\": null,\n             \"role\": \"assistant\",\n             \"content\": [{\"type\":\"output_text\",\"text\":\"Hey there!\\n\"}]\n         },\n         {\n             \"type\": \"message\",\n-            \"id\": null,\n             \"role\": \"user\",\n             \"content\": [{\"type\":\"input_text\",\"text\":\"U2\"}]\n         },\n         {\n             \"type\": \"message\",\n-            \"id\": null,\n             \"role\": \"assistant\",\n             \"content\": [{\"type\":\"output_text\",\"text\":\"Hey there!\\n\"}]\n         },\n         {\n             \"type\": \"message\",\n-            \"id\": null,\n             \"role\": \"user\",\n             \"content\": [{\"type\":\"input_text\",\"text\":\"U3\"}]\n         }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/core/tests/suite/prompt_caching.rs",
+   "new_path": "codex-rs/core/tests/suite/prompt_caching.rs",
+   "diff": "@@ -289,20 +289,17 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests\n \n     let expected_env_msg = serde_json::json!({\n         \"type\": \"message\",\n-        \"id\": serde_json::Value::Null,\n         \"role\": \"user\",\n         \"content\": [ { \"type\": \"input_text\", \"text\": expected_env_text } ]\n     });\n     let expected_ui_msg = serde_json::json!({\n         \"type\": \"message\",\n-        \"id\": serde_json::Value::Null,\n         \"role\": \"user\",\n         \"content\": [ { \"type\": \"input_text\", \"text\": expected_ui_text } ]\n     });\n \n     let expected_user_message_1 = serde_json::json!({\n         \"type\": \"message\",\n-        \"id\": serde_json::Value::Null,\n         \"role\": \"user\",\n         \"content\": [ { \"type\": \"input_text\", \"text\": \"hello 1\" } ]\n     });\n@@ -314,7 +311,6 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests\n \n     let expected_user_message_2 = serde_json::json!({\n         \"type\": \"message\",\n-        \"id\": serde_json::Value::Null,\n         \"role\": \"user\",\n         \"content\": [ { \"type\": \"input_text\", \"text\": \"hello 2\" } ]\n     });\n@@ -424,7 +420,6 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() {\n     // as the prefix of the second request, ensuring cache hit potential.\n     let expected_user_message_2 = serde_json::json!({\n         \"type\": \"message\",\n-        \"id\": serde_json::Value::Null,\n         \"role\": \"user\",\n         \"content\": [ { \"type\": \"input_text\", \"text\": \"hello 2\" } ]\n     });\n@@ -438,7 +433,6 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() {\n </environment_context>\"#;\n     let expected_env_msg_2 = serde_json::json!({\n         \"type\": \"message\",\n-        \"id\": serde_json::Value::Null,\n         \"role\": \"user\",\n         \"content\": [ { \"type\": \"input_text\", \"text\": expected_env_text_2 } ]\n     });\n@@ -543,7 +537,6 @@ async fn per_turn_overrides_keep_cached_prefix_and_key_constant() {\n     // as the prefix of the second request.\n     let expected_user_message_2 = serde_json::json!({\n         \"type\": \"message\",\n-        \"id\": serde_json::Value::Null,\n         \"role\": \"user\",\n         \"content\": [ { \"type\": \"input_text\", \"text\": \"hello 2\" } ]\n     });",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/exec/src/lib.rs",
+   "new_path": "codex-rs/exec/src/lib.rs",
+   "diff": "@@ -149,7 +149,6 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any\n         include_plan_tool: None,\n         include_apply_patch_tool: None,\n         include_view_image_tool: None,\n-        disable_response_storage: oss.then_some(true),\n         show_raw_agent_reasoning: oss.then_some(true),\n         tools_web_search_request: None,\n     };",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/mcp-server/src/codex_message_processor.rs",
+   "new_path": "codex-rs/mcp-server/src/codex_message_processor.rs",
+   "diff": "@@ -994,7 +994,6 @@ fn derive_config_from_params(\n         include_plan_tool,\n         include_apply_patch_tool,\n         include_view_image_tool: None,\n-        disable_response_storage: None,\n         show_raw_agent_reasoning: None,\n         tools_web_search_request: None,\n     };",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/mcp-server/src/codex_tool_config.rs",
+   "new_path": "codex-rs/mcp-server/src/codex_tool_config.rs",
+   "diff": "@@ -162,7 +162,6 @@ impl CodexToolCallParam {\n             include_plan_tool,\n             include_apply_patch_tool: None,\n             include_view_image_tool: None,\n-            disable_response_storage: None,\n             show_raw_agent_reasoning: None,\n             tools_web_search_request: None,\n         };",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/protocol/src/mcp_protocol.rs",
+   "new_path": "codex-rs/protocol/src/mcp_protocol.rs",
+   "diff": "@@ -371,7 +371,6 @@ pub struct Profile {\n     /// [`ModelProviderInfo`] to use.\n     pub model_provider: Option<String>,\n     pub approval_policy: Option<AskForApproval>,\n-    pub disable_response_storage: Option<bool>,\n     pub model_reasoning_effort: Option<ReasoningEffort>,\n     pub model_reasoning_summary: Option<ReasoningSummary>,\n     pub model_verbosity: Option<Verbosity>,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/protocol/src/models.rs",
+   "new_path": "codex-rs/protocol/src/models.rs",
+   "diff": "@@ -42,11 +42,13 @@ pub enum ContentItem {\n #[serde(tag = \"type\", rename_all = \"snake_case\")]\n pub enum ResponseItem {\n     Message {\n+        #[serde(skip_serializing)]\n         id: Option<String>,\n         role: String,\n         content: Vec<ContentItem>,\n     },\n     Reasoning {\n+        #[serde(skip_serializing)]\n         id: String,\n         summary: Vec<ReasoningItemReasoningSummary>,\n         #[serde(default, skip_serializing_if = \"should_serialize_reasoning_content\")]\n@@ -55,13 +57,15 @@ pub enum ResponseItem {\n     },\n     LocalShellCall {\n         /// Set when using the chat completions API.\n+        #[serde(skip_serializing)]\n         id: Option<String>,\n         /// Set when using the Responses API.\n         call_id: Option<String>,\n         status: LocalShellStatus,\n         action: LocalShellAction,\n     },\n     FunctionCall {\n+        #[serde(skip_serializing)]\n         id: Option<String>,\n         name: String,\n         // The Responses API returns the function call arguments as a *string* that contains\n@@ -82,7 +86,7 @@ pub enum ResponseItem {\n         output: FunctionCallOutputPayload,\n     },\n     CustomToolCall {\n-        #[serde(default, skip_serializing_if = \"Option::is_none\")]\n+        #[serde(skip_serializing)]\n         id: Option<String>,\n         #[serde(default, skip_serializing_if = \"Option::is_none\")]\n         status: Option<String>,\n@@ -104,7 +108,7 @@ pub enum ResponseItem {\n     //   \"action\": {\"type\":\"search\",\"query\":\"weather: San Francisco, CA\"}\n     // }\n     WebSearchCall {\n-        #[serde(default, skip_serializing_if = \"Option::is_none\")]\n+        #[serde(skip_serializing)]\n         id: Option<String>,\n         #[serde(default, skip_serializing_if = \"Option::is_none\")]\n         status: Option<String>,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "codex-rs/tui/src/lib.rs",
+   "new_path": "codex-rs/tui/src/lib.rs",
+   "diff": "@@ -129,7 +129,6 @@ pub async fn run_main(\n         include_plan_tool: Some(true),\n         include_apply_patch_tool: None,\n         include_view_image_tool: None,\n-        disable_response_storage: cli.oss.then_some(true),\n         show_raw_agent_reasoning: cli.oss.then_some(true),\n         tools_web_search_request: cli.web_search.then_some(true),\n     };",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "codex-rs/core/src/config.rs",
+   "side": "right",
+   "from_line": 81,
+   "to_line": 81,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Reviewer questions the necessity of the explanatory comment added for the removal of `disable_response_storage`.",
+   "source": "human"
+  },
+  {
+   "path": "codex-rs/core/src/config.rs",
+   "side": "right",
+   "from_line": 81,
+   "to_line": 81,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "You replaced a Rust doc comment (`///`) with a regular comment (`//`). This removes field-level docs from generated documentation. Prefer keeping it as a `///` doc comment describing the new behavior (or remove the historical comment entirely).\n\n```suggestion\n    /// Server-side response storage control removed; responses are never stored.\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "codex-rs/core/src/config.rs",
+   "side": "right",
+   "from_line": 416,
+   "to_line": 416,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The comment explaining the removal of `disable_response_storage` is redundant and should be deleted from the struct definition.",
+   "source": "human"
+  },
+  {
+   "path": "codex-rs/core/src/config.rs",
+   "side": "right",
+   "from_line": 416,
+   "to_line": 416,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Same here: converting `///` to `//` drops the user-facing config docs. Consider keeping a `///` doc comment explaining that the TOML key was removed and responses are never stored.\n\n```suggestion\n    /// `disable_response_storage` removed; responses are never stored.\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "codex-rs/protocol/src/models.rs",
+   "side": "right",
+   "from_line": 50,
+   "to_line": 52,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The `id` field in `Reasoning` variant is defined as `String` (non-optional) but marked with `#[serde(skip_serializing)]`. When deserializing from API responses, if the JSON payload still contains an `id` field, serde will fail to deserialize because `skip_serializing` only affects serialization, not deserialization. This could cause parsing failures in `client.rs:509` when calling `serde_json::from_value::<ResponseItem>(item_val)`. Consider either:\n1. Adding `#[serde(skip_deserializing)]` if the id is never needed from API responses\n2. Changing `id: String` to `id: Option<String>` and using `#[serde(default)]` to handle cases where the field might be present or absent\n\n```suggestion\n    Reasoning {\n        #[serde(skip_serializing, skip_deserializing)]\n        id: String,\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "codex-rs/protocol/src/models.rs",
+   "side": "right",
+   "from_line": 50,
+   "to_line": 52,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`Reasoning { id: String }` is now never serialized, yet it is non-optional. If this enum is used in any non-request serialization path (e.g., transcript export, debug dumps), this will silently drop data. If the design is “Reasoning.id is response-only”, consider making it `Option<String>` to reflect that it may be absent in serialized forms, or add a doc/test demonstrating the expected (deserialize-only) behavior.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "codex-rs/protocol/src/models.rs",
+   "side": "right",
+   "from_line": 82,
+   "to_line": 82,
+   "category": "Performance",
+   "context": "Repo Level",
+   "note": "The `id` field in `FunctionCallOutput` variant is not updated with `#[serde(skip_serializing)]`, while all other `ResponseItem` variants with `id` fields have been updated to skip serialization.\n\nGiven the PR's goal to prevent IDs from being sent to the API (since they're ignored and cause latency), this appears to be an inconsistency.\n\nSuggested fix:\n```rust\nFunctionCallOutput {\n    #[serde(skip_serializing)]\n    id: Option<String>,\n    output: FunctionCallOutputPayload,\n},\n```\n\nIf there's a specific reason `FunctionCallOutput` IDs should be serialized while others shouldn't, please add a comment explaining why.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "codex-rs/core/src/client.rs",
+   "side": "right",
+   "from_line": 197,
+   "to_line": 199,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "`store` is now hard-coded to `false`. Since this PR also removed `Prompt.store` and `disable_response_storage` globally, this is likely intentional. Still, consider whether the server expects the `store` field to be omitted rather than set to `false` (some APIs treat explicit false differently from missing). If the API schema allows omission, using `Option<bool>` and not serializing when None is safer for forward compatibility.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "codex-rs/core/src/client_common.rs",
+   "side": "right",
+   "from_line": 128,
+   "to_line": 128,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "The comment \"/// true when using the Responses API.\" is now misleading. Since this MR hardcodes `store: false` (see client.rs line 198), the comment should be updated or removed to reflect that responses are never stored.\n\nSuggested fix:\n```\n/// Always false; responses are never stored on the server.\npub(crate) store: bool,\n```",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "codex-rs/protocol/src/models.rs",
+   "side": "right",
+   "from_line": 44,
+   "to_line": 46,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Because `ResponsesApiRequest` serializes `input: &Vec<ResponseItem>` directly, these `#[serde(skip_serializing)]` changes will strip `id` from *all* outbound request payloads. That may be correct (server-generated ids shouldn’t be sent back), but it’s a behavior change vs `skip_serializing_if = Option::is_none` for `CustomToolCall`/`WebSearchCall`. Suggest adding/adjusting a unit test that serializes a `ResponsesApiRequest` containing `ResponseItem::{Message,FunctionCall,CustomToolCall,WebSearchCall}` with `Some(id)` and asserts `id` is absent while other correlation fields like `call_id` remain present, to prevent regressions and clarify intent.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "codex-rs/protocol/src/models.rs",
+   "side": "right",
+   "from_line": 45,
+   "to_line": 45,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Excluding local shell invocation identifiers from outbound messages could complicate troubleshooting workflows requiring granular event linkage.\n",
+   "source": "Qwen-Coder-480B"
+  }
+ ]
+}

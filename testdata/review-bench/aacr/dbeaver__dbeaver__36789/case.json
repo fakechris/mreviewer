@@ -1,0 +1,225 @@
+{
+ "id": "aacr/dbeaver__dbeaver__36789",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/dbeaver/dbeaver/pull/36789",
+  "owner": "dbeaver",
+  "repo": "dbeaver",
+  "number": 36789,
+  "base_sha": "469e4265a58af95a6d5f4069515e029fc2891374",
+  "head_sha": "dc67ca7cf486ceaf45559318cdcbca193847188d",
+  "title": "#36788 add HANA table partitions",
+  "description": "As described in #36788 I would like to introduce some basic SAP HANA Table partitioning view for DBeaver.\r\n\r\nExample of how it looks, using one partitioned table:\r\n![grafik](https://github.com/user-attachments/assets/ab770b4b-b523-4128-94a1-4dfa72b75682)\r\n\r\nStill quite some more possibilities but maybe we can start small and then extend on demand.\r\n\r\nOpen for further ideas/improvement recommendations and sorry if I missed some patterns for this.\r\n",
+  "language": "Java",
+  "category": "New Feature Additions",
+  "changed_lines": 294
+ },
+ "diffs": [
+  {
+   "old_path": "plugins/org.jkiss.dbeaver.ext.hana/OSGI-INF/l10n/bundle.properties",
+   "new_path": "plugins/org.jkiss.dbeaver.ext.hana/OSGI-INF/l10n/bundle.properties",
+   "diff": "@@ -35,6 +35,19 @@ meta.org.jkiss.dbeaver.ext.hana.model.HANATrigger.createTime.name = Create Time\n meta.org.jkiss.dbeaver.ext.hana.model.HANATrigger.enabled.name = Enabled\n meta.org.jkiss.dbeaver.ext.hana.model.HANATrigger.valid.name = Valid\n \n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.partId.name                 = Part ID\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.recordCount.name            = Record Count\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.rangeStart.name             = Range Start\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.rangeEnd.name               = Range End\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.totalSize.name              = Total Size\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.mainSize.name               = Main Size\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.deltaSize.name              = Delta Size\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.creationTime.name           = Create Time\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.lastDeltaMerge.name         = Last delta merge\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.lastLogReplay.name          = Last log replay\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.loaded.name                 = Loaded\n+meta.org.jkiss.dbeaver.ext.hana.model.HANAPartition.loadUnit.name               = Load Unit\n+\n tree.column.node.name              = Column\n tree.columns.node.name             = Columns\n tree.dataType.node.name            = Data Type\n@@ -52,6 +65,7 @@ tree.index_columns.node.name       = Index columns\n tree.indexes.node.name             = Indexes\n tree.inplace_table_types.node.name = Inplace Table Types\n tree.inplace_table_type.node.name  = Inplace Table Type\n+tree.partitions.node.name          = Partitions\n tree.procedure.node.name           = Procedure\n tree.procedure_columns.node.name   = Procedure parameters\n tree.procedures.node.name          = Procedures",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "plugins/org.jkiss.dbeaver.ext.hana/plugin.xml",
+   "new_path": "plugins/org.jkiss.dbeaver.ext.hana/plugin.xml",
+   "diff": "@@ -38,6 +38,10 @@\n                                     <items label=\"%tree.index.node.name\" path=\"index\" property=\"indexes\" icon=\"#index\">\n                                         <items label=\"%tree.index_columns.node.name\" path=\"column\" property=\"attributeReferences\" icon=\"#column\" navigable=\"false\" inline=\"true\"/>\n                                     </items>\n+                                </folder>                                \n+                                <folder type=\"org.jkiss.dbeaver.ext.hana.model.HANAPartition\" label=\"%tree.partitions.node.name\" icon=\"#partitions\">\n+                                    <items label=\"%tree.partitions.node.name\" path=\"partition\" property=\"partitions\" icon=\"#partition\">\n+                                    </items>    \n                                 </folder>\n                                 <folder label=\"%tree.references.node.name\" icon=\"#references\" virtual=\"true\">\n                                     <items label=\"%tree.reference.node.name\" path=\"reference\" property=\"references\" icon=\"#reference\" virtual=\"true\">",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANANotPartitionedTable.java",
+   "new_path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANANotPartitionedTable.java",
+   "diff": "@@ -0,0 +1,27 @@\n+/*\r\n+ * DBeaver - Universal Database Manager\r\n+ * Copyright (C) 2010-2024 DBeaver Corp and others\r\n+ *\r\n+ * Licensed under the Apache License, Version 2.0 (the \"License\");\r\n+ * you may not use this file except in compliance with the License.\r\n+ * You may obtain a copy of the License at\r\n+ *\r\n+ *     http://www.apache.org/licenses/LICENSE-2.0\r\n+ *\r\n+ * Unless required by applicable law or agreed to in writing, software\r\n+ * distributed under the License is distributed on an \"AS IS\" BASIS,\r\n+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\r\n+ * See the License for the specific language governing permissions and\r\n+ * limitations under the License.\r\n+ */\r\n+package org.jkiss.dbeaver.ext.hana.model;\r\n+\r\n+import org.jkiss.dbeaver.model.meta.IPropertyValueValidator;\r\n+\r\n+public class HANANotPartitionedTable implements IPropertyValueValidator<HANATable, Object> {\r\n+\r\n+    @Override\r\n+    public boolean isValidValue(HANATable object, Object value) throws IllegalArgumentException {\r\n+        return !(object instanceof HANAPartition);\r\n+    }\r\n+}\r",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "new_path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "diff": "@@ -0,0 +1,181 @@\n+/*\r\n+ * DBeaver - Universal Database Manager\r\n+ * Copyright (C) 2010-2024 DBeaver Corp and others\r\n+ *\r\n+ * Licensed under the Apache License, Version 2.0 (the \"License\");\r\n+ * you may not use this file except in compliance with the License.\r\n+ * You may obtain a copy of the License at\r\n+ *\r\n+ *     http://www.apache.org/licenses/LICENSE-2.0\r\n+ *\r\n+ * Unless required by applicable law or agreed to in writing, software\r\n+ * distributed under the License is distributed on an \"AS IS\" BASIS,\r\n+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\r\n+ * See the License for the specific language governing permissions and\r\n+ * limitations under the License.\r\n+ */\r\n+package org.jkiss.dbeaver.ext.hana.model;\r\n+\r\n+import org.jkiss.code.NotNull;\r\n+import org.jkiss.code.Nullable;\r\n+import org.jkiss.dbeaver.model.exec.jdbc.JDBCResultSet;\r\n+import org.jkiss.dbeaver.model.impl.jdbc.JDBCUtils;\r\n+import org.jkiss.dbeaver.model.meta.Property;\r\n+import org.jkiss.dbeaver.model.struct.rdb.DBSTable;\r\n+import org.jkiss.dbeaver.model.struct.rdb.DBSTablePartition;\r\n+import org.jkiss.dbeaver.model.impl.jdbc.cache.JDBCObjectCache;\r\n+import org.jkiss.dbeaver.model.meta.IPropertyValueListProvider;\r\n+import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;\r\n+import org.jkiss.dbeaver.model.struct.DBSObject;\r\n+import org.jkiss.dbeaver.ext.generic.model.GenericSchema;\r\n+import org.jkiss.dbeaver.ext.generic.model.GenericStructContainer;\r\n+import org.jkiss.dbeaver.ext.generic.model.GenericTable;\r\n+import org.jkiss.dbeaver.model.DBPEvaluationContext;\r\n+import org.jkiss.dbeaver.model.DBUtils;\r\n+import org.jkiss.dbeaver.model.exec.jdbc.JDBCPreparedStatement;\r\n+import org.jkiss.dbeaver.model.exec.jdbc.JDBCSession;\r\n+import org.jkiss.dbeaver.model.exec.jdbc.JDBCStatement;\r\n+import org.jkiss.dbeaver.model.preferences.DBPPropertySource;\r\n+import org.jkiss.utils.CommonUtils;\r\n+import org.jkiss.utils.ByteNumberFormat;\r\n+import java.sql.Timestamp;\r\n+import java.math.BigDecimal;\r\n+\r\n+public class HANAPartition extends HANATable implements DBSTablePartition {\r\n+\r\n+    private final HANATable parentTable;\r\n+    private int partId;\r\n+    private int recordCount;\r\n+    private String rangeStart;\r\n+    private String rangeEnd;\r\n+    private BigDecimal totalSize;\r\n+    private BigDecimal mainSize;\r\n+    private BigDecimal deltaSize;\r\n+    private Timestamp creationTime;\r\n+    private Timestamp lastDeltaMerge;\r\n+    private Timestamp lastLogReplay;\r\n+    private String loaded;\r\n+    private String loadUnit;\r\n+\r\n+    public HANAPartition(\r\n+        @NotNull HANATable table,\r\n+        @NotNull int partId,\r\n+        @NotNull JDBCResultSet dbResult\r\n+    ) {\r\n+        super(table.getContainer(), String.valueOf(partId), table.getTableType(), dbResult);\r\n+        this.partId = partId;\r\n+        this.parentTable = table;\r\n+\r\n+        this.recordCount = JDBCUtils.safeGetInt(dbResult, \"RECORD_COUNT\");\r\n+        this.rangeStart = JDBCUtils.safeGetString(dbResult, \"LEVEL_1_RANGE_MIN_VALUE\");\r\n+        this.rangeEnd = JDBCUtils.safeGetString(dbResult, \"LEVEL_1_RANGE_MAX_VALUE\");\r\n+        if (CommonUtils.isEmpty(this.rangeStart)) {\r\n+            this.rangeStart = JDBCUtils.safeGetString(dbResult, \"LEVEL_2_RANGE_MIN_VALUE\");\r\n+            this.rangeEnd = JDBCUtils.safeGetString(dbResult, \"LEVEL_2_RANGE_MAX_VALUE\");\r\n+        }\r\n+        if (CommonUtils.isEmpty(this.rangeStart)) {\r\n+            this.rangeStart = JDBCUtils.safeGetString(dbResult, \"LEVEL_3_RANGE_MIN_VALUE\");\r\n+            this.rangeEnd = JDBCUtils.safeGetString(dbResult, \"LEVEL_3_RANGE_MAX_VALUE\");\r\n+        }\r\n+\r\n+        this.totalSize = JDBCUtils.safeGetBigDecimal(dbResult, \"MEMORY_SIZE_IN_TOTAL\");\r\n+        this.mainSize = JDBCUtils.safeGetBigDecimal(dbResult, \"MEMORY_SIZE_IN_MAIN\");\r\n+        this.deltaSize = JDBCUtils.safeGetBigDecimal(dbResult, \"MEMORY_SIZE_IN_DELTA\");        \r\n+        this.creationTime = JDBCUtils.safeGetTimestamp(dbResult, \"CREATE_TIME\");\r\n+        this.lastDeltaMerge = JDBCUtils.safeGetTimestamp(dbResult, \"LAST_MERGE_TIME\");\r\n+        this.lastLogReplay = JDBCUtils.safeGetTimestamp(dbResult, \"LAST_REPLAY_LOG_TIME\");\r\n+        this.loaded = JDBCUtils.safeGetString(dbResult, \"LOADED\");\r\n+        this.loadUnit = JDBCUtils.safeGetString(dbResult, \"LOAD_UNIT\");\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 10)\r\n+    public int getPartId() {\r\n+        return partId;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 30)\r\n+    public String getRangeStart() {\r\n+        return rangeStart;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 35)\r\n+    public String getRangeEnd() {\r\n+        return rangeEnd;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 40)\r\n+    public int getRecordCount() {\r\n+        return recordCount;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 45, formatter = ByteNumberFormat.class)\r\n+    public BigDecimal getTotalSize() {\r\n+        return totalSize;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 50, formatter = ByteNumberFormat.class)\r\n+    public BigDecimal getMainSize() {\r\n+        return mainSize;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 55, formatter = ByteNumberFormat.class)\r\n+    public BigDecimal getDeltaSize() {\r\n+        return deltaSize;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 60)\r\n+    public Timestamp getCreationTime() {\r\n+        return creationTime;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 65)\r\n+    public Timestamp getLastDeltaMerge() {\r\n+        return lastDeltaMerge;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 70)\r\n+    public Timestamp getLastLogReplay() {\r\n+        return lastLogReplay;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 75)\r\n+    public String getLoaded() {\r\n+        return loaded;\r\n+    }\r\n+\r\n+    @Property(viewable = true, order = 80)\r\n+    public String getLoadUnit() {\r\n+        return loadUnit;\r\n+    }\r\n+\r\n+    @Override\r\n+    public boolean hasStatistics() {\r\n+        return false;\r\n+    }\r\n+\r\n+    @Override\r\n+    public long getStatObjectSize() {\r\n+        return 0;\r\n+    }    \r\n+\r\n+    @Nullable\r\n+    public DBPPropertySource getStatProperties() {\r\n+        return null;\r\n+    }\r\n+\r\n+    @Override \r\n+    public DBSTable getParentTable() {\r\n+        return this.parentTable;\r\n+    }\r\n+\r\n+    @Override \r\n+    public boolean isSubPartition(){\r\n+        return false;\r\n+    }\r\n+    \r\n+    @Override \r\n+    public DBSTablePartition getPartitionParent(){\r\n+        return null;\r\n+    }\r\n+\r\n+}\r",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+   "new_path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+   "diff": "@@ -21,20 +21,29 @@\n import org.jkiss.dbeaver.DBException;\n import org.jkiss.dbeaver.ext.generic.model.GenericStructContainer;\n import org.jkiss.dbeaver.ext.generic.model.GenericTable;\n+import org.jkiss.dbeaver.ext.generic.model.GenericSchema;\n import org.jkiss.dbeaver.model.DBConstants;\n import org.jkiss.dbeaver.model.DBPObjectStatistics;\n-import org.jkiss.dbeaver.model.exec.jdbc.JDBCResultSet;\n import org.jkiss.dbeaver.model.meta.Property;\n import org.jkiss.dbeaver.model.preferences.DBPPropertySource;\n import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;\n import org.jkiss.dbeaver.model.struct.DBSObject;\n+import org.jkiss.dbeaver.model.impl.jdbc.cache.JDBCObjectCache;\n+import org.jkiss.dbeaver.model.exec.jdbc.JDBCPreparedStatement;\n+import org.jkiss.dbeaver.model.exec.jdbc.JDBCStatement;\n+import org.jkiss.dbeaver.model.exec.jdbc.JDBCResultSet;\n+import org.jkiss.dbeaver.model.exec.jdbc.JDBCSession;\n+import org.jkiss.dbeaver.model.impl.jdbc.JDBCUtils;\n import org.jkiss.utils.ByteNumberFormat;\n+import org.jkiss.utils.CommonUtils;\n \n import java.sql.SQLException;\n+import java.util.Collection;\n import java.util.List;\n \n public class HANATable extends GenericTable implements DBPObjectStatistics {\n \n+    private final PartitionCache partitionCache = new PartitionCache();\n     private long tableSize = -1;\n \n     public HANATable(\n@@ -58,6 +67,36 @@ public HANATableColumn getAttribute(@NotNull DBRProgressMonitor monitor, @NotNul\n         return (HANATableColumn) super.getAttribute(monitor, attributeName);\n     }\n \n+    @NotNull\n+    @Override\n+    @Property(viewable = true, order = 1, visibleIf = HANANotPartitionedTable.class)\n+    public String getName()\n+    {\n+        return super.getName();\n+    }\n+\n+    @Override\n+    @Property(viewable = true, order = 2, visibleIf = HANANotPartitionedTable.class)\n+    public String getTableType()\n+    {\n+        return super.getTableType();\n+    }\n+\n+    @Override\n+    @NotNull\n+    @Property(viewable = true, order = 3, visibleIf = HANANotPartitionedTable.class)\n+    public GenericSchema getSchema()\n+    {\n+        return super.getSchema();\n+    }\n+\n+    @Override\n+    @Property(viewable = true, order = 13, visibleIf = HANANotPartitionedTable.class)\n+    public String getDescription()\n+    {\n+        return super.getDescription();\n+    }\n+\n     @Override\n     public boolean hasStatistics() {\n         return tableSize != -1;\n@@ -94,4 +133,36 @@ public DBSObject refreshObject(@NotNull DBRProgressMonitor monitor) throws DBExc\n     public DBPPropertySource getStatProperties() {\n         return null;\n     }\n+\n+    @NotNull\n+    public Collection<HANAPartition> getPartitions(@NotNull DBRProgressMonitor monitor) throws DBException {\n+        return partitionCache.getAllObjects(monitor, this);\n+    }\n+\n+    static class PartitionCache extends JDBCObjectCache<HANATable, HANAPartition> {\n+\n+        @Override\n+        protected JDBCStatement prepareObjectsStatement(@NotNull JDBCSession session, @NotNull HANATable table) throws SQLException {\n+            final JDBCPreparedStatement dbStat = session.prepareStatement(\"SELECT tp.*, \"\n+            + \"\\nMEMORY_SIZE_IN_TOTAL, RECORD_COUNT, MEMORY_SIZE_IN_MAIN, MEMORY_SIZE_IN_DELTA, CREATE_TIME, LAST_MERGE_TIME, LAST_REPLAY_LOG_TIME, LOADED\"\n+            + \"\\nFROM M_CS_TABLES mcs JOIN TABLE_PARTITIONS tp ON mcs.SCHEMA_NAME=tp.SCHEMA_NAME AND mcs.TABLE_NAME=tp.TABLE_NAME AND mcs.PART_ID=tp.PART_ID\"\n+            + \"\\nWHERE tp.TABLE_NAME = ? AND tp.SCHEMA_NAME = ? ORDER BY tp.PART_ID\");\n+            dbStat.setString(1, table.getName());\n+            dbStat.setString(2, table.getContainer().getName());\n+            return dbStat;\n+        }\n+\n+        @Override\n+        protected HANAPartition fetchObject(\n+            @NotNull JDBCSession session,\n+            @NotNull HANATable table,\n+            @NotNull JDBCResultSet dbResult\n+        ) throws SQLException, DBException {\n+            int partition_id = JDBCUtils.safeGetInt(dbResult, \"PART_ID\");\n+            if (dbResult == null) {\n+                return null;\n+            }\n+            return new HANAPartition(table, partition_id, dbResult);\n+        }\n+    }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/OSGI-INF/l10n/bundle.properties",
+   "side": "right",
+   "from_line": 45,
+   "to_line": 48,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The capitalization for \"Last delta merge\" and \"Last log replay\" is inconsistent with the other properties in this block (which use Title Case, e.g., \"Total Size\", \"Create Time\"). It is recommended to use \"Last Delta Merge\" and \"Last Log Replay\" for consistency.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/plugin.xml",
+   "side": "right",
+   "from_line": 42,
+   "to_line": 45,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The new navigator node defines a folder of type `HANAPartition` but its children are bound to the `partitions` property (`HANATable#getPartitions`). In DBeaver object tree configs, the folder `type` usually corresponds to the parent object type that *owns* the `property` collection, while the `items` represent elements of that collection.\n\nPotential issue: with `folder type=\"...HANAPartition\"`, the folder may be treated as if it is shown for partition objects (or may not appear for tables), so the `property=\"partitions\"` may never be resolved (since `HANAPartition` doesn’t expose `getPartitions`). If the intent is “Tables -> Partitions -> Partition”, consider setting the folder type to `org.jkiss.dbeaver.ext.hana.model.HANATable` (or the table interface used in the tree) and keep `items property=\"partitions\"` to produce `HANAPartition` children.\n\nAlso double-check `path=\"partition\"` is consistent with any existing object tree path conventions for HANA nodes; if not used elsewhere, `path` can be omitted to avoid mismatches.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/plugin.xml",
+   "side": "right",
+   "from_line": 43,
+   "to_line": 44,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The empty `<items>` element for HANA partitions should use self-closing tag syntax (`/>`) instead of separate opening and closing tags for cleaner XML representation.",
+   "source": "human"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANANotPartitionedTable.java",
+   "side": "right",
+   "from_line": 21,
+   "to_line": 27,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Naming/intent mismatch: `HANANotPartitionedTable` returns `false` when `object instanceof HANAPartition`. This effectively means “visible only for non-partition *objects*”, not “not partitioned *table*”. Since `HANAPartition` extends `HANATable`, this works for the current use in `@Property(... visibleIf = HANANotPartitionedTable.class)` to hide base table properties for partition rows, but the class name is misleading and easy to misuse later.\n\nSuggestion: rename to something like `HANAIsNotPartition` / `HANANotPartitionObject` / `HANAHideForPartitions` (and update references), or adjust logic+name pair so they align (e.g., check `table.isPartitioned()` if such concept exists).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 37,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "There are multiple unused imports in this file, including `JDBCObjectCache`, `IPropertyValueListProvider`, `DBRProgressMonitor`, `DBSObject`, `GenericSchema`, `GenericStructContainer`, `GenericTable`, `DBPEvaluationContext`, `DBUtils`, `JDBCPreparedStatement`, `JDBCSession`, and `JDBCStatement`. It is recommended to remove them to keep the code clean.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "side": "right",
+   "from_line": 60,
+   "to_line": 64,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The @NotNull annotation on the 'partId' parameter is redundant because 'int' is a primitive type that cannot be null. This annotation should only be used on object references (like String, Integer, etc.) to indicate nullability constraints. Using @NotNull on primitive types is misleading and provides no actual value.\n",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "side": "right",
+   "from_line": 72,
+   "to_line": 79,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "This cascade of conditions may lead to unexpected behavior. If LEVEL_1_RANGE_MIN_VALUE is empty but LEVEL_2_RANGE_MIN_VALUE contains data, then later if LEVEL_3_RANGE_MIN_VALUE also has data, it would overwrite the previously assigned value from LEVEL_2_RANGE_MIN_VALUE. Consider using else-if statements or breaking after first assignment.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "side": "right",
+   "from_line": 72,
+   "to_line": 79,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential logic issue: The cascading logic only checks if `rangeStart` is empty before falling back to the next level, but doesn't verify `rangeEnd`. If LEVEL_1_RANGE_MIN_VALUE has a value but LEVEL_1_RANGE_MAX_VALUE is empty/null, you could end up with a rangeStart without a corresponding rangeEnd. Consider checking both values or using a logical OR condition: `if (CommonUtils.isEmpty(this.rangeStart) || CommonUtils.isEmpty(this.rangeEnd))`\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "side": "right",
+   "from_line": 151,
+   "to_line": 154,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Consider implementing proper logic to determine if this partition actually has statistics available, rather than always returning false. If partitions never have statistics, consider adding a comment explaining why.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+   "side": "right",
+   "from_line": 142,
+   "to_line": 142,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "PartitionCache nested class should use private visibility instead of package-private to properly encapsulate implementation details.",
+   "source": "human"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+   "side": "right",
+   "from_line": 156,
+   "to_line": 166,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Logic error: The null check for dbResult is placed after it has already been used in JDBCUtils.safeGetInt(). If dbResult is null, the safeGetInt call will throw a NullPointerException before reaching the null check. The null check should be moved before any usage of dbResult, or removed entirely if dbResult is guaranteed to be non-null by the framework.\n\n```suggestion\n        protected HANAPartition fetchObject(\n            @NotNull JDBCSession session,\n            @NotNull HANATable table,\n            @NotNull JDBCResultSet dbResult\n        ) throws SQLException, DBException {\n            int partition_id = JDBCUtils.safeGetInt(dbResult, \"PART_ID\");\n            return new HANAPartition(table, partition_id, dbResult);\n        }\n```",
+   "source": "GLM-4.7"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "side": "right",
+   "from_line": 51,
+   "to_line": 53,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "`totalSize/mainSize/deltaSize` are `BigDecimal` and may be `null` if the underlying columns are NULL. Mark getters/fields as `@Nullable` (or return 0) to avoid surprises in property rendering/formatters. Some formatters assume non-null values and may throw at runtime.\n\n```suggestion\n    private @Nullable BigDecimal totalSize;\n    private @Nullable BigDecimal mainSize;\n    private @Nullable BigDecimal deltaSize;\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "side": "right",
+   "from_line": 171,
+   "to_line": 179,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "`DBSTablePartition#getPartitionParent()` typically should return the parent partition when `isSubPartition()` is true. Returning `null` unconditionally is fine only if this object can never represent a sub-partition. Consider either (1) making this explicit by documenting/encoding that HANA partitions are never sub-partitions, or (2) wiring real hierarchy support if HANA exposes sub-partitions. Otherwise, consumers may NPE or show incorrect tree structures when they expect a non-null parent for sub-partitions.\n\n```suggestion\n    @Override\n    public boolean isSubPartition() {\n        return false;\n    }\n\n    @Override\n    public @Nullable DBSTablePartition getPartitionParent() {\n        return null;\n    }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java",
+   "side": "right",
+   "from_line": 172,
+   "to_line": 177,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `getPartitionParent()` method is declared but lacks an implementation body, resulting in invalid Java syntax that will fail to compile. This method should return null since `isSubPartition()` consistently indicates top-level partitions.",
+   "source": "human"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+   "side": "right",
+   "from_line": 73,
+   "to_line": 74,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The getName method incorrectly includes unnecessary annotations (@NotNull, @Override, and @Property) that conflict with standard override practices and property framework requirements.",
+   "source": "human"
+  },
+  {
+   "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+   "side": "right",
+   "from_line": 137,
+   "to_line": 140,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The new `partitions` property is added on `HANATable` (via `getPartitions`). However, the navigator tree in plugin.xml uses `<folder type=\"...HANAPartition\" ... property=\"partitions\">`, which means it will try to show a partitions-folder under *partition objects*, not under tables. This likely prevents partitions from appearing under normal tables.\n\nConsider changing the folder `type` to `org.jkiss.dbeaver.ext.hana.model.HANATable` (or the actual table class used in the navigator) so that the `partitions` collection is resolved from the table object.\n\n(If this is intentional, please double-check the expected object graph; currently `HANANotPartitionedTable` also suggests partitions are a table child.)",
+   "source": "GPT-5.2"
+  }
+ ]
+}

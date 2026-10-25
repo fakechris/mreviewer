@@ -1,0 +1,120 @@
+{
+ "id": "aacr/ppy__osu__33423",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/ppy/osu/pull/33423",
+  "owner": "ppy",
+  "repo": "osu",
+  "number": 33423,
+  "base_sha": "19e9bffc11f026ebff2dc2831668e606c701f71f",
+  "head_sha": "748ab3d4863f6ea4bf6a3fffccb50e5cd616937b",
+  "title": "Optimize rhythm evaluation by replacing curve",
+  "description": "It's replacing slow Math.Sin with much faster Smoothstep (9x faster execution for this line).\r\nhttps://www.desmos.com/calculator/ta2lhnu6ug",
+  "language": "C#",
+  "category": "Performance Optimizations",
+  "changed_lines": 27
+ },
+ "diffs": [
+  {
+   "old_path": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs",
+   "new_path": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs",
+   "diff": "@@ -68,8 +68,12 @@ public static double EvaluateDifficultyOf(DifficultyHitObject current)\n \n                 // calculate how much current delta difference deserves a rhythm bonus\n                 // this function is meant to reduce rhythm bonus for deltas that are multiples of each other (i.e 100 and 200)\n-                double deltaDifferenceRatio = Math.Min(prevDelta, currDelta) / Math.Max(prevDelta, currDelta);\n-                double currRatio = 1.0 + rhythm_ratio_multiplier * Math.Min(0.5, Math.Pow(Math.Sin(Math.PI / deltaDifferenceRatio), 2));\n+                double reverseDeltaDifferenceRatio = Math.Max(prevDelta, currDelta) / Math.Min(prevDelta, currDelta);\n+\n+                // Take value in range [0, 1]\n+                double deltaDifferenceFraction = reverseDeltaDifferenceRatio - (long)reverseDeltaDifferenceRatio;\n+\n+                double currRatio = 1.0 + rhythm_ratio_multiplier * Math.Min(0.5, DifficultyCalculationUtils.SmoothstepBellCurve(deltaDifferenceFraction));\n \n                 // reduce ratio bonus if delta difference is too big\n                 double fraction = Math.Max(prevDelta / currDelta, currDelta / prevDelta);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+   "new_path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+   "diff": "@@ -66,6 +66,20 @@ public static double MillisecondsToBPM(double ms, int delimiter = 4)\n         /// <returns>The output of the bell curve function of <paramref name=\"x\"/></returns>\n         public static double BellCurve(double x, double mean, double width, double multiplier = 1.0) => multiplier * Math.Exp(Math.E * -(Math.Pow(x - mean, 2) / Math.Pow(width, 2)));\n \n+        /// <summary>\n+        /// Calculates a Smoothstep Bellcurve that returns returns 1 for x = mean, and smoothly reducing it's value to 0 over width\n+        /// </summary>\n+        /// <param name=\"x\">Value to calculate the function for</param>\n+        /// <param name=\"mean\">Value of x, for which return value will be the highest (=1)</param>\n+        /// <param name=\"width\">Range [mean - width, mean + width] where function will change values</param>\n+        /// <returns>The output of the smoothstep bell curve function of <paramref name=\"x\"/></returns>\n+        public static double SmoothstepBellCurve(double x, double mean = 0.5, double width = 0.5)\n+        {\n+            x -= mean;\n+            x = x > 0 ? (width - x) : (width + x);\n+            return Smoothstep(x, 0, width);\n+        }\n+\n         /// <summary>\n         /// Smoothstep function (https://en.wikipedia.org/wiki/Smoothstep)\n         /// </summary>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs",
+   "side": "right",
+   "from_line": 71,
+   "to_line": 76,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`reverseDeltaDifferenceRatio` and the later `fraction = Math.Max(prevDelta / currDelta, ...)` both divide by `Math.Min(prevDelta, currDelta)` / `currDelta` etc. If `StrainTime` can ever be 0 (or extremely close), this will produce `Infinity/NaN` and destabilise difficulty.\n\nAlso, `SmoothstepBellCurve()` is designed around `x` in ~[0,1] (mean=0.5,width=0.5). The fractional-part calculation `x - (long)x` can lose precision for large ratios and doesn’t clamp against small floating overshoots (<0 or >1). Prefer `Math.Floor` and clamp to [0,1] before passing into `SmoothstepBellCurve`.\n\nSuggested:\n- Guard: `if (prevDelta <= 0 || currDelta <= 0) return 1.0;` (or skip bonus) consistent with intended behaviour.\n- `var frac = reverse - Math.Floor(reverse); frac = Math.Clamp(frac, 0, 1);`",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs",
+   "side": "right",
+   "from_line": 73,
+   "to_line": 73,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Comment for reverseDeltaDifferenceRatio inaccurately states value is in [0,1] (it is always ≥1); update to explain fractional part extraction for detecting delta multiples.",
+   "source": "human"
+  },
+  {
+   "path": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs",
+   "side": "right",
+   "from_line": 74,
+   "to_line": 74,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Fractional part calculation uses unsafe cast to long; replace with Math.Truncate to prevent overflow for large ratio values.",
+   "source": "human"
+  },
+  {
+   "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+   "side": "right",
+   "from_line": 69,
+   "to_line": 75,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Doc/typo: summary says \"returns returns\" and \"reducing it's value\" -> \"reducing its value\". Also clarify expected output range: with current code, values outside [mean-width, mean+width] result in x<0 passed to Smoothstep; if Smoothstep clamps internally, fine. If not, output may go below 0. Consider explicitly clamping x to [0,width] before Smoothstep or mention reliance on Smoothstep clamping.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+   "side": "right",
+   "from_line": 70,
+   "to_line": 70,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Documentation contains redundant word 'returns'. Should be 'Calculates a Smoothstep Bellcurve that returns 1 for x = mean, and smoothly reducing its value to 0 over width.'\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+   "side": "right",
+   "from_line": 76,
+   "to_line": 81,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential edge case: when width == 0, this will call Smoothstep(x, 0, 0) and likely divide by zero / produce NaN depending on Smoothstep implementation. Consider guarding (e.g., return x==mean ? 1 : 0) or clamping width to a small epsilon.\n\nAlso consider behavior for negative width: current math inverts range unexpectedly; either validate width > 0 or document it.\n\n```suggestion\n        public static double SmoothstepBellCurve(double x, double mean = 0.5, double width = 0.5)\n        {\n            if (width <= 0)\n                return x == mean ? 1 : 0;\n        \n            x -= mean;\n            x = x > 0 ? (width - x) : (width + x);\n            return Smoothstep(x, 0, width);\n        }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+   "side": "right",
+   "from_line": 78,
+   "to_line": 80,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider using more descriptive variable names to improve readability. Reusing 'x' for different purposes makes the logic harder to follow.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+   "side": "right",
+   "from_line": 78,
+   "to_line": 79,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The ternary expression can be simplified to `Math.Abs(x)` for better readability. Both branches compute `width - Math.Abs(x)`, just written differently.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ],
+ "negatives": []
+}

@@ -1,0 +1,327 @@
+{
+ "id": "aacr/immich-app__immich__16893",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/immich-app/immich/pull/16893",
+  "owner": "immich-app",
+  "repo": "immich",
+  "number": 16893,
+  "base_sha": "c664d99a348999d16cda45a8dd57db436b8f9fba",
+  "head_sha": "d38f1f55f42d600d05058e70d6ccee9679623591",
+  "title": "feat: preload and cancel images with a service worker",
+  "description": "## Description\r\n\r\nThis helps slow connections the most. When scrolling, if a thumbnail that is slow to load goes offscreen, it is removed from the DOM, but the <img src...> keeps the connection open. With the 6 connection per-domain limit, this can increase latency of subsequent requests, slowing down the load of on-screen images. \r\n\r\nSimilar thing happens when hitting next/previous on photo viewer. If you hit next before img loads, it will keep loading - if on a slow connection, and the image is large, this can easily take up al 6 requests. \r\n\r\nThis PR uses a service worker that will cancel any network requests created by <img src...> tags (or any other request) - as the thumbs or photos go out of view. Additionally, it supports preload of next/previous assets in the photo viewer. Lastly, it includes the sveltekit service-worker example, which preloads the entire svelte app in the background when the service worker is activated. \r\n\r\nThis requires a secure context (http://localhost or a https://example.com). If its not present, you don't lose any function, just don't get these benefits it provides. \r\n\r\n## Checklist:\r\n\r\n- [x] I have performed a self-review of my own code\r\n- [ ] I have made corresponding changes to the documentation if applicable\r\n- [x] I have no unrelated changes in the PR.\r\n- [x] I have confirmed that any new dependencies are strictly necessary.\r\n- [ ] I have written tests for new code (if applicable)\r\n- [x] I have followed naming conventions/patterns in the surrounding code\r\n- [x] All code in `src/services/` uses repositories implementations for database calls, filesystem operations, etc.\r\n- [x] All code in `src/repositories/` is pretty basic/simple and does not have any immich specific logic (that belongs in `src/services/`)\r\n",
+  "language": "TypeScript",
+  "category": "New Feature Additions",
+  "changed_lines": 125
+ },
+ "diffs": [
+  {
+   "old_path": "Makefile",
+   "new_path": "Makefile",
+   "diff": "@@ -17,6 +17,9 @@ e2e:\n prod:\n \tdocker compose -f ./docker/docker-compose.prod.yml up --build -V --remove-orphans\n \n+prod-down:\n+\tdocker compose -f ./docker/docker-compose.prod.yml down --remove-orphans\n+\n prod-scale:\n \tdocker compose -f ./docker/docker-compose.prod.yml up --build -V --scale immich-server=3 --scale immich-microservices=3 --remove-orphans\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "e2e/src/api/specs/oauth.e2e-spec.ts",
+   "new_path": "e2e/src/api/specs/oauth.e2e-spec.ts",
+   "diff": "@@ -142,7 +142,7 @@ describe(`/oauth`, () => {\n     it(`should throw an error if the state mismatches`, async () => {\n       const callbackParams = await loginWithOAuth('oauth-auto-register');\n       const { state } = await loginWithOAuth('oauth-auto-register');\n-      const { status, body } = await request(app)\n+      const { status } = await request(app)\n         .post('/oauth/callback')\n         .send({ ...callbackParams, state });\n       expect(status).toBeGreaterThanOrEqual(400);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "e2e/src/web/specs/photo-viewer.e2e-spec.ts",
+   "new_path": "e2e/src/web/specs/photo-viewer.e2e-spec.ts",
+   "diff": "@@ -21,23 +21,9 @@ test.describe('Photo Viewer', () => {\n   test.beforeEach(async ({ context, page }) => {\n     // before each test, login as user\n     await utils.setAuthCookies(context, admin.accessToken);\n-    await page.goto('/photos');\n     await page.waitForLoadState('networkidle');\n   });\n \n-  test('initially shows a loading spinner', async ({ page }) => {\n-    await page.route(`/api/assets/${asset.id}/thumbnail**`, async (route) => {\n-      // slow down the request for thumbnail, so spinner has chance to show up\n-      await new Promise((f) => setTimeout(f, 2000));\n-      await route.continue();\n-    });\n-    await page.goto(`/photos/${asset.id}`);\n-    await page.waitForLoadState('load');\n-    // this is the spinner\n-    await page.waitForSelector('svg[role=status]');\n-    await expect(page.getByTestId('loading-spinner')).toBeVisible();\n-  });\n-\n   test('loads original photo when zoomed', async ({ page }) => {\n     await page.goto(`/photos/${asset.id}`);\n     await expect.poll(async () => await imageLocator(page).getAttribute('src')).toContain('thumbnail');",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "e2e/src/web/specs/shared-link.e2e-spec.ts",
+   "new_path": "e2e/src/web/specs/shared-link.e2e-spec.ts",
+   "diff": "@@ -55,7 +55,6 @@ test.describe('Shared Links', () => {\n     await page.goto(`/share/${sharedLink.key}`);\n     await page.getByRole('heading', { name: 'Test Album' }).waitFor();\n     await page.getByRole('button', { name: 'Download' }).click();\n-    await page.getByText('DOWNLOADING', { exact: true }).waitFor();\n     await page.waitForEvent('download');\n   });\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "web/eslint.config.js",
+   "new_path": "web/eslint.config.js",
+   "diff": "@@ -58,6 +58,8 @@ export default typescriptEslint.config(\n       },\n     },\n \n+    ignores: ['**/service-worker/**'],\n+\n     rules: {\n       '@typescript-eslint/no-unused-vars': [\n         'warn',",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "web/src/lib/components/asset-viewer/photo-viewer.svelte",
+   "new_path": "web/src/lib/components/asset-viewer/photo-viewer.svelte",
+   "diff": "@@ -21,6 +21,7 @@\n   import FaceEditor from '$lib/components/asset-viewer/face-editor/face-editor.svelte';\n   import { photoViewerImgElement } from '$lib/stores/assets-store.svelte';\n   import { isFaceEditMode } from '$lib/stores/face-edit.svelte';\n+  import { cancelImageUrl, preloadImageUrl } from '$lib/utils/sw-messaging';\n \n   interface Props {\n     asset: AssetResponseDto;\n@@ -71,8 +72,7 @@\n   const preload = (targetSize: AssetMediaSize | 'original', preloadAssets?: AssetResponseDto[]) => {\n     for (const preloadAsset of preloadAssets || []) {\n       if (preloadAsset.type === AssetTypeEnum.Image) {\n-        let img = new Image();\n-        img.src = getAssetUrl(preloadAsset.id, targetSize, preloadAsset.thumbhash);\n+        preloadImageUrl(getAssetUrl(preloadAsset.id, targetSize, preloadAsset.thumbhash));\n       }\n     }\n   };\n@@ -168,6 +168,7 @@\n     return () => {\n       loader?.removeEventListener('load', onload);\n       loader?.removeEventListener('error', onerror);\n+      cancelImageUrl(imageLoaderUrl);\n     };\n   });\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "web/src/lib/components/assets/thumbnail/image-thumbnail.svelte",
+   "new_path": "web/src/lib/components/assets/thumbnail/image-thumbnail.svelte",
+   "diff": "@@ -2,9 +2,11 @@\n   import { thumbhash } from '$lib/actions/thumbhash';\n   import BrokenAsset from '$lib/components/assets/broken-asset.svelte';\n   import Icon from '$lib/components/elements/icon.svelte';\n+  import { cancelImageUrl } from '$lib/utils/sw-messaging';\n   import { TUNABLES } from '$lib/utils/tunables';\n   import { mdiEyeOffOutline } from '@mdi/js';\n   import type { ClassValue } from 'svelte/elements';\n+  import type { ActionReturn } from 'svelte/action';\n   import { fade } from 'svelte/transition';\n \n   interface Props {\n@@ -59,11 +61,14 @@\n     onComplete?.(true);\n   };\n \n-  function mount(elem: HTMLImageElement) {\n+  function mount(elem: HTMLImageElement): ActionReturn {\n     if (elem.complete) {\n       loaded = true;\n       onComplete?.(false);\n     }\n+    return {\n+      destroy: () => cancelImageUrl(url),\n+    };\n   }\n \n   let optionalClasses = $derived(",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "web/src/lib/utils/sw-messaging.ts",
+   "new_path": "web/src/lib/utils/sw-messaging.ts",
+   "diff": "@@ -0,0 +1,8 @@\n+const broadcast = new BroadcastChannel('immich');\n+\n+export function cancelImageUrl(url: string) {\n+  broadcast.postMessage({ type: 'cancel', url });\n+}\n+export function preloadImageUrl(url: string) {\n+  broadcast.postMessage({ type: 'preload', url });\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "web/src/service-worker/index.ts",
+   "new_path": "web/src/service-worker/index.ts",
+   "diff": "@@ -0,0 +1,90 @@\n+/// <reference types=\"@sveltejs/kit\" />\n+/// <reference no-default-lib=\"true\"/>\n+/// <reference lib=\"esnext\" />\n+/// <reference lib=\"webworker\" />\n+import { version } from '$service-worker';\n+\n+const useCache = true;\n+const sw = globalThis as unknown as ServiceWorkerGlobalScope;\n+const pendingLoads = new Map<string, AbortController>();\n+\n+// Create a unique cache name for this deployment\n+const CACHE = `cache-${version}`;\n+\n+sw.addEventListener('install', (event) => {\n+  event.waitUntil(sw.skipWaiting());\n+});\n+\n+sw.addEventListener('activate', (event) => {\n+  event.waitUntil(sw.clients.claim());\n+  // Remove previous cached data from disk\n+  event.waitUntil(deleteOldCaches());\n+});\n+\n+sw.addEventListener('fetch', (event) => {\n+  // ignore POST requests etc\n+  if (event.request.method !== 'GET') {\n+    return;\n+  }\n+  const url = new URL(event.request.url);\n+  if (/^\\/api\\/assets\\/[a-f0-9-]+\\/(original|thumbnail)/.test(url.pathname)) {\n+    event.respondWith(immichAsset(url));\n+  }\n+});\n+\n+async function deleteOldCaches() {\n+  for (const key of await caches.keys()) {\n+    if (key !== CACHE) {\n+      await caches.delete(key);\n+    }\n+  }\n+}\n+\n+async function immichAsset(url: URL) {\n+  const cache = await caches.open(CACHE);\n+  let response = useCache ? await cache.match(url) : undefined;\n+  if (response) {\n+    return response;\n+  }\n+  try {\n+    const cancelToken = new AbortController();\n+    const request = fetch(url, {\n+      signal: cancelToken.signal,\n+    });\n+    pendingLoads.set(url.toString(), cancelToken);\n+    response = await request;\n+    if (!(response instanceof Response)) {\n+      throw new TypeError('invalid response from fetch');\n+    }\n+    if (response.status === 200) {\n+      cache.put(url, response.clone());\n+    }\n+    return response;\n+  } catch {\n+    return Response.error();\n+  } finally {\n+    pendingLoads.delete(url.toString());\n+  }\n+}\n+\n+const broadcast = new BroadcastChannel('immich');\n+// eslint-disable-next-line  unicorn/prefer-add-event-listener\n+broadcast.onmessage = (event) => {\n+  if (!event.data) {\n+    return;\n+  }\n+  if (event.data.type === 'cancel') {\n+    const urlstring = event.data.url;\n+    const url = new URL(urlstring, event.origin);\n+\n+    const pending = pendingLoads.get(url.toString());\n+    if (pending) {\n+      pending.abort();\n+      pendingLoads.delete(url.toString());\n+    }\n+  } else if (event.data.type === 'preload') {\n+    const urlstring = event.data.url;\n+    const url = new URL(urlstring, event.origin);\n+    immichAsset(url);\n+  }\n+};",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "Makefile",
+   "side": "right",
+   "from_line": 20,
+   "to_line": 21,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "`prod-down` is a good addition. Consider whether you also want parity with the `prod`/`prod-scale` targets regarding `-V` (remove named/anonymous volumes) or `--remove-orphans`. `docker compose down` already removes the project network and containers; adding `-v` is the flag for removing volumes (not `-V`). If the intent is to keep volumes in prod (safer), this is fine—otherwise consider adding `-v` explicitly to match expectations and document the behavior via the target name (e.g., `prod-down` vs `prod-down-clean`).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "web/eslint.config.js",
+   "side": "right",
+   "from_line": 61,
+   "to_line": 61,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Completely ignoring the service-worker directory bypasses all linting rules, which may hide potential code quality issues. The service-worker code already uses inline eslint-disable comments for specific incompatible rules. Consider using overrides to configure service-worker specific settings instead (e.g., adding webworker globals, disabling specific unicorn rules) while keeping TypeScript and async/await rules enabled for better code quality assurance.\n\n```suggestion\n    overrides: [\n      {\n        files: ['**/service-worker/**'],\n        languageOptions: {\n          globals: {\n            ...globals.serviceworker,\n          },\n        },\n        rules: {\n          'unicorn/prefer-add-event-listener': 'off',\n        },\n      },\n    ],\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "web/eslint.config.js",
+   "side": "right",
+   "from_line": 61,
+   "to_line": 61,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "This ignore will skip linting for any path segment named `service-worker` under `web/` (and potentially nested deps). Please confirm the folder name matches the actual layout (e.g. `web/src/service-worker/` vs `web/src/service_worker/`) and that skipping lint is intended. If the goal is only to ignore generated build artifacts, prefer a narrower glob (e.g. `src/service-worker/**` or a specific output dir) so source files remain linted.\n\n```suggestion\n    // If only web source SW should be ignored, narrow the pattern:\n    // ignores: ['src/service-worker/**'],\n    // If ignoring built artifacts, target the build output dir instead.\n    ignores: ['src/service-worker/**'],\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "web/src/lib/components/asset-viewer/photo-viewer.svelte",
+   "side": "right",
+   "from_line": 24,
+   "to_line": 24,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "This component now imports `$lib/utils/sw-messaging`. That module instantiates `new BroadcastChannel('immich')` at top-level with no feature/environment guard. In contexts where `BroadcastChannel` is unavailable (older browsers, some embedded webviews, or non-window runtimes), importing this component can throw and break rendering. Consider lazy-creating the channel (inside functions) and guarding with `if (typeof BroadcastChannel === 'undefined') return;` (or a no-op fallback).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "web/src/lib/components/asset-viewer/photo-viewer.svelte",
+   "side": "right",
+   "from_line": 75,
+   "to_line": 75,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "`preloadImageUrl()` triggers `immichAsset(url)` in the SW, which fetches and caches the response, but it does not guarantee the browser image pipeline (decode cache) is warmed the same way as `new Image().src = ...`. This may reduce the perceived benefit of preloading in the viewer. Consider keeping the SW preload *and* also doing a lightweight `new Image().src = url` fallback (or make `preloadImageUrl` return whether SW is controlling and only replace when it’s effective).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "web/src/lib/components/asset-viewer/photo-viewer.svelte",
+   "side": "right",
+   "from_line": 162,
+   "to_line": 173,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `cancelImageUrl` call uses `imageLoaderUrl` which is a `$derived` reactive value. In Svelte 5, when the cleanup function from `onMount` runs during component unmount, reactive derived values may have already been disposed or return stale values. This could cause the wrong URL to be cancelled or an error if `imageLoaderUrl` is undefined.\n\nConsider capturing the URL in a local variable before the cleanup function is created, similar to how event listeners are handled. Alternatively, store the current loading URL in a regular variable that persists through unmount.\n\n```suggestion\n  onMount(() => {\n    if (loader?.complete) {\n      onload();\n    }\n    loader?.addEventListener('load', onload);\n    loader?.addEventListener('error', onerror);\n    const currentUrl = imageLoaderUrl;\n    return () => {\n      loader?.removeEventListener('load', onload);\n      loader?.removeEventListener('error', onerror);\n      cancelImageUrl(currentUrl);\n    };\n  });\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "web/src/lib/components/assets/thumbnail/image-thumbnail.svelte",
+   "side": "right",
+   "from_line": 64,
+   "to_line": 72,
+   "category": "Performance",
+   "context": "File Level",
+   "note": "Potential resource leak: If the `url` prop changes while the component is mounted, the previous URL's pending fetch request won't be cancelled. Only the final URL value will be cancelled when the component unmounts. Consider implementing an update mechanism to cancel the old URL when it changes, either by using a Svelte action with parameters and an update method, or by using a $effect to watch for URL changes.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "web/src/lib/components/assets/thumbnail/image-thumbnail.svelte",
+   "side": "right",
+   "from_line": 69,
+   "to_line": 71,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "`destroy` unconditionally calls `cancelImageUrl(url)`. Consider guarding against `url` being undefined/empty (initial render) and against calling cancel for data/blob URLs or already-loaded images if `cancelImageUrl` has side effects. A simple `if (url) cancelImageUrl(url)` (and optionally `if (!loaded)`) avoids unnecessary messaging during normal unmounts.\n\n```suggestion\n    return {\n      destroy: () => {\n        if (url /* && !loaded */) cancelImageUrl(url);\n      },\n    };\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "web/src/lib/utils/sw-messaging.ts",
+   "side": "right",
+   "from_line": 1,
+   "to_line": 1,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The BroadcastChannel name 'immich' is hardcoded. This should be extracted as a named constant to avoid duplication and potential typos when used in other files (e.g., service-worker/index.ts). Consider defining it as `export const BROADCAST_CHANNEL_NAME = 'immich';` and importing it where needed.\n\n```suggestion\nexport const BROADCAST_CHANNEL_NAME = 'immich';\n\nconst broadcast = new BroadcastChannel(BROADCAST_CHANNEL_NAME);\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "web/src/lib/utils/sw-messaging.ts",
+   "side": "right",
+   "from_line": 1,
+   "to_line": 8,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "**SSR Compatibility Issue**: `BroadcastChannel` is a Web API and is not available in the Node.js environment. Initializing it at the top level will cause the application to crash during Server-Side Rendering (SSR) when this file is imported (e.g., by `photo-viewer.svelte`).\n\n**Suggestion**: Initialize the channel only in the browser environment and handle the case where it might be null.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "web/src/lib/utils/sw-messaging.ts",
+   "side": "right",
+   "from_line": 4,
+   "to_line": 4,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The message data structure passed to postMessage lacks TypeScript type definitions. Define an interface or type for the message payload to ensure type safety and better IDE support. For example: `interface BroadcastMessage { type: 'cancel' | 'preload'; url: string; }`\n\n```suggestion\n  interface BroadcastMessage {\n    type: 'cancel' | 'preload';\n    url: string;\n  }\n  \n  export function cancelImageUrl(url: string) {\n    broadcast.postMessage({ type: 'cancel', url } as BroadcastMessage);\n  }\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "web/src/service-worker/index.ts",
+   "side": "right",
+   "from_line": 7,
+   "to_line": 7,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The useCache variable is hardcoded as a constant. This makes it impossible to disable caching without modifying the code. Consider making this configurable or based on environment.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "web/src/service-worker/index.ts",
+   "side": "right",
+   "from_line": 25,
+   "to_line": 25,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The comment \"// ignore POST requests etc\" in the fetch event handler is redundant and should be removed.",
+   "source": "human"
+  },
+  {
+   "path": "web/src/service-worker/index.ts",
+   "side": "right",
+   "from_line": 30,
+   "to_line": 30,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The URL path regex pattern '/^\\/api\\/assets\\/[a-f0-9-]+\\/(original|thumbnail)/' is hardcoded. According to the review checklist, business-related strings (especially URL paths) should not be hardcoded. Extract this as a named constant.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "web/src/service-worker/index.ts",
+   "side": "right",
+   "from_line": 63,
+   "to_line": 64,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Error handling issue: The catch block swallows all errors without logging them. This makes debugging difficult. Consider logging the error before returning Response.error() to help diagnose issues in production.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "web/src/service-worker/index.ts",
+   "side": "right",
+   "from_line": 72,
+   "to_line": 90,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Error handling issue: URL construction can throw an error if the urlstring is malformed. This could crash the service worker's message handler. Wrap the URL construction in a try-catch block to handle invalid URLs gracefully.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "web/src/service-worker/index.ts",
+   "side": "right",
+   "from_line": 77,
+   "to_line": 77,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "**Bug: event.origin is undefined on BroadcastChannel MessageEvent**\n\nThe BroadcastChannel MessageEvent does not have an `origin` property. Using `event.origin` here will result in `undefined`, causing the URL constructor to either fail or create an invalid URL.\n\nFor BroadcastChannel messages, you should use `self.location.origin` or construct the URL differently since messages are only received from the same origin.\n\n**Suggested fix:**\n```\nFix web/src/service-worker/index.ts:77: Replace event.origin with self.location.origin since BroadcastChannel messages are same-origin only\n```\n\nReplace both instances (lines 77 and 86):\n- `const url = new URL(urlstring, event.origin);`\n+ `const url = new URL(urlstring, self.location.origin);`",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "web/src/service-worker/index.ts",
+   "side": "right",
+   "from_line": 85,
+   "to_line": 90,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "`preload` branch calls `immichAsset(url);` without awaiting/handling rejection. If it throws before entering the `try/finally` (e.g., `caches.open` failure), it will create an unhandled rejection. Consider `void immichAsset(url).catch(() => {/* swallow/log */});` to make intent explicit and avoid noisy logs.\n\n```suggestion\n  } else if (event.data.type === 'preload') {\n    const urlstring = event.data.url;\n    const url = new URL(urlstring, event.origin);\n    void immichAsset(url).catch(() => {\n      // optional: log to console for debugging\n    });\n  }\n};\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "web/src/service-worker/index.ts",
+   "side": "right",
+   "from_line": 86,
+   "to_line": 87,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Duplicated URL parsing logic for 'cancel' and 'preload' events in broadcast channel handler; consolidate into single URL creation before conditional branches.",
+   "source": "human"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "Makefile",
+   "side": "right",
+   "from_line": 20,
+   "to_line": 21,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider adding a confirmation prompt or a more descriptive name to avoid accidental shutdowns in production environments.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "e2e/src/api/specs/oauth.e2e-spec.ts",
+   "side": "right",
+   "from_line": 145,
+   "to_line": 145,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Consider extracting and asserting the response body for consistency with other error validation tests in this file. Other similar tests validate both status and body to ensure complete error handling coverage.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "web/src/lib/utils/sw-messaging.ts",
+   "side": "right",
+   "from_line": 1,
+   "to_line": 8,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider adding JSDoc comments to explain the purpose of this module and its exported functions. What does 'cancel' vs 'preload' mean in the context of image loading?\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "web/src/service-worker/index.ts",
+   "side": "right",
+   "from_line": 44,
+   "to_line": 45,
+   "category": "Security Vulnerability",
+   "context": "Diff Level",
+   "note": "Cache keying: `cache.match(url)` and `cache.put(url, ...)` rely on implicit Request construction and may ignore request headers (e.g., Authorization/Cookie) and can behave unexpectedly across origins. If these endpoints are authenticated, caching responses in SW can leak user-specific content across sessions. Consider caching by `event.request` (or cloning it) and/or using `Cache-Control`/`Vary` aware strategy; also ensure you only cache same-origin and only when safe.",
+   "source": "GPT-5.2"
+  }
+ ]
+}

@@ -1,0 +1,155 @@
+{
+ "id": "aacr/juspay__hyperswitch__7353",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/juspay/hyperswitch/pull/7353",
+  "owner": "juspay",
+  "repo": "hyperswitch",
+  "number": 7353,
+  "base_sha": "50cbe20ee1da0392f4f590bade9f866435356b87",
+  "head_sha": "59ec03ceef191dcada50380ec20cd843b80a87b6",
+  "title": "chore: resolve v2 warnings in api_models",
+  "description": "## Type of Change\r\n<!-- Put an `x` in the boxes that apply -->\r\n\r\n- [ ] Bugfix\r\n- [ ] New feature\r\n- [ ] Enhancement\r\n- [x] Refactoring\r\n- [ ] Dependency updates\r\n- [ ] Documentation\r\n- [ ] CI/CD\r\n\r\n## Description\r\n<!-- Describe your changes in detail -->\r\nThis PR resolves the v2 warnings generated in api_models.\r\n\r\n\r\n### Additional Changes\r\n\r\n- [ ] This PR modifies the API contract\r\n- [ ] This PR modifies the database schema\r\n- [ ] This PR modifies application configuration/environment variables\r\n\r\n<!--\r\nProvide links to the files with corresponding changes.\r\n\r\nFollowing are the paths where you can find config files:\r\n1. `config`\r\n2. `crates/router/src/configs`\r\n3. `loadtest/config`\r\n-->\r\n\r\n\r\n## Motivation and Context\r\n<!--\r\nWhy is this change required? What problem does it solve?\r\nIf it fixes an open issue, please link to the issue here.\r\n\r\nIf you don't have an issue, we'd recommend starting with one first so the PR\r\ncan focus on the implementation (unless it is an obvious bug or documentation fix\r\nthat will have little conversation).\r\n-->\r\n\r\n\r\n## How did you test it?\r\n<!--\r\nDid you write an integration/unit/API test to verify the code changes?\r\nOr did you test this change manually (provide relevant screenshots)?\r\n-->\r\n\r\n\r\n## Checklist\r\n<!-- Put an `x` in the boxes that apply -->\r\n\r\n- [x] I formatted the code `cargo +nightly fmt --all`\r\n- [x] I addressed lints thrown by `cargo clippy`\r\n- [ ] I reviewed the submitted code\r\n- [ ] I added unit tests for my changes where possible\r\n",
+  "language": "Rust",
+  "category": "Code Style, Linting, Formatting Fixes",
+  "changed_lines": 94
+ },
+ "diffs": [
+  {
+   "old_path": "crates/api_models/src/admin.rs",
+   "new_path": "crates/api_models/src/admin.rs",
+   "diff": "@@ -16,6 +16,7 @@ use common_utils::{\n use masking::ExposeInterface;\n use masking::{PeekInterface, Secret};\n use serde::{Deserialize, Serialize};\n+#[cfg(feature = \"v1\")]\n use url;\n use utoipa::ToSchema;\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "crates/api_models/src/events/payment.rs",
+   "new_path": "crates/api_models/src/events/payment.rs",
+   "diff": "@@ -10,28 +10,34 @@ use super::{\n     not(feature = \"payment_methods_v2\")\n ))]\n use crate::payment_methods::CustomerPaymentMethodsListResponse;\n-#[cfg(feature = \"v1\")]\n-use crate::payments::{PaymentListFilterConstraints, PaymentListResponseV2};\n #[cfg(all(feature = \"v2\", feature = \"payment_methods_v2\"))]\n-use crate::{events, payment_methods::CustomerPaymentMethodsListResponse};\n+use crate::payment_methods::CustomerPaymentMethodsListResponse;\n+#[cfg(feature = \"v1\")]\n+use crate::{\n+    payment_methods::{self},\n+    payments::{\n+        ExtendedCardInfoResponse, PaymentIdType, PaymentListFilterConstraints,\n+        PaymentListResponseV2, PaymentsApproveRequest, PaymentsCancelRequest,\n+        PaymentsCaptureRequest, PaymentsCompleteAuthorizeRequest,\n+        PaymentsDynamicTaxCalculationRequest, PaymentsDynamicTaxCalculationResponse,\n+        PaymentsExternalAuthenticationRequest, PaymentsExternalAuthenticationResponse,\n+        PaymentsIncrementalAuthorizationRequest, PaymentsManualUpdateRequest,\n+        PaymentsManualUpdateResponse, PaymentsPostSessionTokensRequest,\n+        PaymentsPostSessionTokensResponse, PaymentsRejectRequest, PaymentsRetrieveRequest,\n+        PaymentsStartRequest,\n+    },\n+};\n use crate::{\n     payment_methods::{\n-        self, ListCountriesCurrenciesRequest, ListCountriesCurrenciesResponse,\n+        ListCountriesCurrenciesRequest, ListCountriesCurrenciesResponse,\n         PaymentMethodCollectLinkRenderRequest, PaymentMethodCollectLinkRequest,\n         PaymentMethodCollectLinkResponse, PaymentMethodDeleteResponse, PaymentMethodListRequest,\n         PaymentMethodListResponse, PaymentMethodMigrateResponse, PaymentMethodResponse,\n         PaymentMethodUpdate,\n     },\n     payments::{\n-        self, ExtendedCardInfoResponse, PaymentIdType, PaymentListConstraints, PaymentListFilters,\n-        PaymentListFiltersV2, PaymentListResponse, PaymentsAggregateResponse,\n-        PaymentsApproveRequest, PaymentsCancelRequest, PaymentsCaptureRequest,\n-        PaymentsCompleteAuthorizeRequest, PaymentsDynamicTaxCalculationRequest,\n-        PaymentsDynamicTaxCalculationResponse, PaymentsExternalAuthenticationRequest,\n-        PaymentsExternalAuthenticationResponse, PaymentsIncrementalAuthorizationRequest,\n-        PaymentsManualUpdateRequest, PaymentsManualUpdateResponse,\n-        PaymentsPostSessionTokensRequest, PaymentsPostSessionTokensResponse, PaymentsRejectRequest,\n-        PaymentsResponse, PaymentsRetrieveRequest, PaymentsSessionResponse, PaymentsStartRequest,\n+        self, PaymentListConstraints, PaymentListFilters, PaymentListFiltersV2,\n+        PaymentListResponse, PaymentsAggregateResponse, PaymentsResponse, PaymentsSessionResponse,\n         RedirectionResponse,\n     },\n };\n@@ -159,7 +165,7 @@ impl ApiEventMetric for PaymentsRequest {\n }\n \n #[cfg(feature = \"v2\")]\n-impl ApiEventMetric for payments::PaymentsResponse {\n+impl ApiEventMetric for PaymentsResponse {\n     fn get_api_event_type(&self) -> Option<ApiEventsType> {\n         Some(ApiEventsType::Payment {\n             payment_id: self.id.clone(),",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "crates/api_models/src/events/refund.rs",
+   "new_path": "crates/api_models/src/events/refund.rs",
+   "diff": "@@ -2,8 +2,11 @@ use common_utils::events::{ApiEventMetric, ApiEventsType};\n \n use crate::refunds::{\n     RefundAggregateResponse, RefundListFilters, RefundListMetaData, RefundListRequest,\n-    RefundListResponse, RefundManualUpdateRequest, RefundRequest, RefundResponse,\n-    RefundUpdateRequest, RefundsRetrieveRequest,\n+    RefundListResponse, RefundResponse,\n+};\n+#[cfg(feature = \"v1\")]\n+use crate::refunds::{\n+    RefundManualUpdateRequest, RefundRequest, RefundUpdateRequest, RefundsRetrieveRequest,\n };\n \n #[cfg(feature = \"v1\")]",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "crates/api_models/src/payment_methods.rs",
+   "new_path": "crates/api_models/src/payment_methods.rs",
+   "diff": "@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};\n use std::str::FromStr;\n \n use cards::CardNumber;\n+#[cfg(feature = \"v1\")]\n+use common_utils::crypto::OptionalEncryptableName;\n use common_utils::{\n     consts::SURCHARGE_PERCENTAGE_PRECISION_LENGTH,\n-    crypto::OptionalEncryptableName,\n     errors,\n     ext_traits::OptionExt,\n     id_type, link_utils, pii,\n@@ -2313,6 +2314,10 @@ pub enum MigrationStatus {\n     Failed,\n }\n \n+#[cfg(all(\n+    any(feature = \"v2\", feature = \"v1\"),\n+    not(feature = \"payment_methods_v2\")\n+))]\n type PaymentMethodMigrationResponseType = (\n     Result<PaymentMethodMigrateResponse, String>,\n     PaymentMethodRecord,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "crates/api_models/src/payments.rs",
+   "new_path": "crates/api_models/src/payments.rs",
+   "diff": "@@ -1,6 +1,7 @@\n+#[cfg(feature = \"v1\")]\n+use std::fmt;\n use std::{\n     collections::{HashMap, HashSet},\n-    fmt,\n     num::NonZeroI64,\n };\n pub mod additional_info;\n@@ -9,6 +10,8 @@ use cards::CardNumber;\n #[cfg(feature = \"v2\")]\n use common_enums::enums::PaymentConnectorTransmission;\n use common_enums::ProductType;\n+#[cfg(feature = \"v1\")]\n+use common_utils::types::{ExtendedAuthorizationAppliedBool, RequestExtendedAuthorizationBool};\n use common_utils::{\n     consts::default_payments_list_limit,\n     crypto,\n@@ -17,30 +20,28 @@ use common_utils::{\n     hashing::HashedString,\n     id_type,\n     pii::{self, Email},\n-    types::{\n-        ExtendedAuthorizationAppliedBool, MinorUnit, RequestExtendedAuthorizationBool,\n-        StringMajorUnit,\n-    },\n+    types::{MinorUnit, StringMajorUnit},\n };\n use error_stack::ResultExt;\n use masking::{PeekInterface, Secret, WithType};\n use router_derive::Setter;\n-use serde::{de, ser::Serializer, Deserialize, Deserializer, Serialize};\n+#[cfg(feature = \"v1\")]\n+use serde::{de, Deserializer};\n+use serde::{ser::Serializer, Deserialize, Serialize};\n use strum::Display;\n use time::{Date, PrimitiveDateTime};\n use url::Url;\n use utoipa::ToSchema;\n \n-#[cfg(feature = \"v1\")]\n-use crate::ephemeral_key::EphemeralKeyCreateResponse;\n #[cfg(feature = \"v2\")]\n use crate::payment_methods;\n use crate::{\n     admin::{self, MerchantConnectorInfo},\n-    disputes, enums as api_enums,\n+    enums as api_enums,\n     mandates::RecurringDetails,\n-    refunds, ValidateFieldAndGet,\n };\n+#[cfg(feature = \"v1\")]\n+use crate::{disputes, ephemeral_key::EphemeralKeyCreateResponse, refunds, ValidateFieldAndGet};\n \n #[derive(Clone, Copy, Debug, Eq, PartialEq)]\n pub enum PaymentOp {\n@@ -7626,6 +7627,7 @@ mod payment_id_type {\n         deserializer.deserialize_any(PaymentIdVisitor)\n     }\n \n+    #[allow(dead_code)]\n     pub(crate) fn deserialize_option<'a, D>(\n         deserializer: D,\n     ) -> Result<Option<PaymentIdType>, D::Error>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "crates/api_models/src/admin.rs",
+   "side": "right",
+   "from_line": 19,
+   "to_line": 20,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The `use url;` import is redundant and should be removed since items from the url crate can be accessed via fully qualified paths (e.g., `url::Url`).",
+   "source": "human"
+  },
+  {
+   "path": "crates/api_models/src/events/payment.rs",
+   "side": "right",
+   "from_line": 8,
+   "to_line": 14,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Duplicate import of CustomerPaymentMethodsListResponse under different #[cfg] conditions. Consider consolidating these imports since both conditions may evaluate to true simultaneously.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "crates/api_models/src/events/payment.rs",
+   "side": "right",
+   "from_line": 14,
+   "to_line": 14,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "v2 feature block: Direct import of `CustomerPaymentMethodsListResponse` should be replaced with module-level import (`use crate::payment_methods;`) and qualified path usage (`payment_methods::CustomerPaymentMethodsListResponse`).",
+   "source": "human"
+  },
+  {
+   "path": "crates/api_models/src/events/refund.rs",
+   "side": "right",
+   "from_line": 7,
+   "to_line": 10,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider documenting why these refund-related request/response types are restricted to the \"v1\" feature. Clarification helps prevent accidental misuse or misunderstanding during maintenance.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "crates/api_models/src/payment_methods.rs",
+   "side": "right",
+   "from_line": 6,
+   "to_line": 7,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "`OptionalEncryptableName` is used in this file (e.g., `pub merchant_name: OptionalEncryptableName`), but the import is now gated with `#[cfg(feature = \"v1\")]`. If that usage is not also strictly behind `cfg(feature = \"v1\")`, builds with `--features v2` will fail with an unresolved type/import.\n\nFix options:\n- Widen the import gate to `#[cfg(any(feature = \"v1\", feature = \"v2\"))]` (or remove the cfg if harmless), or\n- Ensure every usage of `OptionalEncryptableName` is behind the same `cfg(feature = \"v1\")` gate.\n\nGiven the type looks like a shared model type, widening the import is usually safest.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "crates/api_models/src/payment_methods.rs",
+   "side": "right",
+   "from_line": 2317,
+   "to_line": 2324,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Feature flag inconsistency detected: The `PaymentMethodMigrationResponseType` type alias and its `From` implementation are now conditionally compiled with `#[cfg(all(any(feature = \"v2\", feature = \"v1\"), not(feature = \"payment_methods_v2\")))]`, but the `PaymentMethodMigrationResponse` struct (line 2291) and `MigrationStatus` enum (line 2311) have no feature flags.\n\nThis creates a compilation issue because:\n1. The struct and enum are always available\n2. The `From` implementation is only available under specific feature combinations\n3. Code in `crates/router/src/core/payment_methods/migration.rs` uses `PaymentMethodMigrationResponse::from(...)` without feature guards\n\nSuggestion: Add the same feature flag guards to both `PaymentMethodMigrationResponse` struct and `MigrationStatus` enum to maintain consistency:\n```rust\n#[cfg(all(\n    any(feature = \"v2\", feature = \"v1\"),\n    not(feature = \"payment_methods_v2\")\n))]\n#[derive(Debug, Default, serde::Serialize)]\npub struct PaymentMethodMigrationResponse { ... }\n\n#[cfg(all(\n    any(feature = \"v2\", feature = \"v1\"),\n    not(feature = \"payment_methods_v2\")\n))]\n#[derive(Debug, Default, serde::Serialize)]\npub enum MigrationStatus { ... }\n```\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "crates/api_models/src/payments.rs",
+   "side": "right",
+   "from_line": 13,
+   "to_line": 14,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Feature-flag gating changed: `fmt` and `ExtendedAuthorizationAppliedBool/RequestExtendedAuthorizationBool` are now imported only under `v1`, and `serde::de/Deserializer` + `disputes/refunds/ValidateFieldAndGet` are also gated under `v1` while `Deserialize` remains unconditional. Please ensure the crate compiles under all feature combinations (no features, v1 only, v2 only, v1+v2) and that any code paths requiring these items are consistently `#[cfg(feature = \"v1\")]` as well. Otherwise you can hit missing import / unused import warnings depending on active features. Consider using `cfg_if!` or module-level `#[cfg]` blocks to keep imports aligned with usage.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "crates/api_models/src/payments.rs",
+   "side": "right",
+   "from_line": 7630,
+   "to_line": 7633,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "`#[allow(dead_code)]` was added on `deserialize_option`. If this is only needed for certain feature combinations/tests, prefer gating the function itself with `#[cfg(...)]` or using a more specific allow (e.g., `#[cfg_attr(not(test), allow(dead_code))]`) to avoid masking genuinely unused code in production builds.",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "crates/api_models/src/events/payment.rs",
+   "side": "right",
+   "from_line": 17,
+   "to_line": 17,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The import statement for `payment_methods` under the `v1` feature flag appears incomplete, missing the closing brace and semicolon after restructuring the module path. The reviewer suggests properly formatting the grouped import with `payment_methods` included in the module path.",
+   "source": "human"
+  }
+ ]
+}

@@ -1,0 +1,317 @@
+{
+ "id": "aacr/CherryHQ__cherry-studio__5540",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/CherryHQ/cherry-studio/pull/5540",
+  "owner": "CherryHQ",
+  "repo": "cherry-studio",
+  "number": 5540,
+  "base_sha": "f258f5b2cb4a4cf9012e106837aba409b383e367",
+  "head_sha": "83a25941859179b635105c9b4fd79d5542e3701e",
+  "title": "feat: 支持自定义助手地址",
+  "description": "同 #3938 ，更新了多语言的支持。\n\n## Summary by Sourcery\n\nAdd support for custom assistant repository URL configuration\n\nNew Features:\n- Enable users to specify a custom URL for fetching assistant configurations\n- Add a new settings section for configuring default assistant repository\n\nEnhancements:\n- Implement dynamic loading of assistants from local or remote sources\n- Add fallback mechanism for assistant loading\n\nChores:\n- Update application state management to include new assistant URL setting",
+  "language": "TypeScript",
+  "category": "New Feature Additions",
+  "changed_lines": 345
+ },
+ "diffs": [
+  {
+   "old_path": "src/renderer/src/i18n/locales/en-us.json",
+   "new_path": "src/renderer/src/i18n/locales/en-us.json",
+   "diff": "@@ -1387,7 +1387,8 @@\n       \"privacy\": {\n         \"title\": \"Privacy Settings\",\n         \"enable_privacy_mode\": \"Anonymous reporting of errors and statistics\"\n-      }\n+      },\n+      \"defaultaides\": \"Built-in\"\n     },\n     \"translate\": {\n       \"any.language\": \"Any language\",",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderer/src/i18n/locales/ja-jp.json",
+   "new_path": "src/renderer/src/i18n/locales/ja-jp.json",
+   "diff": "@@ -1387,7 +1387,8 @@\n       \"privacy\": {\n         \"title\": \"プライバシー設定\",\n         \"enable_privacy_mode\": \"匿名エラーレポートとデータ統計の送信\"\n-      }\n+      },\n+      \"defaultaides\": \"内蔵\"\n     },\n     \"translate\": {\n       \"any.language\": \"任意の言語\",",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderer/src/i18n/locales/ru-ru.json",
+   "new_path": "src/renderer/src/i18n/locales/ru-ru.json",
+   "diff": "@@ -1387,7 +1387,8 @@\n       \"privacy\": {\n         \"title\": \"Настройки приватности\",\n         \"enable_privacy_mode\": \"Анонимная отправка отчетов об ошибках и статистики\"\n-      }\n+      },\n+      \"defaultaides\": \"Встроенный\"\n     },\n     \"translate\": {\n       \"any.language\": \"Любой язык\",",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderer/src/i18n/locales/zh-cn.json",
+   "new_path": "src/renderer/src/i18n/locales/zh-cn.json",
+   "diff": "@@ -967,6 +967,11 @@\n             \"error\": \"连接异常，请检查网络连接\"\n           }\n         },\n+        \"default_aides\": {\n+          \"repo_url\": \"助手URL\",\n+          \"repo_url_placeholder\": \"助手URL\",\n+          \"title\": \"助手配置\"\n+        },\n         \"nutstore\": {\n           \"title\": \"坚果云配置\",\n           \"isLogin\": \"已登录\",",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderer/src/i18n/locales/zh-tw.json",
+   "new_path": "src/renderer/src/i18n/locales/zh-tw.json",
+   "diff": "@@ -1387,7 +1387,8 @@\n       \"privacy\": {\n         \"title\": \"隱私設定\",\n         \"enable_privacy_mode\": \"匿名發送錯誤報告和資料統計\"\n-      }\n+      },\n+      \"defaultaides\": \"內建\"\n     },\n     \"translate\": {\n       \"any.language\": \"任意語言\",",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderer/src/pages/agents/index.ts",
+   "new_path": "src/renderer/src/pages/agents/index.ts",
+   "diff": "@@ -2,7 +2,7 @@ import { useRuntime } from '@renderer/hooks/useRuntime'\n import { Agent } from '@renderer/types'\n import { runAsyncFunction } from '@renderer/utils'\n import { useEffect, useState } from 'react'\n-\n+import store from '@renderer/store'\n let _agents: Agent[] = []\n \n export const getAgentsFromSystemAgents = (systemAgents: any) => {\n@@ -17,8 +17,50 @@ export const getAgentsFromSystemAgents = (systemAgents: any) => {\n }\n \n export function useSystemAgents() {\n-  const [agents, setAgents] = useState<Agent[]>(_agents)\n-  const { resourcesPath } = useRuntime()\n+  const { defaultaides } = store.getState().settings\n+  if (defaultaides === null || defaultaides === undefined) {\n+    console.error('defaultaides is null or undefined');\n+    return useLocalSystemAgents();\n+  }\n+  if (!defaultaides.startsWith('http')) {\n+    return useLocalSystemAgents();\n+  } else {\n+    return useRemoteSystemAgents();\n+  }\n+}\n+\n+const useRemoteSystemAgents = () => {\n+  const [agents, setAgents] = useState<Agent[]>([]);\n+  const { defaultaides } = store.getState().settings\n+  const resourcesPath = `${defaultaides}`;\n+  if (defaultaides === null || defaultaides === undefined) {\n+    console.error('defaultaides is null or undefined');\n+    return agents;\n+  }\n+  useEffect(() => {\n+    const loadAgents = async () => {\n+      try {\n+        await new Promise(resolve => setTimeout(resolve, 500));\n+        const response = await fetch(resourcesPath);\n+        if (!response.ok) {\n+          throw new Error(`HTTP error! Status: ${response.status}`);\n+        }\n+        const agentsData = await response.json() as Agent[];\n+        setAgents(agentsData);\n+      } catch (error) {\n+        console.error(\"Failed to load agents:\", error);\n+      }\n+    };\n+\n+    loadAgents();\n+  }, [resourcesPath]);\n+\n+  return agents;\n+};\n+\n+const useLocalSystemAgents = () => {\n+  const [agents, setAgents] = useState<Agent[]>(_agents);\n+  const { resourcesPath } = useRuntime();\n \n   useEffect(() => {\n     runAsyncFunction(async () => {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+   "new_path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+   "diff": "@@ -32,6 +32,7 @@ import ObsidianSettings from './ObsidianSettings'\n import SiyuanSettings from './SiyuanSettings'\n import WebDavSettings from './WebDavSettings'\n import YuqueSettings from './YuqueSettings'\n+import DefaultaidesSettings from './DefaultaidesSettings'\n \n const DataSettings: FC = () => {\n   const { t } = useTranslation()\n@@ -62,6 +63,14 @@ const DataSettings: FC = () => {\n         p-id=\"2965\"></path>\n     </svg>\n   )\n+  const AidesIcon = () => (\n+    <svg viewBox=\"0 0 100 100\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\" p-id=\"1234\" width=\"16\" height=\"16\">\n+      <path\n+        d=\"M50 10 L61.2 37.3 L87.9 38.2 L66 57.3 L71.2 84.7 L50 66.1 L28.8 84.7 L34 57.3 L12.1 38.2 L38.8 37.3 Z\"\n+        fill=\"#FFD700\"\n+        p-id=\"1235\"></path>\n+    </svg>\n+  );\n \n   const menuItems = [\n     { key: 'divider_0', isDivider: true, text: t('settings.data.divider.basic') },\n@@ -101,6 +110,11 @@ const DataSettings: FC = () => {\n       key: 'siyuan',\n       title: 'settings.data.siyuan.title',\n       icon: <SiyuanIcon />\n+    },\n+    {\n+      key: 'default_aides',\n+      title: 'settings.data.default_aides.title',\n+      icon: <AidesIcon />\n     }\n   ]\n \n@@ -247,6 +261,7 @@ const DataSettings: FC = () => {\n         {menu === 'joplin' && <JoplinSettings />}\n         {menu === 'obsidian' && <ObsidianSettings />}\n         {menu === 'siyuan' && <SiyuanSettings />}\n+        {menu === 'default_aides' && <DefaultaidesSettings />}\n       </SettingContainer>\n     </Container>\n   )",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+   "new_path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+   "diff": "@@ -0,0 +1,46 @@\n+import { HStack } from '@renderer/components/Layout'\n+import { useTheme } from '@renderer/context/ThemeProvider'\n+import { RootState, useAppDispatch } from '@renderer/store'\n+import { setefaultAides } from '@renderer/store/settings'\n+import Input from 'antd/es/input/Input'\n+import { FC } from 'react'\n+import { useTranslation } from 'react-i18next'\n+import { useSelector } from 'react-redux'\n+import { SettingDivider, SettingGroup, SettingRow, SettingRowTitle, SettingTitle } from '..'\n+\n+const DefaultaidesSettings: FC = () => {\n+  const { t } = useTranslation()\n+  const { theme } = useTheme()\n+  const dispatch = useAppDispatch()\n+\n+  const Aides = useSelector((state: RootState) => state.settings.defaultaides)\n+\n+  const handleAidesChange = (e: React.ChangeEvent<HTMLInputElement>) => {\n+    dispatch(setefaultAides(e.target.value))\n+  }\n+\n+\n+\n+  return (\n+    <SettingGroup theme={theme}>\n+      <SettingTitle>{t('settings.data.default_aides.title')}</SettingTitle>\n+      <SettingDivider />\n+      <SettingRow>\n+        <SettingRowTitle>{t('settings.data.default_aides.repo_url')}</SettingRowTitle>\n+        <HStack alignItems=\"center\" gap=\"5px\" style={{ width: 315 }}>\n+          <Input\n+            type=\"text\"\n+            value={Aides || ''}\n+            onChange={handleAidesChange}\n+            style={{ width: 315 }}\n+            placeholder={t('settings.data.default_aides.repo_url_placeholder')}\n+          />\n+        </HStack>\n+      </SettingRow>\n+      <SettingDivider />\n+\n+    </SettingGroup>\n+  )\n+}\n+\n+export default DefaultaidesSettings",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderer/src/store/settings.ts",
+   "new_path": "src/renderer/src/store/settings.ts",
+   "diff": "@@ -103,6 +103,7 @@ export interface SettingsState {\n   joplinToken: string | null\n   joplinUrl: string | null\n   defaultObsidianVault: string | null\n+  defaultaides: string | null\n   // 思源笔记配置\n   siyuanApiUrl: string | null\n   siyuanToken: string | null\n@@ -205,6 +206,8 @@ export const initialState: SettingsState = {\n   joplinToken: '',\n   joplinUrl: '',\n   defaultObsidianVault: null,\n+  \n+  defaultaides: 'settings.defaultaides', // 默认智能体\n   siyuanApiUrl: null,\n   siyuanToken: null,\n   siyuanBoxId: null,\n@@ -453,6 +456,9 @@ const settingsSlice = createSlice({\n     setJoplinUrl: (state, action: PayloadAction<string>) => {\n       state.joplinUrl = action.payload\n     },\n+    setefaultAides: (state, action: PayloadAction<string>) => {\n+      state.defaultaides = action.payload\n+    },\n     setSiyuanApiUrl: (state, action: PayloadAction<string>) => {\n       state.siyuanApiUrl = action.payload\n     },\n@@ -567,6 +573,7 @@ export const {\n   setJoplinUrl,\n   setMessageNavigation,\n   setDefaultObsidianVault,\n+  setefaultAides,\n   setSiyuanApiUrl,\n   setSiyuanToken,\n   setSiyuanBoxId,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/renderer/src/i18n/locales/en-us.json",
+   "side": "right",
+   "from_line": 1391,
+   "to_line": 1391,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The json-key 'defaultaides' should be 'default_aides' to maintain consistency with the naming convention used for other i18n keys in this section. Based on the code search, the translation keys in the source code use 'default_aides' (e.g., 'settings.data.default_aides.title'), and the zh-cn.json locale file also uses 'default_aides'. Using 'defaultaides' here will cause translation lookup failures.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/renderer/src/i18n/locales/ja-jp.json",
+   "side": "right",
+   "from_line": 1391,
+   "to_line": 1391,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "JSON key spelling error: The key should be 'default_aides' (with underscore) instead of 'defaultaides'. Additionally, based on the component code (DefaultaidesSettings.tsx) and zh-cn.json, this should be nested under 'settings.data.default_aides' with properties like 'title', 'repo_url', and 'repo_url_placeholder', not as a simple key-value pair under 'settings.defaultaides'.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/renderer/src/i18n/locales/ru-ru.json",
+   "side": "right",
+   "from_line": 1391,
+   "to_line": 1391,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "JSON key spelling inconsistency detected: 'defaultaides' is used in most locales but 'default_aides' is used in zh-cn.json. This inconsistency could cause issues in the application. Consider standardizing the key name across all locales.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "src/renderer/src/i18n/locales/zh-cn.json",
+   "side": "right",
+   "from_line": 970,
+   "to_line": 974,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "json-key naming is inconsistent. The code and other language files use 'defaultaides' (without underscore), but here it uses 'default_aides' (with underscore). This will cause the Chinese translation to fail to match correctly. It is recommended to change it to 'defaultaides' for consistency.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/renderer/src/i18n/locales/zh-tw.json",
+   "side": "right",
+   "from_line": 1391,
+   "to_line": 1391,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Key naming inconsistency detected. The key 'defaultaides' should be 'default_aides' (with underscore) to maintain consistency with the zh-cn.json locale file, which uses 'default_aides' with a nested structure containing 'repo_url', 'repo_url_placeholder', and 'title' properties. Additionally, this translation appears to be placed at the wrong level - it should be under 'settings.data.default_aides' (as a nested object) rather than directly under 'settings.defaultaides' (as a simple string).\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/renderer/src/pages/agents/index.ts",
+   "side": "right",
+   "from_line": 8,
+   "to_line": 8,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Typing quality: `getAgentsFromSystemAgents(systemAgents: any)` uses `any`. Prefer defining the expected shape (e.g., `Record<string, unknown>` or a proper interface) to get type safety, or add a short justification comment if `any` is unavoidable.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/renderer/src/pages/agents/index.ts",
+   "side": "right",
+   "from_line": 19,
+   "to_line": 19,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The `useSystemAgents` hook uses `store.getState()` to access Redux settings state, which does not trigger re-renders on state updates. Replace with `useSelector` for reactive state access.",
+   "source": "human"
+  },
+  {
+   "path": "src/renderer/src/pages/agents/index.ts",
+   "side": "right",
+   "from_line": 20,
+   "to_line": 25,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Duplicated validation logic for `defaultaides` exists in `useSystemAgents` and `useRemoteSystemAgents`. Extract the null/undefined check and HTTP prefix validation into a shared utility function to centralize error handling and eliminate code duplication.",
+   "source": "human"
+  },
+  {
+   "path": "src/renderer/src/pages/agents/index.ts",
+   "side": "right",
+   "from_line": 40,
+   "to_line": 56,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "**Missing cleanup function** - The useEffect doesn't handle component unmounting during the async fetch operation. If the component unmounts while the fetch is in progress, calling `setAgents` will trigger a React warning about setting state on an unmounted component. Add an AbortController to cancel the fetch and use a mounted flag to prevent state updates after unmount.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+   "side": "right",
+   "from_line": 35,
+   "to_line": 35,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Component name 'DefaultaidesSettings' doesn't follow standard PascalCase naming conventions. Consider renaming to 'DefaultAidesSettings' for better readability and consistency with common naming patterns.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+   "side": "right",
+   "from_line": 66,
+   "to_line": 73,
+   "category": "Performance",
+   "context": "File Level",
+   "note": "According to the React best practices checklist, components should not be declared inside another component. The `AidesIcon` component is defined inside `DataSettings`, which causes it to be recreated on every render. Please move it outside the component or convert it to a render function like `renderAidesIcon`. Note that `JoplinIcon` and `SiyuanIcon` have the same issue - it's recommended to fix all icon components together for consistency.\n\n```suggestion\n  // Move outside the DataSettings component\n  const AidesIcon = () => (\n    <svg viewBox=\"0 0 100 100\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\" p-id=\"1234\" width=\"16\" height=\"16\">\n      <path\n        d=\"M50 10 L61.2 37.3 L87.9 38.2 L66 57.3 L71.2 84.7 L50 66.1 L28.8 84.7 L34 57.3 L12.1 38.2 L38.8 37.3 Z\"\n        fill=\"#FFD700\"\n        p-id=\"1235\"></path>\n    </svg>\n  );\n  \n  const DataSettings: FC = () => {\n    // ... rest of the component\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+   "side": "right",
+   "from_line": 114,
+   "to_line": 118,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "**Naming Inconsistency**: The key 'default_aides' uses underscore naming which is inconsistent with other menu item keys like 'siyuan', 'joplin', 'obsidian' that use simple lowercase. Consider using 'defaultaides' or 'aides' for consistency.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+   "side": "right",
+   "from_line": 4,
+   "to_line": 4,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Typo in action name: 'setefaultAides' should be 'setDefaultAides' (missing 'd' in 'default'). This appears to be a spelling error that could cause confusion and maintenance issues.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+   "side": "right",
+   "from_line": 6,
+   "to_line": 6,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "`React.ChangeEvent` is used but `React` is not imported (only `FC` is). This will cause a TS error unless `React` is in scope. Prefer importing `ChangeEvent` type from React to avoid relying on global React namespace.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+   "side": "right",
+   "from_line": 20,
+   "to_line": 24,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Extra blank lines found (lines 20-21). Remove unnecessary blank lines to follow code style conventions. Maximum one blank line is recommended between code blocks.\n\n```suggestion\n  }\n\n  return (\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/renderer/src/store/settings.ts",
+   "side": "right",
+   "from_line": 106,
+   "to_line": 106,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Typo in property name 'defaultaides'; consider renaming to 'defaultAides' for improved readability.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/renderer/src/store/settings.ts",
+   "side": "right",
+   "from_line": 210,
+   "to_line": 210,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The initial value 'settings.defaultaides' appears to be an i18n translation key rather than an actual default value. Consider using `null` or an empty string like other similar properties (e.g., `defaultObsidianVault: null`), or document why this translation key is used as the default value.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/renderer/src/store/settings.ts",
+   "side": "right",
+   "from_line": 459,
+   "to_line": 459,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Typo in reducer function name: `setefaultAides` should be corrected to `setDefaultAides` to fix spelling inconsistency and prevent usage errors in the Redux slice.",
+   "source": "human"
+  },
+  {
+   "path": "src/renderer/src/store/settings.ts",
+   "side": "right",
+   "from_line": 576,
+   "to_line": 576,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Inconsistent setter method name 'setefaultAides'; recommend correcting to 'setDefaultAides'.\n",
+   "source": "Qwen-Coder-480B"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "src/renderer/src/i18n/locales/ru-ru.json",
+   "side": "right",
+   "from_line": 1391,
+   "to_line": 1391,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Consider revisiting pluralized key name 'defaultaides'; contrastingly, analogous settings utilize singular forms such as 'defaultai' and 'defaultllm'. While linguistically valid depending on interpretation, adopting parallel structure enhances overall coherence.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/renderer/src/pages/agents/index.ts",
+   "side": "right",
+   "from_line": 53,
+   "to_line": 53,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "**Issue: Missing dependency in useEffect**\n\nThe `useEffect` dependency array only includes `[resourcesPath]`, but `resourcesPath` is derived from `defaultaides` which comes from the store. This could lead to stale closures.\n\nSince you're using `store.getState()` (which should be replaced with `useSelector` as mentioned earlier), you should include `defaultaides` in the dependency array, or better yet, refactor to pass it as a parameter to this function.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+   "side": "right",
+   "from_line": 264,
+   "to_line": 264,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "The state property name 'defaultaides' should follow camelCase convention and be 'defaultAides'.\n",
+   "source": "Deepseek-V3.2"
+  }
+ ]
+}

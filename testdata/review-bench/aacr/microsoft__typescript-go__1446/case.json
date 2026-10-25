@@ -1,0 +1,219 @@
+{
+ "id": "aacr/microsoft__typescript-go__1446",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/microsoft/typescript-go/pull/1446",
+  "owner": "microsoft",
+  "repo": "typescript-go",
+  "number": 1446,
+  "base_sha": "a9efe52c52001ea5b49d2ae8d7b0fa32ec8339f3",
+  "head_sha": "892b4a3f6b701352047ceb019fc0683ab1146bb3",
+  "title": "Adding manual tests list",
+  "description": "After tests are generated with `npm run convertfourslash`, if we need to edit them manually, then this script can be run by\r\n `npm run manualtest testname`. This creates a `manual` folder under `fourslash/tests/` and adds the name of the test to `manualTests.txt`. \r\n- All tests in `manualTests.txt` will ne skipped and not regenerated when convertfourslash is run again. \r\n- Once a `manual` folder is created, `testOutput = cp.execFileSync(go, [\"test\", \"./internal/fourslash/tests/gen\"],  [\"test\", \"./internal/fourslash/tests/manual\"],  { encoding: \"utf-8\" })` can be added to `updateFailing.mts` to run all the tests under `./manual` and update `failingtests.txt` accordingly.\r\n\r\n",
+  "language": "Go",
+  "category": "Test Suite / CI Enhancements",
+  "changed_lines": 80
+ },
+ "diffs": [
+  {
+   "old_path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "new_path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "diff": "@@ -10,9 +10,11 @@ const stradaFourslashPath = path.resolve(import.meta.dirname, \"../\", \"../\", \"../\n let inputFileSet: Set<string> | undefined;\r\n \r\n const failingTestsPath = path.join(import.meta.dirname, \"failingTests.txt\");\r\n+const manualTestsPath = path.join(import.meta.dirname, \"manualTests.txt\");\r\n const helperFilePath = path.join(import.meta.dirname, \"../\", \"tests\", \"util_test.go\");\r\n \r\n const outputDir = path.join(import.meta.dirname, \"../\", \"tests\", \"gen\");\r\n+const manualOutputDir = path.join(import.meta.dirname, \"../\", \"tests\", \"manual\");\r\n \r\n const unparsedFiles: string[] = [];\r\n \r\n@@ -21,6 +23,11 @@ function getFailingTests(): Set<string> {\n     return new Set(failingTestsList);\r\n }\r\n \r\n+function getManualTests(): Set<string> {\r\n+    const manualTestsList = fs.readFileSync(manualTestsPath, \"utf-8\").split(\"\\n\").map(line => line.trim()).filter(line => line.length > 0);\r\n+    return new Set(manualTestsList);\r\n+}\r\n+\r\n export function main() {\r\n     const args = process.argv.slice(2);\r\n     const inputFilesPath = args[0];\r\n@@ -34,15 +41,16 @@ export function main() {\n \r\n     fs.rmSync(outputDir, { recursive: true, force: true });\r\n     fs.mkdirSync(outputDir, { recursive: true });\r\n+    fs.mkdirSync(manualOutputDir, { recursive: true });\r\n \r\n     generateHelperFile();\r\n-    parseTypeScriptFiles(getFailingTests(), stradaFourslashPath);\r\n+    parseTypeScriptFiles(getFailingTests(), getManualTests(), stradaFourslashPath);\r\n     console.log(unparsedFiles.join(\"\\n\"));\r\n     const gofmt = which.sync(\"go\");\r\n     cp.execFileSync(gofmt, [\"tool\", \"mvdan.cc/gofumpt\", \"-lang=go1.24\", \"-w\", outputDir]);\r\n }\r\n \r\n-function parseTypeScriptFiles(failingTests: Set<string>, folder: string): void {\r\n+function parseTypeScriptFiles(failingTests: Set<string>, manualTests: Set<string>, folder: string): void {\r\n     const files = fs.readdirSync(folder);\r\n \r\n     files.forEach(file => {\r\n@@ -53,15 +61,22 @@ function parseTypeScriptFiles(failingTests: Set<string>, folder: string): void {\n         }\r\n \r\n         if (stat.isDirectory()) {\r\n-            parseTypeScriptFiles(failingTests, filePath);\r\n+            parseTypeScriptFiles(failingTests, manualTests, filePath);\r\n         }\r\n         else if (file.endsWith(\".ts\")) {\r\n             const content = fs.readFileSync(filePath, \"utf-8\");\r\n             const test = parseFileContent(file, content);\r\n             if (test) {\r\n+                const testName = test.name[0].toUpperCase() + test.name.substring(1);\r\n+                // Skip generation if test is in manual tests list\r\n+                if (manualTests.has(testName)) {\r\n+                    return;\r\n+                }\r\n                 const testContent = generateGoTest(failingTests, test);\r\n-                const testPath = path.join(outputDir, `${test.name}_test.go`);\r\n-                fs.writeFileSync(testPath, testContent, \"utf-8\");\r\n+                if (testContent) {\r\n+                    const testPath = path.join(outputDir, `${test.name}_test.go`);\r\n+                    fs.writeFileSync(testPath, testContent, \"utf-8\");\r\n+                }\r\n             }\r\n         }\r\n     });\r",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "internal/fourslash/_scripts/makeManual.mts",
+   "new_path": "internal/fourslash/_scripts/makeManual.mts",
+   "diff": "@@ -0,0 +1,45 @@\n+import * as fs from \"fs\";\r\n+import * as path from \"path\";\r\n+\r\n+const scriptsDir = import.meta.dirname;\r\n+const manualTestsPath = path.join(scriptsDir, \"manualTests.txt\");\r\n+const genDir = path.join(scriptsDir, \"../\", \"tests\", \"gen\");\r\n+const manualDir = path.join(scriptsDir, \"../\", \"tests\", \"manual\");\r\n+\r\n+function main() {\r\n+    const args = process.argv.slice(2);\r\n+\r\n+    if (args.length === 0) {\r\n+        process.exit(1);\r\n+    }\r\n+\r\n+    const testName = args[0];\r\n+    const testFileName = testName;\r\n+    const genTestFile = path.join(genDir, `${testFileName}`);\r\n+    if (!fs.existsSync(genTestFile)) {\r\n+        console.error(`Test file not found: ${genTestFile}`);\r\n+        console.error(\"Make sure the test exists in the gen directory first.\");\r\n+        process.exit(1);\r\n+    }\r\n+\r\n+    if (!fs.existsSync(manualDir)) {\r\n+        fs.mkdirSync(manualDir, { recursive: true });\r\n+    }\r\n+\r\n+    const manualTestFile = path.join(manualDir, path.basename(genTestFile));\r\n+    fs.renameSync(genTestFile, manualTestFile);\r\n+\r\n+    let manualTests: string[] = [];\r\n+    if (fs.existsSync(manualTestsPath)) {\r\n+        const content = fs.readFileSync(manualTestsPath, \"utf-8\");\r\n+        manualTests = content.split(\"\\n\").map(line => line.trim()).filter(line => line.length > 0);\r\n+    }\r\n+\r\n+    if (!manualTests.includes(testName)) {\r\n+        manualTests.push(testName);\r\n+        manualTests.sort();\r\n+        fs.writeFileSync(manualTestsPath, [...manualTests, \"\"].join(\"\\n\"), \"utf-8\");\r\n+    }\r\n+}\r\n+\r\n+main();\r",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "package.json",
+   "new_path": "package.json",
+   "diff": "@@ -29,7 +29,8 @@\n         \"extension:watch\": \"npm run -w _extension watch\",\n         \"node\": \"node --no-warnings --conditions @typescript/source\",\n         \"convertfourslash\": \"node --experimental-strip-types --no-warnings internal/fourslash/_scripts/convertFourslash.mts\",\n-        \"updatefailing\": \"node --experimental-strip-types --no-warnings internal/fourslash/_scripts/updateFailing.mts\"\n+        \"updatefailing\": \"node --experimental-strip-types --no-warnings internal/fourslash/_scripts/updateFailing.mts\",\n+        \"makemanual\": \"node --experimental-strip-types --no-warnings internal/fourslash/_scripts/makeManual.mts\"\n     },\n     \"workspaces\": [\n         \"./_extension\",",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 29,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The getManualTests function crashes when manualTests.txt is missing due to lack of file existence check; it should return an empty set in this scenario.",
+   "source": "human"
+  },
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 29,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Inconsistent test name processing: getFailingTests() uses substring(4) to remove prefix, but getManualTests() doesn't. This could cause manual test filtering to fail if the manual tests file uses the same format as failing tests.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 44,
+   "to_line": 44,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "manualOutputDir is created but never used. Either remove this directory creation or implement the logic to use it for manual tests.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 70,
+   "to_line": 74,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "There is a potential naming mismatch between how test names are stored in `manualTests.txt` and how they are checked. In `makeManual.mts`, the test name is stored as the full filename (e.g., 'testFile_test.go'), but here the code checks against the capitalized base name (e.g., 'TestFile'). This inconsistency means the skip logic may not work correctly. Consider ensuring consistent naming between the two scripts, or check against both formats.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 70,
+   "to_line": 70,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "This logic assumes `test.name` is not empty. If a filename results in an empty name (e.g. `.ts`), accessing index 0 will cause a runtime error. Consider adding a check for `test.name.length > 0`.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 75,
+   "to_line": 79,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The condition `if (testContent)` fails to prevent writing files containing only whitespace, as non-empty whitespace strings evaluate as truthy in JavaScript. It should instead verify meaningful content exists by checking `testContent.trim().length > 0` before writing the file.",
+   "source": "human"
+  },
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 75,
+   "to_line": 79,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "This conditional check is unnecessary. The `generateGoTest` function has a return type of `string` and always returns a non-empty template string. This check adds unnecessary complexity and might confuse future maintainers into thinking that `generateGoTest` can return falsy values. Consider removing this check and directly writing the file as in the original code.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "internal/fourslash/_scripts/makeManual.mts",
+   "side": "right",
+   "from_line": 12,
+   "to_line": 14,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The script exits silently with status 1 when no arguments are provided, failing to inform users of the required usage. Add descriptive error messages explaining the expected argument format and purpose.",
+   "source": "human"
+  },
+  {
+   "path": "internal/fourslash/_scripts/makeManual.mts",
+   "side": "right",
+   "from_line": 16,
+   "to_line": 18,
+   "category": "Security Vulnerability",
+   "context": "File Level",
+   "note": "`testName` comes directly from CLI and is used to build a path under `genDir`. If a user passes something like `../foo`, `path.join` will resolve outside `genDir`, and `renameSync` could move arbitrary files. Consider restricting input to a filename (no path separators) via `path.basename` + equality check and/or validating allowed characters.\n\n```suggestion\n    const testName = args[0];\n    const testFileName = path.basename(testName);\n    if (testFileName !== testName) {\n        console.error(\"Invalid test name: must be a file name, not a path.\");\n        process.exit(1);\n    }\n    const genTestFile = path.join(genDir, testFileName);\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "internal/fourslash/_scripts/makeManual.mts",
+   "side": "right",
+   "from_line": 18,
+   "to_line": 23,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Missing validation: The script doesn't verify that genTestFile is actually a Go test file (should end with _test.go). This could accidentally move non-test files or directories if they exist with the matching name. Consider adding a file extension check.\n\n```suggestion\n    const genTestFile = path.join(genDir, `${testFileName}_test.go`);\n    if (!fs.existsSync(genTestFile)) {\n        console.error(`Test file not found: ${genTestFile}`);\n        console.error(\"Make sure the test exists in the gen directory first.\");\n        process.exit(1);\n    }\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "internal/fourslash/_scripts/makeManual.mts",
+   "side": "right",
+   "from_line": 29,
+   "to_line": 30,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Missing error handling: The `renameSync` operation can fail (e.g., permission issues, disk full, file locked). If it fails after the existence check, the script will crash. Consider wrapping file operations in try-catch blocks to handle errors gracefully and provide meaningful error messages.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "internal/fourslash/_scripts/makeManual.mts",
+   "side": "right",
+   "from_line": 32,
+   "to_line": 36,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Consider adding error handling for the manualTests.txt file operations. If the file is corrupted or has invalid content, the split operation might fail. Also, consider using a try-catch block for file operations.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "internal/fourslash/_scripts/makeManual.mts",
+   "side": "right",
+   "from_line": 41,
+   "to_line": 41,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Appending an empty string to `manualTests` ensures a trailing newline upon join(), but consider controlling EOL explicitly instead of relying on array manipulation which can lead to inconsistent formatting especially if readers don't trim inputs uniformly.\n",
+   "source": "Qwen-Coder-480B"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 17,
+   "to_line": 17,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "`manualOutputDir` is created but never used in this script. If the intent is to emit skipped tests into `../tests/manual`, current logic only skips generation and doesn't write there. Either remove this to avoid confusion, or add logic to generate/write manual tests into `manualOutputDir`.\n\nIf manual tests will be generated, remember to run gofumpt on that directory too (currently only `outputDir` is formatted).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 75,
+   "to_line": 79,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "`if (testContent)` treats an empty string as \"no content\". If `generateGoTest` can validly return `\"\"` (unlikely but possible), this would incorrectly skip writing. Consider making the return type explicit (`string | undefined`) and checking `testContent != null` instead.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "internal/fourslash/_scripts/convertFourslash.mts",
+   "side": "right",
+   "from_line": 75,
+   "to_line": 75,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "There's a missing closing brace for the `if (testContent)` block on line 75. The code structure shows:\n- Line 74: `if (testContent) {`\n- Line 75-77: statements inside the if\n- Line 78: standalone `}`\n- Line 79: `}` (this closes the else-if from line 66)\n- Line 80: `});` (this closes the forEach from line 55)\n\nBut there's no closing brace for the `if (testContent)` block. This will cause a syntax error. The fix:\n\n```typescript\n                if (testContent) {\n                    const testPath = path.join(outputDir, `${test.name}_test.go`);\n                    fs.writeFileSync(testPath, testContent, \"utf-8\");\n                }\n            }\n        }\n    });\n}\n```",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "package.json",
+   "side": "right",
+   "from_line": 33,
+   "to_line": 33,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider using kebab-case or camelCase for script names to maintain consistency. \"makemanual\" might be clearer as \"make-manual\" or \"makeManual\" depending on the project's naming convention.\n",
+   "source": "Qwen-Coder-480B"
+  }
+ ]
+}

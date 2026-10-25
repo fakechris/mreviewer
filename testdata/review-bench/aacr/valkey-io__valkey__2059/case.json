@@ -1,0 +1,309 @@
+{
+ "id": "aacr/valkey-io__valkey__2059",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/valkey-io/valkey/pull/2059",
+  "owner": "valkey-io",
+  "repo": "valkey",
+  "number": 2059,
+  "base_sha": "b5c7743971df5476acbdbbbd3b378496e885e1e4",
+  "head_sha": "1379171021c18b009fa02c42088e82caf0e33203",
+  "title": "Support RDMA for valkey-cli and benchmark",
+  "description": "Add '--rdma' for both valkey-cli and valkey-benchmark to enable RDMA.\r\n\r\nValkey has already replaced dependency `hiredis` with `libvalkey` (#2032), and libvalkey also supports RDMA.",
+  "language": "C",
+  "category": "New Feature Additions",
+  "changed_lines": 283
+ },
+ "diffs": [
+  {
+   "old_path": "cmake/Modules/ValkeySetup.cmake",
+   "new_path": "cmake/Modules/ValkeySetup.cmake",
+   "diff": "@@ -89,6 +89,11 @@ macro (valkey_build_and_install_bin target sources ld_flags libs link_name)\n         target_link_libraries(${target} OpenSSL::SSL valkey::valkey_tls)\n     endif ()\n \n+    if (USE_RDMA)\n+        # Add required libraries needed for RDMA\n+        target_link_libraries(${target} valkey::valkey_rdma valkey::valkey)\n+    endif ()\n+\n     if (IS_FREEBSD)\n         target_link_libraries(${target} execinfo)\n     endif ()\n@@ -117,6 +122,11 @@ macro (valkey_build_and_install_module target sources ld_flags libs)\n         target_link_libraries(${target} OpenSSL::SSL valkey::valkey_tls)\n     endif ()\n \n+    if (USE_RDMA)\n+        # Add required libraries needed for RDMA\n+        target_link_libraries(${target} valkey::valkey_rdma valkey::valkey)\n+    endif ()\n+\n     if (IS_FREEBSD)\n         target_link_libraries(${target} execinfo)\n     endif ()",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "deps/CMakeLists.txt",
+   "new_path": "deps/CMakeLists.txt",
+   "diff": "@@ -16,6 +16,12 @@ if (USE_TLS) # Module or no module\n         ON\n         CACHE BOOL \"Should we test SSL connections\")\n endif ()\n+if (USE_RDMA) # Module or no module\n+    message(STATUS \"Building valkey_rdma\")\n+    set(ENABLE_RDMA\n+        ON\n+        CACHE BOOL \"Should we test RDMA connections\")\n+endif ()\n # Let libvalkey use sds and dict provided by valkey.\n set(DICT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/src)\n set(SDS_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/src)\n@@ -29,3 +35,4 @@ add_subdirectory(hdr_histogram)\n unset(BUILD_SHARED_LIBS CACHE)\n unset(DISABLE_TESTS CACHE)\n unset(ENABLE_TLS CACHE)\n+unset(ENABLE_RDMA CACHE)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "deps/Makefile",
+   "new_path": "deps/Makefile",
+   "diff": "@@ -52,6 +52,10 @@ ifneq (,$(filter $(BUILD_TLS),yes module))\n     LIBVALKEY_MAKE_FLAGS += USE_TLS=1\n endif\n \n+ifneq (,$(filter $(BUILD_RDMA),yes module))\n+    LIBVALKEY_MAKE_FLAGS += USE_RDMA=1\n+endif\n+\n libvalkey: .make-prerequisites\n \t@printf '%b %b\\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR)\n \tcd libvalkey && $(MAKE) static $(LIBVALKEY_MAKE_FLAGS)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Makefile",
+   "new_path": "src/Makefile",
+   "diff": "@@ -341,13 +341,15 @@ endif\n ifeq ($(BUILD_RDMA),yes)\n \tFINAL_CFLAGS+=-DUSE_RDMA=$(BUILD_YES) -DBUILD_RDMA_MODULE=$(BUILD_NO)\n \tFINAL_LIBS += $(RDMA_LIBS)\n+\tFINAL_LIBS += ../deps/libvalkey/lib/libvalkey_rdma.a $(RDMA_LIBS)\n endif\n \n RDMA_MODULE=\n RDMA_MODULE_NAME:=valkey-rdma$(PROG_SUFFIX).so\n RDMA_MODULE_CFLAGS:=$(FINAL_CFLAGS)\n ifeq ($(BUILD_RDMA),module)\n \tFINAL_CFLAGS+=-DUSE_RDMA=$(BUILD_MODULE)\n+\tRDMA_CLIENT_LIBS = ../deps/libvalkey/lib/libvalkey_rdma.a $(RDMA_LIBS)\n \tRDMA_MODULE=$(RDMA_MODULE_NAME)\n \tRDMA_MODULE_CFLAGS+=-DUSE_RDMA=$(BUILD_MODULE) -DBUILD_RDMA_MODULE=$(BUILD_MODULE) $(RDMA_LIBS)\n endif\n@@ -514,19 +516,19 @@ $(ENGINE_CHECK_AOF_NAME): $(SERVER_NAME)\n \n # valkey-tls.so\n $(TLS_MODULE_NAME): $(SERVER_NAME)\n-\t$(QUIET_CC)$(CC) -o $@ tls.c -shared -fPIC $(TLS_MODULE_CFLAGS) $(TLS_CLIENT_LIBS)\n+\t$(QUIET_CC)$(CC) -o $@ tls.c -shared -fPIC $(TLS_MODULE_CFLAGS) $(TLS_CLIENT_LIBS) $(RDMA_CLIENT_LIBS)\n \n # valkey-rdma.so\n $(RDMA_MODULE_NAME): $(SERVER_NAME)\n \t$(QUIET_CC)$(CC) -o $@ rdma.c -shared -fPIC $(RDMA_MODULE_CFLAGS)\n \n # valkey-cli\n $(ENGINE_CLI_NAME): $(ENGINE_CLI_OBJ)\n-\t$(SERVER_LD) -o $@ $^ ../deps/libvalkey/lib/libvalkey.a ../deps/linenoise/linenoise.o ../deps/fpconv/libfpconv.a $(FINAL_LIBS) $(TLS_CLIENT_LIBS)\n+\t$(SERVER_LD) -o $@ $^ ../deps/libvalkey/lib/libvalkey.a ../deps/linenoise/linenoise.o ../deps/fpconv/libfpconv.a $(FINAL_LIBS) $(TLS_CLIENT_LIBS) $(RDMA_CLIENT_LIBS)\n \n # valkey-benchmark\n $(ENGINE_BENCHMARK_NAME): $(ENGINE_BENCHMARK_OBJ)\n-\t$(SERVER_LD) -o $@ $^ ../deps/libvalkey/lib/libvalkey.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a $(FINAL_LIBS) $(TLS_CLIENT_LIBS)\n+\t$(SERVER_LD) -o $@ $^ ../deps/libvalkey/lib/libvalkey.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a $(FINAL_LIBS) $(TLS_CLIENT_LIBS) $(RDMA_CLIENT_LIBS)\n \n DEP = $(ENGINE_SERVER_OBJ:%.o=%.d) $(ENGINE_CLI_OBJ:%.o=%.d) $(ENGINE_BENCHMARK_OBJ:%.o=%.d)\n -include $(DEP)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/cli_common.c",
+   "new_path": "src/cli_common.c",
+   "diff": "@@ -46,6 +46,9 @@\n #include <openssl/err.h>\n #include <valkey/tls.h>\n #endif\n+#ifdef USE_RDMA\n+#include <valkey/rdma.h>\n+#endif\n \n #define UNUSED(V) ((void)V)\n \n@@ -427,9 +430,15 @@ sds cliVersion(void) {\n }\n \n /* This is a wrapper to call valkeyConnect or valkeyConnectWithTimeout. */\n-valkeyContext *valkeyConnectWrapper(const char *ip, int port, const struct timeval tv, int nonblock) {\n+valkeyContext *valkeyConnectWrapper(const char *ip, int port, const struct timeval tv, int nonblock, int rdma) {\n     valkeyOptions options = {0};\n-    VALKEY_OPTIONS_SET_TCP(&options, ip, port);\n+    if (rdma) {\n+#ifdef USE_RDMA\n+        VALKEY_OPTIONS_SET_RDMA(&options, ip, port);\n+#endif\n+    } else {\n+        VALKEY_OPTIONS_SET_TCP(&options, ip, port);\n+    }\n \n     if (tv.tv_sec || tv.tv_usec) {\n         options.connect_timeout = &tv;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/cli_common.h",
+   "new_path": "src/cli_common.h",
+   "diff": "@@ -53,7 +53,7 @@ sds escapeJsonString(sds s, const char *p, size_t len);\n \n sds cliVersion(void);\n \n-valkeyContext *valkeyConnectWrapper(const char *ip, int port, const struct timeval tv, int nonblock);\n+valkeyContext *valkeyConnectWrapper(const char *ip, int port, const struct timeval tv, int nonblock, int rdma);\n valkeyContext *valkeyConnectUnixWrapper(const char *path, const struct timeval tv, int nonblock);\n \n #endif /* __CLICOMMON_H */",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/valkey-benchmark.c",
+   "new_path": "src/valkey-benchmark.c",
+   "diff": "@@ -51,6 +51,9 @@\n #include <openssl/err.h>\n #include <valkey/tls.h>\n #endif\n+#ifdef USE_RDMA\n+#include <valkey/rdma.h>\n+#endif\n #include \"adlist.h\"\n #include \"dict.h\"\n #include \"zmalloc.h\"\n@@ -88,6 +91,7 @@ static struct config {\n     cliConnInfo conn_info;\n     const char *hostsocket;\n     int tls;\n+    int rdma;\n     struct cliSSLconfig sslconfig;\n     int numclients;\n     _Atomic int liveclients;\n@@ -194,8 +198,8 @@ static void freeBenchmarkThread(benchmarkThread *thread);\n static void freeBenchmarkThreads(void);\n static void *execBenchmarkThread(void *ptr);\n static clusterNode *createClusterNode(char *ip, int port);\n-static serverConfig *getServerConfig(const char *ip, int port, const char *hostsocket);\n-static valkeyContext *getValkeyContext(const char *ip, int port, const char *hostsocket);\n+static serverConfig *getServerConfig(const char *ip, int port, const char *hostsocket, int rdma);\n+static valkeyContext *getValkeyContext(const char *ip, int port, const char *hostsocket, int rdma);\n static void freeServerConfig(serverConfig *cfg);\n static int fetchClusterSlotsConfiguration(client c);\n static void updateClusterSlotsConfiguration(void);\n@@ -241,12 +245,12 @@ static dictType dtype = {\n     NULL               /* allow to expand */\n };\n \n-static valkeyContext *getValkeyContext(const char *ip, int port, const char *hostsocket) {\n+static valkeyContext *getValkeyContext(const char *ip, int port, const char *hostsocket, int rdma) {\n     valkeyContext *ctx = NULL;\n     valkeyReply *reply = NULL;\n     struct timeval tv = {0};\n     if (hostsocket == NULL)\n-        ctx = valkeyConnectWrapper(ip, port, tv, 0);\n+        ctx = valkeyConnectWrapper(ip, port, tv, 0, rdma);\n     else\n         ctx = valkeyConnectUnixWrapper(hostsocket, tv, 0);\n     if (ctx == NULL || ctx->err) {\n@@ -295,12 +299,12 @@ static valkeyContext *getValkeyContext(const char *ip, int port, const char *hos\n }\n \n \n-static serverConfig *getServerConfig(const char *ip, int port, const char *hostsocket) {\n+static serverConfig *getServerConfig(const char *ip, int port, const char *hostsocket, int rdma) {\n     serverConfig *cfg = zcalloc(sizeof(*cfg));\n     if (!cfg) return NULL;\n     valkeyContext *c = NULL;\n     valkeyReply *reply = NULL, *sub_reply = NULL;\n-    c = getValkeyContext(ip, port, hostsocket);\n+    c = getValkeyContext(ip, port, hostsocket, rdma);\n     if (c == NULL) {\n         freeServerConfig(cfg);\n         exit(1);\n@@ -388,7 +392,11 @@ static void resetClient(client c) {\n     aeEventLoop *el = CLIENT_GET_EVENTLOOP(c);\n     aeDeleteFileEvent(el, c->context->fd, AE_WRITABLE);\n     aeDeleteFileEvent(el, c->context->fd, AE_READABLE);\n-    aeCreateFileEvent(el, c->context->fd, AE_WRITABLE, writeHandler, c);\n+    if (config.rdma) {\n+        writeHandler(el, c->context->fd, c, 0); /* RDMA context always writable, but it can't be invoked by AE_WRITABLE */\n+    } else {\n+        aeCreateFileEvent(el, c->context->fd, AE_WRITABLE, writeHandler, c);\n+    }\n     c->written = 0;\n     c->pending = config.pipeline;\n }\n@@ -643,12 +651,14 @@ static client createClient(char *cmd, size_t len, client from, int thread_id) {\n \n     const char *ip = NULL;\n     int port = 0;\n+    int rdma = 0;\n     struct timeval tv = {0};\n     c->cluster_node = NULL;\n     if (config.hostsocket == NULL || is_cluster_client) {\n         if (!is_cluster_client) {\n             ip = config.conn_info.hostip;\n             port = config.conn_info.hostport;\n+            rdma = config.rdma;\n         } else {\n             int node_idx = 0;\n             if (config.num_threads < config.cluster_node_count)\n@@ -661,7 +671,7 @@ static client createClient(char *cmd, size_t len, client from, int thread_id) {\n             port = node->port;\n             c->cluster_node = node;\n         }\n-        c->context = valkeyConnectWrapper(ip, port, tv, 1);\n+        c->context = valkeyConnectWrapper(ip, port, tv, 1, rdma);\n     } else {\n         c->context = valkeyConnectUnixWrapper(config.hostsocket, tv, 1);\n     }\n@@ -819,9 +829,13 @@ static client createClient(char *cmd, size_t len, client from, int thread_id) {\n         benchmarkThread *thread = config.threads[thread_id];\n         el = thread->el;\n     }\n-    if (config.idlemode == 0)\n-        aeCreateFileEvent(el, c->context->fd, AE_WRITABLE, writeHandler, c);\n-    else\n+    if (config.idlemode == 0) {\n+        if (config.rdma) {\n+            writeHandler(el, c->context->fd, c, 0);\n+        } else {\n+            aeCreateFileEvent(el, c->context->fd, AE_WRITABLE, writeHandler, c);\n+        }\n+    } else\n         /* In idle mode, clients still need to register readHandler for catching errors */\n         aeCreateFileEvent(el, c->context->fd, AE_READABLE, readHandler, c);\n \n@@ -1087,7 +1101,7 @@ static int fetchClusterConfiguration(void) {\n     dict *nodes = NULL;\n     const char *errmsg = \"Failed to fetch cluster configuration\";\n     size_t i, j;\n-    ctx = getValkeyContext(config.conn_info.hostip, config.conn_info.hostport, config.hostsocket);\n+    ctx = getValkeyContext(config.conn_info.hostip, config.conn_info.hostport, config.hostsocket, 0);\n     if (ctx == NULL) {\n         exit(1);\n     }\n@@ -1200,7 +1214,7 @@ static int fetchClusterSlotsConfiguration(client c) {\n         assert(node->port);\n         /* Use first node as entry point to connect to. */\n         if (ctx == NULL) {\n-            ctx = getValkeyContext(node->ip, node->port, NULL);\n+            ctx = getValkeyContext(node->ip, node->port, NULL, 0);\n             if (!ctx) {\n                 success = 0;\n                 goto cleanup;\n@@ -1306,6 +1320,7 @@ int parseOptions(int argc, char **argv) {\n     int lastarg;\n     int exit_status = 1;\n     char *tls_usage;\n+    char *rdma_usage;\n \n     for (i = 1; i < argc; i++) {\n         lastarg = (i == (argc - 1));\n@@ -1472,6 +1487,14 @@ int parseOptions(int argc, char **argv) {\n             if (lastarg) goto invalid;\n             config.sslconfig.ciphersuites = strdup(argv[++i]);\n #endif\n+#endif\n+#ifdef USE_RDMA\n+        } else if (!strcmp(argv[i], \"--rdma\")) {\n+            if (valkeyInitiateRdma() != VALKEY_OK) {\n+                fprintf(stderr, \"Failed to initialize RDMA support from libvalkey\\n\");\n+                exit(1);\n+            }\n+            config.rdma = 1;\n #endif\n         } else {\n             /* Assume the user meant to provide an option when the arg starts\n@@ -1511,8 +1534,15 @@ int parseOptions(int argc, char **argv) {\n #endif\n         \"\";\n \n+    rdma_usage =\n+#ifdef USE_RDMA\n+        \" --rdma             Establish a RDMA connection.\\n\"\n+#endif\n+        \"\";\n+\n+\n     printf(\n-        \"%s%s%s\", /* Split to avoid strings longer than 4095 (-Woverlength-strings). */\n+        \"%s%s%s%s\", /* Split to avoid strings longer than 4095 (-Woverlength-strings). */\n         \"Usage: valkey-benchmark [OPTIONS] [COMMAND ARGS...]\\n\\n\"\n         \"Options:\\n\"\n         \" -h <hostname>      Server hostname (default 127.0.0.1)\\n\"\n@@ -1577,6 +1607,7 @@ int parseOptions(int argc, char **argv) {\n         \"                    Sets the number of keys passed to FCALL command when running\\n\"\n         \"                    the 'fcall' test. (default 1)\\n\",\n         tls_usage,\n+        rdma_usage,\n         \" --help             Output this help and exit.\\n\"\n         \" --version          Output version and exit.\\n\\n\"\n         \"Examples:\\n\\n\"\n@@ -1798,7 +1829,7 @@ int main(int argc, char **argv) {\n             printf(\"Node %d(%s): \", i, node_type);\n             if (node->name) printf(\"%s \", node->name);\n             printf(\"%s:%d\\n\", node->ip, node->port);\n-            node->redis_config = getServerConfig(node->ip, node->port, NULL);\n+            node->redis_config = getServerConfig(node->ip, node->port, NULL, 0);\n             if (node->redis_config == NULL) {\n                 fprintf(stderr, \"WARNING: Could not fetch node CONFIG %s:%d\\n\", node->ip, node->port);\n             }\n@@ -1808,7 +1839,7 @@ int main(int argc, char **argv) {\n          * by the user. */\n         if (config.num_threads == 0) config.num_threads = config.cluster_node_count;\n     } else {\n-        config.redis_config = getServerConfig(config.conn_info.hostip, config.conn_info.hostport, config.hostsocket);\n+        config.redis_config = getServerConfig(config.conn_info.hostip, config.conn_info.hostport, config.hostsocket, config.rdma);\n         if (config.redis_config == NULL) {\n             fprintf(stderr, \"WARNING: Could not fetch server CONFIG\\n\");\n         }\n@@ -2045,7 +2076,7 @@ int main(int argc, char **argv) {\n         if (test_is_selected(\"fcall\")) {\n             char *script = generateFunctionScript(1, config.num_keys_in_fcall > 0);\n \n-            valkeyContext *ctx = getValkeyContext(config.conn_info.hostip, config.conn_info.hostport, NULL);\n+            valkeyContext *ctx = getValkeyContext(config.conn_info.hostip, config.conn_info.hostport, NULL, 0);\n             if (ctx == NULL) {\n                 exit(1);\n             }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/valkey-cli.c",
+   "new_path": "src/valkey-cli.c",
+   "diff": "@@ -56,6 +56,9 @@\n #include <openssl/err.h>\n #include <valkey/tls.h>\n #endif\n+#ifdef USE_RDMA\n+#include <valkey/rdma.h>\n+#endif\n #include \"sds.h\"\n #include \"dict.h\"\n #include \"adlist.h\"\n@@ -216,6 +219,7 @@ static struct config {\n     struct timeval connect_timeout;\n     char *hostsocket;\n     int tls;\n+    int rdma;\n     cliSSLconfig sslconfig;\n     long repeat;\n     long interval;\n@@ -1638,7 +1642,7 @@ static int cliConnect(int flags) {\n \n         /* Do not use hostsocket when we got redirected in cluster mode */\n         if (config.hostsocket == NULL || (config.cluster_mode && config.cluster_reissue_command)) {\n-            context = valkeyConnectWrapper(config.conn_info.hostip, config.conn_info.hostport, config.connect_timeout, 0);\n+            context = valkeyConnectWrapper(config.conn_info.hostip, config.conn_info.hostport, config.connect_timeout, 0, config.rdma);\n         } else {\n             context = valkeyConnectUnixWrapper(config.hostsocket, config.connect_timeout, 0);\n         }\n@@ -2528,7 +2532,7 @@ static valkeyReply *reconnectingValkeyCommand(valkeyContext *c, const char *fmt,\n             fflush(stdout);\n \n             valkeyFree(c);\n-            c = valkeyConnectWrapper(config.conn_info.hostip, config.conn_info.hostport, config.connect_timeout, 0);\n+            c = valkeyConnectWrapper(config.conn_info.hostip, config.conn_info.hostport, config.connect_timeout, 0, config.rdma);\n             if (!c->err && config.tls) {\n                 const char *err = NULL;\n                 if (cliSecureConnection(c, config.sslconfig, &err) == VALKEY_ERR && err) {\n@@ -2822,6 +2826,14 @@ static int parseOptions(int argc, char **argv) {\n         } else if (!strcmp(argv[i], \"--tls-ciphersuites\") && !lastarg) {\n             config.sslconfig.ciphersuites = argv[++i];\n #endif\n+#endif\n+#ifdef USE_RDMA\n+        } else if (!strcmp(argv[i], \"--rdma\")) {\n+            if (valkeyInitiateRdma() != VALKEY_OK) {\n+                fprintf(stderr, \"Failed to initialize RDMA support from libvalkey\\n\");\n+                exit(1);\n+            }\n+            config.rdma = 1;\n #endif\n         } else if (!strcmp(argv[i], \"-v\") || !strcmp(argv[i], \"--version\")) {\n             sds version = cliVersion();\n@@ -2944,9 +2956,15 @@ static void usage(int err) {\n         \"                     See the ciphers(1ssl) manpage for more information about the syntax of this string,\\n\"\n         \"                     and specifically for TLSv1.3 ciphersuites.\\n\"\n #endif\n+#endif\n+        \"\";\n+    const char *rdma_usage =\n+#ifdef USE_RDMA\n+        \"  --rdma             Establish a RDMA connection.\\n\"\n #endif\n         \"\";\n \n+\n     fprintf(target,\n             \"valkey-cli %s\\n\"\n             \"\\n\"\n@@ -2986,6 +3004,7 @@ static void usage(int err) {\n             \"  -4                 Prefer IPv4 over IPv6 on DNS lookup.\\n\"\n             \"  -6                 Prefer IPv6 over IPv4 on DNS lookup.\\n\"\n             \"%s\"\n+            \"%s\"\n             \"  --raw              Use raw formatting for replies (default when STDOUT is\\n\"\n             \"                     not a tty).\\n\"\n             \"  --no-raw           Force formatted output even when STDOUT is not a tty.\\n\"\n@@ -2996,7 +3015,7 @@ static void usage(int err) {\n             \"  --show-pushes <yn> Whether to print RESP3 PUSH messages.  Enabled by default when\\n\"\n             \"                     STDOUT is a tty but can be overridden with --show-pushes no.\\n\"\n             \"  --stat             Print rolling stats about server: mem, clients, ...\\n\",\n-            version, tls_usage);\n+            version, tls_usage, rdma_usage);\n \n     fprintf(target,\n             \"  --latency          Enter a special mode continuously sampling latency.\\n\"\n@@ -3970,7 +3989,7 @@ static int clusterManagerExecTransaction(clusterManagerNode *node, clusterManage\n \n static int clusterManagerNodeConnect(clusterManagerNode *node) {\n     if (node->context) valkeyFree(node->context);\n-    node->context = valkeyConnectWrapper(node->ip, node->port, config.connect_timeout, 0);\n+    node->context = valkeyConnectWrapper(node->ip, node->port, config.connect_timeout, 0, config.rdma);\n     if (!node->context->err && config.tls) {\n         const char *err = NULL;\n         if (cliSecureConnection(node->context, config.sslconfig, &err) == VALKEY_ERR && err) {\n@@ -7712,7 +7731,7 @@ static int clusterManagerCommandImport(int argc, char **argv) {\n     char *reply_err = NULL;\n     valkeyReply *src_reply = NULL;\n     // Connect to the source node.\n-    valkeyContext *src_ctx = valkeyConnectWrapper(src_ip, src_port, config.connect_timeout, 0);\n+    valkeyContext *src_ctx = valkeyConnectWrapper(src_ip, src_port, config.connect_timeout, 0, config.rdma);\n     if (src_ctx->err) {\n         success = 0;\n         fprintf(stderr, \"Could not connect to Valkey at %s:%d: %s.\\n\", src_ip, src_port, src_ctx->errstr);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "cmake/Modules/ValkeySetup.cmake",
+   "side": "right",
+   "from_line": 94,
+   "to_line": 94,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The required linking order (valkey_rdma before valkey) resolves an upstream static linking dependency issue; add a comment explaining this workaround and include a TODO to remove valkey::valkey when the upstream fix is integrated.",
+   "source": "human"
+  },
+  {
+   "path": "cmake/Modules/ValkeySetup.cmake",
+   "side": "right",
+   "from_line": 127,
+   "to_line": 127,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "The macro `valkey_build_and_install_module` is unused in the codebase and should be removed, as confirmed by `git grep` showing no references beyond its definition. The added RDMA dependency logic within it is unnecessary since the macro is never invoked.",
+   "source": "human"
+  },
+  {
+   "path": "deps/CMakeLists.txt",
+   "side": "right",
+   "from_line": 23,
+   "to_line": 23,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The description string for the `ENABLE_RDMA` CMake option incorrectly states \"Should we test RDMA connections\" when it should reflect feature enablement (e.g., \"Enable RDMA support\"), as the variable controls functionality—not test execution—and the wording causes confusion with actual testing workflows.",
+   "source": "human"
+  },
+  {
+   "path": "src/Makefile",
+   "side": "right",
+   "from_line": 344,
+   "to_line": 344,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "$(RDMA_LIBS) is being added to FINAL_LIBS twice - once on the previous line and again here as part of the expanded value. This duplication could cause linking issues or warnings.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/cli_common.h",
+   "side": "right",
+   "from_line": 56,
+   "to_line": 56,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "`rdma` parameter is part of the public wrapper signature, but in the implementation it is effectively ignored when `USE_RDMA` is not enabled (the code falls back to TCP without warning). Consider either (1) validating `rdma` here and surfacing an error when RDMA is requested but not compiled in, or (2) gating the parameter behind `#ifdef USE_RDMA` to avoid a silent behavior change for callers.\n\nThis helps prevent confusing situations where `--rdma` (or caller code) sets `rdma=1` but the connection is actually TCP.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/valkey-benchmark.c",
+   "side": "right",
+   "from_line": 253,
+   "to_line": 253,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "The `rdma` parameter added to `getValkeyContext` is redundant since RDMA configuration should be sourced globally from `config.rdma` (consistent with TLS handling), not passed as a function argument. Replace the parameter usage with `config.rdma` in the `valkeyConnectWrapper` call.",
+   "source": "human"
+  },
+  {
+   "path": "src/valkey-benchmark.c",
+   "side": "right",
+   "from_line": 1539,
+   "to_line": 1539,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "RDMA cluster operation requires TCP port to equal RDMA port; document this constraint in valkey.conf.",
+   "source": "human"
+  },
+  {
+   "path": "src/valkey-cli.c",
+   "side": "right",
+   "from_line": 221,
+   "to_line": 223,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "`config.rdma` is newly added but not explicitly initialized here. If `config` isn't zero-initialized (depends on its definition/initialization elsewhere), this could lead to nondeterministic behavior (attempting RDMA when user didn't request it). Ensure it defaults to 0 (e.g., set in config init/reset path or define the static struct with explicit initializer).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/valkey-cli.c",
+   "side": "right",
+   "from_line": 2831,
+   "to_line": 2836,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "If the `--rdma` flag is provided multiple times in the command line, `valkeyInitiateRdma()` will be called multiple times. Consider checking `if (!config.rdma)` before calling it to ensure initialization happens only once, or confirm that `valkeyInitiateRdma()` handles repeated calls gracefully.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/valkey-cli.c",
+   "side": "right",
+   "from_line": 2831,
+   "to_line": 2836,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`valkeyInitiateRdma()` is called during option parsing and `exit(1)` on failure. This makes `--help`/usage behavior and unit/integration tooling more rigid, and can be surprising if parsing happens in contexts where a hard exit isn't desired. Prefer returning an error from `parseOptions` and letting caller handle exit/cleanup consistently. Also consider whether initialization should be idempotent (user passes `--rdma` multiple times) or delayed until connect.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/valkey-cli.c",
+   "side": "right",
+   "from_line": 2963,
+   "to_line": 2963,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Usage text: 'Establish a RDMA connection.' should be 'Establish an RDMA connection.' for correct English.\n\n```suggestion\n        \"  --rdma             Establish an RDMA connection.\\n\"\n```",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "src/Makefile",
+   "side": "right",
+   "from_line": 354,
+   "to_line": 354,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "RDMA_MODULE_CFLAGS currently appends $(RDMA_LIBS), which are linker flags/libraries, not compiler flags. Mixing libs into CFLAGS can break compilation on some toolchains. Keep RDMA libs in a *LIBS variable and only pass them at link time.\n\n```suggestion\n\tRDMA_MODULE_CFLAGS+=-DUSE_RDMA=$(BUILD_MODULE) -DBUILD_RDMA_MODULE=$(BUILD_MODULE)\n\t# Keep RDMA libs for linking only (e.g., in RDMA_CLIENT_LIBS / FINAL_LIBS)\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Makefile",
+   "side": "right",
+   "from_line": 519,
+   "to_line": 519,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The build rule for valkey-tls.so incorrectly links RDMA client libraries, which are irrelevant to TLS functionality and likely a configuration error.",
+   "source": "human"
+  },
+  {
+   "path": "src/Makefile",
+   "side": "right",
+   "from_line": 531,
+   "to_line": 531,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Same issue here - RDMA_CLIENT_LIBS is only defined under BUILD_RDMA=module but used unconditionally. Additionally, when BUILD_RDMA=yes, the RDMA libraries are already part of FINAL_LIBS, so including RDMA_CLIENT_LIBS again might cause library duplication.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/cli_common.c",
+   "side": "right",
+   "from_line": 438,
+   "to_line": 438,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The function silently ignores `rdma=1` requests when compiled without RDMA support (USE_RDMA undefined), risking incorrect behavior; add error handling (e.g., `assert(!rdma)`) in the `#else` branch to prevent silent failures.",
+   "source": "human"
+  },
+  {
+   "path": "src/valkey-benchmark.c",
+   "side": "right",
+   "from_line": 395,
+   "to_line": 399,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Event-loop integration risk: for RDMA you directly call `writeHandler(...)` instead of registering `AE_WRITABLE`. This can cause re-entrancy (calling handler while resetting state), potential busy-looping, and bypasses the event loop’s scheduling/backpressure. Prefer adding an explicit RDMA-specific event or a timer/once flag to defer calling `writeHandler` via the event loop (e.g., `aeCreateTimeEvent` or `aePostFunction`) rather than immediate invocation.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/valkey-benchmark.c",
+   "side": "right",
+   "from_line": 1104,
+   "to_line": 1104,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The RDMA parameter is hardcoded to 0, which means cluster configuration fetching won't use RDMA even when --rdma flag is specified. For consistency with the main connection (line 1839), this should pass config.rdma instead of 0.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/valkey-benchmark.c",
+   "side": "right",
+   "from_line": 1105,
+   "to_line": 1105,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Null/err handling: `getValkeyContext()` checks `(ctx == NULL || ctx->err)` and then unconditionally uses `ctx->errstr`. If `ctx == NULL`, dereferencing `ctx->errstr` is undefined. Split the cases so NULL context prints a generic message.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/valkey-benchmark.c",
+   "side": "right",
+   "from_line": 1217,
+   "to_line": 1217,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Similar to the issue in fetchClusterConfiguration(), the RDMA parameter is hardcoded to 0 here. For consistency with the RDMA feature implementation, this should use config.rdma instead of 0.\n\n```suggestion\n            ctx = getValkeyContext(node->ip, node->port, NULL, config.rdma);\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/valkey-benchmark.c",
+   "side": "right",
+   "from_line": 1492,
+   "to_line": 1498,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Option parsing robustness: `valkeyInitiateRdma()` is called immediately on seeing `--rdma`, and `exit(1)` on failure. That’s fine for a CLI tool, but consider also rejecting incompatible combinations (e.g., `--rdma` with `-s <unixsocket>` or TLS options) early with a clear message, since RDMA likely only applies to TCP connections. Otherwise later code paths may silently ignore RDMA (unix socket) or behave unexpectedly.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/valkey-benchmark.c",
+   "side": "right",
+   "from_line": 1832,
+   "to_line": 1832,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "When fetching cluster node configurations, the RDMA parameter is hardcoded to 0. For consistency with the RDMA feature, this should pass config.rdma instead of 0.\n\n```suggestion\n            node->redis_config = getServerConfig(node->ip, node->port, NULL, config.rdma);\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/valkey-benchmark.c",
+   "side": "right",
+   "from_line": 2079,
+   "to_line": 2079,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "When loading the function script, the RDMA parameter is hardcoded to 0. For consistency with the RDMA feature, this should pass config.rdma instead of 0.\n\n```suggestion\n            valkeyContext *ctx = getValkeyContext(config.conn_info.hostip, config.conn_info.hostport, NULL, config.rdma);\n```",
+   "source": "GLM-4.7"
+  }
+ ]
+}

@@ -1,0 +1,155 @@
+{
+ "id": "aacr/mpv-player__mpv__15828",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/mpv-player/mpv/pull/15828",
+  "owner": "mpv-player",
+  "repo": "mpv",
+  "number": 15828,
+  "base_sha": "5809d4d1bc54c3a3a32b38c7cf8a6ed90e91f7db",
+  "head_sha": "0729afe8d7067f0e4d69000309ec6f3e24ac3926",
+  "title": "player: coalesce option updates and drop redundant ones",
+  "description": "Could use some more testing for sure, but it seems like the dumb way of just processing these in the playloop does the trick.\r\n\r\nStuff like `input-commands` or `hwdec` are good to test since it's obvious if those do repeated executions. e.g. consider these config files.\r\n```\r\nhwdec=auto\r\nhwdec=auto-safe\r\nhwdec=auto\r\nhwdec=auto-safe\r\nhwdec=auto\r\nhwdec=auto-safe\r\nhwdec=auto\r\nhwdec=auto-safe\r\n```\r\n\r\n```\r\ninput-commands=loadfile ${options}${playlist/0}${playlist/0}${playlist/0}\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\ninput-commands-pre=a\r\n```\r\n\r\nLoad them at runtime with `load-config-file`. On master, the first one spams the terminal with garbage because of constant probing. The second one freezes the player and probably will OOM. With this PR, only the last hwdec is processed on the first config file and the second one just quits the player since you're giving loadfile garbage.\r\n\r\nBonus:\r\n```\r\ninput-commands=show-text b\r\ninput-commands-append=show-text a\r\ninput-commands-append=show-text a\r\ninput-commands-append=show-text a\r\n```\r\n\r\nResults in this on master:\r\n```\r\n[   4.947][v][cplayer] Setting option 'input-commands' = 'show-text b' (flags = 4)\r\n[   4.947][v][cplayer] Setting option 'input-commands-append' = 'show-text a' (flags = 4)\r\n[   4.966][v][cplayer] Setting option 'input-commands-append' = 'show-text a' (flags = 4)\r\n[   4.967][v][cplayer] Setting option 'input-commands-append' = 'show-text a' (flags = 4)\r\n[   4.968][t][cplayer] Run command: show-text, flags=73, args=[text=\"b\", duration=\"-1\", level=\"0\"]\r\n[   4.968][t][cplayer] Run command: show-text, flags=73, args=[text=\"b\", duration=\"-1\", level=\"0\"]\r\n[   4.969][t][cplayer] Run command: show-text, flags=73, args=[text=\"a\", duration=\"-1\", level=\"0\"]\r\n[   4.969][t][cplay",
+  "language": "C",
+  "category": "Performance Optimizations",
+  "changed_lines": 56
+ },
+ "diffs": [
+  {
+   "old_path": "player/command.c",
+   "new_path": "player/command.c",
+   "diff": "@@ -7693,8 +7693,7 @@ void mp_option_change_callback(void *ctx, struct m_config_option *co, int flags,\n {\n     struct MPContext *mpctx = ctx;\n     struct MPOpts *opts = mpctx->opts;\n-    bool init = !co;\n-    void *opt_ptr = init ? NULL : co->data; // NULL on start\n+    void *opt_ptr = !co ? NULL : co->data; // NULL on start\n \n     if (co)\n         mp_notify_property(mpctx, co->name);\n@@ -7704,216 +7703,247 @@ void mp_option_change_callback(void *ctx, struct m_config_option *co, int flags,\n     if (self_update)\n         return;\n \n-    if (flags & UPDATE_TERM)\n-        mp_update_logging(mpctx, false);\n-\n-    if (flags & (UPDATE_OSD | UPDATE_SUB_FILT | UPDATE_SUB_HARD)) {\n-        for (int n = 0; n < num_ptracks[STREAM_SUB]; n++) {\n-            struct track *track = mpctx->current_track[n][STREAM_SUB];\n-            struct dec_sub *sub = track ? track->d_sub : NULL;\n-            if (sub) {\n-                int ret = sub_control(sub, SD_CTRL_UPDATE_OPTS,\n-                                      (void *)(uintptr_t)flags);\n-                if (ret == CONTROL_OK && flags & (UPDATE_SUB_FILT | UPDATE_SUB_HARD)) {\n-                    sub_redecode_cached_packets(sub);\n-                    sub_reset(sub);\n-                    if (track->selected)\n-                        reselect_demux_stream(mpctx, track, true);\n+    // Coalesce redundant updates and only keep the newest one.\n+    bool drop = false;\n+    for (int i = 0; i < mpctx->num_option_callbacks; i++) {\n+        if (flags && flags == mpctx->option_callbacks[i].flags)\n+            drop = true;\n+        if (mpctx->option_callbacks[i].co && opt_ptr == mpctx->option_callbacks[i].co->data)\n+            drop = true;\n+        if (drop && i < mpctx->num_option_callbacks - 1)\n+            mpctx->option_callbacks[i] = mpctx->option_callbacks[i + 1];\n+        if (drop && i == mpctx->num_option_callbacks - 1) {\n+            mpctx->option_callbacks[i].co = co;\n+            mpctx->option_callbacks[i].flags = flags;\n+        }\n+    }\n+\n+    if (!drop) {\n+        struct mp_option_callback callback = { .co = co, .flags = flags};\n+        MP_TARRAY_APPEND(mpctx, mpctx->option_callbacks, mpctx->num_option_callbacks, callback);\n+    }\n+}\n+\n+void mp_option_run_callbacks(struct MPContext *mpctx)\n+{\n+    for (int i = 0; i < mpctx->num_option_callbacks; i++) {\n+        struct MPOpts *opts = mpctx->opts;\n+        struct m_config_option *co = mpctx->option_callbacks[i].co;\n+        void *opt_ptr = co ? co->data : NULL;\n+        int flags = mpctx->option_callbacks[i].flags;\n+\n+        if (flags & UPDATE_TERM)\n+            mp_update_logging(mpctx, false);\n+\n+        if (flags & (UPDATE_OSD | UPDATE_SUB_FILT | UPDATE_SUB_HARD)) {\n+            for (int n = 0; n < num_ptracks[STREAM_SUB]; n++) {\n+                struct track *track = mpctx->current_track[n][STREAM_SUB];\n+                struct dec_sub *sub = track ? track->d_sub : NULL;\n+                if (sub) {\n+                    int ret = sub_control(sub, SD_CTRL_UPDATE_OPTS,\n+                                          (void *)(uintptr_t)flags);\n+                    if (ret == CONTROL_OK && flags & (UPDATE_SUB_FILT | UPDATE_SUB_HARD)) {\n+                        sub_redecode_cached_packets(sub);\n+                        sub_reset(sub);\n+                        if (track->selected)\n+                            reselect_demux_stream(mpctx, track, true);\n+                    }\n                 }\n             }\n+            // For subs on a still image.\n+            redraw_subs(mpctx);\n+            osd_changed(mpctx->osd);\n         }\n-        // For subs on a still image.\n-        redraw_subs(mpctx);\n-        osd_changed(mpctx->osd);\n-    }\n \n-    if (flags & UPDATE_BUILTIN_SCRIPTS)\n-        mp_load_builtin_scripts(mpctx);\n+        if (flags & UPDATE_BUILTIN_SCRIPTS)\n+            mp_load_builtin_scripts(mpctx);\n \n-    if (flags & UPDATE_IMGPAR) {\n-        struct track *track = mpctx->current_track[0][STREAM_VIDEO];\n-        if (track && track->dec) {\n-            mp_decoder_wrapper_reset_params(track->dec);\n-            mp_force_video_refresh(mpctx);\n+        if (flags & UPDATE_IMGPAR) {\n+            struct track *track = mpctx->current_track[0][STREAM_VIDEO];\n+            if (track && track->dec) {\n+                mp_decoder_wrapper_reset_params(track->dec);\n+                mp_force_video_refresh(mpctx);\n+            }\n         }\n-    }\n \n-    if (flags & UPDATE_INPUT)\n-        mp_input_update_opts(mpctx->input);\n+        if (flags & UPDATE_INPUT)\n+            mp_input_update_opts(mpctx->input);\n \n-    if (flags & UPDATE_CLIPBOARD)\n-        reinit_clipboard(mpctx);\n+        if (flags & UPDATE_CLIPBOARD)\n+            reinit_clipboard(mpctx);\n \n-    if (flags & UPDATE_SUB_EXTS)\n-        mp_update_subtitle_exts(mpctx->opts);\n+        if (flags & UPDATE_SUB_EXTS)\n+            mp_update_subtitle_exts(mpctx->opts);\n \n-    if (init || opt_ptr == &opts->ipc_path || opt_ptr == &opts->ipc_client) {\n-        mp_uninit_ipc(mpctx->ipc_ctx);\n-        mpctx->ipc_ctx = mp_init_ipc(mpctx->clients, mpctx->global);\n-    }\n+        if (opt_ptr == &opts->ipc_path || opt_ptr == &opts->ipc_client) {\n+            mp_uninit_ipc(mpctx->ipc_ctx);\n+            mpctx->ipc_ctx = mp_init_ipc(mpctx->clients, mpctx->global);\n+        }\n \n-    if (flags & UPDATE_VO && mpctx->video_out) {\n-        struct track *track = mpctx->current_track[0][STREAM_VIDEO];\n-        uninit_video_out(mpctx);\n-        handle_force_window(mpctx, true);\n-        reinit_video_chain(mpctx);\n-        if (track)\n-            queue_seek(mpctx, MPSEEK_RELATIVE, 0.0, MPSEEK_EXACT, 0);\n+        if (flags & UPDATE_VO && mpctx->video_out) {\n+            struct track *track = mpctx->current_track[0][STREAM_VIDEO];\n+            uninit_video_out(mpctx);\n+            handle_force_window(mpctx, true);\n+            reinit_video_chain(mpctx);\n+            if (track)\n+                queue_seek(mpctx, MPSEEK_RELATIVE, 0.0, MPSEEK_EXACT, 0);\n \n-        mp_wakeup_core(mpctx);\n-    }\n+            mp_wakeup_core(mpctx);\n+        }\n \n-    if (flags & UPDATE_AUDIO)\n-        reload_audio_output(mpctx);\n+        if (flags & UPDATE_AUDIO)\n+            reload_audio_output(mpctx);\n \n-    if (flags & UPDATE_PRIORITY)\n-        update_priority(mpctx);\n+        if (flags & UPDATE_PRIORITY)\n+            update_priority(mpctx);\n \n-    if (flags & UPDATE_SCREENSAVER)\n-        update_screensaver_state(mpctx);\n+        if (flags & UPDATE_SCREENSAVER)\n+            update_screensaver_state(mpctx);\n \n-    if (flags & UPDATE_VOL)\n-        audio_update_volume(mpctx);\n+        if (flags & UPDATE_VOL)\n+            audio_update_volume(mpctx);\n \n-    if (flags & UPDATE_LAVFI_COMPLEX)\n-        update_lavfi_complex(mpctx);\n+        if (flags & UPDATE_LAVFI_COMPLEX)\n+            update_lavfi_complex(mpctx);\n \n-    if (flags & UPDATE_VIDEO) {\n-        if (mpctx->video_out) {\n-            vo_control(mpctx->video_out, VOCTRL_UPDATE_RENDER_OPTS, NULL);\n-            mp_wakeup_core(mpctx);\n+        if (flags & UPDATE_VIDEO) {\n+            if (mpctx->video_out) {\n+                vo_control(mpctx->video_out, VOCTRL_UPDATE_RENDER_OPTS, NULL);\n+                mp_wakeup_core(mpctx);\n+            }\n         }\n-    }\n \n-    if (flags & UPDATE_HWDEC) {\n-        struct track *track = mpctx->current_track[0][STREAM_VIDEO];\n-        struct mp_decoder_wrapper *dec = track ? track->dec : NULL;\n-        if (dec) {\n-            mp_decoder_wrapper_control(dec, VDCTRL_REINIT, NULL);\n-            double last_pts = mpctx->video_pts;\n-            if (last_pts != MP_NOPTS_VALUE)\n-                queue_seek(mpctx, MPSEEK_ABSOLUTE, last_pts, MPSEEK_EXACT, 0);\n+        if (flags & UPDATE_HWDEC) {\n+            struct track *track = mpctx->current_track[0][STREAM_VIDEO];\n+            struct mp_decoder_wrapper *dec = track ? track->dec : NULL;\n+            if (dec) {\n+                mp_decoder_wrapper_control(dec, VDCTRL_REINIT, NULL);\n+                double last_pts = mpctx->video_pts;\n+                if (last_pts != MP_NOPTS_VALUE)\n+                    queue_seek(mpctx, MPSEEK_ABSOLUTE, last_pts, MPSEEK_EXACT, 0);\n+            }\n         }\n-    }\n \n-    if (flags & UPDATE_DVB_PROG) {\n-        if (!mpctx->stop_play)\n-            mpctx->stop_play = PT_CURRENT_ENTRY;\n-    }\n+        if (flags & UPDATE_DVB_PROG) {\n+            if (!mpctx->stop_play)\n+                mpctx->stop_play = PT_CURRENT_ENTRY;\n+        }\n \n-    if (flags & UPDATE_DEMUXER)\n-        mpctx->demuxer_changed = true;\n+        if (flags & UPDATE_DEMUXER)\n+            mpctx->demuxer_changed = true;\n \n-    if (flags & UPDATE_AD && mpctx->ao_chain) {\n-        uninit_audio_chain(mpctx);\n-        reinit_audio_chain(mpctx);\n-    }\n+        if (flags & UPDATE_AD && mpctx->ao_chain) {\n+            uninit_audio_chain(mpctx);\n+            reinit_audio_chain(mpctx);\n+        }\n \n-    if (flags & UPDATE_VD && mpctx->vo_chain) {\n-        struct track *track = mpctx->current_track[0][STREAM_VIDEO];\n-        uninit_video_chain(mpctx);\n-        reinit_video_chain(mpctx);\n-        if (track)\n-            queue_seek(mpctx, MPSEEK_RELATIVE, 0.0, MPSEEK_EXACT, 0);\n-    }\n+        if (flags & UPDATE_VD && mpctx->vo_chain) {\n+            struct track *track = mpctx->current_track[0][STREAM_VIDEO];\n+            uninit_video_chain(mpctx);\n+            reinit_video_chain(mpctx);\n+            if (track)\n+                queue_seek(mpctx, MPSEEK_RELATIVE, 0.0, MPSEEK_EXACT, 0);\n+        }\n \n-    if (opt_ptr == &opts->vo->android_surface_size) {\n-        if (mpctx->video_out)\n-            vo_control(mpctx->video_out, VOCTRL_EXTERNAL_RESIZE, NULL);\n-    }\n+        if (opt_ptr == &opts->vo->android_surface_size) {\n+            if (mpctx->video_out)\n+                vo_control(mpctx->video_out, VOCTRL_EXTERNAL_RESIZE, NULL);\n+        }\n \n-    if (opt_ptr == &opts->input_commands) {\n-        mpctx->command_ctx->command_opts_processed = false;\n-        run_command_opts(mpctx);\n-    }\n+        if (opt_ptr == &opts->input_commands) {\n+            mpctx->command_ctx->command_opts_processed = false;\n+            run_command_opts(mpctx);\n+        }\n \n-    if (opt_ptr == &opts->playback_speed || opt_ptr == &opts->playback_pitch) {\n-        update_playback_speed(mpctx);\n-        mp_wakeup_core(mpctx);\n-    }\n+        if (opt_ptr == &opts->playback_speed || opt_ptr == &opts->playback_pitch) {\n+            update_playback_speed(mpctx);\n+            mp_wakeup_core(mpctx);\n+        }\n \n-    if (opt_ptr == &opts->play_dir) {\n-        if (mpctx->play_dir != opts->play_dir) {\n-            // The option must be set before we seek if we're at EOF.\n-            if (mpctx->stop_play == AT_END_OF_FILE)\n-                mpctx->play_dir = opts->play_dir;\n-            queue_seek(mpctx, MPSEEK_ABSOLUTE, get_current_time(mpctx),\n-                       MPSEEK_EXACT, 0);\n+        if (opt_ptr == &opts->play_dir) {\n+            if (mpctx->play_dir != opts->play_dir) {\n+                // The option must be set before we seek if we're at EOF.\n+                if (mpctx->stop_play == AT_END_OF_FILE)\n+                    mpctx->play_dir = opts->play_dir;\n+                queue_seek(mpctx, MPSEEK_ABSOLUTE, get_current_time(mpctx),\n+                           MPSEEK_EXACT, 0);\n+            }\n         }\n-    }\n \n-    if (opt_ptr == &opts->edition_id) {\n-        struct demuxer *demuxer = mpctx->demuxer;\n-        if (mpctx->playback_initialized && demuxer && demuxer->num_editions > 0) {\n-            if (opts->edition_id != demuxer->edition) {\n-                if (!mpctx->stop_play)\n-                    mpctx->stop_play = PT_CURRENT_ENTRY;\n-                mp_wakeup_core(mpctx);\n+        if (opt_ptr == &opts->edition_id) {\n+            struct demuxer *demuxer = mpctx->demuxer;\n+            if (mpctx->playback_initialized && demuxer && demuxer->num_editions > 0) {\n+                if (opts->edition_id != demuxer->edition) {\n+                    if (!mpctx->stop_play)\n+                        mpctx->stop_play = PT_CURRENT_ENTRY;\n+                    mp_wakeup_core(mpctx);\n+                }\n             }\n         }\n-    }\n \n-    if (opt_ptr == &opts->pause)\n-        set_pause_state(mpctx, opts->pause);\n+        if (opt_ptr == &opts->pause)\n+            set_pause_state(mpctx, opts->pause);\n \n-    if (opt_ptr == &opts->audio_delay) {\n-        if (mpctx->ao_chain) {\n-            mpctx->delay += mpctx->opts->audio_delay - mpctx->ao_chain->delay;\n-            mpctx->ao_chain->delay = mpctx->opts->audio_delay;\n+        if (opt_ptr == &opts->audio_delay) {\n+            if (mpctx->ao_chain) {\n+                mpctx->delay += mpctx->opts->audio_delay - mpctx->ao_chain->delay;\n+                mpctx->ao_chain->delay = mpctx->opts->audio_delay;\n+            }\n+            mp_wakeup_core(mpctx);\n         }\n-        mp_wakeup_core(mpctx);\n-    }\n \n-    if (opt_ptr == &opts->vo->window_scale)\n-        update_window_scale(mpctx);\n+        if (opt_ptr == &opts->vo->window_scale)\n+            update_window_scale(mpctx);\n \n-    if (opt_ptr == &opts->vo->hidpi_window_scale)\n-        update_hidpi_window_scale(mpctx, opts->vo->hidpi_window_scale);\n+        if (opt_ptr == &opts->vo->hidpi_window_scale)\n+            update_hidpi_window_scale(mpctx, opts->vo->hidpi_window_scale);\n \n-    if (opt_ptr == &opts->cursor_autohide_delay)\n-        mpctx->mouse_timer = 0;\n+        if (opt_ptr == &opts->cursor_autohide_delay)\n+            mpctx->mouse_timer = 0;\n \n-    if (opt_ptr == &opts->loop_file) {\n-        mpctx->remaining_file_loops = opts->loop_file;\n-        mp_notify_property(mpctx, \"remaining-file-loops\");\n-    }\n+        if (opt_ptr == &opts->loop_file) {\n+            mpctx->remaining_file_loops = opts->loop_file;\n+            mp_notify_property(mpctx, \"remaining-file-loops\");\n+        }\n \n-    if (opt_ptr == &opts->ab_loop[0] || opt_ptr == &opts->ab_loop[1] ||\n-        opt_ptr == &opts->ab_loop_count) {\n-        mpctx->remaining_ab_loops = opts->ab_loop_count;\n-        mp_notify_property(mpctx, \"remaining-ab-loops\");\n-    }\n+        if (opt_ptr == &opts->ab_loop[0] || opt_ptr == &opts->ab_loop[1] ||\n+            opt_ptr == &opts->ab_loop_count) {\n+            mpctx->remaining_ab_loops = opts->ab_loop_count;\n+            mp_notify_property(mpctx, \"remaining-ab-loops\");\n+        }\n \n-    if (opt_ptr == &opts->ab_loop[0] || opt_ptr == &opts->ab_loop[1]) {\n-        update_ab_loop_clip(mpctx);\n-        // Update if visible\n-        set_osd_bar_chapters(mpctx, OSD_BAR_SEEK);\n-        mp_wakeup_core(mpctx);\n-    }\n+        if (opt_ptr == &opts->ab_loop[0] || opt_ptr == &opts->ab_loop[1]) {\n+            update_ab_loop_clip(mpctx);\n+            // Update if visible\n+            set_osd_bar_chapters(mpctx, OSD_BAR_SEEK);\n+            mp_wakeup_core(mpctx);\n+        }\n \n-    if (opt_ptr == &opts->vf_settings)\n-        set_filters(mpctx, STREAM_VIDEO, opts->vf_settings);\n+        if (opt_ptr == &opts->vf_settings)\n+            set_filters(mpctx, STREAM_VIDEO, opts->vf_settings);\n \n-    if (opt_ptr == &opts->af_settings)\n-        set_filters(mpctx, STREAM_AUDIO, opts->af_settings);\n+        if (opt_ptr == &opts->af_settings)\n+            set_filters(mpctx, STREAM_AUDIO, opts->af_settings);\n \n-    for (int type = 0; type < STREAM_TYPE_COUNT; type++) {\n-        for (int order = 0; order < num_ptracks[type]; order++) {\n-            if (opt_ptr == &opts->stream_id[order][type])\n-                update_track_switch(mpctx, order, type);\n+        for (int type = 0; type < STREAM_TYPE_COUNT; type++) {\n+            for (int order = 0; order < num_ptracks[type]; order++) {\n+                if (opt_ptr == &opts->stream_id[order][type])\n+                    update_track_switch(mpctx, order, type);\n+            }\n         }\n-    }\n \n-    if (opt_ptr == &opts->vo->fullscreen && !opts->vo->fullscreen)\n-        mpctx->mouse_event_ts--; // Show mouse cursor\n+        if (opt_ptr == &opts->vo->fullscreen && !opts->vo->fullscreen)\n+            mpctx->mouse_event_ts--; // Show mouse cursor\n \n-    if (opt_ptr == &opts->vo->taskbar_progress)\n-        update_vo_playback_state(mpctx);\n+        if (opt_ptr == &opts->vo->taskbar_progress)\n+            update_vo_playback_state(mpctx);\n \n-    if (opt_ptr == &opts->image_display_duration && mpctx->vo_chain\n-        && mpctx->vo_chain->is_sparse && !mpctx->ao_chain\n-        && mpctx->video_status == STATUS_DRAINING)\n-        mpctx->time_frame = opts->image_display_duration;\n+        if (opt_ptr == &opts->image_display_duration && mpctx->vo_chain\n+            && mpctx->vo_chain->is_sparse && !mpctx->ao_chain\n+            && mpctx->video_status == STATUS_DRAINING)\n+            mpctx->time_frame = opts->image_display_duration;\n+    }\n+    mpctx->num_option_callbacks = 0;\n }\n \n void mp_notify_property(struct MPContext *mpctx, const char *property)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "player/command.h",
+   "new_path": "player/command.h",
+   "diff": "@@ -66,6 +66,11 @@ struct mp_cmd_ctx {\n     void *on_completion_priv; // for free use by on_completion callback\n };\n \n+struct mp_option_callback {\n+    struct m_config_option *co;\n+    int flags;\n+};\n+\n void run_command(struct MPContext *mpctx, struct mp_cmd *cmd,\n                  struct mp_abort_entry *abort,\n                  void (*on_completion)(struct mp_cmd_ctx *cmd),\n@@ -82,6 +87,7 @@ int mp_property_do(const char* name, int action, void* val,\n \n void mp_option_change_callback(void *ctx, struct m_config_option *co, int flags,\n                                bool self_update);\n+void mp_option_run_callbacks(struct MPContext *mpctx);\n \n void mp_notify(struct MPContext *mpctx, int event, void *arg);\n void mp_notify_property(struct MPContext *mpctx, const char *property);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "player/core.h",
+   "new_path": "player/core.h",
+   "diff": "@@ -441,6 +441,9 @@ typedef struct MPContext {\n     struct command_ctx *command_ctx;\n     struct encode_lavc_context *encode_lavc_ctx;\n \n+    struct mp_option_callback *option_callbacks;\n+    int num_option_callbacks;\n+\n     struct mp_ipc_ctx *ipc_ctx;\n \n     int64_t builtin_script_ids[6];",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "player/main.c",
+   "new_path": "player/main.c",
+   "diff": "@@ -412,6 +412,8 @@ int mp_initialize(struct MPContext *mpctx, char **options)\n         mp_smtc_init(mp_new_client(mpctx->clients, \"SystemMediaTransportControls\"));\n #endif\n \n+    mpctx->ipc_ctx = mp_init_ipc(mpctx->clients, mpctx->global);\n+\n     if (opts->encode_opts->file && opts->encode_opts->file[0]) {\n         mpctx->encode_lavc_ctx = encode_lavc_init(mpctx->global);\n         if(!mpctx->encode_lavc_ctx) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "player/playloop.c",
+   "new_path": "player/playloop.c",
+   "diff": "@@ -1289,6 +1289,8 @@ void run_playloop(struct MPContext *mpctx)\n \n     mp_process_input(mpctx);\n \n+    mp_option_run_callbacks(mpctx);\n+\n     handle_chapter_change(mpctx);\n \n     handle_force_window(mpctx, false);\n@@ -1300,6 +1302,7 @@ void mp_idle(struct MPContext *mpctx)\n     handle_clipboard_updates(mpctx);\n     mp_wait_events(mpctx);\n     mp_process_input(mpctx);\n+    mp_option_run_callbacks(mpctx);\n     handle_command_updates(mpctx);\n     handle_update_cache(mpctx);\n     handle_cursor_autohide(mpctx);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "player/command.c",
+   "side": "right",
+   "from_line": 7706,
+   "to_line": 7719,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Critical bug: The array coalescing loop has incorrect logic when performing in-place shifts. When `drop` is true and `i < num - 1`, the element at `i+1` is moved to `i`, but then the loop increments `i`, causing the newly moved element at `i` to be skipped without processing. This means some callbacks may not be properly checked for redundancy.\n\nExample: If callbacks[0] should be dropped, callbacks[1] is moved to callbacks[0]. Then `i` becomes 1, so callbacks[0] (which was originally callbacks[1]) is never checked.\n\nSuggestion: Use a separate index for writing or iterate backwards when removing elements.\n\n```suggestion\n    // Coalesce redundant updates and only keep the newest one.\n    bool drop = false;\n    int write_idx = 0;\n    for (int i = 0; i < mpctx->num_option_callbacks; i++) {\n        if (flags && flags == mpctx->option_callbacks[i].flags)\n            drop = true;\n        if (mpctx->option_callbacks[i].co && opt_ptr == mpctx->option_callbacks[i].co->data)\n            drop = true;\n        if (!drop) {\n            if (write_idx != i)\n                mpctx->option_callbacks[write_idx] = mpctx->option_callbacks[i];\n            write_idx++;\n        }\n    }\n    mpctx->num_option_callbacks = write_idx;\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "player/command.c",
+   "side": "right",
+   "from_line": 7729,
+   "to_line": 7729,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The large indentation change from wrapping callback logic in a loop reduces code readability. Extract the loop handling into a separate function (e.g., `handle_option_callbacks`) to maintain cleaner structure while preserving the callback queuing functionality.",
+   "source": "human"
+  },
+  {
+   "path": "player/command.c",
+   "side": "right",
+   "from_line": 7731,
+   "to_line": 7731,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "**Critical Bug: Null pointer dereference**\n\nThe code accesses `co->data` without checking if `co` is NULL. However, `co` can be NULL (as seen in the original code on line 7696 where it checks `void *opt_ptr = !co ? NULL : co->data`). \n\nWhen option callbacks are triggered during initialization, `co` is NULL, and this will cause a segmentation fault when dereferencing `co->data`.\n\n**Suggested fix:**\n```c\nvoid *opt_ptr = !co ? NULL : co->data;\n```\n\nThis matches the pattern used in the original callback function and safely handles the NULL case.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "player/command.c",
+   "side": "right",
+   "from_line": 7778,
+   "to_line": 7781,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Behavior change: previously the IPC restart ran on init (`init || ...`). Now init callbacks (`co==NULL`) will not restart IPC. If IPC must be (re)initialized on startup or when config is first applied, this could be a regression. Verify startup path now calls IPC init elsewhere, or keep the init condition when needed.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "player/command.c",
+   "side": "right",
+   "from_line": 7946,
+   "to_line": 7946,
+   "category": "Performance",
+   "context": "File Level",
+   "note": "Potential memory leak: Setting `mpctx->num_option_callbacks = 0` only resets the count but doesn't free the memory allocated by `MP_TARRAY_APPEND`. If callbacks are added repeatedly, the array will keep growing without being freed. Consider using `MP_TARRAY_CLEAR` or similar macro to properly free the array, or ensure the memory is freed elsewhere in the lifecycle.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "player/main.c",
+   "side": "right",
+   "from_line": 415,
+   "to_line": 415,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Consider checking the return value of mp_init_ipc for NULL to handle potential initialization failures gracefully.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "player/playloop.c",
+   "side": "right",
+   "from_line": 1292,
+   "to_line": 1292,
+   "category": "Performance",
+   "context": "Repo Level",
+   "note": "The added call to `mp_option_run_callbacks` delays option callback execution until the next playloop iteration, introducing up to hundreds of milliseconds of latency that may cause timing-sensitive issues.",
+   "source": "human"
+  },
+  {
+   "path": "player/playloop.c",
+   "side": "right",
+   "from_line": 1292,
+   "to_line": 1292,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "mp_option_run_callbacks(mpctx) is now executed every loop iteration. Please confirm it is (1) non-reentrant (callbacks can’t directly/indirectly re-enter input processing or the playloop), and (2) bounded (won’t keep generating new option changes and effectively create a busy loop). If callbacks can touch playback/window/VO state, consider documenting why this exact placement (after mp_process_input, before chapter/window handlers) is safe, or add a simple guard to prevent nested/continuous runs.",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "player/command.c",
+   "side": "right",
+   "from_line": 7713,
+   "to_line": 7713,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "The loop for coalescing redundant option callbacks redundantly evaluates the second condition setting `drop` when the first condition has already determined the callback should be dropped.  \nThis unnecessary check occurs despite `drop` being true from the initial flag comparison.",
+   "source": "human"
+  }
+ ]
+}

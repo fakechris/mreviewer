@@ -1,0 +1,82 @@
+{
+ "id": "aacr/dotnet__aspnetcore__62936",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/dotnet/aspnetcore/pull/62936",
+  "owner": "dotnet",
+  "repo": "aspnetcore",
+  "number": 62936,
+  "base_sha": "e7d49f52363753a4faa2a22538eace7a923382ce",
+  "head_sha": "2f372e8ff137aa24114269576fc1912f12ff5402",
+  "title": "Update SignalR Redis tests to use internal Docker Hub mirror",
+  "description": "Docker Hub is prone to rate limiting. To prevent this in dotnet builds we should use our internal container registry.\r\n\r\nc.f. https://dev.azure.com/dnceng/internal/_wiki/wikis/DNCEng%20Services%20Wiki/1354/ACR-for-Docker-Hub-mirroring\r\n",
+  "language": "C#",
+  "category": "Test Suite / CI Enhancements",
+  "changed_lines": 5
+ },
+ "diffs": [
+  {
+   "old_path": "src/SignalR/server/StackExchangeRedis/test/Docker.cs",
+   "new_path": "src/SignalR/server/StackExchangeRedis/test/Docker.cs",
+   "diff": "@@ -16,7 +16,8 @@ public class Docker\n {\n     private static readonly string _exeSuffix = OperatingSystem.IsWindows() ? \".exe\" : string.Empty;\n \n-    private static readonly string _dockerContainerName = \"redisTestContainer\";\n+    private static readonly string _redisImageName = \"dotnetdhmirror-f8bzbjakh8cga6ab.azurecr.io/library/redis:7.4\";\n+    private static readonly string _dockerContainerName = \"redisTestContainer74\";\n     private static readonly string _dockerMonitorContainerName = _dockerContainerName + \"Monitor\";\n     private static readonly Lazy<Docker> _instance = new Lazy<Docker>(Create);\n \n@@ -112,7 +113,7 @@ void Run()\n             // use static name 'redisTestContainer' so if the container doesn't get removed we don't keep adding more\n             // use redis base docker image\n             // 30 second timeout to allow redis image to be downloaded, should be a rare occurrence, only happening when a new version is released\n-            RunProcessAndThrowIfFailed(_path, $\"run --rm -p 6379:6379 --name {_dockerContainerName} -d redis\", \"redis\", logger, TimeSpan.FromMinutes(1));\n+            RunProcessAndThrowIfFailed(_path, $\"run --rm -p 6379:6379 --name {_dockerContainerName} -d {_redisImageName}\", \"redis\", logger, TimeSpan.FromMinutes(1));\n         }\n     }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/SignalR/server/StackExchangeRedis/test/Docker.cs",
+   "side": "right",
+   "from_line": 19,
+   "to_line": 19,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The hardcoded Azure Container Registry URL for the Redis image impedes maintainability and complicates updates; replace with an environment variable fallback.",
+   "source": "human"
+  },
+  {
+   "path": "src/SignalR/server/StackExchangeRedis/test/Docker.cs",
+   "side": "right",
+   "from_line": 20,
+   "to_line": 20,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Hardcoding the Redis version '74' in `_dockerContainerName` requires manual updates when the image version changes. Derive the container name dynamically from `_redisImageName` to maintain consistency without manual intervention.",
+   "source": "human"
+  },
+  {
+   "path": "src/SignalR/server/StackExchangeRedis/test/Docker.cs",
+   "side": "right",
+   "from_line": 20,
+   "to_line": 20,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Renaming the container is fine, but note that using a fixed name can cause port/name conflicts when tests run in parallel (e.g., multiple test jobs on the same host). If parallelism is possible, consider adding a suffix (PID/random) or detecting an existing container and reusing/removing it before starting.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/SignalR/server/StackExchangeRedis/test/Docker.cs",
+   "side": "right",
+   "from_line": 113,
+   "to_line": 113,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The comment references the old container name `'redisTestContainer'`, but the actual container name is now `'redisTestContainer74'` (defined on line 20). Please update the comment to reflect the current container name for accuracy.\n\n```suggestion\n            // use static name 'redisTestContainer74' so if the container doesn't get removed we don't keep adding more\n```",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/SignalR/server/StackExchangeRedis/test/Docker.cs",
+   "side": "right",
+   "from_line": 116,
+   "to_line": 116,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The comment says \"30 second timeout\" but the actual timeout is 1 minute (and comment also mentions 30 seconds). Keep the comment consistent, and consider using `pull` explicitly before `run` to separate download time from startup time (and to provide clearer error messages).",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": []
+}

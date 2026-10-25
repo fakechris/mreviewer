@@ -1,0 +1,224 @@
+{
+ "id": "aacr/kestra-io__kestra__7381",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/kestra-io/kestra/pull/7381",
+  "owner": "kestra-io",
+  "repo": "kestra",
+  "number": 7381,
+  "base_sha": "a716094a9d3c3522fb40ea988b3dab2763d7519c",
+  "head_sha": "3c2a2765fcd06d7fe127e362ddc9a706d4073047",
+  "title": "fix: enable rendering of commands properties inside CommandsWrapper",
+  "description": "enable the rendering of Property<List<String>> commands, interpreter, and before commands within the commands wrapper to have access to workingDir variable\n",
+  "language": "Java",
+  "category": "Bug Fix",
+  "changed_lines": 200
+ },
+ "diffs": [
+  {
+   "old_path": "core/src/main/java/io/kestra/core/models/tasks/runners/ScriptService.java",
+   "new_path": "core/src/main/java/io/kestra/core/models/tasks/runners/ScriptService.java",
+   "diff": "@@ -2,6 +2,7 @@\n \n import com.google.common.collect.ImmutableMap;\n import io.kestra.core.exceptions.IllegalVariableEvaluationException;\n+import io.kestra.core.models.property.Property;\n import io.kestra.core.runners.RunContext;\n import io.kestra.core.utils.ListUtils;\n import io.kestra.core.utils.Slugify;\n@@ -93,6 +94,18 @@ public static List<String> replaceInternalStorage(\n \n     }\n \n+    public static List<String> replaceInternalStorage(\n+        RunContext runContext,\n+        Map<String, Object> additionalVars,\n+        Property<List<String>> commands,\n+        boolean replaceWithRelativePath\n+    ) throws IOException, IllegalVariableEvaluationException {\n+        return commands == null ? Collections.emptyList() :\n+            runContext.render(commands).asList(String.class, additionalVars).stream()\n+                .map(throwFunction(c -> ScriptService.replaceInternalStorage(runContext, c, replaceWithRelativePath)))\n+                .toList();\n+    }\n+\n     public static List<String> replaceInternalStorage(\n         RunContext runContext,\n         List<String> commands",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/src/main/java/io/kestra/core/models/tasks/runners/TaskCommands.java",
+   "new_path": "core/src/main/java/io/kestra/core/models/tasks/runners/TaskCommands.java",
+   "diff": "@@ -1,5 +1,8 @@\n package io.kestra.core.models.tasks.runners;\n \n+import io.kestra.core.models.property.Property;\n+import lombok.With;\n+\n import java.io.IOException;\n import java.nio.file.Files;\n import java.nio.file.Path;\n@@ -19,7 +22,11 @@ public interface TaskCommands {\n \n     AbstractLogConsumer getLogConsumer();\n \n-    List<String> getCommands();\n+    Property<List<String>> getInterpreter();\n+\n+    Property<List<String>> getBeforeCommands();\n+\n+    Property<List<String>> getCommands();\n \n     Map<String, Object> getAdditionalVars();\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/src/main/java/io/kestra/core/models/tasks/runners/TaskRunner.java",
+   "new_path": "core/src/main/java/io/kestra/core/models/tasks/runners/TaskRunner.java",
+   "diff": "@@ -5,6 +5,7 @@\n import io.kestra.core.exceptions.IllegalVariableEvaluationException;\n import io.kestra.core.models.Plugin;\n import io.kestra.core.models.WorkerJobLifecycle;\n+import io.kestra.core.models.property.Property;\n import io.kestra.core.runners.RunContext;\n import io.kestra.plugin.core.runner.Process;\n import jakarta.validation.constraints.NotBlank;\n@@ -16,11 +17,11 @@\n import lombok.experimental.SuperBuilder;\n import org.apache.commons.lang3.SystemUtils;\n \n-import java.util.HashMap;\n-import java.util.List;\n-import java.util.Map;\n+import java.io.IOException;\n+import java.util.*;\n import java.util.concurrent.atomic.AtomicBoolean;\n import java.util.concurrent.atomic.AtomicReference;\n+import java.util.stream.Stream;\n \n import static io.kestra.core.utils.WindowsUtils.windowsToUnixPath;\n \n@@ -130,6 +131,24 @@ public String toAbsolutePath(RunContext runContext, TaskCommands taskCommands, S\n         return windowsToUnixPath(workingDir + \"/\" + relativePath);\n     }\n \n+    public List<String> renderCommands(RunContext runContext, TaskCommands taskCommands) throws IllegalVariableEvaluationException, IOException {\n+        List<String> renderedCommands = this.renderCommandsFromList(runContext, taskCommands, taskCommands.getCommands());\n+        List<String> renderedBeforeCommands = this.renderCommandsFromList(runContext, taskCommands, taskCommands.getBeforeCommands());\n+        List<String> renderedInterpreter = this.renderCommandsFromList(runContext, taskCommands, taskCommands.getInterpreter());\n+\n+        return Stream.of(renderedInterpreter, renderedBeforeCommands, renderedCommands)\n+            .flatMap(Collection::stream).toList();\n+    }\n+\n+    public List<String> renderCommandsFromList(RunContext runContext, TaskCommands taskCommands, Property<List<String>> commands) throws IllegalVariableEvaluationException, IOException {\n+        return ScriptService.replaceInternalStorage(\n+            runContext,\n+            this.additionalVars(runContext, taskCommands),\n+            commands,\n+            this instanceof RemoteRunnerInterface\n+        );\n+    }\n+\n     /** {@inheritDoc} **/\n     @Override\n     public void kill() {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/src/main/java/io/kestra/plugin/core/runner/Process.java",
+   "new_path": "core/src/main/java/io/kestra/plugin/core/runner/Process.java",
+   "diff": "@@ -1,7 +1,9 @@\n package io.kestra.plugin.core.runner;\n \n+import io.kestra.core.exceptions.IllegalVariableEvaluationException;\n import io.kestra.core.models.annotations.Example;\n import io.kestra.core.models.annotations.Plugin;\n+import io.kestra.core.models.property.Property;\n import io.kestra.core.models.tasks.runners.*;\n import io.kestra.core.runners.RunContext;\n import io.micronaut.core.annotation.Introspected;\n@@ -14,6 +16,7 @@\n import org.slf4j.Logger;\n \n import java.io.BufferedReader;\n+import java.io.IOException;\n import java.io.InputStream;\n import java.io.InputStreamReader;\n import java.nio.charset.StandardCharsets;\n@@ -133,11 +136,14 @@ public TaskRunnerResult<TaskRunnerDetailResult> run(RunContext runContext, TaskC\n         environment.putAll(this.env(runContext, taskCommands));\n \n         processBuilder.directory(taskCommands.getWorkingDirectory().toFile());\n-        processBuilder.command(taskCommands.getCommands());\n+\n+        List<String> renderedCommands = this.renderCommands(runContext, taskCommands);\n+\n+        processBuilder.command(renderedCommands);\n \n         java.lang.Process process = processBuilder.start();\n         long pid = process.pid();\n-        logger.debug(\"Starting command with pid {} [{}]\", pid, String.join(\" \", taskCommands.getCommands()));\n+        logger.debug(\"Starting command with pid {} [{}]\", pid, String.join(\" \", renderedCommands));\n \n         LogRunnable stdOutRunnable = new LogRunnable(process.getInputStream(), defaultLogConsumer, false);\n         LogRunnable stdErrRunnable = new LogRunnable(process.getErrorStream(), defaultLogConsumer, true);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "core/src/test/java/io/kestra/core/models/tasks/runners/TaskRunnerTest.java",
+   "new_path": "core/src/test/java/io/kestra/core/models/tasks/runners/TaskRunnerTest.java",
+   "diff": "@@ -1,6 +1,7 @@\n package io.kestra.core.models.tasks.runners;\n \n import io.kestra.core.exceptions.IllegalVariableEvaluationException;\n+import io.kestra.core.models.property.Property;\n import io.kestra.core.runners.RunContext;\n import io.kestra.core.runners.RunContextFactory;\n import io.micronaut.context.ApplicationContext;\n@@ -149,7 +150,17 @@ public AbstractLogConsumer getLogConsumer() {\n         }\n \n         @Override\n-        public List<String> getCommands() {\n+        public Property<List<String>> getInterpreter() {\n+            return null;\n+        }\n+\n+        @Override\n+        public Property<List<String>> getBeforeCommands() {\n+            return null;\n+        }\n+\n+        @Override\n+        public Property<List<String>> getCommands() {\n             return null;\n         }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "script/src/main/java/io/kestra/plugin/scripts/exec/scripts/runners/CommandsWrapper.java",
+   "new_path": "script/src/main/java/io/kestra/plugin/scripts/exec/scripts/runners/CommandsWrapper.java",
+   "diff": "@@ -1,6 +1,7 @@\n package io.kestra.plugin.scripts.exec.scripts.runners;\n \n import io.kestra.core.exceptions.IllegalVariableEvaluationException;\n+import io.kestra.core.models.property.Property;\n import io.kestra.core.models.tasks.RunnableTaskException;\n import io.kestra.core.models.tasks.runners.DefaultLogConsumer;\n import io.kestra.core.models.tasks.runners.*;\n@@ -29,6 +30,7 @@\n import java.util.HashMap;\n import java.util.List;\n import java.util.Map;\n+import java.util.Optional;\n \n @AllArgsConstructor\n @Getter\n@@ -42,7 +44,13 @@ public class CommandsWrapper implements TaskCommands {\n     private Map<String, Object> additionalVars;\n \n     @With\n-    private List<String> commands;\n+    private Property<List<String>> interpreter;\n+\n+    @With\n+    private Property<List<String>> beforeCommands;\n+\n+    @With\n+    private Property<List<String>> commands;\n \n     private Map<String, String> env;\n \n@@ -96,6 +104,8 @@ public CommandsWrapper withEnv(Map<String, String> envs) {\n             workingDirectory,\n             getOutputDirectory(),\n             additionalVars,\n+            interpreter,\n+            beforeCommands,\n             commands,\n             envs,\n             logConsumer,\n@@ -155,7 +165,18 @@ public <T extends TaskRunnerDetailResult> ScriptOutput run() throws Exception {\n         RunContextInitializer initializer = ((DefaultRunContext) runContext).getApplicationContext().getBean(RunContextInitializer.class);\n \n         RunContext taskRunnerRunContext = initializer.forPlugin(((DefaultRunContext) runContext).clone(), realTaskRunner);\n-        this.commands = this.render(runContext, commands);\n+\n+        List<String> renderedCommands = this.renderCommands(runContext, commands);\n+        List<String> renderedBeforeCommands = this.renderCommands(runContext, beforeCommands);\n+        List<String> renderedInterpreter = this.renderCommands(runContext, interpreter);\n+\n+        List<String> finalCommands = ScriptService.scriptCommands(\n+            renderedInterpreter,\n+            renderedBeforeCommands,\n+            renderedCommands,\n+            Optional.ofNullable(targetOS).orElse(TargetOS.AUTO)\n+        );\n+        this.commands = Property.of(finalCommands);\n \n         ScriptOutput.ScriptOutputBuilder scriptOutputBuilder = ScriptOutput.builder()\n             .warningOnStdErr(this.warningOnStdErr);\n@@ -244,7 +265,7 @@ public String render(RunContext runContext, String command, List<String> interna\n         );\n     }\n \n-    public List<String> render(RunContext runContext, List<String> commands) throws IllegalVariableEvaluationException, IOException {\n+    public List<String> renderCommands(RunContext runContext, Property<List<String>> commands) throws IllegalVariableEvaluationException, IOException {\n         TaskRunner<?> taskRunner = this.getTaskRunner();\n         return ScriptService.replaceInternalStorage(\n             this.runContext,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "script/src/main/java/io/kestra/plugin/scripts/runner/docker/Docker.java",
+   "new_path": "script/src/main/java/io/kestra/plugin/scripts/runner/docker/Docker.java",
+   "diff": "@@ -428,11 +428,13 @@ public TaskRunnerResult<DockerTaskRunnerDetailResult> run(RunContext runContext,\n             // start container\n             dockerClient.startContainerCmd(exec.getId()).exec();\n \n+            List<String> renderedCommands = this.renderCommands(runContext, taskCommands);\n+\n             if (logger.isDebugEnabled()) {\n                 logger.debug(\n                     \"Starting command with container id {} [{}]\",\n                     exec.getId(),\n-                    String.join(\" \", taskCommands.getCommands())\n+                    String.join(\" \", renderedCommands)\n                 );\n             }\n \n@@ -640,7 +642,7 @@ private DockerClient dockerClient(RunContext runContext, String image, String ho\n         return DockerService.client(dockerClientConfig);\n     }\n \n-    private CreateContainerCmd configure(TaskCommands taskCommands, DockerClient dockerClient, RunContext runContext, Map<String, Object> additionalVars) throws IllegalVariableEvaluationException {\n+    private CreateContainerCmd configure(TaskCommands taskCommands, DockerClient dockerClient, RunContext runContext, Map<String, Object> additionalVars) throws IllegalVariableEvaluationException, IOException {\n         Optional<Boolean> volumeEnabledConfig = runContext.pluginConfiguration(VOLUME_ENABLED_CONFIG);\n         if (volumeEnabledConfig.isEmpty()) {\n             // check the legacy property and emit a warning if used\n@@ -778,7 +780,7 @@ private CreateContainerCmd configure(TaskCommands taskCommands, DockerClient doc\n \n         return container\n             .withHostConfig(hostConfig)\n-            .withCmd(taskCommands.getCommands())\n+            .withCmd(this.renderCommands(runContext, taskCommands))\n             .withAttachStderr(true)\n             .withAttachStdout(true);\n     }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "script/src/test/java/io/kestra/plugin/scripts/runners/LogConsumerTest.java",
+   "new_path": "script/src/test/java/io/kestra/plugin/scripts/runners/LogConsumerTest.java",
+   "diff": "@@ -2,7 +2,7 @@\n \n import com.google.common.collect.ImmutableMap;\n import io.kestra.core.models.executions.LogEntry;\n-import io.kestra.core.models.tasks.runners.TaskRunnerResult;\n+import io.kestra.core.models.property.Property;\n import io.kestra.core.models.tasks.runners.TaskCommands;\n import io.kestra.core.models.tasks.Task;\n import io.kestra.core.queues.QueueFactoryInterface;\n@@ -22,15 +22,14 @@\n import reactor.core.publisher.Flux;\n \n import java.time.Duration;\n-import java.util.ArrayList;\n-import java.util.Collections;\n-import java.util.List;\n+import java.util.*;\n \n+import static io.kestra.core.utils.TestsUtils.propertyFromList;\n import static org.hamcrest.MatcherAssert.assertThat;\n import static org.hamcrest.Matchers.*;\n \n @KestraTest\n-public class LogConsumerTest {\n+class LogConsumerTest {\n     private static final Task TASK = new Task() {\n         @Override\n         public String getId() {\n@@ -54,11 +53,12 @@ public String getType() {\n     void run() throws Exception {\n        RunContext runContext = TestsUtils.mockRunContext(runContextFactory, TASK, ImmutableMap.of());\n         String outputValue = \"a\".repeat(10000);\n-        TaskCommands taskCommands = new CommandsWrapper(runContext).withCommands(List.of(\n+        TaskCommands taskCommands = new CommandsWrapper(runContext)\n+            .withCommands(Property.of(List.of(\n             \"/bin/sh\", \"-c\",\n             \"echo \\\"::{\\\\\\\"outputs\\\\\\\":{\\\\\\\"someOutput\\\\\\\":\\\\\\\"\" + outputValue + \"\\\\\\\"}}::\\\"\\n\" +\n                 \"echo -n another line\"\n-        ));\n+        )));\n         var run = Docker.from(DockerOptions.builder()\n             .image(\"alpine\")\n             .build()).run(\n@@ -81,11 +81,11 @@ void testWithMultipleCrInSameFrame() throws Exception {\n                     .append(Integer.toString(i).repeat(800)).append(\"\\r\")\n                 .append(Integer.toString(i).repeat(2000)).append(\"\\r\");\n         }\n-        TaskCommands taskCommands = new CommandsWrapper(runContext).withCommands(List.of(\n+        TaskCommands taskCommands = new CommandsWrapper(runContext).withCommands(Property.of(List.of(\n             \"/bin/sh\", \"-c\",\n             \"echo \" + outputValue +\n                 \"echo -n another line\"\n-        ));\n+        )));\n         var run = Docker.from(DockerOptions.builder().image(\"alpine\").build()).run(\n             runContext,\n             taskCommands,\n@@ -102,15 +102,52 @@ void logs() throws Exception {\n         Flux<LogEntry> receive = TestsUtils.receive(logQueue, l -> logs.add(l.getLeft()));\n \n         RunContext runContext = TestsUtils.mockRunContext(runContextFactory, TASK, ImmutableMap.of());\n-        TaskCommands taskCommands = new CommandsWrapper(runContext).withCommands(List.of(\n+        TaskCommands taskCommands = new CommandsWrapper(runContext).withCommands(Property.of(List.of(\n             \"/bin/sh\", \"-c\",\n             \"\"\"\n                 echo '::{\"logs\": [{\"level\":\"INFO\",\"message\":\"Hello World\"}]}::'\n                 echo '::{\"logs\": [{\"level\":\"ERROR\",\"message\":\"Hello Error\"}]}::'\n                 echo '::{\"logs\": [{\"level\":\"TRACE\",\"message\":\"Hello Trace\"}, {\"level\":\"TRACE\",\"message\":\"Hello Trace 2\"}]}::'\n             \"\"\"\n+        )));\n+\n+        Docker.from(DockerOptions.builder().image(\"alpine\").build()).run(\n+            runContext,\n+            taskCommands,\n+            Collections.emptyList()\n+        );\n+\n+        receive.blockLast();\n+\n+        assertThat(logs.stream().filter(m -> m.getLevel().equals(Level.INFO)).count(), is(1L));\n+        assertThat(logs.stream().filter(m -> m.getLevel().equals(Level.ERROR)).count(), is(1L));\n+        assertThat(logs.stream().filter(m -> m.getLevel().equals(Level.TRACE)).filter(m -> m.getMessage().contains(\"Trace 2\")).count(), is(1L));\n+        assertThat(logs.stream().filter(m -> m.getLevel().equals(Level.TRACE)).count(), greaterThanOrEqualTo(5L));\n+    }\n+\n+    @Test\n+    void logs_dynamicProperties() throws Exception {\n+        List<LogEntry> logs = new ArrayList<>();\n+        Flux<LogEntry> receive = TestsUtils.receive(logQueue, l -> logs.add(l.getLeft()));\n+\n+        RunContext runContext = TestsUtils.mockRunContext(runContextFactory, TASK, Map.of(\n+            \"text\", \"World\",\n+            \"error\", \"Error\",\n+            \"trace\", \"Trace 2\",\n+            \"interpreter\", \"sh\"\n         ));\n-        var run = Docker.from(DockerOptions.builder().image(\"alpine\").build()).run(\n+        TaskCommands taskCommands = new CommandsWrapper(runContext)\n+            .withInterpreter(propertyFromList(List.of(\"/bin/{{ inputs.interpreter }}\", \"-c\")))\n+            .withCommands(propertyFromList(List.of(\n+            \"\"\"\n+                echo '::{\"logs\": [{\"level\":\"INFO\",\"message\":\"Hello World\"}]}::'\n+                echo '::{\"logs\": [{\"level\":\"ERROR\",\"message\":\"Hello {{ inputs.error }}\"}]}::'\n+                echo '::{\"logs\": [{\"level\":\"TRACE\",\"message\":\"Hello Trace workdir:{{workingDir}}\"}, {\"level\":\"TRACE\",\"message\":\"Hello {{ inputs.trace }}\"}]}::'\n+                \"\"\")\n+            )\n+        );\n+\n+        Docker.from(DockerOptions.builder().image(\"alpine\").build()).run(\n             runContext,\n             taskCommands,\n             Collections.emptyList()\n@@ -119,8 +156,20 @@ void logs() throws Exception {\n         receive.blockLast();\n \n         assertThat(logs.stream().filter(m -> m.getLevel().equals(Level.INFO)).count(), is(1L));\n+        String beforeLogMessage = logs.stream().filter(m -> m.getLevel().equals(Level.INFO)).findFirst().orElseThrow().getMessage();\n+        assertThat(beforeLogMessage, is(\"Hello World\"));\n+\n         assertThat(logs.stream().filter(m -> m.getLevel().equals(Level.ERROR)).count(), is(1L));\n         assertThat(logs.stream().filter(m -> m.getLevel().equals(Level.TRACE)).filter(m -> m.getMessage().contains(\"Trace 2\")).count(), is(1L));\n+\n+        Optional<String> logWithWorkingDir = logs.stream().filter(m -> m.getLevel().equals(Level.TRACE))\n+            .map(LogEntry::getMessage)\n+            .filter(message -> message.contains(\"Hello Trace workdir\")).findFirst();\n+\n+        assertThat(logWithWorkingDir.isPresent(), is(true));\n+        String workingDir = logWithWorkingDir.get().split(\":\")[1];\n+        assertThat(workingDir, containsString(\"/tmp/\"));\n+\n         assertThat(logs.stream().filter(m -> m.getLevel().equals(Level.TRACE)).count(), greaterThanOrEqualTo(5L));\n     }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/src/main/java/io/kestra/core/models/tasks/runners/AbstractTaskRunnerTest.java",
+   "new_path": "tests/src/main/java/io/kestra/core/models/tasks/runners/AbstractTaskRunnerTest.java",
+   "diff": "@@ -4,6 +4,7 @@\n import io.kestra.core.models.executions.TaskRun;\n import io.kestra.core.models.flows.Flow;\n import io.kestra.core.models.flows.State;\n+import io.kestra.core.models.property.Property;\n import io.kestra.core.models.tasks.Task;\n import io.kestra.core.runners.FilesService;\n import io.kestra.core.runners.RunContext;\n@@ -36,7 +37,9 @@ public abstract class AbstractTaskRunnerTest {\n     protected void run() throws Exception {\n         var runContext = runContext(this.runContextFactory);\n         var commands = initScriptCommands(runContext);\n-        Mockito.when(commands.getCommands()).thenReturn(ScriptService.scriptCommands(List.of(\"/bin/sh\", \"-c\"), Collections.emptyList(), List.of(\"echo 'Hello World'\")));\n+        Mockito.when(commands.getCommands()).thenReturn(\n+            Property.of(ScriptService.scriptCommands(List.of(\"/bin/sh\", \"-c\"), Collections.emptyList(), List.of(\"echo 'Hello World'\")))\n+        );\n \n         var taskRunner = taskRunner();\n         var result = taskRunner.run(runContext, commands, Collections.emptyList());\n@@ -50,7 +53,9 @@ protected void outputDirDisabled() throws Exception {\n         var commands = initScriptCommands(runContext);\n         Mockito.when(commands.getEnableOutputDirectory()).thenReturn(false);\n         Mockito.when(commands.outputDirectoryEnabled()).thenReturn(false);\n-        Mockito.when(commands.getCommands()).thenReturn(ScriptService.scriptCommands(List.of(\"/bin/sh\", \"-c\"), Collections.emptyList(), List.of(\"echo 'Hello World'\")));\n+        Mockito.when(commands.getCommands()).thenReturn(Property.of(\n+            ScriptService.scriptCommands(List.of(\"/bin/sh\", \"-c\"), Collections.emptyList(), List.of(\"echo 'Hello World'\")))\n+        );\n \n         var taskRunner = taskRunner();\n         assertThat(taskRunner.additionalVars(runContext, commands).containsKey(ScriptService.VAR_OUTPUT_DIR), is(false));\n@@ -65,7 +70,8 @@ protected void outputDirDisabled() throws Exception {\n     protected void fail() throws IOException {\n         var runContext = runContext(this.runContextFactory);\n         var commands = initScriptCommands(runContext);\n-        Mockito.when(commands.getCommands()).thenReturn(ScriptService.scriptCommands(List.of(\"/bin/sh\", \"-c\"), Collections.emptyList(), List.of(\"return 1\")));\n+        Mockito.when(commands.getCommands()).thenReturn(Property.of(\n+            ScriptService.scriptCommands(List.of(\"/bin/sh\", \"-c\"), Collections.emptyList(), List.of(\"return 1\"))));\n \n         var taskRunner = taskRunner();\n         assertThrows(TaskException.class, () -> taskRunner.run(runContext, commands, Collections.emptyList()));\n@@ -112,7 +118,7 @@ public void accept(String log, Boolean isStdErr) {\n             )),\n             taskRunner instanceof RemoteRunnerInterface\n         );\n-        Mockito.when(commands.getCommands()).thenReturn(renderedCommands);\n+        Mockito.when(commands.getCommands()).thenReturn(Property.of(renderedCommands));\n \n         List<String> filesToDownload = List.of(\"output.txt\");\n         TaskRunnerResult<?> run = taskRunner.run(runContext, commands, filesToDownload);\n@@ -139,10 +145,10 @@ public void accept(String log, Boolean isStdErr) {\n     protected void failWithInput() throws IOException {\n         var runContext = runContext(this.runContextFactory);\n         var commands = initScriptCommands(runContext);\n-        Mockito.when(commands.getCommands()).thenReturn(ScriptService.scriptCommands(\n+        Mockito.when(commands.getCommands()).thenReturn(Property.of(ScriptService.scriptCommands(\n             List.of(\"/bin/sh\", \"-c\"),\n             Collections.emptyList(),\n-            List.of(\"echo '::{\\\"outputs\\\":{\\\"logOutput\\\":\\\"Hello World\\\"}}::'\", \"return 1\"))\n+            List.of(\"echo '::{\\\"outputs\\\":{\\\"logOutput\\\":\\\"Hello World\\\"}}::'\", \"return 1\")))\n         );\n \n         var taskRunner = taskRunner();",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/src/main/java/io/kestra/core/utils/TestsUtils.java",
+   "new_path": "tests/src/main/java/io/kestra/core/utils/TestsUtils.java",
+   "diff": "@@ -1,5 +1,6 @@\n package io.kestra.core.utils;\n \n+import com.fasterxml.jackson.core.JsonProcessingException;\n import com.fasterxml.jackson.databind.ObjectMapper;\n import com.google.common.io.Files;\n import io.kestra.core.exceptions.DeserializationException;\n@@ -9,6 +10,7 @@\n import io.kestra.core.models.executions.TaskRun;\n import io.kestra.core.models.flows.Flow;\n import io.kestra.core.models.flows.State;\n+import io.kestra.core.models.property.Property;\n import io.kestra.core.models.tasks.Task;\n import io.kestra.core.models.triggers.AbstractTrigger;\n import io.kestra.core.models.triggers.Trigger;\n@@ -242,4 +244,8 @@ public static <T> Flux<T> receive(QueueInterface<T> queue, String consumerGroup,\n \n         return flux;\n     }\n+\n+    public static <T> Property<List<T>> propertyFromList(List<T> list) throws JsonProcessingException {\n+        return new Property<>(JacksonMapper.ofJson().writeValueAsString(list));\n+    }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "core/src/main/java/io/kestra/core/models/tasks/runners/ScriptService.java",
+   "side": "right",
+   "from_line": 97,
+   "to_line": 107,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The new method is inconsistent with the existing `replaceInternalStorage(RunContext, Map<String, Object>, List<String>, boolean)` method (lines 83-91). The existing method renders each individual command with `additionalVars` before replacing internal storage: `runContext.render(c, additionalVars)`. However, this new method only renders the Property as a whole and then directly calls `replaceInternalStorage` on each command without re-rendering. If individual commands in the list contain template variables that need `additionalVars`, they won't be properly rendered. Consider refactoring to match the existing pattern: render each command individually before storage replacement.\n\n```suggestion\n    public static List<String> replaceInternalStorage(\n        RunContext runContext,\n        Map<String, Object> additionalVars,\n        Property<List<String>> commands,\n        boolean replaceWithRelativePath\n    ) throws IOException, IllegalVariableEvaluationException {\n        if (commands == null) {\n            return Collections.emptyList();\n        }\n        return runContext.render(commands).asList(String.class, additionalVars).stream()\n            .map(throwFunction(c -> runContext.render(c, additionalVars)))\n            .map(throwFunction(c -> ScriptService.replaceInternalStorage(runContext, c, replaceWithRelativePath)))\n            .toList();\n    }\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "core/src/main/java/io/kestra/core/models/tasks/runners/ScriptService.java",
+   "side": "right",
+   "from_line": 97,
+   "to_line": 107,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential NPE risk: this overload passes `additionalVars` directly into `asList(...)`. Unlike the List<String> overload (which uses `ListUtils.emptyOnNull(commands)` and then `runContext.render(c, additionalVars)`), there is no normalization for `additionalVars`. If any caller passes `null`, `asList` (or downstream rendering) may throw. Suggest normalizing `additionalVars` to `Collections.emptyMap()` in this method to make it safer and consistent with the other overloads.\n\nMinor consistency: other overloads treat null inputs explicitly (`command == null` returns null / empty string). Here `commands == null` returns empty list; ensure this matches intended semantics for a missing property vs empty property.\n\n```suggestion\n    public static List<String> replaceInternalStorage(\n        RunContext runContext,\n        Map<String, Object> additionalVars,\n        Property<List<String>> commands,\n        boolean replaceWithRelativePath\n    ) throws IOException, IllegalVariableEvaluationException {\n        if (commands == null) {\n            return Collections.emptyList();\n        }\n\n        Map<String, Object> vars = additionalVars == null ? Collections.emptyMap() : additionalVars;\n\n        return runContext.render(commands)\n            .asList(String.class, vars)\n            .stream()\n            .map(throwFunction(c -> ScriptService.replaceInternalStorage(runContext, c, replaceWithRelativePath)))\n            .toList();\n    }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "core/src/main/java/io/kestra/core/models/tasks/runners/TaskCommands.java",
+   "side": "right",
+   "from_line": 4,
+   "to_line": 4,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The import `lombok.With` appears to be unused in this interface. If it is not needed, please remove it to keep the code clean.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "core/src/main/java/io/kestra/core/models/tasks/runners/TaskRunner.java",
+   "side": "right",
+   "from_line": 139,
+   "to_line": 140,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Although ScriptService.replaceInternalStorage handles null inputs by returning empty lists, there's still a theoretical risk of NullPointerException if any of the rendered command lists become null between retrieval and streaming. Consider adding defensive null checking or ensuring that Stream.of() never receives null collections.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "core/src/main/java/io/kestra/core/models/tasks/runners/TaskRunner.java",
+   "side": "right",
+   "from_line": 139,
+   "to_line": 139,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The method simply concatenates interpreter, beforeCommands, and commands lists without proper command formatting. This is inconsistent with `CommandsWrapper.run()` (line 172-177) which uses `ScriptService.scriptCommands()` to properly combine these elements.\n\n`ScriptService.scriptCommands()` handles OS-specific command formatting (via TargetOS parameter) to correctly structure shell commands. Simply concatenating the lists may produce malformed commands that won't execute correctly.\n\nIssue: This concatenation approach bypasses the proper command construction logic that accounts for:\n- Shell interpreter invocation\n- Command file creation\n- OS-specific formatting\n\nThis will cause `Process.run()` and `Docker.configure()` to receive improperly formatted commands when they call `this.renderCommands()`.\n\nThe fix requires determining the appropriate TargetOS and using ScriptService.scriptCommands() instead of simple concatenation, similar to CommandsWrapper.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "core/src/main/java/io/kestra/core/models/tasks/runners/TaskRunner.java",
+   "side": "right",
+   "from_line": 143,
+   "to_line": 143,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "`renderCommandsFromList` should be private as it is only used internally by `renderCommands`.",
+   "source": "human"
+  },
+  {
+   "path": "core/src/main/java/io/kestra/plugin/core/runner/Process.java",
+   "side": "right",
+   "from_line": 140,
+   "to_line": 140,
+   "category": "Performance",
+   "context": "Repo Level",
+   "note": "The added `renderCommands` call introduces redundant command rendering since `CommandsWrapper.getCommands()` already provides pre-rendered commands.",
+   "source": "human"
+  },
+  {
+   "path": "core/src/main/java/io/kestra/plugin/core/runner/Process.java",
+   "side": "right",
+   "from_line": 140,
+   "to_line": 142,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The renderCommands method may return an empty list if all command components are empty. This would cause process execution to fail. Consider adding validation to ensure at least one command is present before proceeding.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "core/src/main/java/io/kestra/plugin/core/runner/Process.java",
+   "side": "right",
+   "from_line": 140,
+   "to_line": 142,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Consider defensive handling around renderedCommands: if renderCommands can return null/empty, ProcessBuilder.command(renderedCommands) will throw or start an invalid process. Also, if renderCommands can throw variable/template evaluation exceptions, it may be better to catch and wrap with a TaskRunnerException/TaskException including the command context for easier troubleshooting.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "script/src/main/java/io/kestra/plugin/scripts/exec/scripts/runners/CommandsWrapper.java",
+   "side": "right",
+   "from_line": 167,
+   "to_line": 179,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "`interpreter`, `beforeCommands`, and `commands` are not initialized in the default constructor, so they can be null here. Passing a null `Property<List<String>>` into `renderCommands`/`ScriptService.replaceInternalStorage(...)` is a likely NPE unless that method explicitly accepts null.\n\nSuggestion: normalize to empty properties before rendering, e.g. `Property.of(Collections.emptyList())` (or whatever “empty” idiom exists in this codebase) when the field is null.\n\nAdditionally, `taskRunnerRunContext` is created but rendering uses `runContext` + `this.runContext` inside `renderCommands`. If the intent is to render under the plugin context, use `taskRunnerRunContext` consistently (or remove the unused variable). Finally, mutating `this.commands` during `run()` makes the wrapper stateful; prefer keeping `finalCommands` local and passing it to downstream code if possible.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "script/src/main/java/io/kestra/plugin/scripts/exec/scripts/runners/CommandsWrapper.java",
+   "side": "right",
+   "from_line": 173,
+   "to_line": 179,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Logic error: Reassigning the combined commands to `this.commands` creates an inconsistent object state. After this assignment, `this.commands` contains the fully combined command structure (interpreter + beforeCommands + commands), but `this.interpreter` and `this.beforeCommands` still retain their original values. This inconsistency could cause issues if any downstream code (like TaskRunner) tries to access these individual fields, as they no longer accurately represent the command structure. Consider either: 1) Not reassigning to `this.commands` and passing the combined commands directly to the TaskRunner, or 2) Also clearing/nullifying `this.interpreter` and `this.beforeCommands` to reflect that they've been merged.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "script/src/main/java/io/kestra/plugin/scripts/runner/docker/Docker.java",
+   "side": "right",
+   "from_line": 431,
+   "to_line": 431,
+   "category": "Performance",
+   "context": "Repo Level",
+   "note": "The `renderCommands` method is called here for logging, but it is also called inside the `configure` method (line 783) to set the container command. Since `renderCommands` involves `ScriptService.replaceInternalStorage`, which can be expensive (potentially involving I/O for internal storage), it is recommended to call `renderCommands` once in the `run` method before calling `configure`, and pass the rendered commands to `configure`. This avoids redundant execution.\n",
+   "source": "Gemini-3-Pro"
+  }
+ ],
+ "negatives": []
+}

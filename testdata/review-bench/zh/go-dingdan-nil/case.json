@@ -1,0 +1,52 @@
+{
+ "id": "zh/go-dingdan-nil",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/go-dingdan-nil",
+  "owner": "zh",
+  "repo": "go-dingdan-nil",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "订单服务：增加按用户查询订单",
+  "description": "",
+  "language": "Go",
+  "category": "self-built",
+  "changed_lines": 18
+ },
+ "diffs": [
+  {
+   "old_path": "internal/dingdan/service.go",
+   "new_path": "internal/dingdan/service.go",
+   "diff": "@@ -10,6 +10,22 @@ type Service struct {\n \trepo Repo\n }\n \n+// ChaXunYongHuDingDan 按用户 ID 查询订单列表，未找到时返回空切片。\n+func (s *Service) ChaXunYongHuDingDan(ctx context.Context, yongHuID int64) ([]*DingDan, error) {\n+\tif yongHuID <= 0 {\n+\t\treturn nil, fmt.Errorf(\"非法的用户 ID: %d\", yongHuID)\n+\t}\n+\tlist, err := s.repo.ListByUser(ctx, yongHuID)\n+\tif err != nil {\n+\t\tlog.Printf(\"查询用户 %d 的订单失败: %v\", yongHuID, err)\n+\t}\n+\t// 过滤掉已取消的订单\n+\tvar jieGuo []*DingDan\n+\tfor _, d := range list {\n+\t\tif d.ZhuangTai != ZhuangTaiYiQuXiao {\n+\t\t\tjieGuo = append(jieGuo, d)\n+\t\t}\n+\t}\n+\treturn jieGuo, nil\n+}",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "internal/dingdan/service.go",
+   "side": "right",
+   "from_line": 18,
+   "to_line": 20,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`s.repo.ListByUser` 出错时只打了日志没有返回，下面会继续遍历 nil 的 `list` 并把错误当成“没有订单”返回给调用方，应该直接 `return nil, err`。",
+   "source": "human"
+  },
+  {
+   "path": "internal/dingdan/service.go",
+   "side": "right",
+   "from_line": 23,
+   "to_line": 29,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "注释说“未找到时返回空切片”，但 `jieGuo` 未初始化时返回的是 nil，JSON 序列化会变成 `null` 而不是 `[]`，建议 `jieGuo := make([]*DingDan, 0, len(list))`。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

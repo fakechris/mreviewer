@@ -1,0 +1,31 @@
+{
+ "id": "control/9b34977d34",
+ "source": "mreviewer-history",
+ "kind": "control",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/fakechris/mreviewer/commit/9b34977d340c409afe1c6420e08fdf20dfec1f58",
+  "owner": "fakechris",
+  "repo": "mreviewer",
+  "number": 0,
+  "base_sha": "9ccd0550b1d7720e5fd2e7a991ae4621eb40a451",
+  "head_sha": "9b34977d340c409afe1c6420e08fdf20dfec1f58",
+  "title": "Remove unused e2e helper",
+  "description": "Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>",
+  "language": "Go",
+  "category": "control",
+  "changed_lines": 5
+ },
+ "diffs": [
+  {
+   "old_path": "internal/e2e/database_failure_recovery_test.go",
+   "new_path": "internal/e2e/database_failure_recovery_test.go",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false,
+   "diff": "@@ -11,7 +11,6 @@ import (\n \t\"log/slog\"\n \t\"net/http\"\n \t\"net/http/httptest\"\n-\t\"strconv\"\n \t\"strings\"\n \t\"testing\"\n \n@@ -470,7 +469,3 @@ func commandRunKey(baseURL string, projectID, mrIID int64, headSHA, deliveryKey\n \tsum := sha256.Sum256([]byte(payload))\n \treturn fmt.Sprintf(\"cmd-%x\", sum[:16])\n }\n-\n-func intString(v int64) string {\n-\treturn strconv.FormatInt(v, 10)\n-}"
+  }
+ ],
+ "golden": [],
+ "negatives": []
+}

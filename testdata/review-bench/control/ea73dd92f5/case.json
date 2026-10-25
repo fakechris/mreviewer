@@ -1,0 +1,31 @@
+{
+ "id": "control/ea73dd92f5",
+ "source": "mreviewer-history",
+ "kind": "control",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/fakechris/mreviewer/commit/ea73dd92f5e3d89b04afd1a45b3a69b540727da8",
+  "owner": "fakechris",
+  "repo": "mreviewer",
+  "number": 0,
+  "base_sha": "f212ec8dd650acf23bee3dfcb95bae2ce28bcbc3",
+  "head_sha": "ea73dd92f5e3d89b04afd1a45b3a69b540727da8",
+  "title": "Fix benchmark harness lint cleanup",
+  "description": "Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>",
+  "language": "Go",
+  "category": "control",
+  "changed_lines": 2
+ },
+ "diffs": [
+  {
+   "old_path": "internal/bench/bench_test.go",
+   "new_path": "internal/bench/bench_test.go",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false,
+   "diff": "@@ -539,7 +539,7 @@ func writeEvidenceReport(t testing.TB, report EvidenceReport) {\n }\n \n func runtimeVersion() string {\n-\treturn strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(fmt.Sprint(\"go1.25.6\")))), \"\\n\", \"\")), \"go version \")), \"go\"))\n+\treturn strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(\"go1.25.6\"))), \"\\n\", \"\")), \"go version \")), \"go\"))\n }\n \n var _ scheduler.Processor = (*llm.Processor)(nil)"
+  }
+ ],
+ "golden": [],
+ "negatives": []
+}

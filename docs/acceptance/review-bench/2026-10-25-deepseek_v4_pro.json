@@ -1,0 +1,3836 @@
+{
+  "generated_at": "2026-10-25T10:08:06.771897Z",
+  "route": "deepseek_v4_pro",
+  "judge_model": "MiniMax-M2.7-highspeed",
+  "line_window": 5,
+  "totals": {
+    "cases": 50,
+    "golden": 476,
+    "findings": 131,
+    "true_positive": 37,
+    "precision": 0.2824427480916031,
+    "recall": 0.07773109243697479,
+    "f1": 0.12191103789126854,
+    "findings_per_case": 2.62,
+    "tokens_per_case": 3340.42,
+    "negative_hits": 1
+  },
+  "by_language": {
+    "C": {
+      "cases": 4,
+      "golden": 42,
+      "findings": 13,
+      "true_positive": 2,
+      "precision": 0.15384615384615385,
+      "recall": 0.047619047619047616,
+      "f1": 0.07272727272727272,
+      "findings_per_case": 3.25,
+      "tokens_per_case": 4389,
+      "negative_hits": 1
+    },
+    "C#": {
+      "cases": 4,
+      "golden": 24,
+      "findings": 2,
+      "true_positive": 2,
+      "precision": 1,
+      "recall": 0.08333333333333333,
+      "f1": 0.15384615384615385,
+      "findings_per_case": 0.5,
+      "tokens_per_case": 2727,
+      "negative_hits": 0
+    },
+    "C++": {
+      "cases": 4,
+      "golden": 66,
+      "findings": 13,
+      "true_positive": 2,
+      "precision": 0.15384615384615385,
+      "recall": 0.030303030303030304,
+      "f1": 0.05063291139240506,
+      "findings_per_case": 3.25,
+      "tokens_per_case": 4391.75,
+      "negative_hits": 0
+    },
+    "Go": {
+      "cases": 7,
+      "golden": 58,
+      "findings": 19,
+      "true_positive": 7,
+      "precision": 0.3684210526315789,
+      "recall": 0.1206896551724138,
+      "f1": 0.1818181818181818,
+      "findings_per_case": 2.7142857142857144,
+      "tokens_per_case": 3037.4285714285716,
+      "negative_hits": 0
+    },
+    "Java": {
+      "cases": 6,
+      "golden": 53,
+      "findings": 20,
+      "true_positive": 5,
+      "precision": 0.25,
+      "recall": 0.09433962264150944,
+      "f1": 0.13698630136986303,
+      "findings_per_case": 3.3333333333333335,
+      "tokens_per_case": 3029.3333333333335,
+      "negative_hits": 0
+    },
+    "JavaScript": {
+      "cases": 4,
+      "golden": 57,
+      "findings": 6,
+      "true_positive": 0,
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "findings_per_case": 1.5,
+      "tokens_per_case": 3626,
+      "negative_hits": 0
+    },
+    "PHP": {
+      "cases": 4,
+      "golden": 29,
+      "findings": 5,
+      "true_positive": 2,
+      "precision": 0.4,
+      "recall": 0.06896551724137931,
+      "f1": 0.1176470588235294,
+      "findings_per_case": 1.25,
+      "tokens_per_case": 2261.25,
+      "negative_hits": 0
+    },
+    "Python": {
+      "cases": 7,
+      "golden": 36,
+      "findings": 22,
+      "true_positive": 7,
+      "precision": 0.3181818181818182,
+      "recall": 0.19444444444444445,
+      "f1": 0.2413793103448276,
+      "findings_per_case": 3.142857142857143,
+      "tokens_per_case": 3355.4285714285716,
+      "negative_hits": 0
+    },
+    "Rust": {
+      "cases": 4,
+      "golden": 39,
+      "findings": 8,
+      "true_positive": 5,
+      "precision": 0.625,
+      "recall": 0.1282051282051282,
+      "f1": 0.21276595744680848,
+      "findings_per_case": 2,
+      "tokens_per_case": 3137.5,
+      "negative_hits": 0
+    },
+    "TypeScript": {
+      "cases": 6,
+      "golden": 72,
+      "findings": 23,
+      "true_positive": 5,
+      "precision": 0.21739130434782608,
+      "recall": 0.06944444444444445,
+      "f1": 0.10526315789473684,
+      "findings_per_case": 3.8333333333333335,
+      "tokens_per_case": 3660.8333333333335,
+      "negative_hits": 0
+    }
+  },
+  "control": {
+    "cases": 14,
+    "findings": 9,
+    "findings_per_case": 0.6428571428571429
+  },
+  "naturalness": {
+    "scored": 122,
+    "mean": 4.926229508196721,
+    "code_terms_broken": 1
+  },
+  "cases": [
+    {
+      "case_id": "aacr/CherryHQ__cherry-studio__5540",
+      "kind": "golden",
+      "language": "TypeScript",
+      "changed_lines": 345,
+      "golden": 19,
+      "findings": 3,
+      "true_positive": 2,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 4345,
+      "duration_ms": 45252,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 5,
+      "naturalness_scores": [
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/renderer/src/pages/agents/index.ts",
+          "start_line": 20,
+          "title": "useSystemAgents 违反 React Hooks 规则：条件调用 Hook 导致状态错乱",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "src/renderer/src/store/settings.ts",
+          "start_line": 210,
+          "title": "defaultaides 初始值被设置为无效的字符串字面量，导致默认状态语义错误",
+          "outcome": "true_positive",
+          "reference": 16,
+          "reason": "两者都指出 defaultaides 的初始值误用了 i18n 键字符串，而非 null 或空字符串，并建议修正该无效默认值。"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/renderer/src/pages/agents/index.ts",
+          "start_line": 20,
+          "title": "useSystemAgents 在组件渲染期间调用 store.getState() 并条件性返回不同 hook，违反 React Hooks 规则且存在状态读取时序问题",
+          "outcome": "true_positive",
+          "reference": 6,
+          "reason": "The finding explicitly identifies the same stale Redux state read caused by store.getState() not subscribing to settings changes and recommends reactive state access, matching the reference comment."
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/renderer/src/pages/agents/index.ts",
+          "side": "new",
+          "start_line": 20,
+          "end_line": 20,
+          "title": "useSystemAgents 违反 React Hooks 规则：条件调用 Hook 导致状态错乱",
+          "body": "`useSystemAgents` 现在根据 `defaultaides` 的值在 `useLocalSystemAgents()` 和 `useRemoteSystemAgents()` 之间条件性地返回不同的 Hook 调用。React Hooks 规则要求每次渲染必须调用相同顺序、相同数量的 Hook。当用户修改 `defaultaides` 设置（从内置切换到远程 URL，或反之）时，组件会从调用 `useLocalSystemAgents`（内部调用 `useState` + `useEffect`）切换到调用 `useRemoteSystemAgents`（内部调用 `useState` + `useEffect`），Hook 数量/顺序发生变化，React 会抛出 “Rendered more hooks than during the previous render” 错误，导致组件崩溃。\n\n更隐蔽的问题是：`useLocalSystemAgents` 和 `useRemoteSystemAgents` 内部各自维护独立的 `useState`，当条件切换时，React 无法正确关联状态，可能复用错误的 state 槽位，导致 agents 数据错乱。",
+          "severity": "high"
+        },
+        {
+          "path": "src/renderer/src/store/settings.ts",
+          "side": "new",
+          "start_line": 210,
+          "end_line": 210,
+          "title": "defaultaides 初始值被设置为无效的字符串字面量，导致默认状态语义错误",
+          "body": "在 `src/renderer/src/store/settings.ts` 中，`defaultaides` 的初始值被设置为字符串字面量 `'settings.defaultaides'`，而不是 `null` 或空字符串。该值既不是合法的 URL，也不以 `http` 开头。\n\n在 `src/renderer/src/pages/agents/index.ts` 的 `useSystemAgents` 中，判断逻辑为：若 `defaultaides` 为 `null`/`undefined` 则回退本地；否则若不以 `http` 开头则回退本地；否则走远程加载。由于初始值是 `'settings.defaultaides'`（不以 `http` 开头），因此默认情况下会走 `useLocalSystemAgents`，这本身是符合预期的回退行为。\n\n但问题在于：这个初始值看起来像是一个未完成的占位符（疑似本意是引用 i18n key 或某个默认 URL），它会让 `defaultaides` 永远处于一个「非空但无效」的状态。任何依赖 `defaultaides === null` 来判断「用户未配置」的逻辑都会失效。同时，`DefaultaidesSettings.tsx` 中 `value={Aides || ''}` 会把 `'settings.defaultaides'` 直接显示在输入框中，用户会看到一个无意义的字符串。\n\n这是一个持久化状态语义错误：初始状态写入了一个无意义的非空值，导致「未配置」与「已配置但无效」两种状态无法区分。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/renderer/src/pages/agents/index.ts",
+          "side": "new",
+          "start_line": 20,
+          "end_line": 20,
+          "title": "useSystemAgents 在组件渲染期间调用 store.getState() 并条件性返回不同 hook，违反 React Hooks 规则且存在状态读取时序问题",
+          "body": "`useSystemAgents` 在函数体顶层直接调用 `store.getState().settings` 读取 `defaultaides`，并根据其值条件性地返回 `useLocalSystemAgents()` 或 `useRemoteSystemAgents()`。\n\n这存在两个问题：\n1. **违反 React Hooks 规则**：`useSystemAgents` 本身是一个自定义 hook，它在内部条件性地调用其他 hook（`useLocalSystemAgents` / `useRemoteSystemAgents`）。当 `defaultaides` 在运行时发生变化（用户修改设置后），组件可能从调用 `useLocalSystemAgents` 切换到 `useRemoteSystemAgents`，导致 hook 调用顺序改变，触发 React 的「Rendered fewer/more hooks than expected」错误或状态错乱。\n2. **状态读取时序问题**：`store.getState()` 是同步读取，但组件不会因为 store 中 `defaultaides` 的变化而重新渲染（除非通过 `useSelector` 订阅）。因此当用户在设置页修改 URL 后，使用该 hook 的组件可能不会感知到变化，导致加载的助手列表与用户配置不一致（读/写不匹配）。\n\n从持久化一致性角度看，这是典型的「读取路径未订阅状态变化」导致的 stale read：用户写入新 URL 后，消费方仍读取旧值。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/ClickHouse__ClickHouse__75474",
+      "kind": "golden",
+      "language": "C++",
+      "changed_lines": 412,
+      "golden": 18,
+      "findings": 4,
+      "true_positive": 1,
+      "false_positive": 3,
+      "negative_hits": 0,
+      "tokens_total": 4818,
+      "duration_ms": 53938,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 2,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/Interpreters/ThreadStatusExt.cpp",
+          "start_line": 190,
+          "title": "ThreadGroupSwitcher 构造函数在异常路径下未恢复已分离的线程组，导致线程组状态泄漏",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "src/Interpreters/ThreadStatusExt.cpp",
+          "start_line": 201,
+          "title": "ThreadGroupSwitcher 构造函数吞掉异常后仍继续执行任务，掩盖了线程组未正确附着的逻辑错误",
+          "outcome": "true_positive",
+          "reference": 14,
+          "reason": "两者都指出构造函数捕获所有异常后仅记录并继续或返回，会吞掉线程组附着失败并让任务在错误状态下运行。"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/Interpreters/ThreadStatusExt.cpp",
+          "start_line": 0,
+          "title": "ThreadGroupSwitcher 构造函数吞掉异常导致线程组静默未附加",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "src/Dictionaries/PolygonDictionaryUtils.h",
+          "start_line": 0,
+          "title": "PolygonDictionaryUtils 局部 ThreadPool 生命周期可能短于异步任务",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/Interpreters/ThreadStatusExt.cpp",
+          "side": "new",
+          "start_line": 190,
+          "end_line": 190,
+          "title": "ThreadGroupSwitcher 构造函数在异常路径下未恢复已分离的线程组，导致线程组状态泄漏",
+          "body": "在 `ThreadGroupSwitcher` 构造函数中，当 `allow_existing_group == true` 且当前线程已附着到不同的组时，代码先调用 `CurrentThread::detachFromGroupIfNotDetached()` 将当前组分离，随后才执行 `attachToGroup(thread_group)`。如果后续的 `attachToGroup` 或 `setThreadName` 抛出异常（例如 `LockMemoryExceptionInThread` 或 `attachToGroup` 内部失败），`catch (...)` 分支仅将 `thread_group` 和 `prev_thread_group` 置空并记录日志，但此时线程已经被 detach，且 `prev_thread_group` 已被清空，导致析构函数无法恢复原线程组。结果是线程在异常后处于「未附着任何组」的状态，而调用方（如 `MergePlainMergeTreeTask::executeStep` 使用 `allow_existing_group=true`）仍认为线程组上下文有效，后续内存追踪与 ProfileEvents 归属会静默丢失。",
+          "severity": "high"
+        },
+        {
+          "path": "src/Interpreters/ThreadStatusExt.cpp",
+          "side": "new",
+          "start_line": 201,
+          "end_line": 201,
+          "title": "ThreadGroupSwitcher 构造函数吞掉异常后仍继续执行任务，掩盖了线程组未正确附着的逻辑错误",
+          "body": "构造函数在 `catch (...)` 中调用 `DB::tryLogCurrentException` 后静默返回，将 `thread_group` 置空。这意味着当 `allow_existing_group=false`（默认，用于线程池任务）且线程意外已附着到其他组时，抛出的 `LOGICAL_ERROR` 被吞掉，任务仍会在「未切换到目标线程组」的状态下继续执行。这正是本 MR 想要检测的「attach/detach 未正确嵌套」问题，但异常被吞掉后，检测结果仅以日志形式出现，任务继续运行在错误的线程组上下文中，内存/ProfileEvents 归属错误，且不会触发任何失败信号。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/Interpreters/ThreadStatusExt.cpp",
+          "side": "new",
+          "start_line": 0,
+          "title": "ThreadGroupSwitcher 构造函数吞掉异常导致线程组静默未附加",
+          "body": "ThreadGroupSwitcher 构造函数在 `catch (...)` 分支中调用 `tryLogCurrentException` 后，将 `thread_group` 和 `prev_thread_group` 置空并返回，而不是重新抛出异常。这意味着当线程组附加失败（例如 `prev_thread` 为 nullptr、或线程已附加到不同组且 `allow_existing_group=false`）时，任务仍会继续执行，但线程并未附加到预期的线程组。\n\n这会导致：\n1. 内存/ProfileEvents 统计被错误地归属到错误的线程组（或根本不计入任何组），造成查询级统计缺失或错配。\n2. 原本用于捕获线程组嵌套错误的断言被静默绕过，使本 MR 想要修复的 bug（`CurrentThread::getGroup()` 返回 nullptr）在部分路径上仍可能以静默方式复现，只是不再崩溃，而是产生错误的统计归属。\n\n构造函数被声明为 `noexcept`，因此无法通过异常传播错误，但静默降级会掩盖真实的逻辑错误。建议至少在 DEBUG/断言构建下保留断言或记录更明确的错误，或考虑在无法附加时让任务快速失败而非静默继续。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/Dictionaries/PolygonDictionaryUtils.h",
+          "side": "new",
+          "start_line": 0,
+          "title": "PolygonDictionaryUtils 局部 ThreadPool 生命周期可能短于异步任务",
+          "body": "在 `GridRoot::divide`（或类似方法）中，原代码使用 `GlobalThreadPool::instance()` 作为 runner 的线程池，现改为在函数内创建局部 `ThreadPool pool(...)`，并以其构造 `ThreadPoolCallbackRunnerLocal\u003cvoid\u003e runner(pool, \"PolygonDict\")`。\n\n`ThreadPoolCallbackRunnerLocal` 持有对 `pool` 的引用（`PoolT \u0026 pool`）。如果 `runner` 调度的是异步任务（通过 `scheduleFromThreadPoolUnsafe` 返回 future 并可能异步执行），而 `pool` 是函数局部变量，则函数返回时 `pool` 被析构，但异步任务可能仍在执行，导致对已析构 `ThreadPool` 的悬空引用访问。\n\n需要确认 `runner` 在此处的调用方式：若所有任务在函数返回前通过 future 等待完成（同步等待），则无问题；若存在 fire-and-forget 的异步调度，则存在 use-after-free 风险。原代码使用全局单例 `GlobalThreadPool::instance()` 不存在此生命周期问题。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/ClickHouse__ClickHouse__85873",
+      "kind": "golden",
+      "language": "C++",
+      "changed_lines": 575,
+      "golden": 18,
+      "findings": 5,
+      "true_positive": 0,
+      "false_positive": 5,
+      "negative_hits": 0,
+      "tokens_total": 3336,
+      "duration_ms": 36521,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_errors": 1,
+      "naturalness_scores": [
+        4,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/Functions/concatWithSeparator.cpp",
+          "start_line": 0,
+          "title": "concatWithSeparator 返回值类型标注错误：非 NULL 输入返回 String 而非 Nullable(String)",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "src/Functions/endsWithUTF8.cpp",
+          "start_line": 0,
+          "title": "endsWithUTF8 示例与描述不一致：示例使用 '富强' 前缀而非后缀",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/Functions/base64Encode.cpp",
+          "start_line": 0,
+          "title": "base64Encode 参数描述错误：将编码函数描述为解码",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "src/Functions/base64URLDecode.cpp",
+          "start_line": 0,
+          "title": "base64URLDecode 参数描述错误：将解码函数描述为编码",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 4,
+          "path": "src/Functions/concat.cpp",
+          "start_line": 0,
+          "title": "concat 返回值类型标注错误：无 NULL 参数时返回 String 而非 Nullable(String)",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/Functions/concatWithSeparator.cpp",
+          "side": "new",
+          "start_line": 0,
+          "title": "concatWithSeparator 返回值类型标注错误：非 NULL 输入返回 String 而非 Nullable(String)",
+          "body": "在 `concatWithSeparator` 的文档中，返回值类型被标注为 `{\"String\"}`，但描述又写 \"If any of the argument values is `NULL`, the function returns `NULL`\"。这与 concat 的标注（Nullable(String)）形成不一致：两个函数在 NULL 传播语义上相同，但类型标注却不同。concatWithSeparator 在参数可空时同样返回 Nullable，笼统标注为 String 不准确。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/Functions/endsWithUTF8.cpp",
+          "side": "new",
+          "start_line": 0,
+          "title": "endsWithUTF8 示例与描述不一致：示例使用 '富强' 前缀而非后缀",
+          "body": "在 `endsWithUTF8` 的文档中，示例查询为 `SELECT endsWithUTF8('данных', 'ых')`，该示例本身正确（'ых' 是后缀）。但旧文档中的示例 `select endsWithUTF8('富强民主文明和谐', '富强')` 使用了前缀 '富强'，而新文档描述为 \"Returns whether string `s` ends with `suffix`\"。虽然新示例已修正，但需确认新示例输出 `1` 与函数实际行为一致。此条为低置信度提示，主要关注示例输出值是否经过实际验证。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/Functions/base64Encode.cpp",
+          "side": "new",
+          "start_line": 0,
+          "title": "base64Encode 参数描述错误：将编码函数描述为解码",
+          "body": "在 `base64Encode` 的文档中，`plaintext` 参数的描述为 \"Plaintext column or constant to decode.\"，但该函数是编码函数（encode），应描述为 \"to encode\"。这是从旧文档迁移时引入的笔误，会误导用户对该函数用途的理解。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/Functions/base64URLDecode.cpp",
+          "side": "new",
+          "start_line": 0,
+          "title": "base64URLDecode 参数描述错误：将解码函数描述为编码",
+          "body": "在 `base64URLDecode` 的文档中，`encoded` 参数的描述为 \"String column or constant to encode.\"，但该函数是解码函数（decode），应描述为 \"to decode\"。这是迁移时引入的笔误。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/Functions/concat.cpp",
+          "side": "new",
+          "start_line": 0,
+          "title": "concat 返回值类型标注错误：无 NULL 参数时返回 String 而非 Nullable(String)",
+          "body": "在 `concat` 的文档中，返回值类型被标注为 `Nullable(String)`，并描述 \"If any of arguments is `NULL`, the function returns `NULL`\"。但 `concat` 函数（ConcatOverloadResolver）在参数不含 NULL 时返回的是普通 `String`，仅在参数可空时才返回 Nullable。将返回类型笼统标注为 `Nullable(String)` 不准确，会误导用户对结果类型（进而影响后续类型推断、索引、比较等）的判断。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/FreeCAD__FreeCAD__20156",
+      "kind": "golden",
+      "language": "C++",
+      "changed_lines": 56,
+      "golden": 16,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1417,
+      "duration_ms": 18910,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "aacr/PowerShell__PowerShell__24910",
+      "kind": "golden",
+      "language": "C#",
+      "changed_lines": 23,
+      "golden": 5,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1218,
+      "duration_ms": 16907,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "aacr/appwrite__appwrite__9999",
+      "kind": "golden",
+      "language": "PHP",
+      "changed_lines": 46,
+      "golden": 18,
+      "findings": 1,
+      "true_positive": 1,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 2552,
+      "duration_ms": 26137,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "app/controllers/api/console.php",
+          "start_line": 46,
+          "title": "控制台域名与主域名语义混用，可能导致控制台功能误判",
+          "outcome": "true_positive",
+          "reason": "两者都指出后端域名有效性校验不应使用面向管理前端的 `_APP_CONSOLE_DOMAIN`，而应继续使用 `_APP_DOMAIN`。"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "app/controllers/api/console.php",
+          "side": "new",
+          "start_line": 46,
+          "end_line": 46,
+          "title": "控制台域名与主域名语义混用，可能导致控制台功能误判",
+          "body": "在 `app/controllers/api/console.php` 中，原本用 `_APP_DOMAIN` 判断域名是否「已知且非测试」来决定是否启用控制台相关逻辑，现在改为优先使用 `_APP_CONSOLE_DOMAIN`。但 `_APP_CONSOLE_DOMAIN` 的语义是「控制台域名」，而 `_APP_DOMAIN` 是「主域名/API 域名」。当两者被配置为不同值时（这正是本 MR 引入该环境变量的目的——控制台域名可能带 `region.` 前缀或指向不同主机），`isKnown()` 与 `isTest()` 的校验对象发生了变化，可能改变控制台功能的启用条件，导致在 `_APP_CONSOLE_DOMAIN` 未通过 `isKnown()` 校验（例如自定义控制台域名）时，原本依赖 `_APP_DOMAIN` 通过校验而启用的功能被意外关闭。\n\n具体而言，`$isDomainValid` 现在基于 `_APP_CONSOLE_DOMAIN` 计算，而后续逻辑（如 CNAME 校验、控制台渲染）仍可能依赖 `_APP_DOMAIN` 的语义。这种「域名来源」与「域名用途」的错位，使得控制台功能的开关条件与实际的 API/主域名配置脱钩，属于边界语义变更。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/cline__cline__4676",
+      "kind": "golden",
+      "language": "TypeScript",
+      "changed_lines": 179,
+      "golden": 15,
+      "findings": 4,
+      "out_of_diff": 1,
+      "true_positive": 0,
+      "false_positive": 4,
+      "negative_hits": 0,
+      "tokens_total": 4688,
+      "duration_ms": 48449,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 3,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/core/storage/state.ts",
+          "start_line": 0,
+          "title": "生产代码路径中残留大量性能调试日志，应清理",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "src/core/storage/state.ts",
+          "start_line": 631,
+          "title": "批量并行写入缺少原子性，单键失败会导致全局状态与密钥部分更新",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/core/storage/state.ts",
+          "start_line": 35,
+          "title": "批量写入错误被吞掉，失败 key 无法被识别或重试",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "src/core/storage/state.ts",
+          "start_line": 0,
+          "title": "批量并行写入破坏了原有的原子性/错误传播语义，部分失败会导致状态不一致",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/core/storage/state.ts",
+          "side": "new",
+          "start_line": 0,
+          "title": "生产代码路径中残留大量性能调试日志，应清理",
+          "body": "本 MR 在 `updateApiConfigurationProto.ts`、`state.ts`、`useApiConfigurationHandlers.ts` 中加入了大量 `console.log`/`console.error` 与 `performance.now()` 计时，包括 `[PERF]` 前缀的日志。这些日志会在每次 provider 切换、每次状态读取（`getAllExtensionState` 中 66+30 次读取）时输出到控制台，属于调试残留。\n\n虽然不影响功能正确性，但：\n1. `getAllExtensionState` 在扩展激活时被调用，会向用户控制台输出多条 `[PERF]` 日志，污染日志输出。\n2. 这些计时代码与业务逻辑耦合，后续维护时容易误删或遗漏 `performance.now()` 的配对。\n\n建议在合并前移除所有 `[PERF]` 日志与 `performance.now()` 计时，或将其收敛到受开关控制的调试工具中。",
+          "severity": "low"
+        },
+        {
+          "path": "src/core/storage/state.ts",
+          "side": "new",
+          "start_line": 631,
+          "end_line": 631,
+          "title": "批量并行写入缺少原子性，单键失败会导致全局状态与密钥部分更新",
+          "body": "### 批量并行写入缺少原子性，单键失败会导致全局状态与密钥部分更新\n\n原实现中 47 次 `updateGlobalState` 与 23 次 `storeSecret` 是顺序 `await` 执行的，虽然同样不具备事务原子性，但每次调用独立完成，失败点清晰且后续调用仍会继续。改为 `Promise.all([updateGlobalStateBatch(...), updateSecretsBatch(...)])` 后，两个批次并行执行，且每个批次内部又用 `Promise.all` 并行执行所有 key 的写入。\n\n问题在于：\n1. 若 `context.globalState.update` 或 `storeSecret` 对某个 key 写入失败（例如底层 VSCode 存储 API reject、磁盘写入失败、密钥存储服务不可用），`Promise.all` 会在第一个 reject 时立即 reject，但其余已发起的写入仍会继续执行并可能成功，导致全局状态与密钥存储处于不一致的部分更新状态。\n2. 由于 `updateGlobalStateBatch` 和 `updateSecretsBatch` 内部各自 `await Promise.all(...)`，而外层又用 `Promise.all` 并行执行两个批次，任何一个批次失败都不会阻止另一个批次继续写入，进一步放大部分写入窗口。\n3. 没有失败回滚或重试机制，调用方 `updateApiConfigurationProto` 的 catch 只会记录错误并 rethrow，不会恢复已写入的状态。\n\n具体后果：例如用户切换 provider 时，`apiProvider` 已写入新值，但对应的 `apiKey` 密钥写入失败，导致全局状态指向新 provider 而密钥仍是旧值或缺失，后续 API 调用会使用错误的密钥或直接失败。\n\n建议：至少在批次写入失败时记录哪些 key 失败并考虑重试；若需要更强一致性，可考虑将全局状态与密钥的写入顺序化（先写密钥再写全局状态），或引入补偿逻辑。\n\n_定位 src/core/storage/state.ts:631 不在本次改动范围内，已按文件级发布。_",
+          "severity": "medium",
+          "out_of_diff": true
+        },
+        {
+          "path": "src/core/storage/state.ts",
+          "side": "new",
+          "start_line": 35,
+          "end_line": 35,
+          "title": "批量写入错误被吞掉，失败 key 无法被识别或重试",
+          "body": "`updateGlobalStateBatch` 和 `updateSecretsBatch` 内部使用 `Promise.all` 直接映射所有 key 的写入，但没有对单个 key 的失败进行捕获或标识。当 `Promise.all` 因某个 key 失败而 reject 时，调用方无法得知是哪个 key 失败，也无法针对性地重试。\n\n此外，`context.globalState.update` 的返回类型是 `Thenable\u003cvoid\u003e`，其 reject 行为取决于 VSCode 内部实现。若底层存储 API 对某些 key 的写入失败是静默的（不 reject 而是返回 resolved），则错误会被完全吞掉，导致数据静默丢失。\n\n这属于本 MR 引入的持久化语义变化：原顺序实现中每个 `await` 的失败会立即在对应位置抛出，便于定位；批量化后失败定位能力下降。",
+          "severity": "low"
+        },
+        {
+          "path": "src/core/storage/state.ts",
+          "side": "new",
+          "start_line": 0,
+          "title": "批量并行写入破坏了原有的原子性/错误传播语义，部分失败会导致状态不一致",
+          "body": "原实现中 47 次 `updateGlobalState` 与 23 次 `storeSecret` 是串行 `await` 的，任一调用抛错会立即中断，后续写入不会执行，且错误会向上传播到 `updateApiConfigurationProto` 的 catch 块。重构后改为 `await Promise.all([updateGlobalStateBatch(...), updateSecretsBatch(...)])`，其中每个 batch 内部又用 `Promise.all` 并行执行所有 `context.globalState.update` / `storeSecret`。\n\n这带来两个问题：\n1. **部分写入**：`Promise.all` 中若某个 key 的 `update`/`storeSecret` 因底层存储错误（如磁盘满、权限、secrets 存储异常）而 reject，其他 key 的写入可能已经成功。此时 `updateApiConfiguration` 抛错，但全局状态与 secrets 已处于「部分更新」的中间态，且没有回滚机制。\n2. **错误吞没/竞态**：`Promise.all` 默认在第一个 reject 时立即 reject，但其余 promise 仍在后台继续执行，其后续 reject 会成为 unhandled rejection（取决于调用方是否处理）。这改变了原有的「失败即停止」语义。\n\n对于 provider 切换这种涉及 apiKey、baseUrl、modelId 等强关联字段的操作，部分写入会导致内存中的 `apiConfiguration`（已通过 `buildApiHandler` 生效）与持久化状态不一致，下次启动时读到混合的旧/新配置。\n\n建议：若底层 `globalState.update`/`storeSecret` 本身不保证原子性，至少应在 batch 函数内捕获并聚合错误，或对关键字段（如 apiProvider + apiKey + baseUrl）保持串行写入以保证一致性；同时明确记录「并行写入不保证原子性」这一语义变化。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/comfyanonymous__ComfyUI__6033",
+      "kind": "golden",
+      "language": "Python",
+      "changed_lines": 30,
+      "golden": 7,
+      "findings": 1,
+      "true_positive": 0,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 2263,
+      "duration_ms": 24967,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "judge_errors": 1,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "comfy/controlnet.py",
+          "start_line": 824,
+          "title": "load_t2i_adapter 中 prefix_replace 键被误改，导致 T2I Adapter 权重映射错误",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "comfy/controlnet.py",
+          "side": "new",
+          "start_line": 824,
+          "end_line": 824,
+          "title": "load_t2i_adapter 中 prefix_replace 键被误改，导致 T2I Adapter 权重映射错误",
+          "body": "在 `comfy/controlnet.py` 的 `load_t2i_adapter` 函数中，原代码为：\n\n```python\nfor i in range(4):\n    for j in range(2):\n        prefix_replace[\"adapter.body.{}.resnets.{}.\".format(i, j)] = \"body.{}.\".format(i * 2 + j)\n    prefix_replace[\"adapter.body.{}.\".format(i, j)] = \"body.{}.\".format(i * 2)\n```\n\n改动后变为：\n\n```python\nfor i in range(4):\n    for j in range(2):\n        prefix_replace[\"adapter.body.{}.resnets.{}.\".format(i, j)] = \"body.{}.\".format(i * 2 + j)\n    prefix_replace[\"adapter.body.{}.\".format(i, )] = \"body.{}.\".format(i * 2)\n```\n\n原代码中 `\"adapter.body.{}.\".format(i, j)` 的 `format` 只消费一个占位符 `{}`，多余的 `j` 参数被静默忽略（这是原代码的一个潜在 bug，但行为上等价于 `format(i)`）。本次改动将 `format(i, j)` 改为 `format(i, )`，从字符串格式化结果上看两者等价（都只填充 `i`），因此该改动本身**不会**改变运行时行为。\n\n然而，这一行位于 `for j in range(2)` 循环体之外、`for i` 循环体之内，它引用了循环变量 `j`（原代码）或不再引用 `j`（新代码）。原代码中 `j` 在循环结束后仍保留最后一个值（`j=1`），但由于 `format` 只消费一个占位符，`j` 实际上从未被使用。改动后 `j` 不再被引用，消除了未使用变量的 lint 告警，行为保持不变。\n\n因此，从严格的行为等价性角度，该改动是安全的。但需要指出：这一行映射 `adapter.body.{i}.` → `body.{i*2}.` 的语义本身可疑（`i*2` 而非 `i*2+1`），且与内层循环的 `i*2+j` 映射存在潜在重叠/冲突，属于既有代码的隐患，不在本次改动范围内。",
+          "severity": "critical"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/dbeaver__dbeaver__36789",
+      "kind": "golden",
+      "language": "Java",
+      "changed_lines": 294,
+      "golden": 11,
+      "findings": 4,
+      "true_positive": 1,
+      "false_positive": 3,
+      "negative_hits": 0,
+      "tokens_total": 3640,
+      "duration_ms": 36965,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 3,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+          "start_line": 147,
+          "title": "分区查询未选取 LOAD_UNIT 列，导致 loadUnit 属性始终为空",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+          "start_line": 164,
+          "title": "fetchObject 中 dbResult 判空逻辑无效且顺序错误",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+          "start_line": 160,
+          "title": "fetchObject 中 dbResult 空值检查顺序错误且判空永远为假",
+          "outcome": "true_positive",
+          "reference": 10,
+          "reason": "Both identify the same logic error: dbResult is dereferenced by safeGetInt before its null check, making the check unreachable and allowing an NPE if dbResult is null."
+        },
+        {
+          "finding_index": 3,
+          "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+          "start_line": 146,
+          "title": "分区查询 SQL 缺少 LOAD_UNIT 列，loadUnit 属性始终为 null",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+          "side": "new",
+          "start_line": 147,
+          "end_line": 147,
+          "title": "分区查询未选取 LOAD_UNIT 列，导致 loadUnit 属性始终为空",
+          "body": "`PartitionCache.prepareObjectsStatement` 的 SELECT 列表包含 `LOADED`，但缺少 `LOAD_UNIT` 列。而 `HANAPartition` 构造函数中通过 `JDBCUtils.safeGetString(dbResult, \"LOAD_UNIT\")` 读取该列，并暴露为 `getLoadUnit()` 属性。由于结果集中不存在该列，`safeGetString` 会返回 null（或抛异常，取决于实现），导致 Load Unit 属性在 UI 中永远为空，属于读取路径与查询结果集不匹配。\n\n建议在 SELECT 列表中加入 `LOAD_UNIT` 列，与 `LOADED` 一并选取。",
+          "severity": "medium"
+        },
+        {
+          "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+          "side": "new",
+          "start_line": 164,
+          "end_line": 164,
+          "title": "fetchObject 中 dbResult 判空逻辑无效且顺序错误",
+          "body": "`fetchObject` 中先调用 `JDBCUtils.safeGetInt(dbResult, \"PART_ID\")`，之后才判断 `if (dbResult == null) return null;`。由于 `dbResult` 参数标注为 `@NotNull`，且判空发生在解引用之后，该判空既无法防止 NPE，也永远不会在 null 时生效。若 `dbResult` 为 null，`safeGetInt` 会先抛出异常。\n\n建议删除该无效判空，或将其移动到 `safeGetInt` 调用之前。",
+          "severity": "low"
+        },
+        {
+          "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+          "side": "new",
+          "start_line": 160,
+          "end_line": 160,
+          "title": "fetchObject 中 dbResult 空值检查顺序错误且判空永远为假",
+          "body": "在 `PartitionCache.fetchObject` 中，代码先调用 `JDBCUtils.safeGetInt(dbResult, \"PART_ID\")` 解引用 `dbResult`，之后才执行 `if (dbResult == null)` 判空。由于 `dbResult` 参数标注为 `@NotNull` 且 JDBCObjectCache 框架在调用 fetchObject 时传入的 result set 不会为 null，该判空分支永远不可达，属于无效防御代码。更关键的是，若未来框架行为变化或传入 null，`safeGetInt` 会先抛出 NPE，判空逻辑无法起到保护作用。应删除该无效判空，或将其移动到解引用之前。",
+          "severity": "high"
+        },
+        {
+          "path": "plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java",
+          "side": "new",
+          "start_line": 146,
+          "end_line": 146,
+          "title": "分区查询 SQL 缺少 LOAD_UNIT 列，loadUnit 属性始终为 null",
+          "body": "`HANAPartition` 构造函数通过 `JDBCUtils.safeGetString(dbResult, \"LOAD_UNIT\")` 读取 `loadUnit` 字段，但 `PartitionCache.prepareObjectsStatement` 的 SELECT 列表只包含 `LOADED`，未包含 `LOAD_UNIT` 列。因此 `loadUnit` 属性在 UI 中始终显示为空，`getLoadUnit()` 永远返回 null。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/dotnet__aspnetcore__61006",
+      "kind": "golden",
+      "language": "C#",
+      "changed_lines": 115,
+      "golden": 6,
+      "findings": 1,
+      "true_positive": 1,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 5272,
+      "duration_ms": 47859,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/Shared/HttpSys/NativeInterop/SocketAddress.cs",
+          "start_line": 45,
+          "title": "IPv4 地址读取丢失网络字节序到主机字节序的转换",
+          "outcome": "true_positive",
+          "reference": 1,
+          "reason": "Both identify the same IPv4 byte-order bug: the network-byte-order S_addr value is passed directly to an IPAddress constructor that expects host byte order, reversing the address on little-endian systems."
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/Shared/HttpSys/NativeInterop/SocketAddress.cs",
+          "side": "new",
+          "start_line": 45,
+          "end_line": 45,
+          "title": "IPv4 地址读取丢失网络字节序到主机字节序的转换",
+          "body": "旧实现 `GetIPv4Address` 通过 `new IPAddress(new byte[] { _buffer[4], _buffer[5], _buffer[6], _buffer[7] })` 构造地址。`_buffer` 是从原生 `SOCKADDR_IN` 逐字节拷贝而来，因此 `_buffer[4..7]` 保存的是网络字节序（大端）的地址字节。`IPAddress(byte[])` 构造函数按传入字节顺序直接解释，因此旧代码返回的地址字节序与网络字节序一致，语义正确。\n\n新实现 `new IPAddress(_sockaddr.sin_addr.S_un.S_addr)` 直接读取 `S_un.S_addr`（一个 `uint`）。在 Windows 上，`SOCKADDR_IN.sin_addr` 的 `S_addr` 字段以网络字节序存储（大端），而 `IPAddress(uint)` 构造函数按主机字节序解释该 `uint`。在小端主机上，直接传入网络字节序的 `uint` 会导致地址字节被反转，产生错误的 IP 地址。\n\n对比同文件中的 `GetPort`，作者明确注释了 `sin_port is network byte order` 并调用 `IPAddress.NetworkToHostOrder` 进行转换，但 `GetIPAddress` 的 IPv4 分支没有做等价转换，这正是遗漏之处。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/dotnet__aspnetcore__62936",
+      "kind": "golden",
+      "language": "C#",
+      "changed_lines": 5,
+      "golden": 5,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1285,
+      "duration_ms": 16140,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "aacr/facebook__react__32499",
+      "kind": "golden",
+      "language": "JavaScript",
+      "changed_lines": 599,
+      "golden": 16,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1495,
+      "duration_ms": 19918,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "aacr/filamentphp__filament__15181",
+      "kind": "golden",
+      "language": "PHP",
+      "changed_lines": 14,
+      "golden": 4,
+      "findings": 4,
+      "out_of_diff": 2,
+      "true_positive": 1,
+      "false_positive": 3,
+      "negative_hits": 0,
+      "tokens_total": 4418,
+      "duration_ms": 43366,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 5,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+          "start_line": 152,
+          "title": "DISTINCT 条件判断依赖 orders[0] 可能因索引不存在而抛错或误判",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+          "start_line": 77,
+          "title": "reorder 仅应用第一个排序列，丢弃其余排序条件可能导致导出顺序与界面不一致",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+          "start_line": 77,
+          "title": "访问空集合下标 0 导致未定义偏移",
+          "outcome": "true_positive",
+          "reference": 2,
+          "reason": "两者都指出对 Collection 使用不安全的 `[0]` 下标访问，应改用 `first()` 等集合方法来避免键不存在或非连续时的取值问题。"
+        },
+        {
+          "finding_index": 3,
+          "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+          "start_line": 153,
+          "title": "DISTINCT 条件依赖被修改后的 orders 数组，去重语义与排序列不一致",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+          "side": "new",
+          "start_line": 152,
+          "end_line": 152,
+          "title": "DISTINCT 条件判断依赖 orders[0] 可能因索引不存在而抛错或误判",
+          "body": "在 `$baseQuery-\u003edistinct($qualifiedKeyName)` 之前新增了条件判断：`in_array($query-\u003egetQuery()-\u003eorders[0]['column'] ?? null, [$keyName, $qualifiedKeyName])`。这里直接访问 `orders[0]`，若 `orders` 为空数组，`$query-\u003egetQuery()-\u003eorders[0]` 会触发 PHP 的 undefined array key 警告（PHP 8 下为 Warning，非致命），随后 `?? null` 兜底为 null，`in_array(null, ...)` 返回 false，导致 distinct 不被应用。\n\n更关键的是，前面的 reorder 逻辑在 `$originalOrders` 为空时会执行 `$query-\u003ereorder($qualifiedKeyName)`，此时 `orders[0]['column']` 应为 `$qualifiedKeyName`，判断成立、distinct 被应用，这是正确的。但当存在原始排序时，reorder 只应用了 `$originalOrders[0]`，而 `orders[0]['column']` 是原始排序列（非主键），判断不成立、distinct 不被应用。\n\n问题在于：`orders` 数组在 reorder 之后可能包含多个 order（原始排序列 + 后续 foreach 追加的 order），而判断只检查 `orders[0]`。如果原始排序第一列恰好是主键（例如用户按 id 排序），则 distinct 会被应用；否则不会。这种依赖 `orders[0]` 的隐式假设在排序列顺序变化时会导致 distinct 行为不一致，进而可能产生重复行或分页错位。",
+          "severity": "high"
+        },
+        {
+          "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+          "side": "new",
+          "start_line": 77,
+          "end_line": 77,
+          "title": "reorder 仅应用第一个排序列，丢弃其余排序条件可能导致导出顺序与界面不一致",
+          "body": "### reorder 仅应用第一个排序列，丢弃其余排序条件可能导致导出顺序与界面不一致\n\n原代码 `$query-\u003ereorder($qualifiedKeyName)` 强制按主键排序。新代码改为：若存在原始排序，则 `$query-\u003ereorder($originalOrders[0]['column'], $originalOrders[0]['direction'])` 并 `$originalOrders-\u003eforget(0)`，随后 foreach 将剩余 order 追加回查询。\n\n这意味着最终查询的排序是「原始第一列 + 剩余原始列 + 主键（若原逻辑仍追加）」。但 `reorder()` 会清空原有 orders 并只保留传入的单个 order，因此原始的多列排序中，第一列之后的列在 reorder 时被暂时清空，之后通过 foreach 重新追加。\n\n潜在问题：如果原始排序第一列存在 NULL 值或重复值，PostgreSQL 下仅按第一列排序时，相同值的行顺序不稳定，而原逻辑强制追加主键可保证稳定顺序。新逻辑在存在原始排序时不再强制追加主键（除非原始排序本身包含主键），可能导致相同排序键的行在分页 chunk 之间顺序漂移，造成导出结果重复或遗漏。\n\n_定位 packages/actions/src/Exports/Jobs/PrepareCsvExport.php:77 不在本次改动范围内，已按文件级发布。_",
+          "severity": "medium",
+          "out_of_diff": true
+        },
+        {
+          "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+          "side": "new",
+          "start_line": 77,
+          "end_line": 77,
+          "title": "访问空集合下标 0 导致未定义偏移",
+          "body": "### 访问空集合下标 0 导致未定义偏移\n\n在 `reject` 过滤掉 `$qualifiedKeyName` 后，`$originalOrders` 可能为空集合。此时 `$originalOrders[0]['column']` 会访问不存在的下标，触发 PHP 的未定义数组键警告（PHP 8 下为 Warning，且返回 null），进而 `reorder(null, null)` 会生成无效的排序子句。\n\n具体流程：当查询的原始排序仅包含主键（例如用户只按 id 排序，或默认排序就是 id）时，`reject` 会移除该排序项，`$originalOrders` 变为空集合。随后 `! empty($originalOrders-\u003eall())` 为 false，走 `else` 分支调用 `reorder($qualifiedKeyName)`，这部分是安全的。但若 `$originalOrders` 非空，代码直接访问 `$originalOrders[0]`，而 `collect()` 返回的集合在 `reject` 后下标可能不连续（例如原始 orders 中第一个元素就是主键排序被 reject 掉，第二个元素才是用户排序），此时 `$originalOrders[0]` 实际指向的是第二个元素，逻辑上仍能取到值，但若 reject 后集合为空则直接崩溃。\n\n更关键的是：`reject` 之后集合下标不连续，`$originalOrders[0]` 并不保证是「第一个有效排序项」。例如原始 orders 为 `[id, name]`，reject 掉 id 后集合为 `[1 =\u003e name]`，此时 `$originalOrders[0]` 访问的是不存在的下标 0，返回 null，导致 `reorder(null, null)`。\n\n_定位 packages/actions/src/Exports/Jobs/PrepareCsvExport.php:77 不在本次改动范围内，已按文件级发布。_",
+          "severity": "high",
+          "out_of_diff": true
+        },
+        {
+          "path": "packages/actions/src/Exports/Jobs/PrepareCsvExport.php",
+          "side": "new",
+          "start_line": 153,
+          "end_line": 153,
+          "title": "DISTINCT 条件依赖被修改后的 orders 数组，去重语义与排序列不一致",
+          "body": "DISTINCT 子句的施加条件检查 `$query-\u003egetQuery()-\u003eorders[0]['column']` 是否为主键，但此时 `$query` 已经过前面的 `reorder` 处理，`orders[0]` 已被替换为用户指定的排序列（或主键）。这导致 DISTINCT 的施加条件与实际去重目标不一致。\n\n具体流程：前面代码在非空排序时执行 `reorder($originalOrders[0]['column'], ...)`，将 `orders[0]` 改为用户排序列；为空时执行 `reorder($qualifiedKeyName)`，`orders[0]` 为主键。因此后续 `in_array($query-\u003egetQuery()-\u003eorders[0]['column'] ?? null, [$keyName, $qualifiedKeyName])` 判断的其实是「当前排序第一列是否为主键」，而非「原始查询是否按主键排序」。\n\n当用户按非主键列排序时，`orders[0]` 是用户列，条件为 false，DISTINCT 不施加。但 `$baseQuery` 后续的分块查询（`orderBy` 追加主键）可能依赖 DISTINCT 主键来保证分页去重正确性。若 DISTINCT 被跳过，按非主键列排序且该列存在重复值时，分块边界可能出现重复行或漏行。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/filamentphp__filament__15217",
+      "kind": "golden",
+      "language": "PHP",
+      "changed_lines": 11,
+      "golden": 3,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1171,
+      "duration_ms": 15969,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "aacr/gofr-dev__gofr__1395",
+      "kind": "golden",
+      "language": "Go",
+      "changed_lines": 348,
+      "golden": 8,
+      "findings": 1,
+      "true_positive": 1,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1729,
+      "duration_ms": 21595,
+      "verdict": "pass",
+      "coverage_ratio": 0.8687089715536105,
+      "judge_calls": 3,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "pkg/gofr/testutil/port.go",
+          "start_line": 38,
+          "title": "NewServerConfigs 连续分配端口存在 TOCTOU 竞争，可能导致 HTTP/Metrics/gRPC 端口冲突",
+          "outcome": "true_positive",
+          "reference": 6,
+          "reason": "Both identify the same TOCTOU race caused by releasing each ephemeral listener before the server binds, allowing another process or test to claim the port and causing flaky bind failures."
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "pkg/gofr/testutil/port.go",
+          "side": "new",
+          "start_line": 38,
+          "end_line": 38,
+          "title": "NewServerConfigs 连续分配端口存在 TOCTOU 竞争，可能导致 HTTP/Metrics/gRPC 端口冲突",
+          "body": "`NewServerConfigs` 依次调用三次 `GetFreePort` 分别获取 HTTP、Metrics、gRPC 端口。`GetFreePort` 的实现是：监听 `:0` 获取一个空闲端口，然后**立即关闭监听器**再返回端口号。这意味着端口在返回时已经不再被占用。\n\n在并行运行测试（`go test -parallel` 或 CI 中多个测试进程）时，存在一个时间窗口：端口被释放后、`main()` 真正 `Listen` 之前，该端口可能被其他测试/进程抢占。更关键的是，三个端口是**顺序**分配的，前一个端口在下一个 `GetFreePort` 调用期间已经处于释放状态，进一步放大了竞争窗口。\n\n这会导致测试偶发失败（`bind: address already in use`），且失败难以复现。虽然这是测试辅助代码，但它是本 MR 的核心交付物，其可靠性直接影响所有迁移后的测试。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/immich-app__immich__14777",
+      "kind": "golden",
+      "language": "TypeScript",
+      "changed_lines": 312,
+      "golden": 16,
+      "findings": 1,
+      "true_positive": 0,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 2124,
+      "duration_ms": 25219,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "server/src/services/asset.service.ts",
+          "start_line": 191,
+          "title": "离线判定依赖入队时的 isOffline 快照，存在删除时状态已变化的竞态",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "server/src/services/asset.service.ts",
+          "side": "new",
+          "start_line": 191,
+          "end_line": 191,
+          "title": "离线判定依赖入队时的 isOffline 快照，存在删除时状态已变化的竞态",
+          "body": "在 `asset.service.ts` 中，`deleteOnDisk` 的取值在入队时（`deleteOnDisk: !asset.isOffline`）以及任务执行时（`if (asset.isOffline) willDelete = false`）分别读取了 `asset.isOffline`。但任务执行时读取的 `asset` 是重新从数据库加载的，而 `deleteOnDisk` 是入队时固化的布尔值。\n\n关键问题在于：`deleteOnDisk` 在入队时被固化为 `!asset.isOffline`，而任务执行时又用 `asset.isOffline` 覆盖。如果资产在入队时是 offline（`deleteOnDisk=false`），但任务执行前被重新扫描为 online（文件重新出现），此时 `asset.isOffline` 变为 false，`willDelete` 保持 `deleteOnDisk=false`，导致本应删除的原始文件未被删除（残留文件）。反之，如果入队时 online（`deleteOnDisk=true`），执行时变为 offline，则 `asset.isOffline` 为 true 会正确阻止删除。\n\n更严重的是反向竞态：入队时 online（`deleteOnDisk=true`），执行时 `asset.isOffline` 仍为 false（因为扫描尚未更新该资产），但文件实际上已被移出 import path 或匹配了新的 exclusion pattern。此时 `willDelete=true`，仍会删除原始文件——这正是本 MR 试图修复的数据丢失场景，但修复依赖 `isOffline` 标志已被正确设置，存在时间窗口。\n\n不过，由于 `deleteOnDisk` 在入队时已固化为 `!asset.isOffline`，且任务执行时又用 `asset.isOffline` 做二次判断，两处逻辑存在冗余与不一致，建议统一为仅在任务执行时基于最新 `asset.isOffline` 判断，避免入队时固化导致的状态不一致。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/immich-app__immich__16893",
+      "kind": "golden",
+      "language": "TypeScript",
+      "changed_lines": 125,
+      "golden": 19,
+      "findings": 1,
+      "true_positive": 0,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 3149,
+      "duration_ms": 36616,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "web/src/service-worker/index.ts",
+          "start_line": 55,
+          "title": "取消请求后仍可能将不完整/错误响应写入缓存，污染后续加载",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "web/src/service-worker/index.ts",
+          "side": "new",
+          "start_line": 55,
+          "end_line": 55,
+          "title": "取消请求后仍可能将不完整/错误响应写入缓存，污染后续加载",
+          "body": "`immichAsset` 在 `finally` 中删除 `pendingLoads` 条目，但 `cancel` 消息触发 `pending.abort()` 后，`await request` 会抛出 AbortError，进入 `catch` 分支返回 `Response.error()`。然而，`cache.put(url, response.clone())` 只在 `response.status === 200` 时执行，且位于 `await request` 之后。问题在于：如果 fetch 在 abort 之前已经返回了部分响应（例如流式响应），或者更关键的是——`cancel` 与 `cache.put` 之间存在竞态。当 `cancel` 消息到达时，`pendingLoads` 中的 AbortController 被 abort，但此时 `immichAsset` 可能已经拿到 `response` 并正在执行 `cache.put`。由于 `cache.put` 使用的是 `response.clone()`，而 clone 的 body 尚未被消费，abort 不会阻止已开始的 `cache.put` 完成，导致一个本应被取消的请求结果被写入缓存。更严重的是，`catch` 分支对任何错误（包括网络错误、非 200 响应）都返回 `Response.error()`，但 `cache.put` 的调用点与错误处理分离，使得缓存写入的语义不清晰。建议：在 `cache.put` 之前检查 `cancelToken.signal.aborted`，并在 abort 时跳过缓存写入；同时将缓存写入逻辑与错误处理统一，确保取消的请求绝不污染缓存。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/infiniflow__ragflow__6691",
+      "kind": "golden",
+      "language": "Python",
+      "changed_lines": 11,
+      "golden": 6,
+      "findings": 3,
+      "true_positive": 1,
+      "false_positive": 2,
+      "negative_hits": 0,
+      "tokens_total": 4120,
+      "duration_ms": 40326,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 2,
+      "naturalness_scores": [
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "graphrag/utils.py",
+          "start_line": 442,
+          "title": "在 trio nursery 内使用 await 阻塞了并发删除，且缩进错误导致 nursery 提前退出",
+          "outcome": "true_positive",
+          "reference": 5,
+          "reason": "两者都指出在 for 循环中直接 await trio.to_thread.run_sync 使原本并发的多条边删除变为串行执行并造成性能下降。"
+        },
+        {
+          "finding_index": 1,
+          "path": "graphrag/utils.py",
+          "start_line": 442,
+          "title": "utils.py 中 `await trio.to_thread.run_sync` 被错误地放在 `trio.open_nursery` 内，导致删除操作串行执行且阻塞事件循环",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "graphrag/general/extractor.py",
+          "start_line": 204,
+          "title": "extractor.py 中 `source_id` 合并后未去重，可能产生重复的 source_id",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "graphrag/utils.py",
+          "side": "new",
+          "start_line": 442,
+          "end_line": 442,
+          "title": "在 trio nursery 内使用 await 阻塞了并发删除，且缩进错误导致 nursery 提前退出",
+          "body": "原代码用 `nursery.start_soon(lambda: settings.docStoreConn.delete(...))` 将同步删除任务并发调度到 nursery 中（虽然原代码本身有把同步函数当异步调用的 bug）。本次改动把 `start_soon` 改成了 `await trio.to_thread.run_sync(...)`，但 `await` 直接写在 `for` 循环体内，导致：\n\n1. 每次循环都同步等待当前删除完成才进入下一次迭代，`removed_edges` 的删除变成串行执行，失去了 `trio.open_nursery()` 并发删除的意图。\n2. 更关键的是，`await` 语句前面多了一个空格（缩进为 5 个空格而非 4 个），这会导致 `await` 与 `for` 循环体不在同一缩进层级，从而产生 `IndentationError`（或至少语义错乱），使 `set_graph` 在存在 `removed_edges` 时直接崩溃。\n\n正确做法应保留并发语义：在 `for` 循环内用 `nursery.start_soon(...)` 调度一个异步包装函数，该函数内部再 `await trio.to_thread.run_sync(...)` 执行同步删除。",
+          "severity": "high"
+        },
+        {
+          "path": "graphrag/utils.py",
+          "side": "new",
+          "start_line": 442,
+          "end_line": 442,
+          "title": "utils.py 中 `await trio.to_thread.run_sync` 被错误地放在 `trio.open_nursery` 内，导致删除操作串行执行且阻塞事件循环",
+          "body": "原代码在 `trio.open_nursery()` 内通过 `nursery.start_soon(lambda: settings.docStoreConn.delete(...))` 并发发起删除。本次改动将 `start_soon` 替换为 `await trio.to_thread.run_sync(...)`，但该 `await` 仍然位于 `async with trio.open_nursery() as nursery:` 块内部。\n\n这带来两个问题：\n1. **串行化**：`await` 会阻塞当前协程直到该删除完成，因此循环中的每个删除操作会逐个串行执行，完全失去了原本 `start_soon` 的并发意图。当 `change.removed_edges` 数量较大时，删除耗时线性累加。\n2. **阻塞 nursery 语义**：在 `open_nursery` 块内直接 `await` 一个长时间运行的同步调用（即使通过 `to_thread` 包装），会阻塞 nursery 的调度，且 `nursery` 变量此时实际上未被使用（没有 `start_soon` 调用），属于无效的并发结构。\n\n正确做法是保留 `nursery.start_soon` 的并发语义，同时将同步调用包装为线程执行，例如：\n```python\nasync with trio.open_nursery() as nursery:\n    for from_node, to_node in change.removed_edges:\n        nursery.start_soon(\n            trio.to_thread.run_sync,\n            settings.docStoreConn.delete,\n            {\"knowledge_graph_kwd\": [\"relation\"], \"from_entity_kwd\": from_node, \"to_entity_kwd\": to_node},\n            search.index_name(tenant_id),\n            kb_id,\n        )\n```\n\n此外，改动还引入了一个缩进错误：新增行前多了一个空格（` await`），虽然 Python 在块内允许额外缩进，但这是明显的格式错误，且与 `async with` 块的对齐不一致。",
+          "severity": "high"
+        },
+        {
+          "path": "graphrag/general/extractor.py",
+          "side": "new",
+          "start_line": 204,
+          "end_line": 204,
+          "title": "extractor.py 中 `source_id` 合并后未去重，可能产生重复的 source_id",
+          "body": "节点合并逻辑中，`source_id` 的合并改为：\n```python\nnode0_attrs[\"source_id\"].extend(node1_attrs[\"source_id\"])\nnode0_attrs[\"source_id\"] = sorted(set(node0_attrs[\"source_id\"]))\n```\n这里 `set()` 已经去重，因此 `source_id` 实际是去重的。但需要确认 `node0_attrs[\"source_id\"]` 与 `node1_attrs[\"source_id\"]` 是否始终为 list 类型。原代码 `node0_attrs[attr].extend(...)` 在 `attr` 为 `keywords` 时因节点无该属性而报 `KeyError`，本次修复移除了 `keywords`，仅保留 `source_id`，方向正确。\n\n不过，若 `source_id` 在节点属性中可能为 `None`（例如某些节点未设置 `source_id`），则 `None.extend(...)` 仍会抛出 `AttributeError: 'NoneType' object has no attribute 'extend'`，与 MR 描述中提到的 `TypeError: 'NoneType' object is not iterable` 属于同类问题。原代码中 `node0_attrs[attr].extend(...)` 同样存在此风险，但本次改动未对 `source_id` 为 `None` 的情况做防御。\n\n由于无法从 diff 中确认 `source_id` 是否始终被初始化为 list，此问题置信度中等，建议在合并前对 `source_id` 做 None 检查或确保其始终为 list。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/infiniflow__ragflow__7151",
+      "kind": "golden",
+      "language": "Python",
+      "changed_lines": 207,
+      "golden": 10,
+      "findings": 6,
+      "true_positive": 2,
+      "false_positive": 4,
+      "negative_hits": 0,
+      "tokens_total": 6192,
+      "duration_ms": 56962,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 4,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "rag/utils/infinity_conn.py",
+          "start_line": 0,
+          "title": "field_keyword 提升为模块级函数后，getFields 对 source_id 的拆分行为可能改变既有读取语义",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "rag/utils/infinity_conn.py",
+          "start_line": 82,
+          "title": "equivalent_condition_to_str 中 filter_fulltext 值未转义单引号，存在全文检索条件注入",
+          "outcome": "true_positive",
+          "reference": 4,
+          "reason": "Both identify the same failure to escape single quotes in the scalar `v` value before interpolating it into the `filter_fulltext` query, enabling syntax breakage and query injection."
+        },
+        {
+          "finding_index": 2,
+          "path": "rag/utils/infinity_conn.py",
+          "start_line": 576,
+          "title": "update 方法中 clmns 字典访问可能因列名大小写不一致触发 KeyError",
+          "outcome": "true_positive",
+          "reference": 5,
+          "reason": "两者都指出 remove 分支直接访问 clmns[v] 而未验证键是否存在，可能因列名大小写不一致或表实例缺失触发 KeyError，属于同一缺陷。"
+        },
+        {
+          "finding_index": 3,
+          "path": "rag/utils/infinity_conn.py",
+          "start_line": 577,
+          "title": "remove 分支中 char 类型判断逻辑错误，非 char 类型也会走 char 分支",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 4,
+          "path": "rag/utils/infinity_conn.py",
+          "start_line": 0,
+          "title": "update 中 remove 逻辑存在非原子多步写入，可能产生部分更新",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 5,
+          "path": "graphrag/utils.py",
+          "start_line": 0,
+          "title": "rebuild_graph 中 entity 断言与字段类型判断依赖后端输出格式，存在读/写不一致风险",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "rag/utils/infinity_conn.py",
+          "side": "new",
+          "start_line": 0,
+          "title": "field_keyword 提升为模块级函数后，getFields 对 source_id 的拆分行为可能改变既有读取语义",
+          "body": "`field_keyword` 从 `InfinityConnection` 的实例方法改为模块级函数，逻辑本身未变（source_id 与 `_kwd` 字段判定为 keyword）。但 `getFields` 中对该函数的使用保持不变，会对 `source_id` 字段执行 `split(\"###\")` 拆分为 list。\n\n本次 MR 同时修改了 `rebuild_graph`，使其依赖 `source_id` 的 list 语义（`src_ids.update(d.get(\"source_id\", []))`）。如果 `source_id` 在 infinity 后端中实际存储为标量（而非 `###` 分隔的多值），`getFields` 拆分后仍返回单元素 list，语义尚可；但如果 `source_id` 本身包含 `###` 子串（例如文档 ID 含该分隔符），会被错误拆分，导致 source_id 损坏。\n\n该风险在旧代码中同样存在（field_keyword 逻辑未变），但本次 MR 将 `source_id` 的读取结果直接用于 `src_ids` 集合并最终写入 `graph.graph[\"source_id\"]`，放大了错误拆分的影响面。",
+          "severity": "medium"
+        },
+        {
+          "path": "rag/utils/infinity_conn.py",
+          "side": "new",
+          "start_line": 82,
+          "end_line": 82,
+          "title": "equivalent_condition_to_str 中 filter_fulltext 值未转义单引号，存在全文检索条件注入",
+          "body": "本次改动新增了 `field_keyword` 分支，对 `_kwd` 字段（以及 `source_id`）走 `filter_fulltext` 路径。在列表分支中，字符串项会先做 `item.replace(\"'\",\"''\")` 转义；但在非列表（标量）分支中，`v` 直接以 `f\"filter_fulltext('{k}', '{v}')\"` 拼接，未做任何单引号转义。\n\n`equivalent_condition_to_str` 的 `condition` 参数来自调用方构造的查询条件，其中可能包含用户可控的字符串（例如文档名、实体关键词等）。当 `v` 是包含单引号的字符串时，会破坏 `filter_fulltext` 的字符串字面量，导致条件注入：攻击者可通过构造 `v = \"x') or filter_fulltext('_id','anything') or ('\"` 之类的值，篡改查询逻辑，绕过预期的过滤条件，读取或匹配到本不应可见的数据。\n\n对比同函数列表分支已显式做了 `replace(\"'\",\"''\")` 转义，说明作者意识到该注入风险，但标量分支遗漏了同样的处理，属于本次改动引入的回归。",
+          "severity": "high"
+        },
+        {
+          "path": "rag/utils/infinity_conn.py",
+          "side": "new",
+          "start_line": 576,
+          "end_line": 576,
+          "title": "update 方法中 clmns 字典访问可能因列名大小写不一致触发 KeyError",
+          "body": "在 `update` 方法中，新增代码通过 `table_instance.show_columns().rows()` 构建 `clmns` 字典，键为列名 `n`。随后在 `remove` 分支中直接使用 `clmns[v]` 访问，其中 `v` 是 `newValue` 中 `remove` 键对应的值（列名）。\n\n问题在于：`show_columns()` 返回的列名大小写可能与调用方传入的列名大小写不一致。例如 `getFields` 方法中明确使用 `k = column.lower()` 将列名转为小写后再处理，说明底层存储的列名可能是小写，而调用方传入的 `remove` 值可能是原始大小写（如 `PAGERANK_FLD` 等常量）。若两者不一致，`clmns[v]` 会抛出 `KeyError`，导致整个 `update` 操作失败。\n\n此外，`clmns` 仅在 `table_instance` 为真时构建，若 `table_instance` 为 `None`，`clmns` 为空字典，`remove` 分支中 `clmns[v]` 同样会 KeyError。",
+          "severity": "high"
+        },
+        {
+          "path": "rag/utils/infinity_conn.py",
+          "side": "new",
+          "start_line": 577,
+          "end_line": 577,
+          "title": "remove 分支中 char 类型判断逻辑错误，非 char 类型也会走 char 分支",
+          "body": "在 `remove` 分支中，判断列是否为 char 类型的代码为：\n\n```python\nty, de = clmns[v]\nif ty.lower().find(\"cha\"):\n    if not de:\n        de = \"\"\nnewValue[v] = de\n```\n\n`str.find()` 在未找到子串时返回 `-1`，而 `-1` 在 Python 中为真值。因此当列类型不是 char（例如 int、float 等）时，`ty.lower().find(\"cha\")` 返回 `-1`，`if -1` 为真，仍会进入 char 分支，将 `de`（默认值）赋给 `newValue[v]`。这会导致非 char 类型列在 `remove` 时被错误地重置为默认值，而非预期的删除行为。\n\n正确写法应为 `if \"cha\" in ty.lower():` 或 `if ty.lower().find(\"cha\") != -1:`。",
+          "severity": "medium"
+        },
+        {
+          "path": "rag/utils/infinity_conn.py",
+          "side": "new",
+          "start_line": 0,
+          "title": "update 中 remove 逻辑存在非原子多步写入，可能产生部分更新",
+          "body": "`update` 方法在 `remove` 分支中先通过 `table_instance.output(...).filter(filter).to_df()` 读取旧值，再对每个 `(k, new_v)` 组合分别执行一次 `table_instance.update(...)`，最后再执行一次 `table_instance.update(filter, newValue)`。这些写入是多次独立的数据库操作，中间没有事务包裹。\n\n如果 `removeValue` 包含多个键（例如同时移除多个字段的某个值），或 `remove_opt` 中有多个不同的 `(k, new_v)` 组合，一旦中途某次 update 失败或进程崩溃，会导致部分字段已移除、部分未移除，产生不一致的持久化状态。此外，`remove_opt` 的循环更新与末尾的 `table_instance.update(filter, newValue)` 之间也没有原子性保证。\n\n这是本次 MR 新引入的写入路径（旧代码只是 `del newValue[k]` 并设置 `newValue[v]=0`），因此属于本次变更引入的风险。",
+          "severity": "high"
+        },
+        {
+          "path": "graphrag/utils.py",
+          "side": "new",
+          "start_line": 0,
+          "title": "rebuild_graph 中 entity 断言与字段类型判断依赖后端输出格式，存在读/写不一致风险",
+          "body": "rebuild_graph 中 entity 循环将断言从 `== \"relation\"` 改为 `== \"entity\"`，并新增了对 `entity_kwd` 是 list 还是标量的运行时判断（`isinstance(d[\"entity_kwd\"], list)`），注释说明是为了兼容 infinity 与 es 两种后端输出。\n\n问题在于：`getFields` 对 `_kwd` 字段（除 docnm_kwd、knowledge_graph_kwd 外）会统一 `split(\"###\")` 成 list，而 infinity 后端在 `field_keyword` 中把 `entity_kwd` 判定为 keyword 字段，insert 时用 `\"###\".join(v)` 存储。因此同一字段在不同后端/不同读取路径下可能返回 list 或标量，代码依赖 `isinstance` 做分支，属于脆弱的读/写格式耦合。\n\n如果某个后端返回的 `entity_kwd` 是空 list（例如字段为空），`d[\"entity_kwd\"][0]` 会抛 IndexError；如果返回的是标量但实际是 `\"###\"` 分隔的多值字符串，则不会正确拆分。这会导致 rebuild 时节点缺失或异常。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/juspay__hyperswitch__7353",
+      "kind": "golden",
+      "language": "Rust",
+      "changed_lines": 94,
+      "golden": 8,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1078,
+      "duration_ms": 14266,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "aacr/kestra-io__kestra__7381",
+      "kind": "golden",
+      "language": "Java",
+      "changed_lines": 200,
+      "golden": 12,
+      "findings": 1,
+      "true_positive": 0,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 2059,
+      "duration_ms": 26827,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "script/src/main/java/io/kestra/plugin/scripts/runner/docker/Docker.java",
+          "start_line": 783,
+          "title": "Docker runner 在 configure 阶段渲染命令，与 CommandsWrapper 的渲染/组装流程重复且结果不一致",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "script/src/main/java/io/kestra/plugin/scripts/runner/docker/Docker.java",
+          "side": "new",
+          "start_line": 783,
+          "end_line": 783,
+          "title": "Docker runner 在 configure 阶段渲染命令，与 CommandsWrapper 的渲染/组装流程重复且结果不一致",
+          "body": "Docker.run() 的 configure() 方法在创建容器时通过 `withCmd(this.renderCommands(runContext, taskCommands))` 渲染命令，而 `renderCommands` 内部调用 `renderCommandsFromList`，它只渲染 `taskCommands.getCommands()`（以及 interpreter、beforeCommands）并做 `replaceInternalStorage`，但**不会**执行 `ScriptService.scriptCommands(...)` 的组装逻辑。\n\n与此同时，`CommandsWrapper.run()` 中新增的逻辑会先渲染 interpreter/beforeCommands/commands，再通过 `ScriptService.scriptCommands(...)` 组装成 finalCommands，并写回 `this.commands = Property.of(finalCommands)`。\n\n问题在于：Docker 容器实际启动使用的命令来自 `configure()` 中 `renderCommands` 的结果（即未经过 scriptCommands 组装的原始渲染结果），而 CommandsWrapper 精心组装的 finalCommands 并未被 Docker 使用。这导致：\n1. 命令被渲染两次（configure 阶段一次，CommandsWrapper.run 阶段一次），若渲染存在副作用或非幂等（例如依赖运行时的随机值、时间戳、或内部存储上传），两次结果可能不一致。\n2. interpreter/beforeCommands 的组装顺序（scriptCommands 的语义）在 Docker 路径下被绕过，Docker 容器实际执行的命令序列与 Process runner 或其他 runner 不一致。\n\n这破坏了「命令组装与渲染」的单一职责边界：渲染逻辑现在同时存在于 TaskRunner.renderCommands 和 CommandsWrapper.run 两处，且二者对「最终命令」的定义不同。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/keycloak__keycloak__38723",
+      "kind": "golden",
+      "language": "Java",
+      "changed_lines": 83,
+      "golden": 10,
+      "findings": 1,
+      "true_positive": 1,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1724,
+      "duration_ms": 31120,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java",
+          "start_line": 81,
+          "title": "GuideParser.setAttributes 中 tileVisible case 缺少 break，存在 switch 穿透风险",
+          "outcome": "true_positive",
+          "reference": 9,
+          "reason": "Both identify the missing break in the tileVisible switch case as a potential fall-through risk, even though the finding additionally discusses an unrelated boolean-parsing edge case."
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java",
+          "side": "new",
+          "start_line": 81,
+          "end_line": 81,
+          "title": "GuideParser.setAttributes 中 tileVisible case 缺少 break，存在 switch 穿透风险",
+          "body": "在 `GuideParser.setAttributes` 的 switch 语句中，新增的 `case \"tileVisible\"` 分支没有 `break` 语句。当前它是最后一个 case，因此暂时不会产生错误行为，但这是一个脆弱的控制流结构：一旦后续有人在该 case 之后新增其他 case（例如 `case \"foo\"`），解析到 `tileVisible` 属性时就会穿透执行到下一个 case，导致 `guide` 对象被错误地设置额外属性。\n\n此外，`tileVisible` 的解析逻辑本身也存在隐患：`GUIDE_ELEMENT_PATTERN` 的正则中 `tileVisible` 的值会被匹配到 `valueString`（因为 `tileVisible=\"false\"` 是带引号的字符串）或 `valueInt`（如果写成 `tileVisible=false` 不带引号）。当前代码使用 `attributeMatcher.group(\"valueString\")` 解析，若文档中写成不带引号的布尔值（如 `tileVisible=false`），`valueString` 组将为 null，`Boolean.parseBoolean(null)` 返回 false，导致 `tileVisible=false` 被正确解析为 false，但 `tileVisible=true`（不带引号）会被错误解析为 false。这与 `priority` 使用 `valueInt` 组的处理方式不一致，属于解析逻辑的不对称。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/keycloak__keycloak__40283",
+      "kind": "golden",
+      "language": "Java",
+      "changed_lines": 596,
+      "golden": 17,
+      "findings": 5,
+      "true_positive": 1,
+      "false_positive": 4,
+      "negative_hits": 0,
+      "tokens_total": 4393,
+      "duration_ms": 48852,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 3,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "test-framework/core/src/main/java/org/keycloak/testframework/database/AbstractContainerTestDatabase.java",
+          "start_line": 86,
+          "title": "getJdbcUrl 内部 IP 替换依赖容器网络配置的脆弱假设",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java",
+          "start_line": 105,
+          "title": "集群启动缺少原子性，部分容器启动失败时残留已启动容器",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "quarkus/tests/junit5/src/main/java/org/keycloak/it/utils/DockerKeycloakDistribution.java",
+          "start_line": 340,
+          "title": "getMappedPort 在容器未启动时抛出 NPE，且无状态校验",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "test-framework/core/src/main/java/org/keycloak/testframework/database/AbstractContainerTestDatabase.java",
+          "start_line": 87,
+          "title": "getJdbcUrl 的 internal 模式依赖网络迭代顺序并假设单网络",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 4,
+          "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancer.java",
+          "start_line": 15,
+          "title": "LoadBalancer.node 越界错误信息参数顺序颠倒",
+          "outcome": "true_positive",
+          "reference": 1,
+          "reason": "Both identify that the IllegalArgumentException format string labels nodeIndex and cluster size in one order while the supplied arguments are in the opposite order, causing the displayed values to be swapped."
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "test-framework/core/src/main/java/org/keycloak/testframework/database/AbstractContainerTestDatabase.java",
+          "side": "new",
+          "start_line": 86,
+          "end_line": 86,
+          "title": "getJdbcUrl 内部 IP 替换依赖容器网络配置的脆弱假设",
+          "body": "`AbstractContainerTestDatabase.getJdbcUrl()` 在 `internal=true` 时，通过 `container.getContainerInfo().getNetworkSettings().getNetworks().values().iterator().next().getIpAddress()` 获取容器 IP，并用 `container.getExposedPorts().get(0)` 替换端口。这里存在多个脆弱假设：\n\n1. `getNetworks().values().iterator().next()` 假设容器只连接了一个网络，且该网络是 Keycloak 容器可访问的网络。在 Testcontainers 中，如果数据库容器与 Keycloak 容器不在同一个 Docker 网络（例如 Keycloak 容器使用默认 bridge 网络，而数据库容器被放入自定义网络），取到的 IP 可能无法从 Keycloak 容器访问，导致集群节点无法连接数据库。\n2. `getExposedPorts().get(0)` 假设暴露端口列表的第一个元素就是数据库端口，且顺序稳定。`getExposedPorts()` 返回的是 `Set`（或无序集合），其迭代顺序不保证，取 `get(0)` 可能取到错误的端口，从而生成错误的 JDBC URL。\n3. `url.replace(host + \":\" + firstMappedPort, ip + \":\" + exposedPort)` 依赖字符串替换，若 JDBC URL 中 host:port 出现多次或格式不同（如带参数），替换可能不完整或错位。\n\n这些假设在特定网络拓扑或端口暴露顺序下会导致集群节点拿到错误的数据库地址，表现为连接失败或连接到错误的数据库实例，属于读/写目标不一致的隐患。",
+          "severity": "medium"
+        },
+        {
+          "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java",
+          "side": "new",
+          "start_line": 105,
+          "end_line": 105,
+          "title": "集群启动缺少原子性，部分容器启动失败时残留已启动容器",
+          "body": "`ClusteredKeycloakServer.start()` 通过 `startContainersWithSameImage` / `startContainersWithMixedImage` 循环逐个启动容器。若第 N 个容器启动失败（例如镜像拉取失败、端口冲突、数据库连接失败），前面 N-1 个已启动的容器不会被回滚或停止，导致测试进程残留运行中的容器。由于 `MANUAL_STOP = true`，这些容器不会自动清理，可能造成端口占用、数据库连接泄漏，以及后续测试或 CI 环境的污染。\n\n此外，`stop()` 方法通过 `Arrays.stream(containers).filter(Objects::nonNull).forEach(...)` 停止容器，但若 `start()` 中途抛异常，`containers` 数组中已赋值的元素仍会被 `stop()` 清理（如果调用方在 finally 中调用 stop），但若调用方未捕获异常并调用 stop，则残留。这属于多步持久化/资源分配流程缺少原子性回滚的问题。",
+          "severity": "low"
+        },
+        {
+          "path": "quarkus/tests/junit5/src/main/java/org/keycloak/it/utils/DockerKeycloakDistribution.java",
+          "side": "new",
+          "start_line": 340,
+          "end_line": 340,
+          "title": "getMappedPort 在容器未启动时抛出 NPE，且无状态校验",
+          "body": "`DockerKeycloakDistribution.getMappedPort(int)` 直接调用 `keycloakContainer.getMappedPort(port)`，但 `keycloakContainer` 字段在 `run()` 之前为 `null`（初始化为 `null`，仅在 `run()` 中通过 `getKeycloakContainer()` 赋值）。`ClusteredKeycloakServer.getBaseUrl(int)` / `getManagementBaseUrl(int)` 会调用 `containers[index].getMappedPort(...)`，而 `LoadBalancer.node(int)` 在测试中可能在服务器尚未启动（或启动失败）时被调用，导致 NPE 而非可诊断的错误信息。此外，若 `containers[index]` 为 null（例如 `startContainersWithMixedImage` 在数量不匹配时抛异常前已部分填充数组），同样会 NPE。",
+          "severity": "medium"
+        },
+        {
+          "path": "test-framework/core/src/main/java/org/keycloak/testframework/database/AbstractContainerTestDatabase.java",
+          "side": "new",
+          "start_line": 87,
+          "end_line": 87,
+          "title": "getJdbcUrl 的 internal 模式依赖网络迭代顺序并假设单网络",
+          "body": "`AbstractContainerTestDatabase.getJdbcUrl()` 在 `internal` 模式下通过 `container.getContainerInfo().getNetworkSettings().getNetworks().values().iterator().next().getIpAddress()` 获取容器 IP。`getNetworks()` 返回的 Map 迭代顺序不保证稳定，且当容器连接多个网络时，`iterator().next()` 可能取到错误的网络 IP。同时 `container.getExposedPorts().get(0)` 假设暴露端口列表的第一个即为 JDBC 端口，这一假设脆弱。对于集群场景（多个 Keycloak 容器共享同一数据库容器），数据库容器可能被加入多个网络，导致取到错误 IP，进而使 Keycloak 无法连接数据库。",
+          "severity": "medium"
+        },
+        {
+          "path": "test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancer.java",
+          "side": "new",
+          "start_line": 15,
+          "end_line": 15,
+          "title": "LoadBalancer.node 越界错误信息参数顺序颠倒",
+          "body": "`LoadBalancer.node(int nodeIndex)` 在越界时抛出 `IllegalArgumentException`，但格式化字符串中 `%d` 的顺序与参数顺序相反：格式串为 `\"Requested nodeIndex: %d, cluster size: %d\"`，而传入参数为 `(server.clusterSize(), nodeIndex)`，导致错误信息中 nodeIndex 与 clusterSize 的值互换，误导调试。",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/linera-io__linera-protocol__4639",
+      "kind": "golden",
+      "language": "Rust",
+      "changed_lines": 40,
+      "golden": 6,
+      "findings": 1,
+      "true_positive": 1,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 2520,
+      "duration_ms": 31628,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 2,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "linera-core/src/client/mod.rs",
+          "start_line": 852,
+          "title": "客户端分页偏移量使用 u64 累加，与服务器端 usize 边界语义可能不一致",
+          "outcome": "true_positive",
+          "reference": 4,
+          "reason": "两者都指出分页偏移量随不断增长的接收日志推进时，基于返回条目数的终止条件可能永远不成立，从而导致无限循环，并都建议增加最大迭代次数等保护。"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "linera-core/src/client/mod.rs",
+          "side": "new",
+          "start_line": 852,
+          "end_line": 852,
+          "title": "客户端分页偏移量使用 u64 累加，与服务器端 usize 边界语义可能不一致",
+          "body": "客户端在循环中通过 `offset += received_entries as u64` 累加偏移量，而服务器端将 `request_received_log_excluding_first_n` 通过 `usize::try_from(start)` 转换后读取 `start..end`。当 `received_log` 在两次请求之间发生增长（新证书被接收）时，`chain.received_log.count()` 会变大，导致 `end` 上界变化。由于客户端以「返回条目数 \u003c 上限」作为终止条件，而服务器端每次都以当前 `count()` 作为上界，若日志在分页过程中持续增长，客户端可能永远无法满足终止条件（无限循环），或读取到重复/交错的数据。\n\n更关键的是，`offset` 被声明为 `u64`（来自 `tracker`），而服务器端 `usize::try_from(start)` 在 32 位平台上可能溢出。不过 `received_entries as u64` 的累加本身在 64 位平台上是安全的。\n\n建议：在循环中增加最大迭代次数保护，或使用服务器端返回的「是否还有更多」标志而非依赖条目数判断；同时确认 `tracker` 的类型与 `usize` 的兼容性。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/microsoft__typescript-go__1446",
+      "kind": "golden",
+      "language": "Go",
+      "changed_lines": 80,
+      "golden": 13,
+      "findings": 5,
+      "out_of_diff": 1,
+      "true_positive": 2,
+      "false_positive": 3,
+      "negative_hits": 0,
+      "tokens_total": 4170,
+      "duration_ms": 42161,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 9,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "code_terms_broken": 1,
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "internal/fourslash/_scripts/makeManual.mts",
+          "start_line": 13,
+          "title": "makeManual 依赖 gen 目录中已存在的文件，但 convertFourslash 每次运行都会清空 gen",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "internal/fourslash/_scripts/makeManual.mts",
+          "start_line": 27,
+          "title": "makeManual.mts 中文件移动与清单登记非原子，中断会导致测试漂移",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "internal/fourslash/_scripts/convertFourslash.mts",
+          "start_line": 27,
+          "title": "getManualTests() 未处理 manualTests.txt 不存在的情况，首次运行会崩溃",
+          "outcome": "true_positive",
+          "reason": "Both identify the same missing-file crash in getManualTests() and recommend returning an empty set when manualTests.txt does not exist."
+        },
+        {
+          "finding_index": 3,
+          "path": "internal/fourslash/_scripts/convertFourslash.mts",
+          "start_line": 68,
+          "title": "测试名大小写规范化不一致导致手动测试跳过逻辑失效",
+          "outcome": "true_positive",
+          "reference": 3,
+          "reason": "两者都指出 manualTests.txt 中保存的名称格式与 convertFourslash.mts 检查时使用的首字母大写基础名称不一致，可能导致手动测试无法被正确跳过。"
+        },
+        {
+          "finding_index": 4,
+          "path": "internal/fourslash/_scripts/convertFourslash.mts",
+          "start_line": 27,
+          "title": "manualTests.txt 缺失时 convertFourslash 崩溃",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "internal/fourslash/_scripts/makeManual.mts",
+          "side": "new",
+          "start_line": 13,
+          "end_line": 13,
+          "title": "makeManual 依赖 gen 目录中已存在的文件，但 convertFourslash 每次运行都会清空 gen",
+          "body": "`makeManual.mts` 的核心逻辑是：从 `gen` 目录找到已生成的测试文件（`genTestFile`），若不存在则报错退出，存在则 `renameSync` 移动到 `manual` 目录。\n\n但 `convertFourslash.mts` 的 `main()` 在每次运行时都会执行 `fs.rmSync(outputDir, { recursive: true, force: true })` 清空整个 `gen` 目录，然后重新生成。这意味着 `makeManual` 只能在一次 `convertfourslash` 运行之后、下一次运行之前使用。一旦用户再次运行 `convertfourslash`（例如为了生成其他测试），`gen` 目录被清空，之前尚未手动化的测试文件消失，`makeManual` 将无法再找到它们。\n\n这构成了一个脆弱的工作流依赖：`makeManual` 的正确性依赖于 `gen` 目录中恰好存在目标文件，而该目录的生命周期由另一个脚本以「清空重建」的方式管理，二者之间没有显式的顺序约束或校验。",
+          "severity": "medium"
+        },
+        {
+          "path": "internal/fourslash/_scripts/makeManual.mts",
+          "side": "new",
+          "start_line": 27,
+          "end_line": 27,
+          "title": "makeManual.mts 中文件移动与清单登记非原子，中断会导致测试漂移",
+          "body": "`makeManual.mts` 先执行 `fs.renameSync(genTestFile, manualTestFile)` 将测试文件从 `gen` 目录移动到 `manual` 目录，随后才读取并更新 `manualTests.txt`。这两个持久化步骤之间没有事务或回滚机制。若进程在 `renameSync` 之后、`writeFileSync` 之前被中断（例如 Ctrl+C、崩溃、磁盘写失败），则测试文件已移入 `manual` 目录，但 `manualTests.txt` 中未登记该测试名。\n\n后果：下次运行 `convertfourslash` 时，`getManualTests()` 不包含该测试名，`parseTypeScriptFiles` 不会跳过它，会重新在 `gen` 目录生成该测试，导致同一测试同时存在于 `gen` 与 `manual` 目录，产生重复与状态漂移。\n\n建议：先更新 `manualTests.txt`（或先写入一个临时清单文件再原子重命名），再移动测试文件；或者将两步合并为可重入/幂等的操作，并在移动前确保清单已持久化。",
+          "severity": "medium"
+        },
+        {
+          "path": "internal/fourslash/_scripts/convertFourslash.mts",
+          "side": "new",
+          "start_line": 27,
+          "end_line": 27,
+          "title": "getManualTests() 未处理 manualTests.txt 不存在的情况，首次运行会崩溃",
+          "body": "`convertFourslash.mts` 新增的 `getManualTests()` 直接 `fs.readFileSync(manualTestsPath, \"utf-8\")`，未检查文件是否存在。`manualTests.txt` 由 `makeManual.mts` 在首次登记时才创建，因此在尚未运行过 `makeManual` 的干净环境中，直接运行 `convertfourslash` 会因文件不存在而抛出 `ENOENT` 异常，导致整个转换脚本失败。\n\n对比同文件已有的 `getFailingTests()`（其对应的 `failingTests.txt` 是仓库中已提交的文件），`manualTests.txt` 是新增且初始不存在的文件，因此该读取路径引入了新的失败模式。\n\n建议：在读取前用 `fs.existsSync` 判断，不存在时返回空集合。",
+          "severity": "medium"
+        },
+        {
+          "path": "internal/fourslash/_scripts/convertFourslash.mts",
+          "side": "new",
+          "start_line": 68,
+          "end_line": 68,
+          "title": "测试名大小写规范化不一致导致手动测试跳过逻辑失效",
+          "body": "### 测试名大小写规范化不一致导致手动测试跳过逻辑失效\n\n`convertFourslash.mts` 在判断是否跳过手动测试时，将 `test.name` 首字母大写后与 `manualTests` 集合比较：`const testName = test.name[0].toUpperCase() + test.name.substring(1);`。而 `makeManual.mts` 在写入 `manualTests.txt` 时，直接使用命令行传入的原始 `testName`（`manualTests.push(testName)`），未做任何大小写规范化。\n\n如果用户运行 `npm run makemanual mytest`（小写开头），`manualTests.txt` 中记录的是 `mytest`，但 `convertFourslash` 比较时使用的是 `Mytest`，二者不匹配，导致该测试在下次 `convertfourslash` 时仍会被重新生成，手动编辑的内容被覆盖丢失。\n\n同时，`makeManual.mts` 中 `genTestFile = path.join(genDir, testFileName)` 直接拼接 `testName`，而 `convertFourslash` 生成的文件名是 `${test.name}_test.go`（未做首字母大写），因此 `makeManual` 查找文件时使用的文件名与生成的文件名也可能不一致（取决于 `test.name` 的原始大小写）。这两处大小写处理的不一致构成了一个真实的、会导致数据丢失的失败路径。\n\n_定位 internal/fourslash/_scripts/convertFourslash.mts:68 不在本次改动范围内，已按文件级发布。_",
+          "severity": "high",
+          "out_of_diff": true
+        },
+        {
+          "path": "internal/fourslash/_scripts/convertFourslash.mts",
+          "side": "new",
+          "start_line": 27,
+          "end_line": 27,
+          "title": "manualTests.txt 缺失时 convertFourslash 崩溃",
+          "body": "`getManualTests()` 无条件执行 `fs.readFileSync(manualTestsPath, \"utf-8\")`。`manualTests.txt` 只有在用户首次运行 `makeManual.mts` 后才会被创建（且 `makeManual` 仅在 `manualTests.includes(testName)` 为 false 时才写入文件）。\n\n在全新克隆或尚未运行过 `makeManual` 的环境中，`manualTests.txt` 不存在，`convertfourslash` 会抛出 `ENOENT` 异常并中断整个转换流程。这与 `getFailingTests()` 的处理方式不一致——后者通过 `fs.existsSync` 判断（从上下文看 `failingTests.txt` 是已提交的既有文件），而新增的 `manualTests.txt` 是运行时才可能产生的文件，缺少存在性检查会破坏默认工作流。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/mpv-player__mpv__15828",
+      "kind": "golden",
+      "language": "C",
+      "changed_lines": 56,
+      "golden": 8,
+      "findings": 5,
+      "true_positive": 0,
+      "false_positive": 5,
+      "negative_hits": 0,
+      "tokens_total": 6701,
+      "duration_ms": 67095,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "player/command.c",
+          "start_line": 0,
+          "title": "去重判定仅凭 flags 相等即丢弃更新，会错误合并语义不同的选项变更",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "player/command.c",
+          "start_line": 0,
+          "title": "数组压缩循环在 drop 状态下存在越界访问与元素错位",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "player/command.c",
+          "start_line": 0,
+          "title": "回调合并算法在数组内原地搬移时可能丢失或错乱待执行的回调",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "player/command.c",
+          "start_line": 0,
+          "title": "去重判定依赖 flags 精确相等，可能错误合并语义不同的更新",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 4,
+          "path": "player/main.c",
+          "start_line": 0,
+          "title": "回调执行推迟到 playloop 后，IPC 初始化与日志刷新时序被改变",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "player/command.c",
+          "side": "new",
+          "start_line": 0,
+          "title": "去重判定仅凭 flags 相等即丢弃更新，会错误合并语义不同的选项变更",
+          "body": "新的合并逻辑中，只要新回调的 flags 与队列中某个已有回调的 flags 完全相等，就判定为冗余并丢弃（drop = true）。但 flags 是位掩码，多个不同选项可能共享相同的 flags 组合（例如多个选项都带 UPDATE_VIDEO 或 UPDATE_OSD），而它们各自需要执行的副作用（通过 opt_ptr 区分）完全不同。仅凭 flags 相等就丢弃，会导致后一个选项的副作用被错误吞掉。\n\n例如两个不同选项 A、B 都只设置 UPDATE_VIDEO 标志，先设置 A 再设置 B：B 的 flags 与 A 相等，于是 B 被判定为 drop，其 opt_ptr 对应的副作用（如 vo_control、mp_wakeup_core 等）不会执行。这破坏了选项变更的完整性。\n\n去重应当同时要求 flags 相等且 opt_ptr（即 co-\u003edata）指向同一选项实例，才可安全合并；仅 flags 相等不足以证明是同一选项的重复设置。",
+          "severity": "high"
+        },
+        {
+          "path": "player/command.c",
+          "side": "new",
+          "start_line": 0,
+          "title": "数组压缩循环在 drop 状态下存在越界访问与元素错位",
+          "body": "去重循环在检测到 drop 后，通过将后续元素前移来压缩数组：\n```c\nfor (int i = 0; i \u003c mpctx-\u003enum_option_callbacks; i++) {\n    if (flags \u0026\u0026 flags == mpctx-\u003eoption_callbacks[i].flags)\n        drop = true;\n    if (mpctx-\u003eoption_callbacks[i].co \u0026\u0026 opt_ptr == mpctx-\u003eoption_callbacks[i].co-\u003edata)\n        drop = true;\n    if (drop \u0026\u0026 i \u003c mpctx-\u003enum_option_callbacks - 1)\n        mpctx-\u003eoption_callbacks[i] = mpctx-\u003eoption_callbacks[i + 1];\n    if (drop \u0026\u0026 i == mpctx-\u003enum_option_callbacks - 1) {\n        mpctx-\u003eoption_callbacks[i].co = co;\n        mpctx-\u003eoption_callbacks[i].flags = flags;\n    }\n}\n```\n\n问题在于：一旦 drop 被置为 true，后续所有迭代都会进入压缩分支，把元素不断前移，但循环边界 num_option_callbacks 并未同步减小，且 drop 一旦为 true 就永远为 true（没有在每次迭代重置）。这会导致：\n1. 当 drop 在中间某次迭代被置 true 后，后续迭代 `mpctx-\u003eoption_callbacks[i] = mpctx-\u003eoption_callbacks[i + 1]` 会读取 i+1 位置，而最后一次迭代（i == num-1）会读取到数组末尾之外（option_callbacks[num] 越界）。\n2. 压缩逻辑把多个元素前移后，最后一个元素被覆盖为当前 co/flags，但中间被前移的元素内容错乱，且 num_option_callbacks 未递减，导致数组尾部残留脏数据。\n\n实际上这段代码的意图似乎是「找到匹配项后，用当前回调覆盖匹配位置」，但实现上把「查找匹配」和「压缩」混在同一个循环里，且 drop 状态不重置，逻辑不自洽。",
+          "severity": "high"
+        },
+        {
+          "path": "player/command.c",
+          "side": "new",
+          "start_line": 0,
+          "title": "回调合并算法在数组内原地搬移时可能丢失或错乱待执行的回调",
+          "body": "合并去重循环在遍历 `option_callbacks` 数组的同时，一旦 `drop` 为真就执行 `mpctx-\u003eoption_callbacks[i] = mpctx-\u003eoption_callbacks[i + 1]` 进行原地搬移，但 `drop` 一旦被置为 true 后在整个循环中不再复位。这会导致：\n\n1. 当某次迭代命中去重条件（`drop=true`）后，后续所有迭代都会继续执行搬移，即使后续元素本不应被去重，从而把后续合法回调也一并搬移/覆盖，造成回调丢失或错乱。\n2. 当 `drop` 为 true 且 `i == num_option_callbacks - 1` 时，直接把最后一个槽位覆盖为当前 `co/flags`，但此时 `num_option_callbacks` 并未递减，且前面搬移已经破坏了数组内容，最终数组状态不可预测。\n\n例如：队列中已有回调 A（flags=UPDATE_TERM）、B（flags=UPDATE_VO），新回调 C 的 flags 与 A 相同。i=0 时命中 `flags == A.flags`，`drop=true`，执行 `option_callbacks[0] = option_callbacks[1]`（B 覆盖 A）。i=1 时 `drop` 仍为 true，继续执行 `option_callbacks[1] = option_callbacks[2]`（越界/垃圾值），且因 `i == num-1` 又把 `option_callbacks[1]` 覆盖为 C。最终 B 丢失，且数组尾部出现未定义内容。\n\n这属于本 MR 新引入的合并逻辑缺陷，会导致部分选项更新被静默丢弃或执行错误的回调，属于数据/状态同步错误。",
+          "severity": "high"
+        },
+        {
+          "path": "player/command.c",
+          "side": "new",
+          "start_line": 0,
+          "title": "去重判定依赖 flags 精确相等，可能错误合并语义不同的更新",
+          "body": "去重条件 `flags == mpctx-\u003eoption_callbacks[i].flags` 要求 flags 位掩码完全相等才合并。但 `flags` 是位掩码（UPDATE_TERM、UPDATE_VO、UPDATE_OSD 等可组合），两个语义上应合并的更新可能因附带不同的附加位而 flags 不相等，从而无法合并；反之，两个 flags 恰好相等但 opt_ptr 不同的更新（例如两个不同选项都触发 UPDATE_VO）会被错误合并，导致其中一个选项的更新被丢弃。\n\n具体地，`opt_ptr` 才是标识「哪个选项」的可靠键，而 `flags` 只是「需要执行哪些动作」。用 flags 相等作为合并键会把「不同选项但相同 flags」的更新错误合并，同时漏掉「同一选项但 flags 因组合位不同」的合并。\n\n这属于本 MR 新引入的合并语义缺陷，可能导致选项更新被错误丢弃或重复执行。",
+          "severity": "medium"
+        },
+        {
+          "path": "player/main.c",
+          "side": "new",
+          "start_line": 0,
+          "title": "回调执行推迟到 playloop 后，IPC 初始化与日志刷新时序被改变",
+          "body": "原代码在 `mp_option_change_callback` 中，当 `init`（co 为 NULL，即启动时）或 `opt_ptr` 指向 `ipc_path`/`ipc_client` 时，会立即执行 `mp_uninit_ipc` + `mp_init_ipc`。本 MR 将这段逻辑移入 `mp_option_run_callbacks`，并删除了 `init` 条件，改为在 `mp_initialize` 中显式调用一次 `mp_init_ipc`。\n\n但 `mp_option_run_callbacks` 是在 playloop（`run_playloop`/`mp_idle`）中调用的，而 `mp_initialize` 中的 `mp_init_ipc` 发生在 playloop 启动之前。这意味着：\n\n1. 启动阶段（`init` 路径）原本通过回调立即初始化 IPC，现在改为在 `mp_initialize` 中手动初始化，但若后续有其它代码路径在 playloop 启动前依赖 IPC 已就绪，时序可能被破坏。\n2. `UPDATE_TERM` 触发的 `mp_update_logging` 原本立即执行，现在推迟到 playloop，日志刷新时机被延后，可能影响启动早期日志输出顺序。\n\n这属于本 MR 引入的时序变更，需确认 `mp_init_ipc` 的提前调用与 playloop 中回调执行之间不存在依赖缺口。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/mpv-player__mpv__16090",
+      "kind": "golden",
+      "language": "C",
+      "changed_lines": 185,
+      "golden": 12,
+      "findings": 4,
+      "true_positive": 2,
+      "false_positive": 2,
+      "negative_hits": 0,
+      "tokens_total": 4339,
+      "duration_ms": 46240,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 4,
+      "judge_errors": 1,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "video/out/gpu/video.c",
+          "start_line": 3754,
+          "title": "GPU 上传路径对 mp_image 原地调用 mp_image_vflip，可能破坏共享/引用图像",
+          "outcome": "true_positive",
+          "reference": 7,
+          "reason": "两者都指出在 GPU 上传路径中对调用方拥有的 mpi 原地执行 mp_image_vflip 可能破坏共享或复用该图像的数据，并且可能与已有的翻转元数据或处理路径重复应用翻转。"
+        },
+        {
+          "finding_index": 1,
+          "path": "filters/f_auto_filters.c",
+          "start_line": 356,
+          "title": "autovflip 过滤器在 vflip 状态切换时未重置 prev_imgfmt，可能错误跳过重建",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "filters/f_auto_filters.c",
+          "start_line": 383,
+          "title": "vflip 过滤器创建失败时 target_vflip 被错误置 0，导致后续帧状态机不一致",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "video/out/vo_dmabuf_wayland.c",
+          "start_line": 713,
+          "title": "vo_dmabuf_wayland 的 buffer transform 计算将 vflip 与 rotate 简单相加，可能产生错误的组合变换",
+          "outcome": "true_positive",
+          "reference": 9,
+          "reason": "两者都指出用 `+ 4 * !!vflip` 简单编码旋转与翻转组合存在映射错误风险，并主张按 Wayland 枚举及 `(rotate, vflip)` 显式选择正确的 transform。"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "video/out/gpu/video.c",
+          "side": "new",
+          "start_line": 3754,
+          "end_line": 3754,
+          "title": "GPU 上传路径对 mp_image 原地调用 mp_image_vflip，可能破坏共享/引用图像",
+          "body": "在 `video/out/gpu/video.c` 的 `pass_upload_image` 中，新增了 `if (mpi-\u003eparams.vflip) mp_image_vflip(mpi);`。`mp_image_vflip` 会原地修改图像数据（翻转各平面）。如果 `mpi` 是一个被多处引用的图像（例如通过 `mp_image_new_ref` 共享底层 buffer，或该帧同时被其他过滤器/渲染路径持有引用），原地翻转会破坏其他引用者看到的数据，导致同一帧在不同消费方呈现不一致（部分翻转、部分未翻转）。此外，翻转后 `mpi-\u003eparams.vflip` 本身并未被清零，后续若该图像再次进入上传路径可能被重复翻转。",
+          "severity": "medium"
+        },
+        {
+          "path": "filters/f_auto_filters.c",
+          "side": "new",
+          "start_line": 356,
+          "end_line": 356,
+          "title": "autovflip 过滤器在 vflip 状态切换时未重置 prev_imgfmt，可能错误跳过重建",
+          "body": "在 `filters/f_auto_filters.c` 的 `vflip_process` 中，快速路径判断 `img-\u003eparams.vflip == p-\u003eprev_vflip \u0026\u0026 img-\u003eimgfmt == p-\u003eprev_imgfmt` 时直接设置 `img-\u003eparams.vflip = p-\u003etarget_vflip` 并继续。但 `prev_vflip` 初始化为 -1，`prev_imgfmt` 未显式初始化（依赖零值）。当 vflip 状态在运行中从 0 变为 1（或反之）时，代码会走 `mp_subfilter_drain_destroy` 重建 subfilter，并更新 `prev_vflip`/`prev_imgfmt`。然而在 `mp_sws_supports_input` 失败或 `mp_create_user_filter` 失败的分支中，`target_vflip` 被设为 `vflip`（即保持原值），但 `prev_vflip` 已被更新为新的 `img-\u003eparams.vflip`，此时若后续帧的 vflip 又回到旧值，快速路径会因 `prev_vflip` 已更新而正确触发重建，逻辑上尚可。真正的边界在于：当 vflip 为 0（无需翻转）时，代码在 `if (!vflip || (info \u0026\u0026 info-\u003evflip))` 分支直接 continue，但此时 `prev_vflip` 已被设为 0，`target_vflip` 也设为 0，而 `prev_imgfmt` 被更新。若 VO 的 vflip 能力（`info-\u003evflip`）在运行中动态变化（如 VO 切换），已缓存的 `prev_vflip`/`prev_imgfmt` 不会失效，可能导致后续帧错误地走快速路径而跳过必要的翻转。",
+          "severity": "low"
+        },
+        {
+          "path": "filters/f_auto_filters.c",
+          "side": "new",
+          "start_line": 383,
+          "end_line": 383,
+          "title": "vflip 过滤器创建失败时 target_vflip 被错误置 0，导致后续帧状态机不一致",
+          "body": "在 `vflip_process` 中，当 `mp_create_user_filter` 返回 NULL（创建失败）时，代码仍执行了 `p-\u003etarget_vflip = 0;`（该赋值位于 `if (p-\u003esub.filter)` 分支之外）。这会导致：即使 vflip 过滤器根本没有被创建，`target_vflip` 也被设为 0。\n\n随后下一帧进入时，若 `img-\u003eparams.vflip == p-\u003eprev_vflip \u0026\u0026 img-\u003eimgfmt == p-\u003eprev_imgfmt` 成立（这是连续帧的常见情况），代码会执行 `img-\u003eparams.vflip = p-\u003etarget_vflip;` 即把 vflip 改写为 0，然后直接 `mp_subfilter_continue` 输出。这意味着图像被标记为「已翻转」，但实际上从未执行任何翻转操作，导致画面方向错误（该翻转的没翻转）。\n\n这是一个状态机不一致问题：`target_vflip` 表示「输出帧应具有的 vflip 值」，只有在过滤器真正创建成功时才应更新为 0。创建失败时应保持 `target_vflip = vflip`（即保持原样），与 `!vflip` 或 `info-\u003evflip` 分支的行为一致。",
+          "severity": "high"
+        },
+        {
+          "path": "video/out/vo_dmabuf_wayland.c",
+          "side": "new",
+          "start_line": 713,
+          "end_line": 713,
+          "title": "vo_dmabuf_wayland 的 buffer transform 计算将 vflip 与 rotate 简单相加，可能产生错误的组合变换",
+          "body": "在 `video/out/vo_dmabuf_wayland.c` 的 `reconfig` 中，`wl_surface_set_buffer_transform` 的 transform 值由 `img-\u003eparams.rotate / 90 + 4 * !!img-\u003eparams.vflip` 计算。Wayland 的 buffer transform 枚举中，值 4/5/6/7 分别对应 90/180/270 度旋转加翻转（FLIPPED_90、FLIPPED_180、FLIPPED_270 及 FLIPPED）。将 vflip 直接以 `+4` 叠加到 rotate 上，仅在 rotate 为 0 时（得到 FLIPPED，即 180 度翻转）语义正确。当 rotate 非 0 时，例如 rotate=90 且 vflip=1，得到 transform=5（FLIPPED_90），但 Wayland 的 FLIPPED_90 语义是「先翻转再旋转 90 度」还是「先旋转再翻转」与 mpv 中「先垂直翻转再顺时针旋转」的约定（见 mp_image.h 注释 \"flipped vertically before rotating\"）可能不一致，导致旋转+翻转组合的视频方向错误。此外，`resize` 中 `vo-\u003etarget_params-\u003evflip = vo-\u003eparams-\u003evflip` 直接复制，但 `target_params-\u003erotate` 被强制取模到 90 的倍数，而 vflip 未做任何归一化，二者组合在后续消费处可能产生不一致。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/mrdoob__three.js__30076",
+      "kind": "golden",
+      "language": "JavaScript",
+      "changed_lines": 151,
+      "golden": 17,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 966,
+      "duration_ms": 14292,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "aacr/mrdoob__three.js__31402",
+      "kind": "golden",
+      "language": "JavaScript",
+      "changed_lines": 210,
+      "golden": 10,
+      "findings": 5,
+      "true_positive": 0,
+      "false_positive": 5,
+      "negative_hits": 0,
+      "tokens_total": 7728,
+      "duration_ms": 67038,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 2,
+      "judge_errors": 1,
+      "naturalness_scores": [
+        5,
+        4,
+        4,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/renderers/webgpu/WebGPUBackend.js",
+          "start_line": 0,
+          "title": "dispatchSize 合法性判断存在边界缺陷，部分维度为 0 时静默回退到自动计算",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "src/renderers/webgpu/nodes/WGSLNodeBuilder.js",
+          "start_line": 0,
+          "title": "instanceIndex 在 y/z 维度上未按 workgroupSize 正确缩放，存在索引溢出/错位风险",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/renderers/common/Renderer.js",
+          "start_line": 0,
+          "title": "dispatchSize 参数在多个 computeNode 场景下被共享，导致状态耦合与错误 dispatch",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "src/renderers/webgpu/WebGPUBackend.js",
+          "start_line": 1325,
+          "title": "dispatchSize 有效性判断使用 `\u003e 0` 且默认 `[0,0,0]`，会静默吞掉显式传入的 0 值配置错误",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 4,
+          "path": "src/renderers/webgpu/WebGPUBackend.js",
+          "start_line": 1323,
+          "title": "旧调用路径未传 dispatchSize 时，`dispatchSize[0]` 访问可能抛 TypeError",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/renderers/webgpu/WebGPUBackend.js",
+          "side": "new",
+          "start_line": 0,
+          "title": "dispatchSize 合法性判断存在边界缺陷，部分维度为 0 时静默回退到自动计算",
+          "body": "`isValid` 要求三个维度都大于 0 才使用调用方传入的 dispatchSize。但默认参数 `dispatchSize = [ 0, 0, 0 ]` 意味着任何调用方只要漏传或传了含 0 的数组（例如 `[ 10, 10, 0 ]` 这种想表达 z 维度为 1 的常见写法），就会静默回退到 `computeNodeData` 的自动 dispatch 逻辑，而不是报错或按调用方意图执行。这会让调用方误以为显式指定的 dispatchSize 生效，实际却走了完全不同的 dispatch 路径，产生难以排查的线程覆盖不足或过度分配问题。",
+          "severity": "high"
+        },
+        {
+          "path": "src/renderers/webgpu/nodes/WGSLNodeBuilder.js",
+          "side": "new",
+          "start_line": 0,
+          "title": "instanceIndex 在 y/z 维度上未按 workgroupSize 正确缩放，存在索引溢出/错位风险",
+          "body": "原实现 `instanceIndex = globalId.x + globalId.y * numWorkgroups.x * u32(workgroupSize) + ...` 中，`globalId` 是全局线程 ID（已含 workgroupSize 缩放），因此乘以 `numWorkgroups.x * workgroupSize` 得到的是该维度上的总线程数，这是正确的。新实现改为 `globalId.y * (workgroupSizeX * numWorkgroups.x)`，其中 `workgroupSizeX * numWorkgroups.x` 恰好等于 x 维度的总线程数，语义上等价。但问题在于：`globalId` 在 WGSL 中已经是全局 ID（`global_invocation_id`），其 y 分量已经包含了 workgroupSizeY 的缩放。当 workgroupSizeY \u003e 1 时，`globalId.y` 的取值范围是 `[0, workgroupSizeY * numWorkgroups.y)`，而乘以 `workgroupSizeX * numWorkgroups.x` 后，y 维度的步长是 x 维度总线程数，这是正确的。真正的风险在于：当调用方传入的 dispatchSize 与 workgroupSize 的乘积不等于 dispatchCount 时（例如 MR 描述中 [9,9,1] 导致线程不足的场景），instanceIndex 会超出实际数据范围，但这是调用方责任。更关键的结构性问题在于：该公式假设 dispatch 是三维满铺的，且 `numWorkgroups` 与 dispatchSize 严格对应，但代码中 dispatchSize 与 workgroupSize 之间没有一致性校验，一旦二者不匹配（例如 workgroupSize=[16,16,1] 但 dispatchSize 走自动分支），instanceIndex 计算与 dispatch 实际线程数就会错位。",
+          "severity": "high"
+        },
+        {
+          "path": "src/renderers/common/Renderer.js",
+          "side": "new",
+          "start_line": 0,
+          "title": "dispatchSize 参数在多个 computeNode 场景下被共享，导致状态耦合与错误 dispatch",
+          "body": "`Renderer.compute` 接收单个 `dispatchSize` 参数，但在循环遍历 `computeNodes`（可能是数组）时，将同一个 `dispatchSize` 传给每个 `computeNode` 的 `backend.compute`。当 `computeNodes` 是数组且各节点需要不同的 dispatchSize 时，调用方无法为每个节点分别指定 dispatchSize，只能共享一个值。这破坏了 compute 节点的独立性，使 dispatchSize 的语义从『每个节点的线程分布』退化为『全局共享的线程分布』，与 computeKernel 的『每个节点独立控制线程分布』设计意图相冲突。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/renderers/webgpu/WebGPUBackend.js",
+          "side": "new",
+          "start_line": 1325,
+          "end_line": 1325,
+          "title": "dispatchSize 有效性判断使用 `\u003e 0` 且默认 `[0,0,0]`，会静默吞掉显式传入的 0 值配置错误",
+          "body": "`WebGPUBackend.compute()` 中新增的 `isValid` 判断为 `dispatchSize[0] \u003e 0 \u0026\u0026 dispatchSize[1] \u003e 0 \u0026\u0026 dispatchSize[2] \u003e 0`，而 `Renderer.compute()` 的默认参数是 `[0,0,0]`。当用户显式传入包含 0 的 dispatchSize（例如 `[10,10,0]`，表示只在 x/y 维度分发、z 维度为 0 是合法场景，或用户误填了 0）时，`isValid` 为 false，代码会静默回退到 `computeNodeData` 的自动分发路径，而不是按用户意图执行或报错。这导致用户以为指定了 dispatchSize 但实际被忽略，产生与预期不符的计算结果（例如部分线程未执行），且没有任何警告。MR 描述中明确提到「Maybe warnings if you enter something incorrectly」，说明作者也意识到需要校验，但当前实现是静默回退而非警告。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/renderers/webgpu/WebGPUBackend.js",
+          "side": "new",
+          "start_line": 1323,
+          "end_line": 1323,
+          "title": "旧调用路径未传 dispatchSize 时，`dispatchSize[0]` 访问可能抛 TypeError",
+          "body": "`WebGPUBackend.compute()` 新增了 `dispatchSize` 参数，但未提供默认值。`Renderer.compute()` 已改为默认 `[0,0,0]` 并透传，因此从 Renderer 路径调用时不会为 undefined。但 `WebGPUBackend.compute()` 是公开方法，若存在其他调用方（例如直接调用 backend.compute 的代码、测试、或第三方扩展）仍按旧签名 `compute(computeGroup, computeNode, bindings, pipeline)` 调用，则 `dispatchSize` 为 `undefined`，`dispatchSize[0]` 会抛出 `TypeError: Cannot read properties of undefined`。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/mudler__LocalAI__4577",
+      "kind": "golden",
+      "language": "Go",
+      "changed_lines": 185,
+      "golden": 21,
+      "findings": 2,
+      "true_positive": 0,
+      "false_positive": 2,
+      "negative_hits": 0,
+      "tokens_total": 3536,
+      "duration_ms": 38649,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "naturalness_scores": [
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "core/http/endpoints/openai/chat.go",
+          "start_line": 0,
+          "title": "流式路径中 timing 字段被覆盖而非累加，多 chunk 时仅保留最后一次的值",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "core/http/endpoints/openai/completion.go",
+          "start_line": 0,
+          "title": "completion.go 非流式路径丢失 Prompt/Completion token 累加，导致 usage 计数回归",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "core/http/endpoints/openai/chat.go",
+          "side": "new",
+          "start_line": 0,
+          "title": "流式路径中 timing 字段被覆盖而非累加，多 chunk 时仅保留最后一次的值",
+          "body": "在 `core/http/endpoints/openai/chat.go` 的流式 `process` 回调中，每个 token chunk 都会构造一个新的 `usage`，并直接赋值 `usage.TimingTokenGeneration = tokenUsage.TimingTokenGeneration` 与 `usage.TimingPromptProcessing = tokenUsage.TimingPromptProcessing`。由于 `tokenUsage` 来自 `backend.TokenUsage`，而 `core/backend/llm.go` 中 `tokenUsage.TimingTokenGeneration = reply.TimingTokenGeneration` 是覆盖赋值（每个流式 chunk 的 reply 携带的是该 chunk 的增量或累计值，取决于后端实现），因此流式响应中每个 chunk 的 timing 值语义不明确，且与 completion.go 中「累加」的处理方式不一致。\n\n更关键的是，`core/http/endpoints/openai/inference.go` 的 `ComputeChoices` 中已经对 `tokenUsage.TimingPromptProcessing += prediction.Usage.TimingPromptProcessing` 做了累加，但 `llm.go` 的 tokenCallback 又用 `reply.TimingTokenGeneration` 直接覆盖，两条路径对同一字段的语义（累加 vs 覆盖）不一致，可能导致最终 usage 中的 timing 值取决于后端返回的是增量还是累计值，产生不可预测的结果。",
+          "severity": "medium"
+        },
+        {
+          "path": "core/http/endpoints/openai/completion.go",
+          "side": "new",
+          "start_line": 0,
+          "title": "completion.go 非流式路径丢失 Prompt/Completion token 累加，导致 usage 计数回归",
+          "body": "在 `core/http/endpoints/openai/completion.go` 的非流式（non-streaming）路径中，原代码在循环内对 `totalTokenUsage.Prompt` 和 `totalTokenUsage.Completion` 进行累加：\n\n```go\ntotalTokenUsage.Prompt += tokenUsage.Prompt\ntotalTokenUsage.Completion += tokenUsage.Completion\n```\n\n本次改动将这两行替换为对 timing 字段的累加：\n\n```go\ntotalTokenUsage.TimingTokenGeneration += tokenUsage.TimingTokenGeneration\ntotalTokenUsage.TimingPromptProcessing += tokenUsage.TimingPromptProcessing\n```\n\n但 `totalTokenUsage.Prompt` 和 `totalTokenUsage.Completion` 的累加被完全删除，导致最终返回的 `usage.PromptTokens` / `usage.CompletionTokens` / `usage.TotalTokens` 始终为 0（除非 `totalTokenUsage` 在别处被赋值，但此处循环内已无任何对 Prompt/Completion 的写入）。这是对既有正确行为的回归。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/ollama__ollama__12185",
+      "kind": "golden",
+      "language": "Go",
+      "changed_lines": 64,
+      "golden": 12,
+      "findings": 3,
+      "true_positive": 1,
+      "false_positive": 2,
+      "negative_hits": 0,
+      "tokens_total": 4652,
+      "duration_ms": 46936,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 3,
+      "naturalness_scores": [
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "ml/backend/ggml/ggml.go",
+          "start_line": 0,
+          "title": "ggml Tensor.Ints() 在 CPU 内存路径返回底层内存别名切片，调用方修改会破坏张量数据",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "kvcache/causal.go",
+          "start_line": 202,
+          "title": "kvcache 保存 Ints() 返回的底层内存切片引用，存在悬垂/别名风险",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "kvcache/encoder.go",
+          "start_line": 94,
+          "title": "encoder.go 多次调用 batch.Positions.Ints() 可能产生不一致或越界",
+          "outcome": "true_positive",
+          "reference": 1,
+          "reason": "两者都指出直接用 Multimodal 索引 Positions.Ints() 未验证切片长度或索引有效性，可能导致越界和运行时 panic。"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "ml/backend/ggml/ggml.go",
+          "side": "new",
+          "start_line": 0,
+          "title": "ggml Tensor.Ints() 在 CPU 内存路径返回底层内存别名切片，调用方修改会破坏张量数据",
+          "body": "新增的 `Ints()` 方法在 CPU 内存分支（`bts := C.ggml_get_data(t.t); bts != nil`）直接通过 `unsafe.Slice` 返回指向张量底层缓冲区的切片，而非拷贝。这与同文件 `Floats()` 的 CPU 分支行为一致，但与 `Ints()` 的 GPU 分支（`make` + `ggml_backend_tensor_get` 拷贝）语义不一致。\n\n在 `kvcache/causal.go` 中，`c.curPositions = batch.Positions.Ints()` 将返回的切片直接保存到缓存结构体字段中。如果后续任何代码对该切片进行写入（例如排序、修改位置值），会直接污染 `batch.Positions` 张量的底层数据，进而影响后续层对该张量的读取。\n\n更关键的是生命周期问题：`unsafe.Slice` 返回的切片不持有对底层 C 内存的所有权。如果 `batch.Positions` 张量在 `StartForward` 返回后被释放或复用（runner 中 `nextBatch.ctx` 的输入张量在下一轮 forward 时会被重新填充），`c.curPositions` 将指向已失效或已被覆盖的内存，导致缓存位置信息错乱。",
+          "severity": "medium"
+        },
+        {
+          "path": "kvcache/causal.go",
+          "side": "new",
+          "start_line": 202,
+          "end_line": 202,
+          "title": "kvcache 保存 Ints() 返回的底层内存切片引用，存在悬垂/别名风险",
+          "body": "在 `kvcache/causal.go` 的 `StartForward` 中，`c.curPositions = batch.Positions.Ints()` 将 `Ints()` 返回的切片保存到缓存结构体字段中，并在后续 `for i, pos := range c.curPositions` 中读取。\n\n新增的 `ml/backend/ggml/ggml.go` 中 `Tensor.Ints()` 在 CPU 内存路径（`t.sync == nil` 且 `ggml_get_data` 非空）下通过 `unsafe.Slice((*int32)(bts), C.ggml_nelements(t.t))` 直接复用底层张量内存，而非拷贝。这意味着 `c.curPositions` 指向的是 `batch.Positions` 张量的底层缓冲区。\n\n如果该张量在 `StartForward` 返回后、`c.curPositions` 被读取之前被释放、复用或修改（例如 runner 中 `batch.Positions` 由 `nextBatch.ctx.Input().FromIntSlice(...)` 创建，其生命周期与 context 绑定，且后续 forwardBatch 可能复用同一 context/缓冲区），则 `c.curPositions` 会变成悬垂指针或读到被覆盖的数据，导致缓存 cell 的 position 记录错误，进而破坏 KV cache 的读写一致性。\n\n对比 `Floats()` 在 CPU 路径同样使用 `unsafe.Slice`，但 `Ints()` 是本次新增且被 kvcache 长期持有引用，属于新引入的别名/生命周期风险。",
+          "severity": "medium"
+        },
+        {
+          "path": "kvcache/encoder.go",
+          "side": "new",
+          "start_line": 94,
+          "end_line": 94,
+          "title": "encoder.go 多次调用 batch.Positions.Ints() 可能产生不一致或越界",
+          "body": "在 `kvcache/encoder.go` 的 `StartForward` 中，`c.curPos = batch.Positions.Ints()[batch.Multimodal[...].Index]` 每次调用 `Ints()` 都会重新获取底层内存切片。\n\n由于 `Ints()` 在 CPU 路径返回的是底层内存的 `unsafe.Slice` 视图，若两次调用之间底层缓冲区被修改或张量被释放，索引访问可能越界或读到错误值。虽然此处只调用一次，但结合 `causal.go` 中同样对 `batch.Positions.Ints()` 的调用，同一张量在多个缓存实现中被多次读取，增加了别名风险面。\n\n此外，`Multimodal[...].Index` 是索引到 Inputs 的位置，而这里用它索引 Positions，依赖 Positions 与 Inputs 等长且顺序一致的不变量；该不变量在 `model.go` 的 `Forward` 中通过 `batch.Positions.Dim(0) != len(batch.Sequences)` 校验，但未校验与 Inputs 长度一致，属于潜在的不变量缺口。",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/openai__codex__3212",
+      "kind": "golden",
+      "language": "Rust",
+      "changed_lines": 130,
+      "golden": 7,
+      "findings": 1,
+      "true_positive": 1,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 3035,
+      "duration_ms": 33398,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 2,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "codex-rs/protocol/src/models.rs",
+          "start_line": 45,
+          "title": "`id` 字段改为 `skip_serializing` 可能破坏需要携带 item id 的请求路径",
+          "outcome": "true_positive",
+          "reference": 5,
+          "reason": "两者都指出对 `id` 使用无条件的 `skip_serializing` 会在非请求或往返序列化路径中静默丢弃本应保留的数据，参考评论只是聚焦于必填的 `Reasoning.id`。"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "codex-rs/protocol/src/models.rs",
+          "side": "new",
+          "start_line": 45,
+          "end_line": 45,
+          "title": "`id` 字段改为 `skip_serializing` 可能破坏需要携带 item id 的请求路径",
+          "body": "在 `codex-rs/protocol/src/models.rs` 中，`ResponseItem::Message`、`Reasoning`、`LocalShellCall`、`FunctionCall`、`CustomToolCall`、`WebSearchCall` 的 `id` 字段被统一改为 `#[serde(skip_serializing)]`。此前 `Message.id` 是 `Option\u003cString\u003e` 且未跳过序列化（测试中显式断言 `\"id\": null`），现在所有 `id` 都不会出现在序列化输出中。\n\nMR 描述说明「当 item ids 被发送到 Responses API 时，它会从数据库加载它们而忽略提供的值」，因此移除 id 是有意为之。但 `skip_serializing` 是无条件的：它同时作用于所有序列化路径，包括可能仍需要 id 的其它 API（例如 chat completions 路径、或任何依赖 `ResponseItem` 序列化往返的持久化/恢复逻辑）。`LocalShellCall` 的注释明确写着「Set when using the chat completions API」，说明该结构体并非仅服务于 Responses API。\n\n如果存在任何依赖 id 往返的路径（例如从本地历史恢复后重新发送、或 chat completions 需要 id 关联），无条件跳过序列化会导致 id 静默丢失，产生难以追踪的行为差异。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/opencv__opencv__27284",
+      "kind": "golden",
+      "language": "C++",
+      "changed_lines": 307,
+      "golden": 14,
+      "findings": 4,
+      "true_positive": 1,
+      "false_positive": 3,
+      "negative_hits": 0,
+      "tokens_total": 7996,
+      "duration_ms": 67623,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 3,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        4
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "modules/videoio/misc/java/src/cpp/videoio_converters.hpp",
+          "start_line": 0,
+          "title": "JavaStreamReader 持有 JNIEnv 指针且未做线程绑定，跨线程回调会导致崩溃",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+          "start_line": 0,
+          "title": "read 未校验 Java 侧返回值，负数或部分读取会导致缓冲区越界/数据损坏",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+          "start_line": 23,
+          "title": "JavaStreamReader::read 未按实际读取字节数回填缓冲区，可能产生脏数据或越界",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+          "start_line": 11,
+          "title": "JavaStreamReader 析构未释放 JNIEnv 引用且未处理 GetMethodID 失败，存在资源泄漏与空指针风险",
+          "outcome": "true_positive",
+          "reference": 8,
+          "reason": "Both identify the same missing error handling when JNI GetMethodID fails to resolve the required Java methods."
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "modules/videoio/misc/java/src/cpp/videoio_converters.hpp",
+          "side": "new",
+          "start_line": 0,
+          "title": "JavaStreamReader 持有 JNIEnv 指针且未做线程绑定，跨线程回调会导致崩溃",
+          "body": "`JavaStreamReader` 在构造函数中保存了 `JNIEnv* env` 指针，并在 `read`/`seek` 中直接使用。JNIEnv 是线程相关的：它只在获取它的那个线程（即 JNI 调用进入的线程）上有效。如果 `VideoCapture` 的底层读取发生在另一个线程（例如 FFmpeg 后端的解码线程），或者 `IStreamReader` 被跨线程调用，那么保存的 `env` 指针将指向无效的线程环境，调用 `NewByteArray`/`CallLongMethod` 等会导致未定义行为或崩溃。\n\n此外，`NewGlobalRef` 创建的全局引用在析构时通过 `DeleteGlobalRef` 释放，但析构函数同样依赖保存的 `env`，若析构发生在不同线程同样会出错。\n\n建议：不保存 `JNIEnv*`，而是在每次调用时通过 `JavaVM*` 获取当前线程的 `JNIEnv`（`AttachCurrentThread`/`GetEnv`），或确保 `IStreamReader` 的所有调用都发生在同一线程并显式记录该约束。",
+          "severity": "high"
+        },
+        {
+          "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+          "side": "new",
+          "start_line": 0,
+          "title": "read 未校验 Java 侧返回值，负数或部分读取会导致缓冲区越界/数据损坏",
+          "body": "`JavaStreamReader::read` 调用 `CallLongMethod` 得到 `res`（Java 侧 `read` 返回的字节数），但随后无条件执行 `GetByteArrayRegion(jBuffer, 0, size, buffer)`，将整个 `size` 字节复制回 C++ 缓冲区，而不管 `res` 实际是多少。\n\n问题：\n1. 若 Java 侧 `read` 返回负数（表示错误，如 `RandomAccessFile.read` 在 EOF 时返回 -1），`res` 为负，但代码仍复制 `size` 字节，且返回负值给调用方，可能破坏上层状态机。\n2. 若 Java 侧只读取了部分字节（`res \u003c size`），代码仍复制 `size` 字节，其中 `res..size` 区间是未初始化的 jbyteArray 内容，导致缓冲区尾部数据损坏。\n\n测试代码中 `Math.max(f.read(buffer), 0)` 掩盖了 -1 的情况，但生产用户实现可能直接返回 -1 或部分读取。",
+          "severity": "medium"
+        },
+        {
+          "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+          "side": "new",
+          "start_line": 23,
+          "end_line": 23,
+          "title": "JavaStreamReader::read 未按实际读取字节数回填缓冲区，可能产生脏数据或越界",
+          "body": "`JavaStreamReader::read` 先以 `size` 分配 `jbyteArray`，调用 Java 侧 `read(byte[], long)` 得到实际读取字节数 `res`，但随后无条件地以 `size` 为长度调用 `GetByteArrayRegion` 回填整个缓冲区。当 Java 侧返回的 `res` 小于 `size`（例如流末尾或部分读取）时，缓冲区中 `[res, size)` 区间会被填充为未初始化的数组内容（Java 新建 byte 数组默认零填充，但语义上仍是未写入的脏数据），而调用方（videoio 后端）会依据返回值 `res` 只消费前 `res` 字节，因此通常不会直接越界，但存在语义不一致：缓冲区内容与返回值不匹配。更严重的是，若 Java 侧实现返回的 `res` 大于 `size`（恶意或错误的实现），则 `GetByteArrayRegion` 仍以 `size` 读取，不会越界，但返回值 `res` 会误导调用方读取超出实际写入的字节，导致读取未初始化内存。建议仅回填 `min(res, size)` 字节，或先校验 `res` 范围。",
+          "severity": "medium"
+        },
+        {
+          "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+          "side": "new",
+          "start_line": 11,
+          "end_line": 11,
+          "title": "JavaStreamReader 析构未释放 JNIEnv 引用且未处理 GetMethodID 失败，存在资源泄漏与空指针风险",
+          "body": "构造函数中通过 `NewGlobalRef` 创建了全局引用 `obj`，析构函数中调用 `DeleteGlobalRef` 释放，这部分是正确的。但构造函数中 `GetMethodID` 的返回值 `m_read`、`m_seek` 未做空值检查：若 Java 类未正确实现 `read([BJ)J` 或 `seek(JI)J` 方法（例如签名不匹配），`GetMethodID` 返回 NULL，后续 `read`/`seek` 中虽有 `if (!m_read)` 保护，但 `seek` 中 `if (!m_seek)` 保护存在，`read` 中 `if (!m_read)` 保护也存在，因此不会直接崩溃。然而，`GetMethodID` 失败时 JNI 会抛出异常，代码未调用 `ExceptionCheck`/`ExceptionClear`，异常会悬挂在 JNI 环境中，导致后续 JNI 调用行为未定义。此外，`env` 指针在对象生命周期内被长期持有，若该 JNIEnv 属于某个已结束的 native 调用线程（JNIEnv 是线程局部的），跨线程使用会导致崩溃。虽然当前使用场景可能在同一线程，但作为持久化对象（IStreamReader 被 VideoCapture 持有），其生命周期可能跨越多次 JNI 调用，存在线程亲和性风险。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/ppy__osu__33423",
+      "kind": "golden",
+      "language": "C#",
+      "changed_lines": 27,
+      "golden": 8,
+      "findings": 1,
+      "true_positive": 1,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 3133,
+      "duration_ms": 33902,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 4,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+          "start_line": 78,
+          "title": "SmoothstepBellCurve 在 x 超出 [mean-width, mean+width] 时未钳制，可能产生负值",
+          "outcome": "true_positive",
+          "reference": 3,
+          "reason": "两者都指出超出 [mean-width, mean+width] 的输入会使传给 Smoothstep 的 x 变为负值，可能导致输出低于 0，并建议在函数边界显式钳制。"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+          "side": "new",
+          "start_line": 78,
+          "end_line": 78,
+          "title": "SmoothstepBellCurve 在 x 超出 [mean-width, mean+width] 时未钳制，可能产生负值",
+          "body": "新增的 `SmoothstepBellCurve` 函数在 `x` 偏离 `mean` 超过 `width` 时，`x = x \u003e 0 ? (width - x) : (width + x)` 会得到负值，随后传入 `Smoothstep(x, 0, width)`。若 `Smoothstep` 未对输入做钳制，负输入会返回负值（或未定义行为），从而破坏“bell curve 输出应在 [0,1] 区间”的不变量。\n\n在当前调用点 `RhythmEvaluator.cs` 中，`deltaDifferenceFraction` 被约束在 [0,1) 且 `mean=0.5, width=0.5`，因此实际输入始终落在 [0,1] 内，不会触发负值。但该函数作为 `DifficultyCalculationUtils` 中的公共工具方法，其文档声称“smoothly reducing its value to 0 over width”，隐含了超出 width 后应保持为 0 的语义，而当前实现并未保证这一点。\n\n这是一个边界不变量未在函数边界处强制的问题：函数把“输入在有效范围内”这一前置条件留给了调用方，而函数自身的文档与命名（BellCurve）暗示了更宽的适用性。若未来有调用方传入超出 [mean-width, mean+width] 的值，将静默产生负值，污染难度计算。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/sveltejs__svelte__15250",
+      "kind": "golden",
+      "language": "JavaScript",
+      "changed_lines": 105,
+      "golden": 14,
+      "findings": 1,
+      "true_positive": 0,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 4315,
+      "duration_ms": 42264,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        4
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+          "start_line": 38,
+          "title": "服务端 `{:else}` 分支的 `BLOCK_OPEN_ELSE` 注释被插入到最后一个 `{:else if}` 分支之前",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+          "side": "new",
+          "start_line": 38,
+          "end_line": 38,
+          "title": "服务端 `{:else}` 分支的 `BLOCK_OPEN_ELSE` 注释被插入到最后一个 `{:else if}` 分支之前",
+          "body": "在 `packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js` 中，重构后的 while 循环通过 `if_statement = if_statement.alternate = b.if(...)` 逐级构建嵌套的 `if/else if` 链。循环结束后，代码执行 `if_statement.alternate = alt ? ... : b.block([])`，此时 `if_statement` 指向的是**最后一个 `{:else if}` 的 if 语句**，而非最外层的 if 语句。\n\n紧接着 `if_statement.alternate.body.unshift(... BLOCK_OPEN_ELSE ...)` 将 `\u003c!--[!--\u003e`（`BLOCK_OPEN_ELSE`）注释插入到最后一个 `{:else if}` 分支的 alternate（即真正的 `{:else}` 或空块）之前。\n\n问题在于：当存在 `{:else}` 分支时，`BLOCK_OPEN_ELSE` 注释被放在最后一个 `{:else if}` 的 alternate 块开头，这是正确的（因为 `{:else}` 就是最后一个 `{:else if}` 的 alternate）。但当**没有 `{:else}` 分支**时，`alt` 为 `undefined`，`if_statement.alternate` 被赋值为 `b.block([])`（空块），随后 `BLOCK_OPEN_ELSE` 被 unshift 进这个空块。由于空块永远不会被执行（最后一个 `{:else if}` 的 alternate 为空意味着没有 else 分支），这个 `BLOCK_OPEN_ELSE` 注释实际上会被输出到模板中，但客户端 hydration 逻辑（`if_block` 中 `hydrate_index = Infinity` 对应 `HYDRATION_START_ELSE`）期望在存在 else 分支时才出现该注释。\n\n更关键的是，`BLOCK_OPEN_ELSE` 被 unshift 到空块后，由于该空块是最后一个 `{:else if}` 的 alternate，当所有 `{:else if}` 条件都不满足时，这个空块（含 `BLOCK_OPEN_ELSE` 注释）会被执行，导致输出一个多余的 `\u003c!--[!--\u003e` 注释，而客户端在 hydration 时若所有条件都不满足，会走到 `hydrate_index = Infinity` 分支并期望匹配 `HYDRATION_START_ELSE`，但服务端实际输出的是空块（无内容），造成 hydration 注释不匹配。\n\n需要确认：当没有 `{:else}` 分支时，服务端是否应该输出 `BLOCK_OPEN_ELSE`。从客户端逻辑看，`if_block` 中 `hydrate_index !== -1` 且 `root_index === 0` 时，会检查 `anchor.data` 是否为 `HYDRATION_START`、`HYDRATION_START_ELSE` 或其他数字，说明服务端在无 else 分支时不应输出 `BLOCK_OPEN_ELSE`。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/symfony__symfony__60342",
+      "kind": "golden",
+      "language": "PHP",
+      "changed_lines": 32,
+      "golden": 4,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 904,
+      "duration_ms": 12486,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "aacr/timescale__timescaledb__8138",
+      "kind": "golden",
+      "language": "C",
+      "changed_lines": 559,
+      "golden": 11,
+      "findings": 1,
+      "out_of_diff": 1,
+      "true_positive": 0,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 3093,
+      "duration_ms": 35160,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "tsl/src/compression/compression.c",
+          "start_line": 1340,
+          "title": "build_decompress_attrmap 中 nextindesc 递增逻辑错误导致列映射错位",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "tsl/src/compression/compression.c",
+          "side": "new",
+          "start_line": 1340,
+          "end_line": 1340,
+          "title": "build_decompress_attrmap 中 nextindesc 递增逻辑错误导致列映射错位",
+          "body": "### build_decompress_attrmap 中 nextindesc 递增逻辑错误导致列映射错位\n\n在 `build_decompress_attrmap` 中，内层循环对每个压缩列（outatt）遍历非压缩列（inatt）时，`nextindesc` 在每次内层迭代前递增，而不是在匹配失败后递增。这导致对每个压缩列，扫描非压缩列的起始位置不断前移，且当 `nextindesc \u003e= innatts` 时回绕到 0。结果是：对于列顺序不完全一致（或存在 dropped 列）的表，压缩列可能被映射到错误的非压缩列，产生静默的数据错位/损坏。\n\n具体地，`nextindesc` 是跨外层循环持续累加的变量，内层 `for (j = 0; j \u003c innatts; j++)` 中每次迭代都 `nextindesc++`，但 `j` 只是循环计数，实际访问的是 `TupleDescAttr(noncompressed_desc, nextindesc)`。当 `nextindesc` 回绕后，`j` 与 `nextindesc` 不再同步，可能重复访问同一列或跳过列，导致 `attrMap-\u003eattnums[i]` 被赋成错误的 `inatt-\u003eattnum`。\n\n这属于本次重构引入的新逻辑（原实现用 `get_attnum(out_rel-\u003erd_id, col_name)` 按名称精确匹配），一旦列顺序与压缩表不一致就会触发错误映射。\n\n_定位 tsl/src/compression/compression.c:1340 不在本次改动范围内，已按文件级发布。_",
+          "severity": "critical",
+          "out_of_diff": true
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/unionlabs__union__3414",
+      "kind": "golden",
+      "language": "Rust",
+      "changed_lines": 213,
+      "golden": 18,
+      "findings": 6,
+      "out_of_diff": 2,
+      "true_positive": 3,
+      "false_positive": 3,
+      "negative_hits": 0,
+      "tokens_total": 5917,
+      "duration_ms": 54407,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 5,
+      "naturalness_scores": [
+        5,
+        3,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "lib/voyager-core/src/lib.rs",
+          "start_line": 333,
+          "title": "Timestamp::from_secs 存在 u64 溢出风险",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "voyager/modules/consensus/cometbls/src/main.rs",
+          "start_line": 165,
+          "title": "cometbls/tendermint 共识模块将纳秒值经 try_into 冗余转换后包装",
+          "outcome": "true_positive",
+          "reference": 8,
+          "reason": "Both identify the same redundant and potentially invalid `.try_into().expect(...)` chained after `Timestamp::from_nanos`, which already returns the correctly typed `Timestamp`."
+        },
+        {
+          "finding_index": 2,
+          "path": "lib/voyager-core/src/lib.rs",
+          "start_line": 329,
+          "title": "Timestamp 新类型的序列化格式与既有 i64/u64 表示不兼容，可能破坏 RPC 与持久化数据",
+          "outcome": "true_positive",
+          "reason": "Both identify the same core defect: wrapping `u64` in `Timestamp` changes its Serde representation, and `#[serde(transparent)]` is needed to preserve the previous raw-number wire format."
+        },
+        {
+          "finding_index": 3,
+          "path": "lib/voyager-core/src/lib.rs",
+          "start_line": 334,
+          "title": "from_secs 存在 u64 乘法溢出风险，且与既有 i64 语义不一致",
+          "outcome": "true_positive",
+          "reference": 2,
+          "reason": "Both comments identify the same unchecked multiplication in Timestamp::from_secs that can overflow and produce an incorrect timestamp or panic."
+        },
+        {
+          "finding_index": 4,
+          "path": "voyager/modules/consensus/ethereum/src/main.rs",
+          "start_line": 158,
+          "title": "Ethereum 共识模块将秒级时间戳误当作纳秒传入 from_nanos",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 5,
+          "path": "voyager/modules/consensus/ethereum/src/main.rs",
+          "start_line": 174,
+          "title": "Ethereum 共识模块非 finalized 分支同样将秒级时间戳误当作纳秒",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "lib/voyager-core/src/lib.rs",
+          "side": "new",
+          "start_line": 333,
+          "end_line": 333,
+          "title": "Timestamp::from_secs 存在 u64 溢出风险",
+          "body": "`from_secs` 使用 `secs * 1_000_000_000` 进行乘法，在 debug 构建下若 `secs` 超过约 1.8e10（约 584 年）会触发整数溢出 panic；在 release 构建下会静默回绕，产生错误的时间戳。虽然当前实际时间戳远小于该阈值，但这是一个新引入的公共 API，缺少溢出保护。",
+          "severity": "medium"
+        },
+        {
+          "path": "voyager/modules/consensus/cometbls/src/main.rs",
+          "side": "new",
+          "start_line": 165,
+          "end_line": 165,
+          "title": "cometbls/tendermint 共识模块将纳秒值经 try_into 冗余转换后包装",
+          "body": "### cometbls/tendermint 共识模块将纳秒值经 try_into 冗余转换后包装\n\n`as_unix_nanos()` 返回纳秒值，`Timestamp::from_nanos` 正确包装后，又调用 `.try_into().expect(\"should be fine\")`。`Timestamp` 未实现 `TryFrom`/`Into` 到自身或其它类型的转换（从 diff 看仅实现了 `from_nanos`/`from_secs`/`as_nanos`/`as_secs`/`Display`），因此这里的 `.try_into()` 目标类型不明确，且 `.expect` 引入了不必要的 panic 风险。tendermint 模块存在相同模式。\n\n_定位 voyager/modules/consensus/cometbls/src/main.rs:165 不在本次改动范围内，已按文件级发布。_",
+          "severity": "medium",
+          "out_of_diff": true
+        },
+        {
+          "path": "lib/voyager-core/src/lib.rs",
+          "side": "new",
+          "start_line": 329,
+          "end_line": 329,
+          "title": "Timestamp 新类型的序列化格式与既有 i64/u64 表示不兼容，可能破坏 RPC 与持久化数据",
+          "body": "`Timestamp` 被定义为 `pub struct Timestamp(u64)` 并派生 `Serialize/Deserialize`。对于元组结构体，serde 默认将其序列化为 JSON 数组（如 `[123]`）或（若启用 `is_human_readable` 相关配置）裸值，而原先 `WaitForTimestamp.timestamp` 是 `i64`、`ConsensusStateMeta.timestamp_nanos` 是 `u64`、`query_latest_timestamp` 返回 `i64`，这些在 JSON 中都是裸数字。\n\n本次变更把 `WaitForTimestamp`、`ConsensusStateMeta`、`query_latest_timestamp` 等跨进程/跨模块边界（RPC、`#[model]` 序列化、队列消息）的字段类型从裸整数改为 `Timestamp`，会改变这些字段的线上 JSON 编码。任何依赖旧编码的持久化数据、日志、或与旧版本节点通信的场景都会出现反序列化失败或字段不匹配。\n\n这是本次 diff 引入的边界不变量变化，需要显式确认序列化格式（例如为 `Timestamp` 添加 `#[serde(transparent)]` 或自定义 `Serialize` 以保持裸数字编码），否则属于生产兼容性回归。",
+          "severity": "high"
+        },
+        {
+          "path": "lib/voyager-core/src/lib.rs",
+          "side": "new",
+          "start_line": 334,
+          "end_line": 334,
+          "title": "from_secs 存在 u64 乘法溢出风险，且与既有 i64 语义不一致",
+          "body": "`Timestamp::from_secs` 实现为 `Timestamp(secs * 1_000_000_000)`，在 debug 构建下 `secs` 较大时（约 \u003e 1.8e10 秒，即约 584 年后）会发生 `u64` 乘法溢出 panic；在 release 构建下会静默回绕，产生错误的时间戳。\n\n同时，原 `WaitForTimestamp.timestamp` 是 `i64`（纳秒），而新 `Timestamp` 内部是 `u64`。在 `voyager/plugins/client-update/ethereum/src/main.rs` 中，原先通过 `i64::try_from(...)` 显式处理了可能为负或超范围的转换，现在改为 `Timestamp::from_secs(...)` 直接接受 `u64` 秒数，丢失了符号/范围校验。虽然该调用点传入的是 `genesis_time + ...` 的正值，但类型语义从「有符号纳秒」变为「无符号秒」的边界变化需要确认不会引入负值或溢出。",
+          "severity": "medium"
+        },
+        {
+          "path": "voyager/modules/consensus/ethereum/src/main.rs",
+          "side": "new",
+          "start_line": 158,
+          "end_line": 158,
+          "title": "Ethereum 共识模块将秒级时间戳误当作纳秒传入 from_nanos",
+          "body": "### Ethereum 共识模块将秒级时间戳误当作纳秒传入 from_nanos\n\n在 `query_latest_timestamp` 的 `finalized` 分支中，`finalized_header.execution.timestamp` 是以**秒**为单位的以太坊执行层时间戳（`execution_payload.timestamp` 语义为 Unix 秒）。重构前代码是 `timestamp.try_into().unwrap()` 直接返回 i64（即返回秒值），重构后改为 `Timestamp::from_nanos(...)`，把秒值当作纳秒存储。这会导致下游所有依赖该时间戳的等待/比较逻辑（如 `WaitForTimestamp`）产生约 10^9 倍的偏差，时间戳语义完全错误。\n\n注意：`finalized` 分支（beacon API 的 `execution.timestamp`）是秒，而 `else` 分支（`provider.get_block(...).header.timestamp`）也是秒。两处都应使用 `Timestamp::from_secs`，而非 `from_nanos`。\n\n_定位 voyager/modules/consensus/ethereum/src/main.rs:158 不在本次改动范围内，已按文件级发布。_",
+          "severity": "high",
+          "out_of_diff": true
+        },
+        {
+          "path": "voyager/modules/consensus/ethereum/src/main.rs",
+          "side": "new",
+          "start_line": 174,
+          "end_line": 174,
+          "title": "Ethereum 共识模块非 finalized 分支同样将秒级时间戳误当作纳秒",
+          "body": "`else` 分支中 `provider.get_block(...).header.timestamp` 是以太坊区块头时间戳，单位为**秒**。重构后同样被 `Timestamp::from_nanos` 直接包装，导致秒值被当作纳秒存储，时间戳放大 10^9 倍。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/valkey-io__valkey__2059",
+      "kind": "golden",
+      "language": "C",
+      "changed_lines": 283,
+      "golden": 11,
+      "findings": 3,
+      "out_of_diff": 2,
+      "true_positive": 0,
+      "false_positive": 3,
+      "negative_hits": 1,
+      "tokens_total": 3423,
+      "duration_ms": 34394,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/cli_common.c",
+          "start_line": 433,
+          "title": "非 RDMA 构建下 --rdma 选项被静默忽略并退化为 TCP 连接",
+          "outcome": "negative_hit",
+          "reference": 3,
+          "reason": "两者都指出在未定义 USE_RDMA 时 rdma=1 会被静默忽略并退化为 TCP，缺少显式错误处理或断言。"
+        },
+        {
+          "finding_index": 1,
+          "path": "src/valkey-benchmark.c",
+          "start_line": 829,
+          "title": "RDMA 连接在 idle 模式下未注册读事件，错误无法被捕获",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/valkey-benchmark.c",
+          "start_line": 651,
+          "title": "集群模式下 RDMA 连接被静默降级为 TCP",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/cli_common.c",
+          "side": "new",
+          "start_line": 433,
+          "end_line": 433,
+          "title": "非 RDMA 构建下 --rdma 选项被静默忽略并退化为 TCP 连接",
+          "body": "`valkeyConnectWrapper` 中，当 `rdma` 为真时，`VALKEY_OPTIONS_SET_RDMA` 调用被包裹在 `#ifdef USE_RDMA` 内，但 `else` 分支的 `VALKEY_OPTIONS_SET_TCP` 在 `rdma` 为真且未定义 `USE_RDMA` 时仍会执行。\n\n具体控制流：\n- 若编译时未定义 `USE_RDMA`，`if (rdma)` 分支体为空（仅剩 `#ifdef` 块被预处理器移除），随后 `else` 分支执行 `VALKEY_OPTIONS_SET_TCP`。\n- 结果是：用户在非 RDMA 构建的二进制上显式传入 `--rdma`，程序不会报错，而是静默建立普通 TCP 连接。\n\n这与 `parseOptions` 中 `--rdma` 选项本身也被 `#ifdef USE_RDMA` 包裹形成矛盾：在非 RDMA 构建下，`--rdma` 根本不会被解析（会落入 `invalid` 分支），因此 `config.rdma` 恒为 0，`rdma` 参数恒为 0。也就是说，当前代码路径下 `rdma=1` 且 `USE_RDMA` 未定义的情况实际上不会发生。\n\n但这一防御性缺口仍然存在：一旦未来有人移除 `parseOptions` 中的 `#ifdef` 包裹（例如为了在非 RDMA 构建下也能识别并报错），`valkeyConnectWrapper` 会静默降级为 TCP，掩盖配置错误。更直接的问题是：`if (rdma)` 分支在 `USE_RDMA` 未定义时为空，`VALKEY_OPTIONS_SET_RDMA` 宏调用被无条件跳过，缺少 `#else` 分支来显式报错或断言，使错误传播路径不完整。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/valkey-benchmark.c",
+          "side": "new",
+          "start_line": 829,
+          "end_line": 829,
+          "title": "RDMA 连接在 idle 模式下未注册读事件，错误无法被捕获",
+          "body": "### RDMA 连接在 idle 模式下未注册读事件，错误无法被捕获\n\n在 `createClient` 中，当 `config.idlemode != 0` 时，代码无条件走 `else` 分支注册 `AE_READABLE` 读事件，而 RDMA 分支只在 `idlemode == 0` 时生效。这意味着在 idle 模式下使用 `--rdma` 时，RDMA 连接仍会尝试通过 `c-\u003econtext-\u003efd` 注册读事件。RDMA 连接的文件描述符语义与普通 TCP 不同（RDMA 上下文并非由内核 socket 的 fd 驱动可读/可写事件，正如代码注释所述 \"RDMA context always writable, but it can't be invoked by AE_WRITABLE\"），因此依赖 fd 的 `AE_READABLE` 事件在 RDMA 下可能无法正确触发，导致 idle 模式下无法捕获连接错误或读取数据。\n\n_定位 src/valkey-benchmark.c:829 不在本次改动范围内，已按文件级发布。_",
+          "severity": "medium",
+          "out_of_diff": true
+        },
+        {
+          "path": "src/valkey-benchmark.c",
+          "side": "new",
+          "start_line": 651,
+          "end_line": 651,
+          "title": "集群模式下 RDMA 连接被静默降级为 TCP",
+          "body": "### 集群模式下 RDMA 连接被静默降级为 TCP\n\n在 `createClient` 中，`rdma` 局部变量初始化为 0，仅在 `!is_cluster_client` 分支中赋值为 `config.rdma`。当 `is_cluster_client` 为真（集群模式）时，`rdma` 保持为 0，随后 `valkeyConnectWrapper(ip, port, tv, 1, rdma)` 以 `rdma=0` 建立 TCP 连接。这意味着用户指定 `--rdma` 后，在集群模式下连接各节点时会被静默降级为普通 TCP，而非 RDMA，与用户预期不符。\n\n_定位 src/valkey-benchmark.c:651 不在本次改动范围内，已按文件级发布。_",
+          "severity": "low",
+          "out_of_diff": true
+        }
+      ]
+    },
+    {
+      "case_id": "aacr/vllm-project__vllm__17425",
+      "kind": "golden",
+      "language": "Python",
+      "changed_lines": 154,
+      "golden": 8,
+      "findings": 1,
+      "out_of_diff": 1,
+      "true_positive": 1,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 2139,
+      "duration_ms": 25833,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "vllm/logger.py",
+          "start_line": 60,
+          "title": "`warning_once` 的 `*args` 参与 `lru_cache` 缓存键，改变了「once」去重语义并可能引入非确定性缓存键",
+          "outcome": "true_positive",
+          "reason": "Both identify the same defect: `lru_cache` includes `*args` in the cache key, so different formatting arguments cause the same message to be logged multiple times, breaking once-per-message semantics."
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "vllm/logger.py",
+          "side": "new",
+          "start_line": 60,
+          "end_line": 60,
+          "title": "`warning_once` 的 `*args` 参与 `lru_cache` 缓存键，改变了「once」去重语义并可能引入非确定性缓存键",
+          "body": "### `warning_once` 的 `*args` 参与 `lru_cache` 缓存键，改变了「once」去重语义并可能引入非确定性缓存键\n\n`_print_warning_once`/`_print_info_once` 由 `@lru_cache` 装饰，缓存键由所有位置参数构成。改动前缓存键为 `(logger, msg)`，改动后变为 `(logger, msg, *args)`。\n\n这意味着：对于同一 `msg` 模板，只要 `*args` 不同，就会产生不同的缓存条目，从而可能多次打印「本应只打印一次」的警告。例如 `maybe_remap_kv_scale_name` 中，`name`/`remapped_name` 每次不同，`warning_once` 现在会为每个不同的 `name` 组合各打印一次警告，而不是全局只打印一次。\n\n这改变了 `warning_once` 的既有契约（「subsequent calls with the same message are silently dropped」——文档仍写的是 same message，但实际去重粒度已变为 message+args）。对于 checkpoint 加载场景，若模型中有大量 `kv_scale` 名称不匹配，可能产生大量重复警告输出。\n\n此外，`*args` 中若包含不可哈希对象（虽然类型标注为 `Hashable`，但运行时无强制校验），`lru_cache` 会抛出 `TypeError: unhashable type`，导致原本只是打印警告的代码路径直接崩溃。\n\n_定位 vllm/logger.py:60 不在本次改动范围内，已按文件级发布。_",
+          "severity": "medium",
+          "out_of_diff": true
+        }
+      ]
+    },
+    {
+      "case_id": "control/0e3b4b3fcf",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 1543,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1219,
+      "duration_ms": 17208,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "control/11b85d38d6",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 451,
+      "golden": 0,
+      "findings": 1,
+      "true_positive": 0,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 1601,
+      "duration_ms": 19250,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "scripts/verify-onboarding.sh",
+          "start_line": 119,
+          "title": "verify-onboarding.sh 校验的章节标题与 README 实际标题不一致",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "scripts/verify-onboarding.sh",
+          "side": "new",
+          "start_line": 119,
+          "end_line": 119,
+          "title": "verify-onboarding.sh 校验的章节标题与 README 实际标题不一致",
+          "body": "verify-onboarding.sh 新增的校验断言要求 README.zh-CN.md 必须包含 `^## 企业 Webhook 快速启动` 这一精确标题，但本次 diff 中 README.zh-CN.md 实际改成的标题是 `## 什么情况下切到企业 Webhook`（对应英文 `## When To Use Enterprise Webhook`），并未出现 `## 企业 Webhook 快速启动` 这个标题。\n\n英文侧同样存在错位：脚本要求 `^## Enterprise Webhook Quick Start`，而 README.md 中该标题确实改成了 `## Enterprise Webhook Quick Start`（英文侧一致），但中文侧标题被改成了「什么情况下切到企业 Webhook」，与脚本断言不匹配。\n\n这会导致 `scripts/verify-onboarding.sh` 在 CI 或本地校验时对中文 README 的断言失败，使本 MR 自身无法通过其引入的校验脚本。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "control/1a054a44f9",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 262,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1640,
+      "duration_ms": 21943,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "control/26140bb3ea",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 5700,
+      "golden": 0,
+      "findings": 3,
+      "true_positive": 0,
+      "false_positive": 3,
+      "negative_hits": 0,
+      "tokens_total": 3816,
+      "duration_ms": 42374,
+      "verdict": "requested_changes",
+      "coverage_ratio": 0.43859649122807015,
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "internal/gate/service.go",
+          "start_line": 0,
+          "title": "gate 的 discussion 解析状态与 finding 状态机形成双源真相",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "internal/db/queries/review_findings.sql",
+          "start_line": 5,
+          "title": "新增 range_* 列但缺少对应数据库迁移，部署时可能因列不存在导致写入失败",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "internal/llm/dedup.go",
+          "start_line": 18,
+          "title": "persistFindings 多步写入未包裹在显式事务中，存在部分写入风险",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "internal/gate/service.go",
+          "side": "new",
+          "start_line": 0,
+          "title": "gate 的 discussion 解析状态与 finding 状态机形成双源真相",
+          "body": "`ComputeResultWithDiscussionState` 新增了 `discussionStateByFinding map[int64]bool` 参数，`discussionResolved` 优先读取该 map，否则回退到解析 `finding.Evidence` 中的 `resolved` 标志。这引入了两套关于“discussion 是否已解决”的真相来源：外部调用方传入的 map 与持久化在 `Evidence` 字段中的标志。\n\n当调用方传入的 map 与数据库中的 `Evidence` 标志不一致时（例如 map 缺失某个 finding 的 key，或 map 值过期），`qualifies` 的判定结果会随调用路径不同而变化：`ComputeResult`（旧路径，传 nil）走 Evidence 解析，而新路径走 map。这会让 gate 的通过/阻塞结论取决于调用方是否记得传入并正确填充 map，属于隐式的跨模块契约，容易在后续维护中产生不一致。\n\n建议明确单一真相来源：要么始终从 `Evidence` 解析，要么将 discussion 状态持久化为独立字段并让 gate 只读该字段，避免 map 与 Evidence 并存。",
+          "severity": "medium"
+        },
+        {
+          "path": "internal/db/queries/review_findings.sql",
+          "side": "new",
+          "start_line": 5,
+          "end_line": 5,
+          "title": "新增 range_* 列但缺少对应数据库迁移，部署时可能因列不存在导致写入失败",
+          "body": "本 MR 在 `internal/db/queries/review_findings.sql` 的 `InsertReviewFinding` 和 `UpdateFindingRelocation` 中新增了 6 个 `range_*` 列（range_start_kind、range_start_old_line、range_start_new_line、range_end_kind、range_end_old_line、range_end_new_line），并在 `models.go` 与生成的 `review_findings.sql.go` 中同步添加了对应字段。但变更集中没有包含任何 schema 迁移文件（未看到 `ALTER TABLE review_findings ADD COLUMN ...` 或迁移目录变更）。\n\n如果这些列尚未存在于数据库中，部署后所有 review finding 的 INSERT 和 UPDATE 都会因「Unknown column」而失败，导致整个 review 持久化流程中断。即使列已存在，缺少迁移文件也意味着该 schema 变更无法在其它环境（staging/prod）可靠复现，属于部署安全风险。",
+          "severity": "high"
+        },
+        {
+          "path": "internal/llm/dedup.go",
+          "side": "new",
+          "start_line": 18,
+          "end_line": 18,
+          "title": "persistFindings 多步写入未包裹在显式事务中，存在部分写入风险",
+          "body": "`internal/llm/dedup.go` 中的 `persistFindings` 对每个 finding 依次执行 `insertFinding`、`UpdateFindingState`（supersede）、`UpdateFindingLastSeen`、`UpdateFindingRelocation`，并在循环末尾对缺失 finding 执行 `UpdateFindingState`。这些写操作全部通过传入的 `queries *db.Queries` 执行，但该 querier 并未绑定到显式事务（`ProcessRun` 中直接使用 `p.queries`，未调用 `db.RunTx`）。\n\n如果中途某一步失败（例如某个 finding 的 insert 成功但后续 supersede 更新失败），函数直接 `return err`，此时已写入的 finding 会保留，而后续 finding 未写入，造成 review 结果部分持久化。由于没有事务回滚，重试时可能产生重复或状态不一致的数据。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "control/32edddd86e",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 165,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1049,
+      "duration_ms": 14401,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "control/72fbb92225",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 363,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1598,
+      "duration_ms": 22696,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "control/7a23cdd9f7",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 59,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 830,
+      "duration_ms": 11799,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "control/7d6197412c",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 11,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 654,
+      "duration_ms": 10765,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "control/9b34977d34",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 5,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 615,
+      "duration_ms": 11419,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "control/a32754e330",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 154,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 1070,
+      "duration_ms": 15349,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "control/a6dcf38b2e",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 1717,
+      "golden": 0,
+      "findings": 4,
+      "true_positive": 0,
+      "false_positive": 4,
+      "negative_hits": 0,
+      "tokens_total": 5182,
+      "duration_ms": 54113,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "cmd/mreviewer/schema_benchmark.go",
+          "start_line": 112,
+          "title": "schema-benchmark 对每个 route 使用无超时的 context.Background，单个挂起调用会无限阻塞整个基准",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "cmd/mreviewer/schema_benchmark.go",
+          "start_line": 118,
+          "title": "schema-benchmark 的 repair_rate 与 final_success_rate 统计口径不一致，导致指标失真",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "internal/llm/provider.go",
+          "start_line": 175,
+          "title": "SchemaReportFromError 无法穿透 scheduler 终端错误包装，导致失败路径的 schema 报告丢失",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "internal/llm/schema_harness.go",
+          "start_line": 176,
+          "title": "修复后校验失败但可解析时返回 FinalValid=false 的成功结果，弱化了严格校验契约",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "cmd/mreviewer/schema_benchmark.go",
+          "side": "new",
+          "start_line": 112,
+          "end_line": 112,
+          "title": "schema-benchmark 对每个 route 使用无超时的 context.Background，单个挂起调用会无限阻塞整个基准",
+          "body": "`runSchemaBenchmarkCommand` 在遍历每个 route 的每个 request 时，调用 `provider.Review(context.Background(), request)`，未注入任何超时或取消信号。基准命令通常面向多个 route × 多个 request 的批量运行，若某个 provider 的 HTTP 调用挂起（网络分区、上游无响应、无读超时），该 goroutine 会无限阻塞，整个基准命令无法完成，也无法输出任何已聚合的结果。\n\n对比 `review` 命令路径，provider 内部虽可能有自身的超时/重试逻辑，但基准命令作为批处理入口，缺少顶层的 deadline 或 per-request 超时，导致一个坏 route 拖垮整个运行，且无法通过 Ctrl-C 之外的机制恢复（`context.Background()` 不响应信号）。",
+          "severity": "medium"
+        },
+        {
+          "path": "cmd/mreviewer/schema_benchmark.go",
+          "side": "new",
+          "start_line": 118,
+          "end_line": 118,
+          "title": "schema-benchmark 的 repair_rate 与 final_success_rate 统计口径不一致，导致指标失真",
+          "body": "在 `cmd/mreviewer/schema_benchmark.go` 的聚合循环中，`repairCount` 仅在 `report != nil` 时递增，而 `successCount` 在 `reviewErr == nil` 时递增。当 `provider.Review` 返回错误（`reviewErr != nil`）但 `response.SchemaReport` 为 nil 时，`report` 会回退为 `llm.SchemaReportFromError(reviewErr)`；若该函数返回 nil（例如错误不是 `*providerParseError`，而是被 `scheduler.NewTerminalError` 包装的终端错误），则 `report` 为 nil，`repairCount` 不会递增，但该请求仍计入 `summary.Requests`（分母）。这导致 `repair_rate` 与 `final_success_rate` 的分母相同、但分子统计口径不同：`repair_rate` 只统计能拿到 schema report 的请求，而 `final_success_rate` 统计所有请求。当存在大量无法提取 schema report 的失败请求时，`repair_rate` 会被系统性低估，且与 `final_success_rate` 无法直接比较，违背了文档中『repair_rate 与 final_success_rate 应基于同一请求集合』的指标定义。",
+          "severity": "medium"
+        },
+        {
+          "path": "internal/llm/provider.go",
+          "side": "new",
+          "start_line": 175,
+          "end_line": 175,
+          "title": "SchemaReportFromError 无法穿透 scheduler 终端错误包装，导致失败路径的 schema 报告丢失",
+          "body": "`internal/llm/provider.go` 新增的 `SchemaReportFromError` 仅通过 `errors.As(err, \u0026parseErr)` 匹配 `*providerParseError`。但在 `openai.go` 与 `minimax.go` 中，harness 返回的错误会被 `scheduler.NewTerminalError(parserErrorCode, enrichProviderParseError(...))` 包装后再返回。`scheduler.NewTerminalError` 若未实现 `Unwrap()` 或未正确透传底层错误，`errors.As` 将无法穿透该包装层，导致 `SchemaReportFromError` 返回 nil。这意味着 benchmark 命令在失败路径上无法获取 `SchemaExecutionReport`，进而使 `initial_schema_accuracy` 与 `failure_reasons` 在失败请求上失真（失败请求的 initial 状态无法被统计）。",
+          "severity": "low"
+        },
+        {
+          "path": "internal/llm/schema_harness.go",
+          "side": "new",
+          "start_line": 176,
+          "end_line": 176,
+          "title": "修复后校验失败但可解析时返回 FinalValid=false 的成功结果，弱化了严格校验契约",
+          "body": "`executeRepair` 在修复输出未通过严格校验、但 `ParseReviewResult` 仍能解析时，返回 `FinalValid=false` 的 `ReviewSchemaHarnessResult` 且 `err=nil`。这改变了原有 provider 的行为：旧代码在 `validateReviewResultStrictJSON(repairedRaw)` 失败后，会走 `salvageReviewResultAfterStrictValidationFailure`，若 salvage 也失败则返回 `providerParseError`（终端错误）；只有 salvage 成功才返回结果。\n\n新代码中，只要 `ParseReviewResult` 成功（即使严格校验失败），就返回成功结果，`FinalValid` 仅作为报告字段标记为 false，但调用方（`openai.go`/`minimax.go`）无条件返回 `nil` error。这意味着 schema 不合规的 review 结果会被当作成功结果向上游传播，下游（如发布/评论逻辑）无法区分「严格合规」与「仅可解析但缺字段」。\n\n具体症状：一个缺少 `body_markdown` 的 finding 在修复后仍缺失该字段时，`ParseReviewResult` 可能仍能解析出该 finding（因为解析器比严格校验宽松），于是返回成功，但 `FinalValid=false`。上游若只检查 `err==nil`，会消费到 schema 不合规的结果。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "control/acd3a9f4d1",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 79,
+      "golden": 0,
+      "findings": 1,
+      "true_positive": 0,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 1580,
+      "duration_ms": 18962,
+      "verdict": "pass",
+      "coverage_ratio": 1,
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "QUICKSTART.md",
+          "start_line": 33,
+          "title": "文档中的数据库 DSN 环境变量名与项目约定不一致",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "QUICKSTART.md",
+          "side": "new",
+          "start_line": 33,
+          "end_line": 33,
+          "title": "文档中的数据库 DSN 环境变量名与项目约定不一致",
+          "body": "QUICKSTART.md 在「验证 2: CLI 手动触发 Review」中使用了 `MYSQL_DSN` 环境变量来配置 SQLite 连接：\n\n```bash\nexport MYSQL_DSN=\"sqlite://./mreviewer.db\"\n```\n\n但该变量名 `MYSQL_DSN` 与 SQLite 场景语义冲突（SQLite 并非 MySQL），且从项目上下文看，数据库连接配置很可能使用其他变量名（例如 `DATABASE_DSN` 或 `DB_DSN`）。如果开发者严格按文档执行，配置将不会生效，导致 CLI 无法连接数据库或回退到默认 MySQL 配置，进而使「无需 Docker 的 SQLite 验证」这一核心流程失败。\n\n建议核对项目实际的配置加载代码（如 `config` 包或 `.env.example`），将文档中的变量名修正为真实使用的名称，并确认 SQLite DSN 格式（`sqlite://./mreviewer.db` 中的相对路径写法）是否被项目所支持。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "control/e2b34bdcdf",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 1101,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 938,
+      "duration_ms": 13399,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "control/ea73dd92f5",
+      "kind": "control",
+      "language": "Go",
+      "changed_lines": 2,
+      "golden": 0,
+      "findings": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "negative_hits": 0,
+      "tokens_total": 708,
+      "duration_ms": 9493,
+      "verdict": "pass",
+      "coverage_ratio": 1
+    },
+    {
+      "case_id": "zh/go-dingdan-nil",
+      "kind": "chinese",
+      "language": "Go",
+      "changed_lines": 18,
+      "golden": 2,
+      "findings": 2,
+      "true_positive": 1,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 1871,
+      "duration_ms": 21948,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5,
+        4
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "internal/dingdan/service.go",
+          "start_line": 0,
+          "title": "仓库查询错误被吞掉，调用方无法感知失败",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "internal/dingdan/service.go",
+          "start_line": 18,
+          "title": "查询失败时错误被吞掉，返回空结果与 nil 错误",
+          "outcome": "true_positive",
+          "reason": "两者都指出 ListByUser 查询失败时仅记录日志并以空结果和 nil 错误返回，应直接将错误返回给调用方。"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "internal/dingdan/service.go",
+          "side": "new",
+          "start_line": 0,
+          "title": "仓库查询错误被吞掉，调用方无法感知失败",
+          "body": "在 `ChaXunYongHuDingDan` 中，`s.repo.ListByUser` 返回错误时仅通过 `log.Printf` 记录日志，随后继续执行过滤逻辑并最终 `return jieGuo, nil`。这导致底层查询失败（如数据库连接中断、超时、SQL 错误）时，方法仍返回 `nil` 错误和一个空切片，调用方会把「查询失败」误判为「该用户没有订单」。\n\n这是一个错误传播边界的破坏：Service 层吞掉了 Repo 层的错误，使上层无法区分「无数据」与「查询出错」两种截然不同的状态。对于订单查询这类业务，静默返回空结果可能造成用户看到「无订单」而实际是系统故障，属于生产环境中的错误行为。",
+          "severity": "high"
+        },
+        {
+          "path": "internal/dingdan/service.go",
+          "side": "new",
+          "start_line": 18,
+          "end_line": 18,
+          "title": "查询失败时错误被吞掉，返回空结果与 nil 错误",
+          "body": "`ChaXunYongHuDingDan` 调用 `s.repo.ListByUser` 后，若返回错误，仅通过 `log.Printf` 记录日志，随后继续执行过滤逻辑并返回 `jieGuo, nil`。这导致数据库查询失败（连接超时、SQL 错误、锁等待超时等）时，调用方收到 `nil` 错误和一个空切片，无法区分「用户确实没有订单」与「查询失败」。\n\n从数据正确性角度，这是典型的读路径错误吞没：上层业务可能据此认为用户无订单，进而触发后续写操作（如重复下单、误判库存占用等），造成 read/write mismatch 与潜在的数据不一致。\n\n修复方式：查询出错时直接返回错误，不要继续处理。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "zh/go-huancun-lock",
+      "kind": "chinese",
+      "language": "Go",
+      "changed_lines": 19,
+      "golden": 1,
+      "findings": 4,
+      "true_positive": 1,
+      "false_positive": 3,
+      "negative_hits": 0,
+      "tokens_total": 3290,
+      "duration_ms": 32968,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "pkg/huancun/cache.go",
+          "start_line": 22,
+          "title": "Get 方法在释放读锁后对 map 执行写操作，存在数据竞争",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "pkg/huancun/cache.go",
+          "start_line": 23,
+          "title": "Get 在释放读锁后对 map 执行 delete 写操作，存在数据竞争",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "pkg/huancun/cache.go",
+          "start_line": 9,
+          "title": "默认过期时间字段与 item 过期时间点未在写入路径生效",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "pkg/huancun/cache.go",
+          "start_line": 24,
+          "title": "Get 在释放读锁后对 map 执行 delete，与并发 Set 产生数据竞争",
+          "outcome": "true_positive",
+          "reason": "两者都指出 Get 在未持有写锁时执行 delete 会与并发 Get/Set 访问 map 产生数据竞争并可能触发并发 map 写入崩溃。"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "pkg/huancun/cache.go",
+          "side": "new",
+          "start_line": 22,
+          "end_line": 22,
+          "title": "Get 方法在释放读锁后对 map 执行写操作，存在数据竞争",
+          "body": "`Get` 方法在 `c.mu.RUnlock()` 释放读锁之后，才对过期条目执行 `delete(c.items, key)`。此时已不再持有任何锁，而 `delete` 是对 map 的写操作。若其他 goroutine 同时通过 `Set`/`Put` 等方法（持有写锁）写入 `c.items`，将产生并发 map 读写的数据竞争（data race），在 Go 运行时下可能触发 `fatal error: concurrent map writes` 导致进程崩溃，或产生未定义行为。\n\n原代码使用 `defer c.mu.RUnlock()` 并在读锁保护下返回，本次变更移除了 defer 并提前释放锁，从而引入了该竞争窗口。\n\n建议：在删除过期条目前升级为写锁，或使用 `sync.Map`，或采用「先读锁判断、再写锁删除并二次校验」的模式。例如：\n\n```go\nfunc (c *Cache) Get(key string) (any, bool) {\n\tc.mu.RLock()\n\tit, ok := c.items[key]\n\tc.mu.RUnlock()\n\tif !ok {\n\t\treturn nil, false\n\t}\n\tif !it.guoQiShi.IsZero() \u0026\u0026 time.Now().After(it.guoQiShi) {\n\t\tc.mu.Lock()\n\t\t// 二次校验，避免重复删除或删除已被更新的条目\n\t\tif cur, ok := c.items[key]; ok \u0026\u0026 !cur.guoQiShi.IsZero() \u0026\u0026 time.Now().After(cur.guoQiShi) {\n\t\t\tdelete(c.items, key)\n\t\t}\n\t\tc.mu.Unlock()\n\t\treturn nil, false\n\t}\n\treturn it.value, true\n}\n```",
+          "severity": "high"
+        },
+        {
+          "path": "pkg/huancun/cache.go",
+          "side": "new",
+          "start_line": 23,
+          "end_line": 23,
+          "title": "Get 在释放读锁后对 map 执行 delete 写操作，存在数据竞争",
+          "body": "`Get` 方法在 `c.mu.RUnlock()` 之后，对 `c.items` 执行 `delete(c.items, key)`。此时已不持有任何锁，而其他 goroutine 可能正通过 `Set`/`Get` 持有写锁或读锁并发访问同一 map。Go 的 map 不是并发安全的，并发读写（尤其是写与写、写与读同时发生）会触发运行时 panic（`concurrent map writes`）或导致数据竞争，属于未定义行为。\n\n原代码使用 `defer c.mu.RUnlock()` 保证整个读操作在锁内完成；本次改动将解锁提前，破坏了原有的锁保护边界。惰性删除的写操作必须发生在写锁（`c.mu.Lock()`）保护之下。",
+          "severity": "critical"
+        },
+        {
+          "path": "pkg/huancun/cache.go",
+          "side": "new",
+          "start_line": 9,
+          "end_line": 9,
+          "title": "默认过期时间字段与 item 过期时间点未在写入路径生效",
+          "body": "新增的 `moRenGuoQi` 字段和 `item.guoQiShi` 字段目前只在 `Get` 中被读取，没有任何写入路径（如 `Set`/`Put`）为 `item.guoQiShi` 赋值，也没有使用 `moRenGuoQi` 计算过期时间点。因此所有条目的 `guoQiShi` 都为零值 `time.Time{}`，`IsZero()` 恒为 true，过期逻辑永远不会触发，本次 MR 声称的「支持过期时间」功能实际上未生效。\n\n这属于功能不完整：要么本 MR 遗漏了 Set 方法的改动，要么过期时间需要通过其他入口注入。",
+          "severity": "medium"
+        },
+        {
+          "path": "pkg/huancun/cache.go",
+          "side": "new",
+          "start_line": 24,
+          "end_line": 24,
+          "title": "Get 在释放读锁后对 map 执行 delete，与并发 Set 产生数据竞争",
+          "body": "`Get` 方法在 `c.mu.RUnlock()` 之后，直接调用 `delete(c.items, key)` 修改底层 map。此时不再持有任何锁。若另一个 goroutine 正在 `Set`（持有写锁并写入 map），则会发生对同一 map 的并发读写。Go 的 map 不是并发安全的，并发读写会触发运行时 panic（`fatal error: concurrent map read and map write` 或 `concurrent map writes`），导致整个进程崩溃。\n\n这是本次改动引入的：原代码在 `defer c.mu.RUnlock()` 的保护下只做读操作，不存在写 map 的路径；新代码把写操作（delete）放到了锁外。",
+          "severity": "critical"
+        }
+      ]
+    },
+    {
+      "case_id": "zh/go-peizhi-default",
+      "kind": "chinese",
+      "language": "Go",
+      "changed_lines": 11,
+      "golden": 1,
+      "findings": 2,
+      "true_positive": 1,
+      "false_positive": 1,
+      "negative_hits": 0,
+      "tokens_total": 2014,
+      "duration_ms": 22170,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "internal/peizhi/load.go",
+          "start_line": 26,
+          "title": "超时单位换算错误：秒被当作纳秒使用",
+          "outcome": "true_positive",
+          "reason": "两者都指出 CHAOSHI_MIAO 的秒数被错误地直接转换为纳秒，并建议乘以 time.Second。"
+        },
+        {
+          "finding_index": 1,
+          "path": "internal/peizhi/load.go",
+          "start_line": 24,
+          "title": "环境变量值被当作纳秒解析，超时语义与注释不符",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "internal/peizhi/load.go",
+          "side": "new",
+          "start_line": 26,
+          "end_line": 26,
+          "title": "超时单位换算错误：秒被当作纳秒使用",
+          "body": "环境变量 `CHAOSHI_MIAO` 的注释和命名都表明其单位是“秒”，但代码将 `strconv.Atoi` 得到的整数直接赋值给 `pz.ChaoShi`（类型为 `time.Duration`）。`time.Duration` 的底层单位是纳秒，因此 `time.Duration(miao)` 表示的是 `miao` 纳秒而非 `miao` 秒。例如设置 `CHAOSHI_MIAO=30` 时，实际超时只有 30 纳秒，而非预期的 30 秒，导致几乎所有请求立即超时。\n\n正确写法应为 `pz.ChaoShi = time.Duration(miao) * time.Second`。",
+          "severity": "critical"
+        },
+        {
+          "path": "internal/peizhi/load.go",
+          "side": "new",
+          "start_line": 24,
+          "end_line": 24,
+          "title": "环境变量值被当作纳秒解析，超时语义与注释不符",
+          "body": "`strconv.Atoi(v)` 解析出的整数被直接赋值给 `time.Duration` 类型的 `pz.ChaoShi`。在 Go 中，`time.Duration` 的底层单位是纳秒，因此 `time.Duration(miao)` 表示的是 `miao` 纳秒，而不是注释和变量名所声称的“秒”。\n\n例如设置 `CHAOSHI_MIAO=30` 时，实际得到的超时是 30 纳秒（几乎立即超时），而非预期的 30 秒。这会导致所有依赖该超时的调用几乎立刻失败，属于配置加载与使用方之间的语义不匹配。\n\n修复方式：将秒转换为纳秒，例如 `pz.ChaoShi = time.Duration(miao) * time.Second`。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "zh/java-kucun-tx",
+      "kind": "chinese",
+      "language": "Java",
+      "changed_lines": 18,
+      "golden": 2,
+      "findings": 6,
+      "true_positive": 1,
+      "false_positive": 5,
+      "negative_hits": 0,
+      "tokens_total": 3970,
+      "duration_ms": 39093,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 2,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "start_line": 27,
+          "title": "先读后写的库存扣减存在并发竞态，导致超卖",
+          "outcome": "true_positive",
+          "reason": "Both identify the same read-modify-write concurrency race causing overselling and recommend a conditional atomic decrement plus transaction handling."
+        },
+        {
+          "finding_index": 1,
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "start_line": 33,
+          "title": "updateById 全字段更新可能覆盖并发写入的其他字段",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "start_line": 30,
+          "title": "库存扣减存在并发竞态，可导致超卖",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "start_line": 32,
+          "title": "扣减库存采用 check-then-act 且无原子更新，并发下单会超卖",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 4,
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "start_line": 37,
+          "title": "库存扣减与流水写入之间缺少事务边界，失败时账实不一致",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 5,
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "start_line": 26,
+          "title": "库存扣减与流水写入缺少事务边界，存在部分写入风险",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "side": "new",
+          "start_line": 27,
+          "end_line": 27,
+          "title": "先读后写的库存扣减存在并发竞态，导致超卖",
+          "body": "kouJian 采用「selectById 读取库存 → 判断是否充足 → setKeYong 扣减 → updateById 写回」的读改写模式。在并发场景下，多个线程可能同时读到相同的 `keYong` 值，各自通过 `keYong \u003e= shuLiang` 的校验，然后各自写回扣减后的值，最后一个写回会覆盖前一个的结果，导致实际扣减量少于请求总量，即超卖。\n\n例如库存为 10，两个请求各扣 6：两个线程都读到 keYong=10，都通过校验，分别写回 4，最终库存为 4，但实际应扣 12（应失败或扣到 -2）。\n\n即使加上事务，默认的读已提交隔离级别也无法解决此竞态，必须使用原子更新或行锁。",
+          "severity": "critical"
+        },
+        {
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "side": "new",
+          "start_line": 33,
+          "end_line": 33,
+          "title": "updateById 全字段更新可能覆盖并发写入的其他字段",
+          "body": "kuCunMapper.updateById(kuCun) 会按主键更新整行所有字段（MyBatis-Plus 默认行为）。由于 kuCun 对象是通过 selectById 读出的旧快照，若在读取与写回之间，其他请求或后台任务修改了该行的其他字段（如总库存、锁定库存等），本次 updateById 会用旧值覆盖这些字段的新值，造成数据丢失。\n\n即使解决了扣减竞态，全字段更新仍可能覆盖与本次扣减无关的字段变更。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "side": "new",
+          "start_line": 30,
+          "end_line": 30,
+          "title": "库存扣减存在并发竞态，可导致超卖",
+          "body": "`kouJian` 方法采用「先读后写」的非原子模式：先 `selectById` 读取库存，判断 `keYong \u003c shuLiang` 后，再 `setKeYong` 并 `updateById`。在并发下单场景下，多个线程可能同时读到相同的 `keYong`，都通过库存充足判断，随后各自执行扣减，最终导致库存被扣成负数（超卖）。这是典型的 check-then-act 竞态，属于 OWASP A01 访问控制/业务逻辑缺陷范畴。\n\n该方法没有事务（代码中 TODO 也承认了），也没有使用 `UPDATE ... WHERE keYong \u003e= ?` 的原子条件更新或乐观锁/悲观锁，因此并发下必然存在竞态窗口。",
+          "severity": "high"
+        },
+        {
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "side": "new",
+          "start_line": 32,
+          "end_line": 32,
+          "title": "扣减库存采用 check-then-act 且无原子更新，并发下单会超卖",
+          "body": "`kouJian` 方法先 `selectById` 读取 `keYong`，在内存中判断 `keYong \u003c shuLiang` 后，再 `setKeYong` 并 `updateById` 写回。整个「读-判断-写」序列没有任何锁、乐观锁版本号或原子 SQL（如 `UPDATE ... SET ke_yong = ke_yong - ? WHERE ke_yong \u003e= ?`）。当两个请求同时读取到相同的 `keYong` 值时，两者都会通过库存校验，随后各自写回一个基于同一旧值计算出的结果，导致其中一个扣减被覆盖丢失，最终库存被超卖。\n\n这是本次变更引入的典型 check-then-act 竞态，属于库存扣减场景的经典缺陷。",
+          "severity": "critical"
+        },
+        {
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "side": "new",
+          "start_line": 37,
+          "end_line": 37,
+          "title": "库存扣减与流水写入之间缺少事务边界，失败时账实不一致",
+          "body": "`kouJian` 先执行 `kuCunMapper.updateById(kuCun)` 扣减库存，随后执行 `liuShuiMapper.insert(liuShui)` 写流水，两者之间没有任何事务包裹（代码中甚至留有 `// TODO 后面补上事务` 注释）。如果流水插入失败（数据库异常、约束冲突等），库存已经被扣减但流水缺失，导致库存账与流水账不一致，且无法通过流水追溯扣减来源。\n\n库存扣减与流水记录属于同一业务动作的两个不可分割部分，必须处于同一事务中，要么同时成功要么同时回滚。",
+          "severity": "high"
+        },
+        {
+          "path": "src/main/java/com/example/kucun/KuCunService.java",
+          "side": "new",
+          "start_line": 26,
+          "end_line": 26,
+          "title": "库存扣减与流水写入缺少事务边界，存在部分写入风险",
+          "body": "kouJian 方法依次执行「更新库存」和「插入流水」两个写操作，但方法上没有 @Transactional 注解，代码中甚至留有 `// TODO 后面补上事务` 的注释，明确表明事务尚未实现。\n\n如果 `kuCunMapper.updateById(kuCun)` 成功执行，但随后 `liuShuiMapper.insert(liuShui)` 因数据库异常、网络抖动等原因失败，库存已经被扣减，而流水没有记录，导致库存与流水账不一致。这种部分写入会破坏账务对账，且难以通过重试自动恢复（重试会再次扣减库存）。\n\n这是本次变更引入的核心数据一致性问题，必须在此 MR 内修复。",
+          "severity": "critical"
+        }
+      ]
+    },
+    {
+      "case_id": "zh/java-riqi-format",
+      "kind": "chinese",
+      "language": "Java",
+      "changed_lines": 10,
+      "golden": 1,
+      "findings": 3,
+      "true_positive": 1,
+      "false_positive": 2,
+      "negative_hits": 0,
+      "tokens_total": 2390,
+      "duration_ms": 24531,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/main/java/com/example/baobiao/RiQiGeShi.java",
+          "start_line": 8,
+          "title": "共享静态 SimpleDateFormat 在多线程导出中线程不安全",
+          "outcome": "true_positive",
+          "reason": "两者都指出静态共享的 SimpleDateFormat 在多线程导出中不安全，可能导致格式错乱或运行时异常，并建议改用线程安全或非共享实例。"
+        },
+        {
+          "finding_index": 1,
+          "path": "src/main/java/com/example/baobiao/RiQiGeShi.java",
+          "start_line": 8,
+          "title": "共享 static final SimpleDateFormat 在多线程导出场景下存在并发安全问题",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/main/java/com/example/baobiao/RiQiGeShi.java",
+          "start_line": 8,
+          "title": "共享静态 SimpleDateFormat 在多线程导出下存在数据竞争",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/main/java/com/example/baobiao/RiQiGeShi.java",
+          "side": "new",
+          "start_line": 8,
+          "end_line": 8,
+          "title": "共享静态 SimpleDateFormat 在多线程导出中线程不安全",
+          "body": "新增的静态字段 `GE_SHI` 是一个 `SimpleDateFormat` 实例，而 `SimpleDateFormat` 内部维护可变状态（如 `Calendar` 字段），并非线程安全。注释明确说明导出任务是多线程跑的，多个线程并发调用 `geShiHua` 会同时读写同一个 `SimpleDateFormat` 的内部状态，导致格式化结果错乱（例如日期串错位、数字串扰）或抛出 `NumberFormatException`/`ArrayIndexOutOfBoundsException` 等运行时异常。\n\n这是本次 diff 新引入的共享可变状态，属于并发数据竞争问题。建议改用线程安全的 `java.time.format.DateTimeFormatter`（不可变、线程安全），或使用 `ThreadLocal\u003cSimpleDateFormat\u003e`，或每次调用新建实例。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/main/java/com/example/baobiao/RiQiGeShi.java",
+          "side": "new",
+          "start_line": 8,
+          "end_line": 8,
+          "title": "共享 static final SimpleDateFormat 在多线程导出场景下存在并发安全问题",
+          "body": "`RiQiGeShi` 引入了一个 `static final SimpleDateFormat GE_SHI` 实例，并通过 `geShiHua(Date)` 静态方法对外暴露。`SimpleDateFormat` 内部维护了非线程安全的 `Calendar` 状态，`format` 方法在并发调用时会共享并修改该状态。\n\n代码注释明确写到「导出任务是多线程跑的，这里直接调用即可」，这恰恰与 `SimpleDateFormat` 的线程不安全特性相矛盾。当多个导出线程并发调用 `geShiHua` 时，可能出现：\n1. 格式化结果错乱（线程 A 的日期被线程 B 的字段污染，输出错误日期）；\n2. 抛出 `NumberFormatException`、`ArrayIndexOutOfBoundsException` 等运行时异常，导致导出任务失败。\n\n这是由本次变更引入的并发正确性缺陷，属于生产环境可复现的阻断性风险。",
+          "severity": "high"
+        },
+        {
+          "path": "src/main/java/com/example/baobiao/RiQiGeShi.java",
+          "side": "new",
+          "start_line": 8,
+          "end_line": 8,
+          "title": "共享静态 SimpleDateFormat 在多线程导出下存在数据竞争",
+          "body": "新增的 `GE_SHI` 是一个 `static final SimpleDateFormat` 实例，而代码注释明确说明“导出任务是多线程跑的”。`SimpleDateFormat` 内部维护可变状态（`Calendar` 等），其 `format` 方法不是线程安全的。多个导出线程并发调用 `geShiHua` 时，会同时读写同一个 `Calendar` 实例，导致格式化结果错乱（例如输出错误的日期/时间、抛出 `NumberFormatException` 或 `ArrayIndexOutOfBoundsException`），从而污染报表导出的日期列数据。\n\n这是本次改动引入的问题：之前该类没有提供任何格式化方法，现在新增了共享实例并声明用于多线程场景。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "zh/py-rizhi-secret",
+      "kind": "chinese",
+      "language": "Python",
+      "changed_lines": 12,
+      "golden": 2,
+      "findings": 5,
+      "true_positive": 1,
+      "false_positive": 4,
+      "negative_hits": 0,
+      "tokens_total": 3295,
+      "duration_ms": 32851,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 5,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "tongzhi/duanxin.py",
+          "start_line": 12,
+          "title": "logger 未定义导致运行时 NameError",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "tongzhi/duanxin.py",
+          "start_line": 17,
+          "title": "响应解析缺少异常保护，非 JSON 响应会抛异常",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "tongzhi/duanxin.py",
+          "start_line": 17,
+          "title": "未校验 HTTP 状态码，仅依赖业务 code 判断成功",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "tongzhi/duanxin.py",
+          "start_line": 11,
+          "title": "短信签名密钥被明文写入日志",
+          "outcome": "true_positive",
+          "reason": "两者都指出同一日志调用会将包含短信签名密钥及手机号的完整参数写入日志，需要移除或脱敏敏感字段。"
+        },
+        {
+          "finding_index": 4,
+          "path": "tongzhi/duanxin.py",
+          "start_line": 12,
+          "title": "日志泄露短信密钥与短信内容",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "tongzhi/duanxin.py",
+          "side": "new",
+          "start_line": 12,
+          "end_line": 12,
+          "title": "logger 未定义导致运行时 NameError",
+          "body": "函数中使用了 `logger.info` 与 `logger.error`，但本文件（diff 范围内）未定义或导入 `logger`。文件顶部仅有 `import requests` 与 `WANGGUAN` 常量。若 `logger` 未在文件其他位置定义，首次调用该函数将抛出 `NameError`，导致短信发送功能完全不可用。",
+          "severity": "high"
+        },
+        {
+          "path": "tongzhi/duanxin.py",
+          "side": "new",
+          "start_line": 17,
+          "end_line": 17,
+          "title": "响应解析缺少异常保护，非 JSON 响应会抛异常",
+          "body": "`resp.json().get(\"code\") == 0` 直接调用 `resp.json()`。若网关返回非 JSON 内容（如 HTML 错误页、网关超时返回的纯文本、5xx 错误页），`resp.json()` 会抛出 `requests.exceptions.JSONDecodeError` 或 `ValueError`，该异常未被捕获，会向上传播导致调用方崩溃，而不是返回 `False`。",
+          "severity": "medium"
+        },
+        {
+          "path": "tongzhi/duanxin.py",
+          "side": "new",
+          "start_line": 17,
+          "end_line": 17,
+          "title": "未校验 HTTP 状态码，仅依赖业务 code 判断成功",
+          "body": "函数仅通过 `resp.json().get(\"code\") == 0` 判断成功，未检查 `resp.status_code`。若网关返回 HTTP 4xx/5xx（如 401 鉴权失败、500 内部错误），但响应体恰好包含 `code=0`（或网关在错误页中返回了 code 字段），函数会误判为发送成功。更常见的情况是：HTTP 层已失败，但业务层仍尝试解析并可能得到误导性结果。",
+          "severity": "medium"
+        },
+        {
+          "path": "tongzhi/duanxin.py",
+          "side": "new",
+          "start_line": 11,
+          "end_line": 11,
+          "title": "短信签名密钥被明文写入日志",
+          "body": "`fasong_duanxin` 函数将包含签名密钥 `miyao` 的完整参数字典 `canshu` 通过 `logger.info(\"发送短信请求: %s\", canshu)` 记录到日志。`canshu` 中的 `sign` 字段即为短信网关的签名密钥（`miyao`），属于敏感凭据。一旦日志被泄露（如日志聚合平台、错误上报、运维访问），攻击者即可获取该密钥，进而伪造短信签名、冒用网关发送任意短信，造成资费损失或钓鱼攻击。\n\n建议在记录日志前对敏感字段进行脱敏，例如：`logger.info(\"发送短信请求: mobile=%s\", shouji)`，避免将 `sign` 写入日志。",
+          "severity": "high"
+        },
+        {
+          "path": "tongzhi/duanxin.py",
+          "side": "new",
+          "start_line": 12,
+          "end_line": 12,
+          "title": "日志泄露短信密钥与短信内容",
+          "body": "`logger.info(\"发送短信请求: %s\", canshu)` 将整个 `canshu` 字典写入日志，其中包含 `sign`（密钥）和 `content`（短信正文）。短信密钥属于敏感凭据，短信正文可能包含验证码、通知内容等敏感信息。一旦日志被采集、归档或泄露，将直接暴露密钥与用户隐私。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "zh/py-shangchuan-path",
+      "kind": "chinese",
+      "language": "Python",
+      "changed_lines": 10,
+      "golden": 1,
+      "findings": 3,
+      "true_positive": 1,
+      "false_positive": 2,
+      "negative_hits": 0,
+      "tokens_total": 2904,
+      "duration_ms": 28354,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "judge_errors": 1,
+      "naturalness_scores": [
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "yonghu/touxiang.py",
+          "start_line": 12,
+          "title": "头像文件名未校验导致路径穿越与任意文件写入",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "yonghu/touxiang.py",
+          "start_line": 11,
+          "title": "文件名未校验导致路径穿越，可写入任意目录",
+          "outcome": "true_positive",
+          "reason": "两者均指出用户可控的 `wenjian_ming` 未校验可通过 `../` 或绝对路径逃逸预期目录，从而造成任意文件写入的路径穿越漏洞。"
+        },
+        {
+          "finding_index": 2,
+          "path": "yonghu/touxiang.py",
+          "start_line": 12,
+          "title": "文件名未清洗导致路径穿越与任意文件覆盖",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "yonghu/touxiang.py",
+          "side": "new",
+          "start_line": 12,
+          "end_line": 12,
+          "title": "头像文件名未校验导致路径穿越与任意文件写入",
+          "body": "`baocun_touxiang` 函数将用户可控的 `wenjian_ming` 直接拼接到 `os.path.join(mulu, wenjian_ming)` 中，未做任何路径规范化或校验。攻击者可通过传入 `../../etc/cron.d/evil` 或绝对路径 `/etc/passwd` 等文件名，逃逸出 `/data/touxiang/{yonghu_id}/` 目录，将任意内容写入服务器任意可写位置。由于 `neirong` 也是用户可控的字节流，攻击者可覆盖关键配置文件、写入 cron 任务、植入 webshell 或覆盖其他用户的头像文件，构成任意文件写入漏洞（OWASP A01:2021 失效的访问控制 / A03:2021 注入）。",
+          "severity": "critical"
+        },
+        {
+          "path": "yonghu/touxiang.py",
+          "side": "new",
+          "start_line": 11,
+          "end_line": 11,
+          "title": "文件名未校验导致路径穿越，可写入任意目录",
+          "body": "`baocun_touxiang` 将调用方传入的 `wenjian_ming` 直接拼接到 `os.path.join(mulu, wenjian_ming)` 中，未做任何清洗或校验。若 `wenjian_ming` 包含 `../`、绝对路径（如 `/etc/...`）或 Windows 风格分隔符，最终写入路径会逃逸出 `TOUXIANG_DIR/{yonghu_id}` 目录，攻击者可将任意内容写到服务器任意可写位置，例如覆盖配置文件、写入 webshell 等。这是典型的路径穿越漏洞，且由本 MR 新引入。",
+          "severity": "critical"
+        },
+        {
+          "path": "yonghu/touxiang.py",
+          "side": "new",
+          "start_line": 12,
+          "end_line": 12,
+          "title": "文件名未清洗导致路径穿越与任意文件覆盖",
+          "body": "`baocun_touxiang` 直接使用调用方传入的 `wenjian_ming` 与用户 ID 目录拼接路径，未对文件名做任何校验或清洗。攻击者（或客户端）可传入如 `../../etc/cron.d/evil`、`..%2F..%2F...` 或绝对路径等恶意文件名，使 `os.path.join` 结果逃逸出 `/data/touxiang/\u003cid\u003e/` 目录，从而将文件写入任意可写位置，或覆盖已有文件（如覆盖其他用户的头像、系统文件）。由于 `os.makedirs(mulu, exist_ok=True)` 只创建用户目录，无法阻止 `..` 逃逸。这是本次新增代码引入的安全与数据完整性风险。",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "case_id": "zh/py-zhifu-float",
+      "kind": "chinese",
+      "language": "Python",
+      "changed_lines": 16,
+      "golden": 2,
+      "findings": 3,
+      "true_positive": 1,
+      "false_positive": 2,
+      "negative_hits": 0,
+      "tokens_total": 2575,
+      "duration_ms": 26095,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 2,
+      "naturalness_scores": [
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "zhifu/jisuan.py",
+          "start_line": 13,
+          "title": "浮点折扣率与 Decimal 金额混用导致精度丢失",
+          "outcome": "true_positive",
+          "reason": "两者都指出 Decimal 金额与 float 折扣率相乘会触发 TypeError，并建议先转换折扣率为 Decimal 以保持金额计算精度。"
+        },
+        {
+          "finding_index": 1,
+          "path": "zhifu/jisuan.py",
+          "start_line": 18,
+          "title": "round 使用银行家舍入可能造成金额偏差",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "zhifu/jisuan.py",
+          "start_line": 4,
+          "title": "折扣率使用 float 与 Decimal 混算导致金额精度丢失",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "zhifu/jisuan.py",
+          "side": "new",
+          "start_line": 13,
+          "end_line": 13,
+          "title": "浮点折扣率与 Decimal 金额混用导致精度丢失",
+          "body": "`youhui_lv` 声明为 `float`，而 `jine` 与 `manjian` 均为 `Decimal`。在 `zhehou = jine * youhui_lv` 中，Decimal 与 float 相乘会触发 `TypeError`（Python 3 中 Decimal 与 float 不能直接相乘），或者若实现允许则会把 float 转成二进制浮点再参与运算，引入不可控的舍入误差。\n\n支付金额计算对精度极其敏感，折扣率如 0.85、0.1 等十进制小数在二进制浮点中无法精确表示，会导致折后价出现尾差。例如 `Decimal(\"100\") * 0.1` 在 Python 3 中直接抛 `TypeError: unsupported operand type(s) for *: 'decimal.Decimal' and 'float'`，函数根本无法运行；即便绕过，结果也可能不是精确的 10.00。\n\n建议将 `youhui_lv` 的类型改为 `Decimal`，或在使用前用 `Decimal(str(youhui_lv))` 显式转换，保证全程 Decimal 运算。",
+          "severity": "high"
+        },
+        {
+          "path": "zhifu/jisuan.py",
+          "side": "new",
+          "start_line": 18,
+          "end_line": 18,
+          "title": "round 使用银行家舍入可能造成金额偏差",
+          "body": "`return round(shifu, 2)` 对 Decimal 使用 Python 内置 `round`，默认采用银行家舍入（round half to even）。在支付场景中，金额通常要求四舍五入（round half up），否则当第三位小数为 5 且前一位为偶数时会向下舍入，产生 0.01 元的偏差。\n\n例如 `round(Decimal(\"10.005\"), 2)` 结果为 `10.00` 而非业务期望的 `10.01`。虽然单笔偏差极小，但在批量对账或累计场景下会放大，且与财务系统的舍入规则不一致。\n\n建议使用 `shifu.quantize(Decimal(\"0.01\"), rounding=ROUND_HALF_UP)` 显式指定舍入模式。",
+          "severity": "medium"
+        },
+        {
+          "path": "zhifu/jisuan.py",
+          "side": "new",
+          "start_line": 4,
+          "end_line": 4,
+          "title": "折扣率使用 float 与 Decimal 混算导致金额精度丢失",
+          "body": "`jisuan_shifu` 中 `youhui_lv` 声明为 `float`，而 `jine` 是 `Decimal`。执行 `zhehou = jine * youhui_lv` 时，Python 会尝试将 `float` 转换为 `Decimal`，但 `Decimal` 与 `float` 直接相乘会抛出 `TypeError`（`unsupported operand type(s) for *: 'decimal.Decimal' and 'float'`），或者若调用方传入的是 `Decimal` 折扣率则正常。更关键的是，即使能运算，`float` 的二进制表示（如 0.85 实际为 0.84999999999999997779...）会污染金额精度，导致最终 `round(shifu, 2)` 结果与预期不符。金额计算应全程使用 `Decimal`，折扣率也应声明为 `Decimal` 或字符串传入后转换。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "zh/ts-denglu-token",
+      "kind": "chinese",
+      "language": "TypeScript",
+      "changed_lines": 18,
+      "golden": 1,
+      "findings": 6,
+      "true_positive": 1,
+      "false_positive": 5,
+      "negative_hits": 0,
+      "tokens_total": 3557,
+      "duration_ms": 34924,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 1,
+      "naturalness_scores": [
+        5,
+        5,
+        4,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/auth/denglu.ts",
+          "start_line": 27,
+          "title": "yiDengLu 只读取 localStorage，忽略 sessionStorage 导致“不记住我”用户被误判为未登录",
+          "outcome": "true_positive",
+          "reason": "两者都指出 yiDengLu 仅读取 localStorage、缺少 sessionStorage 回退，导致未勾选“记住我”的有效会话被误判为未登录。"
+        },
+        {
+          "finding_index": 1,
+          "path": "src/auth/denglu.ts",
+          "start_line": 17,
+          "title": "token、用户、登录时间分三次写入且读取时无原子性校验，可能产生部分写入/陈旧状态",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/auth/denglu.ts",
+          "start_line": 18,
+          "title": "认证 token 明文持久化到 localStorage，存在 XSS 窃取风险",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "src/auth/denglu.ts",
+          "start_line": 30,
+          "title": "yiDengLu() 仅凭本地时间戳判断登录状态，可被篡改绕过",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 4,
+          "path": "src/auth/denglu.ts",
+          "start_line": 27,
+          "title": "「不记住我」时登录状态判断失效：yiDengLu 只读 localStorage",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 5,
+          "path": "src/auth/denglu.ts",
+          "start_line": 23,
+          "title": "huoQuToken 优先返回 localStorage 中的过期 token",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/auth/denglu.ts",
+          "side": "new",
+          "start_line": 27,
+          "end_line": 27,
+          "title": "yiDengLu 只读取 localStorage，忽略 sessionStorage 导致“不记住我”用户被误判为未登录",
+          "body": "`baoCunDengLu` 在 `jiZhuWo` 为 false 时把 token、用户、登录时间写入 `sessionStorage`；但 `yiDengLu` 只从 `localStorage.getItem('dengLuShiJian')` 读取登录时间，`huoQuToken` 虽然做了 `localStorage ?? sessionStorage` 的回退，但 `yiDengLu` 没有同样的回退。\n\n后果：选择“不记住我”登录的用户，其登录时间只存在于 sessionStorage，`yiDengLu()` 读取到的 `shiJian` 为 `NaN`，`Date.now() - NaN` 为 `NaN`，`NaN \u003c 7天` 恒为 false，因此会被判定为“未登录”，即使 sessionStorage 中仍有有效 token。这造成写入路径与读取路径不一致（read/write mismatch），登录状态判断失效。",
+          "severity": "high"
+        },
+        {
+          "path": "src/auth/denglu.ts",
+          "side": "new",
+          "start_line": 17,
+          "end_line": 17,
+          "title": "token、用户、登录时间分三次写入且读取时无原子性校验，可能产生部分写入/陈旧状态",
+          "body": "`baoCunDengLu` 依次执行三次 `setItem`（token、yongHu、dengLuShiJian），三者之间没有事务或原子性保证。`huoQuToken` 与 `yiDengLu` 分别独立读取，未校验三者是否来自同一次登录。\n\n后果：若写入过程中发生异常（如存储配额满、隐私模式限制）导致只写入部分键，或用户同时存在 localStorage 与 sessionStorage 的旧值，读取时可能拿到 token 与登录时间来自不同登录会话的组合，产生陈旧/不一致的持久化状态。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/auth/denglu.ts",
+          "side": "new",
+          "start_line": 18,
+          "end_line": 18,
+          "title": "认证 token 明文持久化到 localStorage，存在 XSS 窃取风险",
+          "body": "`baoCunDengLu` 在 `jiZhuWo` 为 true 时将 `jieGuo.token` 明文写入 `localStorage`。localStorage 对所有同源脚本可见，一旦页面存在任意 XSS（包括第三方脚本、依赖注入的脚本），攻击者即可读取 token 并冒充用户。相比 sessionStorage（随会话结束清除）或 HttpOnly Cookie，localStorage 中的 token 生命周期更长、暴露面更大。\n\n建议：优先使用 HttpOnly + Secure + SameSite 的 Cookie 承载会话，避免 JS 可读；若必须使用 Web Storage，应缩短有效期、配合短期刷新令牌，并确保 CSP 与 XSS 防护到位。",
+          "severity": "high"
+        },
+        {
+          "path": "src/auth/denglu.ts",
+          "side": "new",
+          "start_line": 30,
+          "end_line": 30,
+          "title": "yiDengLu() 仅凭本地时间戳判断登录状态，可被篡改绕过",
+          "body": "`yiDengLu()` 读取 localStorage 中的 `dengLuShiJian`，仅比较 `Date.now() - shiJian \u003c 7天` 来判断是否已登录。该时间戳完全由客户端控制，攻击者（或用户）可直接修改 localStorage 将 `dengLuShiJian` 设为当前时间，从而让前端认为已登录，绕过登录态校验。此外该函数未校验 token 是否存在或有效，也未与后端会话状态核对。\n\n若前端仅据此函数决定是否展示受保护内容或放行请求，则构成客户端信任边界被突破的认证绕过。",
+          "severity": "high"
+        },
+        {
+          "path": "src/auth/denglu.ts",
+          "side": "new",
+          "start_line": 27,
+          "end_line": 27,
+          "title": "「不记住我」时登录状态判断失效：yiDengLu 只读 localStorage",
+          "body": "`baoCunDengLu` 在 `jiZhuWo` 为 false 时把 `token`、`yongHu`、`dengLuShiJian` 全部写入 `sessionStorage`，但 `yiDengLu` 只从 `localStorage.getItem('dengLuShiJian')` 读取登录时间。当用户选择「不记住我」时，`localStorage` 中没有 `dengLuShiJian`，`Number(null)` 得到 `NaN`，`Date.now() - NaN` 为 `NaN`，`NaN \u003c 7天` 恒为 `false`，导致用户明明刚登录成功、会话尚未结束，却被判定为「未登录」。这破坏了「不记住我」场景下会话内应保持登录的预期。",
+          "severity": "high"
+        },
+        {
+          "path": "src/auth/denglu.ts",
+          "side": "new",
+          "start_line": 23,
+          "end_line": 23,
+          "title": "huoQuToken 优先返回 localStorage 中的过期 token",
+          "body": "`huoQuToken` 使用 `localStorage.getItem('token') ?? sessionStorage.getItem('token')`，优先返回 localStorage 的 token。但 `yiDengLu` 的 7 天有效期判断只针对 `dengLuShiJian`，且 `huoQuToken` 本身不做任何过期校验。当 localStorage 中残留一个超过 7 天的旧 token（例如用户上次「记住我」登录后长期未访问），而本次会话是「不记住我」的新登录时，`huoQuToken` 会优先返回过期的 localStorage token，而不是 sessionStorage 中的新 token，导致请求携带过期凭证。",
+          "severity": "medium"
+        }
+      ]
+    },
+    {
+      "case_id": "zh/ts-fenye-offbyone",
+      "kind": "chinese",
+      "language": "TypeScript",
+      "changed_lines": 17,
+      "golden": 2,
+      "findings": 8,
+      "true_positive": 2,
+      "false_positive": 6,
+      "negative_hits": 0,
+      "tokens_total": 4102,
+      "duration_ms": 36877,
+      "verdict": "requested_changes",
+      "coverage_ratio": 1,
+      "judge_calls": 3,
+      "naturalness_scores": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "matches": [
+        {
+          "finding_index": 0,
+          "path": "src/utils/fenye.ts",
+          "start_line": 12,
+          "title": "总页数计算使用 Math.floor 导致整除不尽的最后一页数据丢失",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 1,
+          "path": "src/utils/fenye.ts",
+          "start_line": 13,
+          "title": "起始索引 ye * meiYe 与「ye 从 1 开始」的约定不符，导致第 1 页数据被跳过",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 2,
+          "path": "src/utils/fenye.ts",
+          "start_line": 13,
+          "title": "ye 参数缺少合法性校验，负数、0 或越界页会静默返回错误结果",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 3,
+          "path": "src/utils/fenye.ts",
+          "start_line": 11,
+          "title": "总页数计算未向上取整，数据长度不能被每页条数整除时少算一页",
+          "outcome": "true_positive",
+          "reason": "两者都指出总页数使用 Math.floor 会遗漏最后不足一页的数据，并建议改用 Math.ceil。"
+        },
+        {
+          "finding_index": 4,
+          "path": "src/utils/fenye.ts",
+          "start_line": 12,
+          "title": "起始索引计算错误，第一页被跳过且后续页整体偏移",
+          "outcome": "true_positive",
+          "reference": 1,
+          "reason": "两者均指出分页起始索引未对从1开始的页码减1，导致第一页被跳过且后续页偏移。"
+        },
+        {
+          "finding_index": 5,
+          "path": "src/utils/fenye.ts",
+          "start_line": 10,
+          "title": "总页数计算未向上取整，整除时少算一页",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 6,
+          "path": "src/utils/fenye.ts",
+          "start_line": 11,
+          "title": "当前页起始索引未按“页从 1 开始”约定减一，导致页偏移错位",
+          "outcome": "false_positive"
+        },
+        {
+          "finding_index": 7,
+          "path": "src/utils/fenye.ts",
+          "start_line": 7,
+          "title": "缺少对页号越界与非法值的校验，可能返回空页或静默错误",
+          "outcome": "false_positive"
+        }
+      ],
+      "raw_findings": [
+        {
+          "path": "src/utils/fenye.ts",
+          "side": "new",
+          "start_line": 12,
+          "end_line": 12,
+          "title": "总页数计算使用 Math.floor 导致整除不尽的最后一页数据丢失",
+          "body": "`zongYeShu` 使用 `Math.floor(shuJu.length / meiYe)` 计算。当 `shuJu.length` 不能被 `meiYe` 整除时，例如 10 条数据每页 3 条，`Math.floor(10/3) = 3`，但实际应有 4 页（3+3+3+1）。调用方若依据 `zongYeShu` 决定翻页范围，将永远无法访问到最后一页的剩余数据，造成数据丢失。应改为 `Math.ceil(shuJu.length / meiYe)`。",
+          "severity": "high"
+        },
+        {
+          "path": "src/utils/fenye.ts",
+          "side": "new",
+          "start_line": 13,
+          "end_line": 13,
+          "title": "起始索引 ye * meiYe 与「ye 从 1 开始」的约定不符，导致第 1 页数据被跳过",
+          "body": "注释明确声明 `ye` 从 1 开始，但起始索引计算为 `const kaiShi = ye * meiYe`。当 `ye = 1` 时，`kaiShi = meiYe`，即从第 `meiYe` 条开始切片，跳过了前 `meiYe` 条数据（第 1 页应返回 `shuJu[0..meiYe-1]`）。同时最后一页（`ye = zongYeShu`）会因 `kaiShi` 超出数组长度而返回空数组。应改为 `(ye - 1) * meiYe`。",
+          "severity": "high"
+        },
+        {
+          "path": "src/utils/fenye.ts",
+          "side": "new",
+          "start_line": 13,
+          "end_line": 13,
+          "title": "ye 参数缺少合法性校验，负数、0 或越界页会静默返回错误结果",
+          "body": "函数仅校验了 `meiYe \u003c= 0`，未校验 `ye`。当 `ye` 为 0、负数或超过总页数时，`slice` 会静默返回空数组或错误区间的数据，而不会抛出异常。调用方无法区分「合法空页」与「非法页码」，可能导致静默的数据错误。建议对 `ye` 做范围校验（如 `ye \u003c 1` 时抛错，或对越界页返回空数组并明确约定）。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/utils/fenye.ts",
+          "side": "new",
+          "start_line": 11,
+          "end_line": 11,
+          "title": "总页数计算未向上取整，数据长度不能被每页条数整除时少算一页",
+          "body": "`zongYeShu` 使用 `Math.floor(shuJu.length / meiYe)` 计算。当 `shuJu.length` 不能被 `meiYe` 整除时，余下的数据仍需要额外一页来展示，但 `Math.floor` 会向下取整，导致总页数少 1。例如 `shuJu.length = 10`、`meiYe = 3` 时，实际需要 4 页（3+3+3+1），但计算结果为 3，最后一页（第 4 页）的数据将无法通过正常翻页访问。应改为 `Math.ceil(shuJu.length / meiYe)`。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/utils/fenye.ts",
+          "side": "new",
+          "start_line": 12,
+          "end_line": 12,
+          "title": "起始索引计算错误，第一页被跳过且后续页整体偏移",
+          "body": "`kaiShi` 使用 `ye * meiYe` 计算，但注释明确说明 `ye` 从 1 开始。当 `ye = 1`（第一页）时，`kaiShi = 1 * meiYe = meiYe`，导致第一页的前 `meiYe` 条数据被跳过，第一页实际返回的是第二页的数据，后续所有页整体向后偏移一页。应改为 `(ye - 1) * meiYe`。",
+          "severity": "medium"
+        },
+        {
+          "path": "src/utils/fenye.ts",
+          "side": "new",
+          "start_line": 10,
+          "end_line": 10,
+          "title": "总页数计算未向上取整，整除时少算一页",
+          "body": "`zongYeShu = Math.floor(shuJu.length / meiYe)` 在数据条数恰好被每页条数整除时会少算一页。例如 `shuJu.length = 10`、`meiYe = 5` 时，实际应有 2 页，但 `Math.floor(10/5) = 2` 恰好正确；而 `shuJu.length = 11`、`meiYe = 5` 时 `Math.floor(11/5) = 2`，实际应为 3 页，最后一页数据被丢弃。正确做法是 `Math.ceil(shuJu.length / meiYe)`。",
+          "severity": "critical"
+        },
+        {
+          "path": "src/utils/fenye.ts",
+          "side": "new",
+          "start_line": 11,
+          "end_line": 11,
+          "title": "当前页起始索引未按“页从 1 开始”约定减一，导致页偏移错位",
+          "body": "注释约定 `ye` 从 1 开始，但 `kaiShi = ye * meiYe` 直接以页号乘以每页条数作为起始索引。当 `ye = 1`、`meiYe = 5` 时，`kaiShi = 5`，第 1 页实际返回的是第 6 条之后的数据（前 5 条被跳过）；当 `ye = 2` 时返回第 11 条之后的数据。正确做法应为 `kaiShi = (ye - 1) * meiYe`。",
+          "severity": "critical"
+        },
+        {
+          "path": "src/utils/fenye.ts",
+          "side": "new",
+          "start_line": 7,
+          "end_line": 7,
+          "title": "缺少对页号越界与非法值的校验，可能返回空页或静默错误",
+          "body": "函数仅校验了 `meiYe \u003c= 0`，未校验 `ye` 的合法性。当 `ye` 为 0、负数、非整数或超过总页数时，`slice` 会静默返回空数组或错误区间，调用方无法区分“正常空页”与“非法请求”。建议对 `ye` 做整数且 `1 \u003c= ye \u003c= zongYeShu` 的校验（或明确约定越界返回空数组）。",
+          "severity": "medium"
+        }
+      ]
+    }
+  ],
+  "errors": 0
+}

@@ -1,0 +1,493 @@
+{
+ "id": "aacr/ClickHouse__ClickHouse__85873",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/ClickHouse/ClickHouse/pull/85873",
+  "owner": "ClickHouse",
+  "repo": "ClickHouse",
+  "number": 85873,
+  "base_sha": "80e66f08662739d8eaaccb40ef75c573572bb8ba",
+  "head_sha": "73ecc7d809300ed1c29e1078712c531ebddcb181",
+  "title": "Docs: transfer string functions to source code (2/4)",
+  "description": "<!---\r\nA technical comment, you are free to remove or leave it as it is when PR is created\r\nThe following categories are used in the next scripts, update them accordingly\r\nutils/changelog/changelog.py\r\ntests/ci/cancel_and_rerun_workflow_lambda/app.py\r\n-->\r\nTransfers string functions documentation to the source code. Part 2/4.\r\n### Changelog category (leave one):\r\n- Documentation (changelog entry is not required)\r\n\r\n\r\n### Changelog entry (a [user-readable short description](https://github.com/ClickHouse/ClickHouse/blob/master/docs/changelog_entry_guidelines.md) of the changes that goes into CHANGELOG.md):\r\n...\r\n\r\n### Documentation entry for user-facing changes\r\n\r\n- [ ] Documentation is written (mandatory for new features)\r\n\r\n<!---\r\nDirectly edit documentation source files in the \"docs\" folder with the same pull-request as code changes\r\n\r\nor\r\n\r\nAdd a user-readable short description of the changes that should be added to docs.clickhouse.com below.\r\n\r\nAt a minimum, the following information should be added (but add more as needed).\r\n- Motivation: Why is this function, table engine, etc. useful to ClickHouse users?\r\n\r\n- Parameters: If the feature being added takes arguments, options or is influenced by settings, please list them below with a brief explanation.\r\n\r\n- Example use: A query or command.\r\n-->\r\n",
+  "language": "C++",
+  "category": "Documentation Update",
+  "changed_lines": 575
+ },
+ "diffs": [
+  {
+   "old_path": "src/Functions/base64Decode.cpp",
+   "new_path": "src/Functions/base64Decode.cpp",
+   "diff": "@@ -18,15 +18,33 @@ using FunctionBase64Decode = FunctionBaseXXConversion<Base64DecodeImpl>;\n \n REGISTER_FUNCTION(Base64Decode)\n {\n-    FunctionDocumentation::Description description = R\"(Accepts a string and decodes it from base64, according to RFC 4648 (https://datatracker.ietf.org/doc/html/rfc4648#section-4). Throws an exception in case of an error. Alias: FROM_BASE64.)\";\n+    FunctionDocumentation::Description description = R\"(\n+Decodes a string from [Base64](https://en.wikipedia.org/wiki/Base64) representation, according to RFC 4648.\n+Throws an exception in case of error.\n+\n+Alias: `FROM_BASE64`.\n+)\";\n     FunctionDocumentation::Syntax syntax = \"base64Decode(encoded)\";\n-    FunctionDocumentation::Arguments arguments = {{\"encoded\", \"A string column. If the string is not a valid Base64-encoded value, an exception is thrown.\", {\"String\"}}};\n-    FunctionDocumentation::ReturnedValue returned_value = {\"A string containing the decoded value of the argument.\", {\"String\"}};\n-    FunctionDocumentation::Examples examples = {{\"Example\", \"SELECT base64Decode('Y2xpY2tob3VzZQ==')\", \"clickhouse\"}};\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"encoded\", \"String column or constant to decode. If the string is not valid Base64-encoded, an exception is thrown.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns a string containing the decoded value of the argument.\", {\"String\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT base64Decode('Y2xpY2tob3VzZQ==')\",\n+        R\"(\n+┌─base64Decode('Y2xpY2tob3VzZQ==')─┐\n+│ clickhouse                       │\n+└──────────────────────────────────┘\n+        )\"\n+    }\n+    };\n     FunctionDocumentation::IntroducedIn introduced_in = {18, 16};\n-    FunctionDocumentation::Category category = FunctionDocumentation::Category::Encoding;\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n \n-    factory.registerFunction<FunctionBase64Decode>({description, syntax, arguments, returned_value, examples, introduced_in, category});\n+    factory.registerFunction<FunctionBase64Decode>(documentation);\n \n     /// MySQL compatibility alias.\n     factory.registerAlias(\"FROM_BASE64\", \"base64Decode\", FunctionFactory::Case::Insensitive);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/base64Encode.cpp",
+   "new_path": "src/Functions/base64Encode.cpp",
+   "diff": "@@ -18,15 +18,30 @@ using FunctionBase64Encode = FunctionBaseXXConversion<Base64EncodeImpl>;\n \n REGISTER_FUNCTION(Base64Encode)\n {\n-    FunctionDocumentation::Description description = R\"(Encodes a String as base64, according to RFC 4648 (https://datatracker.ietf.org/doc/html/rfc4648#section-4). Alias: TO_BASE64.)\";\n+    FunctionDocumentation::Description description = R\"(\n+Encodes a string using [Base64](https://en.wikipedia.org/wiki/Base64) representation, according to RFC 4648.\n+)\";\n     FunctionDocumentation::Syntax syntax = \"base64Encode(plaintext)\";\n-    FunctionDocumentation::Arguments arguments = {{\"plaintext\", \"String column or constant.\"}};\n-    FunctionDocumentation::ReturnedValue returned_value = {\"A string containing the encoded value of the argument.\", {\"String\"}};\n-    FunctionDocumentation::Examples examples = {{\"Example\", \"SELECT base64Encode('clickhouse')\", \"Y2xpY2tob3VzZQ==\"}};\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"plaintext\", \"Plaintext column or constant to decode.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns a string containing the encoded value of the argument.\", {\"String\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT base64Encode('clickhouse')\",\n+        R\"(\n+┌─base64Encode('clickhouse')─┐\n+│ Y2xpY2tob3VzZQ==           │\n+└────────────────────────────┘\n+        )\"\n+    }\n+    };\n     FunctionDocumentation::IntroducedIn introduced_in = {18, 16};\n     FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n \n-    factory.registerFunction<FunctionBase64Encode>({description, syntax, arguments, returned_value, examples, introduced_in, category});\n+    factory.registerFunction<FunctionBase64Encode>(documentation);\n \n     /// MySQL compatibility alias.\n     factory.registerAlias(\"TO_BASE64\", \"base64Encode\", FunctionFactory::Case::Insensitive);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/base64URLDecode.cpp",
+   "new_path": "src/Functions/base64URLDecode.cpp",
+   "diff": "@@ -18,15 +18,31 @@ using FunctionBase64Decode = FunctionBaseXXConversion<Base64DecodeImpl>;\n \n REGISTER_FUNCTION(Base64URLDecode)\n {\n-    FunctionDocumentation::Description description = R\"(Accepts a base64-encoded URL and decodes it from base64 with URL-specific modifications, according to RFC 4648 (https://datatracker.ietf.org/doc/html/rfc4648#section-5).)\";\n-    FunctionDocumentation::Syntax syntax = \"base64URLDecode(encodedURL)\";\n-    FunctionDocumentation::Arguments arguments = {{\"encodedURL\", \"String column or constant. If the string is not a valid Base64-encoded value, an exception is thrown.\"}};\n-    FunctionDocumentation::ReturnedValue returned_value = {\"A string containing the decoded value of the argument.\", {\"String\"}};\n-    FunctionDocumentation::Examples examples = {{\"Example\", \"SELECT base64URLDecode('aHR0cDovL2NsaWNraG91c2UuY29t')\", \"https://clickhouse.com\"}};\n+    FunctionDocumentation::Description description = R\"(\n+Decodes a string from [Base64](https://en.wikipedia.org/wiki/Base64) representation using URL-safe alphabet, according to RFC 4648.\n+Throws an exception in case of error.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"base64URLDecode(encoded)\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"encoded\", \"String column or constant to encode. If the string is not valid Base64-encoded, an exception is thrown.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns a string containing the decoded value of the argument.\", {\"String\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT base64URLDecode('aHR0cHM6Ly9jbGlja2hvdXNlLmNvbQ')\",\n+        R\"(\n+┌─base64URLDecode('aHR0cHM6Ly9jbGlja2hvdXNlLmNvbQ')─┐\n+│ https://clickhouse.com                            │\n+└───────────────────────────────────────────────────┘\n+        )\"\n+    }\n+    };\n     FunctionDocumentation::IntroducedIn introduced_in = {24, 6};\n-    FunctionDocumentation::Category category = FunctionDocumentation::Category::Encoding;\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n \n-    factory.registerFunction<FunctionBase64Decode>({description, syntax, arguments, returned_value, examples, introduced_in, category});\n+    factory.registerFunction<FunctionBase64Decode>(documentation);\n }\n \n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/compareSubstrings.cpp",
+   "new_path": "src/Functions/compareSubstrings.cpp",
+   "diff": "@@ -375,29 +375,40 @@ class FunctionCompareSubstrings : public IFunction\n \n REGISTER_FUNCTION(CompareSubstrings)\n {\n-    factory.registerFunction<FunctionCompareSubstrings>(FunctionDocumentation{\n-        .description = R\"(\n-                This function compares parts of two strings directly, without the need to copy the parts of the string into new columns.\n-                )\",\n-        .syntax = R\"(\n-        compareSubstrings(str1, str2, str1_off, str2_off, num_bytes)\n-        )\",\n-        .arguments\n-        = {{\"string1\", \"Required. The string to compare.\"},\n-           {\"string2\", \"Required. The string to compare.\"},\n-           {\"string1_offset\", \"Positive number. The starting position (zero-based index) in `str1` from which the comparison begins.\"},\n-           {\"string2_offset\", \"Positive number. The starting position (zero-based index) in `str2` from which the comparison begins.\"},\n-           {\"num_bytes\", \"The number of bytes to compare in both strings, starting from their respective offsets.\"}},\n-        .returned_value\n-        = {R\"(-1 if the substring from str1 is lexicographically smaller than the substring from str2, 0 if the substrings are equal, 1 if the substring from str1 is lexicographically greater than the substring from str2.)\"},\n-        .examples{\n-            {\"typical\",\n-             \"SELECT compareSubstrings('123', '123', 0, 0, 3)\",\n-             R\"(\n-                ┌─compareSubtr⋯', 0, 0, 3)─┐\n-             1. │                        0 │\n-                └──────────────────────────┘\n-                )\"}},\n-        .category = FunctionDocumentation::Category::String});\n+    FunctionDocumentation::Description description = R\"(\n+Compares two strings lexicographically.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"compareSubstrings(s1, s2, s1_offset, s2_offset, num_bytes)\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"s1\", \"The first string to compare.\", {\"String\"}},\n+        {\"s2\", \"The second string to compare.\", {\"String\"}},\n+        {\"s1_offset\", \"The position (zero-based) in `s1` from which the comparison starts.\", {\"UInt*\"}},\n+        {\"s2_offset\", \"The position (zero-based index) in `s2` from which the comparison starts.\", {\"UInt*\"}},\n+        {\"num_bytes\", \"The maximum number of bytes to compare in both strings. If `s1_offset` (or `s2_offset`) + `num_bytes` exceeds the end of an input string, `num_bytes` will be reduced accordingly.\", {\"UInt*\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {R\"(\n+Returns:\n+- `-1` if `s1`[`s1_offset` : `s1_offset` + `num_bytes`] < `s2`[`s2_offset` : `s2_offset` + `num_bytes`].\n+- `0` if `s1`[`s1_offset` : `s1_offset` + `num_bytes`] = `s2`[`s2_offset` : `s2_offset` + `num_bytes`].\n+- `1` if `s1`[`s1_offset` : `s1_offset` + `num_bytes`] > `s2`[`s2_offset` : `s2_offset` + `num_bytes`].\n+    )\",\n+    {\"Int8\"}\n+    };\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT compareSubstrings('Saxony', 'Anglo-Saxon', 0, 6, 5) AS result\",\n+        R\"(\n+┌─result─┐\n+│      0 │\n+└────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {25, 2};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    factory.registerFunction<FunctionCompareSubstrings>(documentation);\n }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/concat.cpp",
+   "new_path": "src/Functions/concat.cpp",
+   "diff": "@@ -250,8 +250,75 @@ class ConcatOverloadResolver : public IFunctionOverloadResolver\n \n REGISTER_FUNCTION(Concat)\n {\n-    factory.registerFunction<ConcatOverloadResolver>({}, FunctionFactory::Case::Insensitive);\n-    factory.registerFunction<FunctionConcatAssumeInjective>();\n+    FunctionDocumentation::Description description = R\"(\n+Concatenates the given arguments.\n+\n+Arguments which are not of types [`String`](../data-types/string.md) or [`FixedString`](../data-types/fixedstring.md) are converted to strings using their default serialization.\n+As this decreases performance, it is not recommended to use non-String/FixedString arguments.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"concat([s1, s2, ...])\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"s1, s2, ...\", \"Any number of values of arbitrary type.\", {\"Any\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\n+        \"Returns the String created by concatenating the arguments. If any of arguments is `NULL`, the function returns `NULL`. If there are no arguments, it returns an empty string.\",\n+        {\"Nullable(String)\"}\n+    };\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"String concatenation\",\n+        \"SELECT concat('Hello, ', 'World!')\",\n+        R\"(\n+┌─concat('Hello, ', 'World!')─┐\n+│ Hello, World!               │\n+└─────────────────────────────┘\n+        )\"\n+    },\n+    {\n+        \"Number concatenation\",\n+        \"SELECT concat(42, 144)\",\n+        R\"(\n+┌─concat(42, 144)─┐\n+│ 42144           │\n+└─────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {1, 1};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    FunctionDocumentation::Description description_injective = R\"(\n+Like [`concat`](#concat) but assumes that `concat(s1, s2, ...) → sn` is injective,\n+i.e, it returns different results for for different arguments.\n+\n+Can be used for optimization of `GROUP BY`.\n+)\";\n+    FunctionDocumentation::Syntax syntax_injective = \"concatAssumeInjective([s1, s2, ...])\";\n+    FunctionDocumentation::Arguments arguments_injective = {\n+        {\"s1, s2, ...\", \"Any number of values of arbitrary type.\", {\"String\", \"FixedString\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value_injective = {\n+        \"Returns the String created by concatenating the arguments. If any of argument values is `NULL`, the function returns `NULL`. If no arguments are passed, it returns an empty string.\",\n+        {\"String\"}\n+    };\n+    FunctionDocumentation::Examples examples_injective = {\n+    {\n+        \"Group by optimization\",\n+        \"SELECT concat(key1, key2), sum(value) FROM key_val GROUP BY concatAssumeInjective(key1, key2)\",\n+        R\"(\n+┌─concat(key1, key2)─┬─sum(value)─┐\n+│ Hello, World!      │          3 │\n+│ Hello, World!      │          2 │\n+│ Hello, World       │          3 │\n+└────────────────────┴────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation documentation_injective = {description_injective, syntax_injective, arguments_injective, returned_value_injective, examples_injective, introduced_in, category};\n+\n+    factory.registerFunction<ConcatOverloadResolver>(documentation, FunctionFactory::Case::Insensitive);\n+    factory.registerFunction<FunctionConcatAssumeInjective>(documentation_injective);\n }\n \n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/concatWithSeparator.cpp",
+   "new_path": "src/Functions/concatWithSeparator.cpp",
+   "diff": "@@ -180,21 +180,86 @@ using FunctionConcatWithSeparatorAssumeInjective = ConcatWithSeparatorImpl<NameC\n \n REGISTER_FUNCTION(ConcatWithSeparator)\n {\n-    factory.registerFunction<FunctionConcatWithSeparator>(FunctionDocumentation{\n-        .description = R\"(\n-Returns the concatenation strings separated by string separator. Syntax: concatWithSeparator(sep, expr1, expr2, expr3...)\n+    FunctionDocumentation::Description description = R\"(\n+Concatenates the given strings with a given separator.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"concatWithSeparator(sep[, exp1, exp2, ...])\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"sep\", \"The separator to use.\", {\"const String\", \"const FixedString\"}},\n+        {\"exp1, exp2, ...\", \"Expression to be concatenated. Arguments which are not of type `String` or `FixedString` are converted to strings using their default serialization. As this decreases performance, it is not recommended to use non-String/FixedString arguments.\", {\"Any\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\n+        \"Returns the String created by concatenating the arguments. If any of the argument values is `NULL`, the function returns `NULL`.\",\n+        {\"String\"}\n+    };\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT concatWithSeparator('a', '1', '2', '3', '4')\",\n+        R\"(\n+┌─concatWithSeparator('a', '1', '2', '3', '4')─┐\n+│ 1a2a3a4                                      │\n+└──────────────────────────────────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {22, 12};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    FunctionDocumentation::Description description_injective = R\"(\n+Like [`concatWithSeparator`](#concatWithSeparator) but assumes that `concatWithSeparator(sep[,exp1, exp2, ... ]) → result` is injective.\n+A function is called injective if it returns different results for different arguments.\n+\n+Can be used for optimization of `GROUP BY`.\n+)\";\n+    FunctionDocumentation::Syntax syntax_injective = \"concatWithSeparatorAssumeInjective(sep[, exp1, exp2, ... ])\";\n+    FunctionDocumentation::Arguments arguments_injective = {\n+        {\"sep\", \"The separator to use.\", {\"const String\", \"const FixedString\"}},\n+        {\"exp1, exp2, ...\", \"Expression to be concatenated. Arguments which are not of type `String` or `FixedString` are converted to strings using their default serialization. As this decreases performance, it is not recommended to use non-String/FixedString arguments.\", {\"String\", \"FixedString\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value_injective = {\n+        \"Returns the String created by concatenating the arguments. If any of the argument values is `NULL`, the function returns `NULL`.\",\n+        {\"String\"}\n+    };\n+    FunctionDocumentation::Examples examples_injective = {\n+    {\n+        \"Usage example\",\n+        R\"(\n+CREATE TABLE user_data (\n+user_id UInt32,\n+first_name String,\n+last_name String,\n+score UInt32\n+)\n+ENGINE = MergeTree\n+ORDER BY tuple();\n+\n+INSERT INTO user_data VALUES\n+(1, 'John', 'Doe', 100),\n+(2, 'Jane', 'Smith', 150),\n+(3, 'John', 'Wilson', 120),\n+(4, 'Jane', 'Smith', 90);\n+\n+SELECT\n+    concatWithSeparatorAssumeInjective('-', first_name, last_name) as full_name,\n+    sum(score) as total_score\n+FROM user_data\n+GROUP BY concatWithSeparatorAssumeInjective('-', first_name, last_name);\n         )\",\n-        .examples{{\"concatWithSeparator\", \"SELECT concatWithSeparator('a', '1', '2', '3')\", \"\"}},\n-        .category = FunctionDocumentation::Category::String});\n-\n-    factory.registerFunction<FunctionConcatWithSeparatorAssumeInjective>(FunctionDocumentation{\n-        .description = R\"(\n-Same as concatWithSeparator, the difference is that you need to ensure that concatWithSeparator(sep, expr1, expr2, expr3...) → result is injective, it will be used for optimization of GROUP BY.\n+        R\"(\n+┌─full_name───┬─total_score─┐\n+│ Jane-Smith  │         240 │\n+│ John-Doe    │         100 │\n+│ John-Wilson │         120 │\n+└─────────────┴─────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation documentation_injective = {description_injective, syntax_injective, arguments_injective, returned_value_injective, examples_injective, introduced_in, category};\n \n-The function is named \"injective\" if it always returns different result for different values of arguments. In other words: different arguments never yield identical result.\n-        )\",\n-        .examples{{\"concatWithSeparatorAssumeInjective\", \"SELECT concatWithSeparatorAssumeInjective('a', '1', '2', '3')\", \"\"}},\n-        .category = FunctionDocumentation::Category::String});\n+    factory.registerFunction<FunctionConcatWithSeparator>(documentation);\n+    factory.registerFunction<FunctionConcatWithSeparatorAssumeInjective>(documentation_injective);\n \n     /// Compatibility with Spark and MySQL:\n     factory.registerAlias(\"concat_ws\", \"concatWithSeparator\", FunctionFactory::Case::Insensitive);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/convertCharset.cpp",
+   "new_path": "src/Functions/convertCharset.cpp",
+   "diff": "@@ -221,7 +221,32 @@ class FunctionConvertCharset : public IFunction\n \n REGISTER_FUNCTION(ConvertCharset)\n {\n-    factory.registerFunction<FunctionConvertCharset>();\n+    FunctionDocumentation::Description description = R\"(\n+Returns string `s` converted from the encoding `from` to encoding `to`.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"convertCharset(s, from, to)\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"s\", \"Input string.\", {\"String\"}},\n+        {\"from\", \"Source character encoding.\", {\"String\"}},\n+        {\"to\", \"Target character encoding.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns string `s` converted from encoding `from` to encoding `to`.\", {\"String\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT convertCharset('Café', 'UTF-8', 'ISO-8859-1');\",\n+        R\"(\n+┌─convertChars⋯SO-8859-1')─┐\n+│ Caf�                     │\n+└──────────────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {1, 1};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    factory.registerFunction<FunctionConvertCharset>(documentation);\n }\n \n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/decodeHTMLComponent.cpp",
+   "new_path": "src/Functions/decodeHTMLComponent.cpp",
+   "diff": "@@ -220,6 +220,29 @@ namespace\n \n REGISTER_FUNCTION(DecodeHTMLComponent)\n {\n-    factory.registerFunction<FunctionDecodeHTMLComponent>();\n+    FunctionDocumentation::Description description = R\"(\n+Decodes HTML entities in a string to their corresponding characters.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"decodeHTMLComponent(s)\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"s\", \"String containing HTML entities to decode.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns the string with HTML entities decoded.\", {\"String\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT decodeHTMLComponent('&lt;div&gt;Hello &amp; &quot;World&quot;&lt;/div&gt;')\",\n+        R\"(\n+┌─decodeHTMLComponent('&lt;div&gt;Hello &amp; &quot;World&quot;&lt;/div&gt;')─┐\n+│ <div>Hello & \"World\"</div>                                                  │\n+└─────────────────────────────────────────────────────────────────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {23, 9};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    factory.registerFunction<FunctionDecodeHTMLComponent>(documentation);\n }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/decodeXMLComponent.cpp",
+   "new_path": "src/Functions/decodeXMLComponent.cpp",
+   "diff": "@@ -233,6 +233,29 @@ namespace\n \n REGISTER_FUNCTION(DecodeXMLComponent)\n {\n-    factory.registerFunction<FunctionDecodeXMLComponent>();\n+    FunctionDocumentation::Description description = R\"(\n+Decodes XML entities in a string to their corresponding characters.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"decodeXMLComponent(s)\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"s\", \"String containing XML entities to decode.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns the string with XML entities decoded.\", {\"String\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT decodeXMLComponent('&lt;tag&gt;Hello &amp; World&lt;/tag&gt;')\",\n+        R\"(\n+┌─decodeXMLCom⋯;/tag&gt;')─┐\n+│ <tag>Hello & World</tag> │\n+└──────────────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {21, 2};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    factory.registerFunction<FunctionDecodeXMLComponent>(documentation);\n }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/empty.cpp",
+   "new_path": "src/Functions/empty.cpp",
+   "diff": "@@ -194,6 +194,48 @@ The function also works for [strings](string-functions.md#notempty) or [UUID](uu\n     FunctionDocumentation documentation_empty = {description_empty, syntax_empty, arguments, returned_value_empty, examples_empty, introduced_in, category};\n     FunctionDocumentation documentation_not_empty = {description_not_empty, syntax_not_empty, arguments, returned_value_not_empty, examples_not_empty, introduced_in, category};\n \n+    // String function documentation\n+    FunctionDocumentation::Description description_empty_string = R\"(\n+Checks whether the input string is empty.\n+A string is considered non-empty if it contains at least one byte, even if this byte is a space or the null byte.\n+The function is also available for [arrays](/sql-reference/functions/array-functions#empty) and [UUIDs](/sql-reference/data-types/uuid).\n+)\";\n+    FunctionDocumentation::Description description_not_empty_string = R\"(\n+Checks whether the input string is non-empty.\n+A string is considered non-empty if it contains at least one byte, even if this byte is a space or the null byte.\n+The function is also available for [arrays](/sql-reference/functions/array-functions#empty) and [UUIDs](/sql-reference/data-types/uuid).\n+)\";\n+    FunctionDocumentation::Syntax syntax_empty_string = \"empty(x)\";\n+    FunctionDocumentation::Syntax syntax_not_empty_string = \"notEmpty(x)\";\n+    FunctionDocumentation::Arguments arguments_string = {{\"x\", \"Input value.\", {\"String\"}}};\n+    FunctionDocumentation::ReturnedValue returned_value_empty_string = {\"Returns `1` for an empty string or `0` for a non-empty string.\", {\"UInt8\"}};\n+    FunctionDocumentation::ReturnedValue returned_value_not_empty_string = {\"Returns `1` for a non-empty string or `0` for an empty string.\", {\"UInt8\"}};\n+    FunctionDocumentation::Examples examples_empty_string = {\n+    {\n+        \"Basic usage\",\n+        \"SELECT empty('')\",\n+        R\"(\n+┌─empty('')─┐\n+│         1 │\n+└───────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::Examples examples_not_empty_string = {\n+    {\n+        \"Basic usage\",\n+        \"SELECT notEmpty('text')\",\n+        R\"(\n+┌─notEmpty('text')─┐\n+│                1 │\n+└──────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::Category category_string = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation_empty_string = {description_empty_string, syntax_empty_string, arguments_string, returned_value_empty_string, examples_empty_string, introduced_in, category_string};\n+    FunctionDocumentation documentation_not_empty_string = {description_not_empty_string, syntax_not_empty_string, arguments_string, returned_value_not_empty_string, examples_not_empty_string, introduced_in, category_string};\n+\n     factory.registerFunction<FunctionEmptyOverloadResolver<true, NameNotEmpty>>(documentation_not_empty);\n     factory.registerFunction<FunctionEmptyOverloadResolver<false, NameEmpty>>(documentation_empty);\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/encodeXMLComponent.cpp",
+   "new_path": "src/Functions/encodeXMLComponent.cpp",
+   "diff": "@@ -139,6 +139,33 @@ namespace\n \n REGISTER_FUNCTION(EncodeXMLComponent)\n {\n-    factory.registerFunction<FunctionEncodeXMLComponent>();\n+    FunctionDocumentation::Description description = R\"(\n+Escapes characters to place string into XML text node or attribute.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"encodeXMLComponent(s)\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"s\", \"String to escape.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns the escaped string.\", {\"String\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        R\"(\n+SELECT\n+    '<tag>Hello & \"World\"</tag>' AS original,\n+    encodeXMLComponent('<tag>Hello & \"World\"</tag>') AS xml_encoded;\n+        )\",\n+        R\"(\n+┌─original───────────────────┬─xml_encoded──────────────────────────────────────────┐\n+│ <tag>Hello & \"World\"</tag> │ &lt;tag&gt;Hello &amp; &quot;World&quot;&lt;/tag&gt; │\n+└────────────────────────────┴──────────────────────────────────────────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {21, 1};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    factory.registerFunction<FunctionEncodeXMLComponent>(documentation);\n }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/endsWith.cpp",
+   "new_path": "src/Functions/endsWith.cpp",
+   "diff": "@@ -10,7 +10,31 @@ using FunctionEndsWith = FunctionStartsEndsWith<NameEndsWith>;\n \n REGISTER_FUNCTION(EndsWith)\n {\n-    factory.registerFunction<FunctionEndsWith>();\n+    FunctionDocumentation::Description description = R\"(\n+Checks whether a string ends with the provided string.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"endsWith(str, suffix)\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"str\", \"String to check.\", {\"String\"}},\n+        {\"suffix\", \"Suffix to check for.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns `1` if `str` ends with `suffix`, otherwise `0`.\", {\"UInt8\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT endsWith('ClickHouse', 'House');\",\n+        R\"(\n+┌─endsWith('Cl⋯', 'House')─┐\n+│                        1 │\n+└──────────────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {1, 1};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    factory.registerFunction<FunctionEndsWith>(documentation);\n }\n \n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/endsWithUTF8.cpp",
+   "new_path": "src/Functions/endsWithUTF8.cpp",
+   "diff": "@@ -10,12 +10,33 @@ using FunctionEndsWithUTF8 = FunctionStartsEndsWith<NameEndsWithUTF8>;\n \n REGISTER_FUNCTION(EndsWithUTF8)\n {\n-    factory.registerFunction<FunctionEndsWithUTF8>(FunctionDocumentation{\n-        .description = R\"(\n-Returns whether string `str` ends with `suffix`, the difference between `endsWithUTF8` and `endsWith` is that `endsWithUTF8` match `str` and `suffix` by UTF-8 characters.\n-        )\",\n-        .examples{{\"endsWithUTF8\", \"select endsWithUTF8('富强民主文明和谐', '富强');\", \"\"}},\n-        .category = FunctionDocumentation::Category::String});\n+    FunctionDocumentation::Description description = R\"(\n+Returns whether string `s` ends with `suffix`.\n+Assumes that the string contains valid UTF-8 encoded text.\n+If this assumption is violated, no exception is thrown and the result is undefined.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"endsWithUTF8(s, suffix)\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"s\", \"String to check.\", {\"String\"}},\n+        {\"suffix\", \"Suffix to check for.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns `1` if `str` ends with `suffix`, otherwise `0`.\", {\"UInt8\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        \"SELECT endsWithUTF8('данных', 'ых');\",\n+        R\"(\n+┌─endsWithUTF8('данных', 'ых')─┐\n+│                            1 │\n+└──────────────────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {23, 8};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    factory.registerFunction<FunctionEndsWithUTF8>(documentation);\n }\n \n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Functions/extractTextFromHTML.cpp",
+   "new_path": "src/Functions/extractTextFromHTML.cpp",
+   "diff": "@@ -353,7 +353,50 @@ class FunctionExtractTextFromHTML : public IFunction\n \n REGISTER_FUNCTION(ExtractTextFromHTML)\n {\n-    factory.registerFunction<FunctionExtractTextFromHTML>();\n+    FunctionDocumentation::Description description = R\"(\n+Extracts text content from HTML or XHTML.\n+\n+This function removes HTML tags, comments, and script/style elements, leaving only the text content. It handles:\n+- Removal of all HTML/XML tags\n+- Removal of comments (`<!-- -->`)\n+- Removal of script and style elements with their content\n+- Processing of CDATA sections (copied verbatim)\n+- Proper whitespace handling and normalization\n+\n+Note: HTML entities are not decoded and should be processed with a separate function if needed.\n+)\";\n+    FunctionDocumentation::Syntax syntax = \"extractTextFromHTML(html)\";\n+    FunctionDocumentation::Arguments arguments = {\n+        {\"html\", \"String containing HTML content to extract text from.\", {\"String\"}}\n+    };\n+    FunctionDocumentation::ReturnedValue returned_value = {\"Returns the extracted text content with normalized whitespace.\", {\"String\"}};\n+    FunctionDocumentation::Examples examples = {\n+    {\n+        \"Usage example\",\n+        R\"(\n+SELECT extractTextFromHTML('\n+<html>\n+    <head><title>Page Title</title></head>\n+    <body>\n+        <p>Hello <b>World</b>!</p>\n+        <script>alert(\"test\");</script>\n+        <!-- comment -->\n+    </body>\n+</html>\n+');\n+        )\",\n+        R\"(\n+┌─extractTextFromHTML('<html><head>...')─┐\n+│ Page Title Hello World!                │\n+└────────────────────────────────────────┘\n+        )\"\n+    }\n+    };\n+    FunctionDocumentation::IntroducedIn introduced_in = {21, 3};\n+    FunctionDocumentation::Category category = FunctionDocumentation::Category::String;\n+    FunctionDocumentation documentation = {description, syntax, arguments, returned_value, examples, introduced_in, category};\n+\n+    factory.registerFunction<FunctionExtractTextFromHTML>(documentation);\n }\n \n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/queries/0_stateless/02415_all_new_functions_must_be_documented.reference",
+   "new_path": "tests/queries/0_stateless/02415_all_new_functions_must_be_documented.reference",
+   "diff": "@@ -69,8 +69,6 @@ byteSize\n caseWithExpression\n catboostEvaluate\n cbrt\n-concat\n-concatAssumeInjective\n connectionId\n cos\n cosh\n@@ -93,10 +91,8 @@ cutWWW\n dateDiff\n dateTime64ToSnowflake\n dateTimeToSnowflake\n-decodeHTMLComponent\n decodeURLComponent\n decodeURLFormComponent\n-decodeXMLComponent\n defaultProfiles\n defaultRoles\n defaultValueOfArgumentType\n@@ -109,8 +105,6 @@ enabledProfiles\n enabledRoles\n encodeURLComponent\n encodeURLFormComponent\n-encodeXMLComponent\n-endsWith\n erf\n erfc\n errorCodeToName\n@@ -120,7 +114,6 @@ exp10\n exp2\n extract\n extractAll\n-extractTextFromHTML\n extractURLParameter\n extractURLParameterNames\n extractURLParameters",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/queries/0_stateless/02415_all_new_functions_must_have_version_information.reference",
+   "new_path": "tests/queries/0_stateless/02415_all_new_functions_must_have_version_information.reference",
+   "diff": "@@ -81,11 +81,6 @@ byteSize\n caseWithExpression\n catboostEvaluate\n cbrt\n-compareSubstrings\n-concat\n-concatAssumeInjective\n-concatWithSeparator\n-concatWithSeparatorAssumeInjective\n connectionId\n cos\n cosh\n@@ -119,10 +114,8 @@ damerauLevenshteinDistance\n dateDiff\n dateTime64ToSnowflake\n dateTimeToSnowflake\n-decodeHTMLComponent\n decodeURLComponent\n decodeURLFormComponent\n-decodeXMLComponent\n defaultProfiles\n defaultRoles\n defaultValueOfArgumentType\n@@ -185,9 +178,6 @@ enabledProfiles\n enabledRoles\n encodeURLComponent\n encodeURLFormComponent\n-encodeXMLComponent\n-endsWith\n-endsWithUTF8\n erf\n erfc\n errorCodeToName\n@@ -199,7 +189,6 @@ extract\n extractAll\n extractKeyValuePairs\n extractKeyValuePairsWithEscaping\n-extractTextFromHTML\n extractURLParameter\n extractURLParameterNames\n extractURLParameters",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/Functions/base64Decode.cpp",
+   "side": "right",
+   "from_line": 36,
+   "to_line": 40,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider aligning multi-line raw string literal indentation for better visual consistency.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Functions/base64Encode.cpp",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 27,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Logical error in documentation: The function `base64Encode` is for encoding plaintext to base64, but the argument description says 'to decode'. This appears to be a copy-paste error. The description should say 'to encode' instead.\n\n```suggestion\n        {\"plaintext\", \"Plaintext column or constant to encode.\", {\"String\"}}\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Functions/base64URLDecode.cpp",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 28,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Documentation typo: The function is `base64URLDecode` (a decode function), but the argument description says 'to encode'. This should say 'to decode' for consistency and accuracy.\n\n```suggestion\n        {\"encoded\", \"String column or constant to decode. If the string is not valid Base64-encoded, an exception is thrown.\", {\"String\"}}\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Functions/compareSubstrings.cpp",
+   "side": "right",
+   "from_line": 385,
+   "to_line": 386,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Inconsistent terminology: `s1_offset` uses \"zero-based\" while `s2_offset` uses \"zero-based index\". Suggest unifying them to \"zero-based index\" for consistency.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/Functions/concat.cpp",
+   "side": "right",
+   "from_line": 293,
+   "to_line": 293,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Documentation typo: duplicate \"for\" in injective concat function description should be corrected to single \"for\".",
+   "source": "human"
+  },
+  {
+   "path": "src/Functions/concat.cpp",
+   "side": "right",
+   "from_line": 302,
+   "to_line": 302,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Documentation style inconsistency: 'String' should use lowercase 'string' in concatAssumeInjective return value description to match conventions for conceptual type references rather than specific type names.",
+   "source": "human"
+  },
+  {
+   "path": "src/Functions/concatWithSeparator.cpp",
+   "side": "right",
+   "from_line": 210,
+   "to_line": 211,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Minor formatting issue: Missing space after comma in function signature. Should be `sep[, exp1, exp2, ...]` instead of `sep[,exp1, exp2, ...]` for consistency with the syntax definition below.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Functions/convertCharset.cpp",
+   "side": "right",
+   "from_line": 224,
+   "to_line": 247,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Consider declaring all documentation variables as const since they do not change after initialization. This improves code clarity and prevents accidental modification.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Functions/convertCharset.cpp",
+   "side": "right",
+   "from_line": 234,
+   "to_line": 244,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The example output looks inconsistent/garbled: header shows `convertChars⋯SO-8859-1')` (likely truncated/mismatched function name) and the result `Caf�` suggests a display/encoding issue rather than a deterministic expected value. Tests that validate documentation/examples may become flaky or misleading. Prefer using a clean, stable example and output (or omit the output block if it depends on terminal encoding), and ensure the header matches `convertCharset`.\n\nAlso consider escaping/using an example where conversion produces deterministic bytes and display is unambiguous (e.g., convert to UTF-8 or show `hex()` of the result).\n\n```suggestion\n    FunctionDocumentation::Examples examples = {\n        {\n            \"Usage example\",\n            \"SELECT hex(convertCharset('Café', 'UTF-8', 'ISO-8859-1'));\",\n            R\"(\n┌─hex(convertCharset('Café', 'UTF-8', 'ISO-8859-1'))─┐\n│ 436166E9                                      │\n└───────────────────────────────────────────────┘\n            )\"\n        }\n    };\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/decodeHTMLComponent.cpp",
+   "side": "right",
+   "from_line": 223,
+   "to_line": 230,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Const-correctness: these documentation locals are not modified after initialization, so prefer `const` (or `const auto`) to prevent accidental mutation and make intent clear.\n\nExample:\n```cpp\nconst FunctionDocumentation::Description description = ...;\nconst FunctionDocumentation documentation{...};\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/decodeHTMLComponent.cpp",
+   "side": "right",
+   "from_line": 233,
+   "to_line": 239,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Docs example robustness: consider adding a trailing semicolon to the SQL statement for copy/paste consistency. Also make sure the rendered output block exactly matches actual ClickHouse output (column width/alignment/quotes). Small mismatches can make doc/reference tests flaky.\n\n```suggestion\n        \"Usage example\",\n        \"SELECT decodeHTMLComponent('&lt;div&gt;Hello &amp; &quot;World&quot;&lt;/div&gt;');\",\n        R\"(\n┌─decodeHTMLComponent('&lt;div&gt;Hello &amp; &quot;World&quot;&lt;/div&gt;')─┐\n│ <div>Hello & \"World\"</div>                                                  │\n└─────────────────────────────────────────────────────────────────────────────┘\n        )\"\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/empty.cpp",
+   "side": "right",
+   "from_line": 236,
+   "to_line": 237,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The newly created string-specific documentation objects `documentation_empty_string` and `documentation_not_empty_string` are defined but never used. The factory.registerFunction calls on lines 239-240 still use the original `documentation_not_empty` and `documentation_empty` variables (Array category). This dead code should either be removed or the registration should be updated to use these new string documentation objects.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Functions/encodeXMLComponent.cpp",
+   "side": "right",
+   "from_line": 142,
+   "to_line": 166,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider adding 'const' qualifier to these local variables to enforce immutability and better express design intent.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Functions/encodeXMLComponent.cpp",
+   "side": "right",
+   "from_line": 150,
+   "to_line": 164,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The raw string literals for the example SQL/output include leading indentation and an extra newline after R\"(, which may render with unwanted whitespace in generated documentation/tests. Consider left-aligning the content (or using a helper to trim) so the displayed example matches expected formatting exactly.\n\n```suggestion\n    FunctionDocumentation::Examples examples = {\n        {\n            \"Usage example\",\n            R\"(SELECT\n    '<tag>Hello & \"World\"</tag>' AS original,\n    encodeXMLComponent('<tag>Hello & \"World\"</tag>') AS xml_encoded;)\",\n            R\"(┌─original───────────────────┬─xml_encoded──────────────────────────────────────────┐\n│ <tag>Hello & \"World\"</tag> │ &lt;tag&gt;Hello &amp; &quot;World&quot;&lt;/tag&gt; │\n└────────────────────────────┴──────────────────────────────────────────────────────┘)\"\n        }\n    };\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/endsWith.cpp",
+   "side": "right",
+   "from_line": 13,
+   "to_line": 35,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Consider declaring these local variables as `const` since they are initialized once and never modified. This improves const correctness and makes the code's intent clearer.\n\nExample:\n```cpp\nconst FunctionDocumentation::Description description = R\"(...\n```\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Functions/endsWith.cpp",
+   "side": "right",
+   "from_line": 22,
+   "to_line": 32,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The example output header is truncated (`endsWith('Cl⋯', 'House')`). Since the expression `endsWith('ClickHouse', 'House')` is not excessively long, it would be clearer to show the full column name in the documentation example to avoid confusion.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/Functions/endsWith.cpp",
+   "side": "right",
+   "from_line": 22,
+   "to_line": 32,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Minor formatting: the `Examples` initializer is a bit hard to scan due to nested braces alignment. Consider formatting consistently (one example per brace block, properly indented) to improve readability and reduce future diff noise.\n\n```suggestion\n    FunctionDocumentation::Examples examples =\n    {\n        {\n            \"Usage example\",\n            \"SELECT endsWith('ClickHouse', 'House');\",\n            R\"(\n┌─endsWith('Cl⋯', 'House')─┐\n│                        1 │\n└──────────────────────────┘\n)\"\n        },\n    };\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/endsWithUTF8.cpp",
+   "side": "right",
+   "from_line": 23,
+   "to_line": 23,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Inconsistency in documentation: The returned_value description uses `str` but the argument is defined as `s` in the Arguments section and syntax. For consistency with the defined parameter name, should use `s` instead of `str`.\n\n```suggestion\n    FunctionDocumentation::ReturnedValue returned_value = {\"Returns `1` if `s` ends with `suffix`, otherwise `0`.\", {\"UInt8\"}};\n```",
+   "source": "GLM-4.7"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "src/Functions/base64Decode.cpp",
+   "side": "right",
+   "from_line": 31,
+   "to_line": 31,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The function documentation's returned value description is unnecessarily verbose; update it to \"Returns the decoded string.\" for conciseness.",
+   "source": "human"
+  },
+  {
+   "path": "src/Functions/base64Decode.cpp",
+   "side": "right",
+   "from_line": 32,
+   "to_line": 42,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Potential doc/regression issues in the new FunctionDocumentation block:\n\n1) The text says “according to RFC 4648” but the previous version included a direct link to the RFC section. Consider adding the RFC URL back (either inline or as a separate sentence) for consistency and easier verification.\n\n2) The example output uses a raw string literal with a leading newline and extra indentation before the closing `)`.\nDepending on the renderer, this can introduce unintended leading/trailing whitespace in generated docs/tests. Consider left-aligning the output and avoiding the extra indentation, or use a normal string with explicit `\\n`.\n\n3) Category changed from `Encoding` to `String`. Please double-check project conventions (other base64* functions) to avoid misclassification in function docs.\n\n```suggestion\n    FunctionDocumentation::Examples examples = {\n        {\n            \"Usage example\",\n            \"SELECT base64Decode('Y2xpY2tob3VzZQ==')\",\n            \"┌─base64Decode('Y2xpY2tob3VzZQ==')─┐\\n\"\n            \"│ clickhouse                       │\\n\"\n            \"└──────────────────────────────────┘\"\n        }\n    };\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/concat.cpp",
+   "side": "right",
+   "from_line": 302,
+   "to_line": 302,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Missing article 'the' before 'argument values'. Consider changing to 'If any of the argument values is `NULL`' for better grammatical correctness.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Functions/concatWithSeparator.cpp",
+   "side": "right",
+   "from_line": 183,
+   "to_line": 185,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The ConcatWithSeparator function documentation string lacks precision in describing separator usage; update to explicitly state the separator is inserted between the concatenated strings.",
+   "source": "human"
+  },
+  {
+   "path": "src/Functions/concatWithSeparator.cpp",
+   "side": "right",
+   "from_line": 186,
+   "to_line": 186,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Likely typo/inconsistency in parameter naming: using `exp1` here but elsewhere/commonly it is `expr1`. Consider renaming to `expr1` for clarity and consistency (also aligns with the older doc text).\n\n```suggestion\n    FunctionDocumentation::Syntax syntax = \"concatWithSeparator(sep[, expr1, expr2, ...])\";\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/concatWithSeparator.cpp",
+   "side": "right",
+   "from_line": 217,
+   "to_line": 220,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Doc inconsistency for injective variant: the argument type list restricts `exp1, exp2, ...` to {\"String\", \"FixedString\"}, but the description still talks about converting non-String/FixedString args via default serialization. This is contradictory and may confuse users. Either keep types as {\"Any\"} (if conversion is allowed) or adjust the description to state only String/FixedString should be passed for injective assumption.\n\n```suggestion\n    FunctionDocumentation::Arguments arguments_injective = {\n        {\"sep\", \"The separator to use.\", {\"const String\", \"const FixedString\"}},\n        {\"expr1, expr2, ...\", \"Expression to be concatenated.\", {\"String\", \"FixedString\"}}\n    };\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/convertCharset.cpp",
+   "side": "right",
+   "from_line": 245,
+   "to_line": 245,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "`IntroducedIn` is set to `{1, 1}` which is likely not the real version this function was added/introduced in. If this is meant to be the ClickHouse server version, please set it to the actual version when `convertCharset` became available; otherwise the versioning tests/release notes can be incorrect. If unknown, align with project conventions (e.g., current release version or omit if optional).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/decodeXMLComponent.cpp",
+   "side": "right",
+   "from_line": 243,
+   "to_line": 244,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The returned value description in decodeXMLComponent documentation lacks clarity; update it to specify \"the provided string\" instead of \"the string\" to accurately reflect input transformation.",
+   "source": "human"
+  },
+  {
+   "path": "src/Functions/decodeXMLComponent.cpp",
+   "side": "right",
+   "from_line": 249,
+   "to_line": 251,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Potential typo or malformed example result in documentation. The ellipsis-like character sequence '⋯' followed by ';' may be unintentional or corrupt rendering.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Functions/empty.cpp",
+   "side": "right",
+   "from_line": 198,
+   "to_line": 202,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Logical inconsistency in documentation: The description for `description_empty_string` (empty function) incorrectly states 'A string is considered non-empty if it contains at least one byte...' This appears to be a copy-paste error from the `notEmpty` description. It should describe when a string is considered empty, not non-empty.\n\n```suggestion\n    FunctionDocumentation::Description description_empty_string = R\"(\nChecks whether the input string is empty.\nA string is considered empty if it contains no bytes, even if this byte is a space or the null byte.\nThe function is also available for [arrays](/sql-reference/functions/array-functions#empty) and [UUIDs](/sql-reference/data-types/uuid).\n)\";\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Functions/empty.cpp",
+   "side": "right",
+   "from_line": 198,
+   "to_line": 202,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "`description_empty_string` says the function is also available for arrays and UUIDs, but `empty(x)` for arrays is a different overload and the link points to `/array-functions#empty`. Since this block is explicitly “String function documentation”, consider narrowing the wording to avoid implying this doc applies to those types, or explicitly say “See also: empty(Array), empty(UUID)” to prevent confusion.\n\n```suggestion\n    FunctionDocumentation::Description description_empty_string = R\"(\n    Checks whether the input string is empty.\n    A string is considered non-empty if it contains at least one byte, even if this byte is a space or the null byte.\n    See also: `empty(Array)` and `empty(UUID)`.\n    )\";\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/endsWith.cpp",
+   "side": "right",
+   "from_line": 14,
+   "to_line": 14,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The EndsWith function documentation incorrectly describes the ending parameter as a \"string\" rather than a \"suffix\", causing ambiguity in its intended purpose. Update the description to use \"suffix\" for precise technical terminology.",
+   "source": "human"
+  },
+  {
+   "path": "src/Functions/endsWith.cpp",
+   "side": "right",
+   "from_line": 16,
+   "to_line": 16,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The endsWith function syntax documentation uses 'str' for the string parameter; change to 's' for consistency with convention.",
+   "source": "human"
+  },
+  {
+   "path": "src/Functions/endsWith.cpp",
+   "side": "right",
+   "from_line": 21,
+   "to_line": 21,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The return value description must reference the parameter name `str` (not `s`) to maintain consistency with the function signature's declared arguments.",
+   "source": "human"
+  },
+  {
+   "path": "src/Functions/endsWithUTF8.cpp",
+   "side": "right",
+   "from_line": 28,
+   "to_line": 32,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Example output formatting: the raw string literal includes extra leading spaces before closing delimiter; check whether golden tests expect exact whitespace. Prefer aligning the closing \")\" to column 0 and avoiding trailing indentation inside the raw string to reduce diff-noise/format brittleness.\n\n```suggestion\n        R\"(\n┌─endsWithUTF8('данных', 'ых')─┐\n│                            1 │\n└──────────────────────────────┘\n)\"\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Functions/extractTextFromHTML.cpp",
+   "side": "right",
+   "from_line": 388,
+   "to_line": 392,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The example output string includes extra padding spaces before the closing box (\"│ Page Title Hello World!                │\"). If the function normalizes whitespace, this may not match actual output and can make reference tests brittle. Consider trimming trailing spaces in the documented output or using an output snippet that matches the real formatter exactly.",
+   "source": "GPT-5.2"
+  }
+ ]
+}
