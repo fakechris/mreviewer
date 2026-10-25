@@ -13,6 +13,9 @@ type RunOptions struct {
 	ReviewerPacks []string
 	RouteOverride string
 	AdvisorRoute  string
+	// CoverageThreshold is the minimum reviewed-lines ratio for a passing
+	// verdict; zero selects DefaultCoverageThreshold.
+	CoverageThreshold float64
 }
 
 type PackRunner interface {
@@ -62,11 +65,21 @@ func (e *Engine) Run(ctx context.Context, input ReviewInput, opts RunOptions) (R
 		Verdict:           decision.Verdict,
 		MarkdownSummary:   decision.Summary,
 		JSONSchemaVersion: "v1alpha1",
+		Coverage:          coverageSummaryFromInput(input, opts.CoverageThreshold),
 	}
-	if decision.Summary != "" {
+	// INV-1019: a review that did not see enough of the change must not pass.
+	// Findings that were found still produce requested_changes; only a clean
+	// result is downgraded, because "nothing found" is not "nothing there".
+	if bundle.Coverage != nil && bundle.Coverage.Incomplete {
+		if v := strings.ToLower(strings.TrimSpace(bundle.Verdict)); v == "" || v == "pass" || v == "passed" || v == "approved" {
+			bundle.Verdict = VerdictIncomplete
+		}
+		bundle.MarkdownSummary = appendCoverageNote(bundle.MarkdownSummary, bundle.Coverage)
+	}
+	if bundle.MarkdownSummary != "" {
 		bundle.PublishCandidates = append(bundle.PublishCandidates, PublishCandidate{
 			Kind: "summary",
-			Body: decision.Summary,
+			Body: bundle.MarkdownSummary,
 		})
 	}
 	lineIndex := buildChangedLineIndex(input.Request)
@@ -183,4 +196,68 @@ func outOfDiffBodyFromFinding(finding Finding) string {
 		}
 	}
 	return summaryBodyFromFinding(finding.Title, finding.Body) + "\n\n_定位 " + where + " 不在本次改动范围内，已按文件级发布。_"
+}
+
+func coverageSummaryFromInput(input ReviewInput, threshold float64) *CoverageSummary {
+	report := input.Coverage
+	if report.TotalChangedLines == 0 && report.HunksTotal == 0 && len(report.ReviewedPaths) == 0 {
+		return nil
+	}
+	if threshold <= 0 || threshold > 1 {
+		threshold = DefaultCoverageThreshold
+	}
+	ratio := report.Ratio
+	if report.TotalChangedLines > 0 {
+		ratio = float64(report.ReviewedChangedLines) / float64(report.TotalChangedLines)
+	} else if ratio == 0 {
+		ratio = 1
+	}
+	summary := &CoverageSummary{
+		Mode:                 string(report.Mode),
+		TotalChangedLines:    report.TotalChangedLines,
+		ReviewedChangedLines: report.ReviewedChangedLines,
+		HunksTotal:           report.HunksTotal,
+		HunksInPrompt:        report.HunksInPrompt,
+		Ratio:                ratio,
+		Threshold:            threshold,
+		Incomplete:           ratio < threshold,
+		Summary:              report.Summary,
+	}
+	for _, skipped := range report.Skipped {
+		summary.Skipped = append(summary.Skipped, SkippedScope{Path: skipped.Path, Reason: skipped.Reason, ChangedLines: skipped.ChangedLines})
+	}
+	return summary
+}
+
+// appendCoverageNote adds an "unreviewed scope" section to the summary so the
+// platform comment says what the reviewer did not see.
+func appendCoverageNote(summary string, coverage *CoverageSummary) string {
+	var b strings.Builder
+	if strings.TrimSpace(summary) != "" {
+		b.WriteString(strings.TrimRight(summary, "\n"))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("### 未评审范围\n\n")
+	b.WriteString("本次评审只覆盖了 ")
+	b.WriteString(strconv.Itoa(coverage.ReviewedChangedLines))
+	b.WriteString("/")
+	b.WriteString(strconv.Itoa(coverage.TotalChangedLines))
+	b.WriteString(" 行改动（")
+	b.WriteString(strconv.Itoa(int(coverage.Ratio*100 + 0.5)))
+	b.WriteString("%），低于阈值 ")
+	b.WriteString(strconv.Itoa(int(coverage.Threshold*100 + 0.5)))
+	b.WriteString("%，结论为 incomplete，不代表未评审部分没有问题。\n")
+	for _, skipped := range coverage.Skipped {
+		b.WriteString("- `")
+		b.WriteString(skipped.Path)
+		b.WriteString("`：")
+		b.WriteString(skipped.Reason)
+		if skipped.ChangedLines > 0 {
+			b.WriteString("，")
+			b.WriteString(strconv.Itoa(skipped.ChangedLines))
+			b.WriteString(" 行未评审")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }

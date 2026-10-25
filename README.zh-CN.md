@@ -234,7 +234,8 @@ mreviewer review --target <pr-or-mr-url> --output both --publish artifact-only
 - `--reviewer-packs`: 逗号分隔的 reviewer pack 列表
 - `--route`: model 或 model chain override
 - `--advisor-route`: 可选的更强 second opinion model / chain override
-- `--exit-mode`: `never` 或 `requested_changes`；最终 verdict 需要修改时返回退出码 `3`
+- `--exit-mode`: `never`、`requested_changes` 或 `incomplete`；最终 verdict 需要修改时返回退出码 `3`，选 `incomplete` 时若评审覆盖率低于 `--coverage-threshold`（默认 0.8）还会返回退出码 `2`
+- `--coverage-threshold`: 评审者必须实际看到的改动行比例下限（0-1]；低于该值 verdict 为 `incomplete`，commit status 为 `pending`，brief 中列出未评审的文件
 - `--compare-live`: 逗号分隔的已有 reviewer 标识
 - `--compare-artifacts`: 逗号分隔的外部 JSON artifact 路径
 

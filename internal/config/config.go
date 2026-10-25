@@ -56,11 +56,15 @@ type ModelChainConfig struct {
 type ReviewConfig struct {
 	// ConfigRef selects which git ref the repository ai-review.yaml is read
 	// from: "base" (default, the target branch) or "head" (the change itself).
-	ConfigRef        string   `yaml:"config_ref"`
-	ModelChain       string   `yaml:"model_chain"`
-	AdvisorChain     string   `yaml:"advisor_chain"`
-	Packs            []string `yaml:"packs"`
-	CompareReviewers []string `yaml:"compare_reviewers"`
+	ConfigRef string `yaml:"config_ref"`
+	// CoverageThreshold is the minimum share (0-1] of changed lines that must
+	// reach the reviewer before a passing verdict is allowed; 0 means the
+	// built-in default (0.8). Below it the verdict is "incomplete".
+	CoverageThreshold float64  `yaml:"coverage_threshold"`
+	ModelChain        string   `yaml:"model_chain"`
+	AdvisorChain      string   `yaml:"advisor_chain"`
+	Packs             []string `yaml:"packs"`
+	CompareReviewers  []string `yaml:"compare_reviewers"`
 }
 
 // envMapping maps Config field setters to their environment variable names.

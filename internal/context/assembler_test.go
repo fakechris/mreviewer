@@ -368,6 +368,58 @@ func TestLargeMRDegradation(t *testing.T) {
 	if len(result.Excluded) != 1 || result.Excluded[0].Reason != ExcludedReasonScopeLimit {
 		t.Fatalf("excluded = %#v, want single scope_limit entry", result.Excluded)
 	}
+	// INV-1019: coverage must say how much of the change was seen and what was not.
+	cov := result.Coverage
+	if cov.TotalChangedLines != 4 || cov.ReviewedChangedLines != 2 {
+		t.Fatalf("changed lines total/reviewed = %d/%d, want 4/2", cov.TotalChangedLines, cov.ReviewedChangedLines)
+	}
+	if cov.HunksTotal != 2 || cov.HunksInPrompt != 1 {
+		t.Fatalf("hunks total/in prompt = %d/%d, want 2/1", cov.HunksTotal, cov.HunksInPrompt)
+	}
+	if cov.Ratio != 0.5 {
+		t.Fatalf("ratio = %v, want 0.5", cov.Ratio)
+	}
+	if cov.Mode != ReviewModeDegradation {
+		t.Fatalf("coverage mode = %q, want degradation", cov.Mode)
+	}
+	if len(cov.Skipped) != 1 || cov.Skipped[0].Path != "src/b.go" || cov.Skipped[0].Reason != ExcludedReasonScopeLimit || cov.Skipped[0].ChangedLines != 2 {
+		t.Fatalf("skipped = %#v, want src/b.go scope_limit 2 lines", cov.Skipped)
+	}
+}
+
+func TestCoverageFullScopeRatioIsOne(t *testing.T) {
+	input := defaultAssembleInput()
+	input.Diffs = []gitlab.MergeRequestDiff{{OldPath: "src/a.go", NewPath: "src/a.go", Diff: sampleDiff("a")}}
+	result, err := NewAssembler().Assemble(input)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if result.Coverage.Ratio != 1 || result.Coverage.TotalChangedLines != 2 || len(result.Coverage.Skipped) != 0 {
+		t.Fatalf("coverage = %#v, want full", result.Coverage)
+	}
+}
+
+func TestCoverageRecordsTruncatedTail(t *testing.T) {
+	input := defaultAssembleInput()
+	input.Settings.MaxChangedLines = 3
+	input.Diffs = []gitlab.MergeRequestDiff{
+		{OldPath: "src/a.go", NewPath: "src/a.go", Diff: sampleDiff("a")},
+		{OldPath: "src/b.go", NewPath: "src/b.go", Diff: sampleDiffWithChangedLines("b", 4)},
+	}
+	result, err := NewAssembler().Assemble(input)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	cov := result.Coverage
+	if cov.TotalChangedLines != 6 || cov.ReviewedChangedLines != 3 {
+		t.Fatalf("changed lines total/reviewed = %d/%d, want 6/3", cov.TotalChangedLines, cov.ReviewedChangedLines)
+	}
+	if len(cov.Skipped) != 1 || cov.Skipped[0].Reason != ExcludedReasonTruncated || cov.Skipped[0].Path != "src/b.go" || cov.Skipped[0].ChangedLines != 3 {
+		t.Fatalf("skipped = %#v, want src/b.go truncated 3 lines", cov.Skipped)
+	}
+	if cov.HunksInPrompt != 2 || cov.HunksTotal != 2 {
+		t.Fatalf("hunks in prompt/total = %d/%d, want 2/2 (truncated hunk still counts as seen)", cov.HunksInPrompt, cov.HunksTotal)
+	}
 }
 
 func TestThresholdDeterminism(t *testing.T) {

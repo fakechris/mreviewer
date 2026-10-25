@@ -170,5 +170,6 @@ func NewProcessor(cfg *config.Config, sqlDB *sql.DB, inputLoader reviewrun.Revie
 	}
 	return reviewrun.NewEngineProcessor(sqlDB, inputLoader, engine).
 		WithDefaultReviewerPacks(NormalizeReviewPacks(cfg.Review.Packs)).
-		WithDefaultAdvisorRoute(strings.TrimSpace(cfg.Review.AdvisorChain)), nil
+		WithDefaultAdvisorRoute(strings.TrimSpace(cfg.Review.AdvisorChain)).
+		WithCoverageThreshold(cfg.Review.CoverageThreshold), nil
 }

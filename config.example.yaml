@@ -85,6 +85,10 @@ review:
   # gate_mode, enabled, provider_route, severity_threshold and confidence_threshold
   # are never honoured from the repository file; set them in project/group policy.
   config_ref: base
+  # Minimum share (0-1] of changed lines the reviewer must actually see before a
+  # passing verdict is allowed. Below it the verdict is "incomplete" and the
+  # commit status is "pending" instead of "success". 0 = default 0.8.
+  coverage_threshold: 0.8
   model_chain: review_primary
   advisor_chain: advisor_primary
   packs:
