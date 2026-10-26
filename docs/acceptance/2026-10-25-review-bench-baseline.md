@@ -128,7 +128,9 @@ OpenCodeReview README 榜单（同一 AACR-Bench 全集 200 PR，其自有匹配
 | Rust | 3 | 33 | 6 | 1 | 16.7% | 3.0% | 5.1% |
 | TypeScript | 6 | 72 | 26 | 6 | 23.1% | 8.3% | 12.2% |
 
-出错的 7 个 case：aacr/dotnet__aspnetcore__61006, aacr/facebook__react__32499, aacr/linera-io__linera-protocol__4639, aacr/mpv-player__mpv__15828, aacr/mpv-player__mpv__16090, aacr/sveltejs__svelte__15250, aacr/timescale__timescaledb__8138。其中 6 个是 `missing tool_use block`：M2.7 的思考块也计入 max_tokens，20000 的预算在大 diff 上仍被耗尽（非流式 Anthropic SDK 调用把 max_tokens 卡在约 21k 以下）；1 个是修复后仍不过严格校验。这些 case 未计入指标。
+出错的 7 个 case：aacr/dotnet__aspnetcore__61006, aacr/facebook__react__32499, aacr/linera-io__linera-protocol__4639, aacr/mpv-player__mpv__15828, aacr/mpv-player__mpv__16090, aacr/sveltejs__svelte__15250, aacr/timescale__timescaledb__8138。其中 6 个是 `missing tool_use block`：思考块也计入 max_tokens，20000 的预算在大 diff 上被耗尽；1 个是修复后仍不过严格校验。这些 case 未计入指标。
+
+**为什么不是 M3.1-Flash**：minimax provider 以非流式方式调用 Anthropic 协议，SDK 对约 21k 以上的 max_tokens 直接拒绝发送；思考 token 计入该预算，所以一个会顺着调用关系推理的模型（M3.1 在一个改了 23 个文件的 case 上合理地用了约 19k 思考 token，并最终正确调用了工具）在大 case 上必然先撞上限。这是 provider 不支持流式的限制，不是模型的问题；按 OCR 榜单的规律，推理更充分的模型 recall 更高，本基线换用 M2.7 很可能低估了 MiniMax 系列的 recall。流式支持落地后应在同一评测集重跑 M3.1。
 
 ### 4.3 两条路由对照
 

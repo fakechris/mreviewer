@@ -23,9 +23,13 @@ models:
   # MiniMax over its Anthropic-compatible endpoint: the forced submit_review
   # tool call is reliable there, while the OpenAI-compatible endpoint answered
   # 48/64 corpus cases in prose instead of calling the tool (2026-10-25).
-  # M2.7-highspeed rather than M3.1-Flash: M3.1 spends ~19k thinking tokens on
-  # a 64-line PR and the non-streaming Anthropic SDK call is capped near 21k
-  # max_tokens, so M3.1 regularly stopped on max_tokens before the tool call.
+  # M2.7-highspeed rather than M3.1-Flash for now: the minimax provider calls
+  # the Anthropic API without streaming, and the SDK refuses non-streaming
+  # requests above roughly 21k max_tokens. Thinking tokens count against that
+  # budget, so a model that reasons through a 23-file change (M3.1 used ~19k
+  # thinking tokens on one such case, legitimately) hits the cap before it can
+  # call the tool. That is a provider limitation, not a model fault; once the
+  # provider streams, re-run M3.1 on the same corpus.
   minimax_m27_highspeed:
     provider: minimax
     base_url: https://api.minimaxi.com/anthropic
