@@ -1,0 +1,52 @@
+{
+ "id": "zh/py-zhifu-float",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/py-zhifu-float",
+  "owner": "zh",
+  "repo": "py-zhifu-float",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "支付：计算优惠后金额",
+  "description": "",
+  "language": "Python",
+  "category": "self-built",
+  "changed_lines": 16
+ },
+ "diffs": [
+  {
+   "old_path": "zhifu/jisuan.py",
+   "new_path": "zhifu/jisuan.py",
+   "diff": "@@ -1,4 +1,21 @@\n from decimal import Decimal\n \n+\n+def jisuan_shifu(jine: Decimal, youhui_lv: float, manjian: Decimal = Decimal(\"0\")) -> Decimal:\n+    \"\"\"计算实付金额。\n+\n+    jine: 订单原价（元）\n+    youhui_lv: 折扣率，例如 0.85 表示八五折\n+    manjian: 满减金额，直接从折后价里扣\n+    \"\"\"\n+    if youhui_lv <= 0 or youhui_lv > 1:\n+        raise ValueError(\"折扣率必须在 (0, 1] 之间\")\n+    zhehou = jine * youhui_lv\n+    shifu = zhehou - manjian\n+    # 实付不能为负\n+    if shifu < 0:\n+        shifu = 0\n+    return round(shifu, 2)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "zhifu/jisuan.py",
+   "side": "right",
+   "from_line": 12,
+   "to_line": 12,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`Decimal * float` 在 Python 里会直接抛 `TypeError`，这个函数根本跑不通；`youhui_lv` 应该用 `Decimal(str(youhui_lv))` 转换后再乘，金额计算也不该让 float 参与。",
+   "source": "human"
+  },
+  {
+   "path": "zhifu/jisuan.py",
+   "side": "right",
+   "from_line": 15,
+   "to_line": 17,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`shifu = 0` 把 Decimal 换成了 int，返回类型和签名不一致，调用方做 `.quantize()` 之类的操作会报错，应写成 `Decimal(\"0\")`。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

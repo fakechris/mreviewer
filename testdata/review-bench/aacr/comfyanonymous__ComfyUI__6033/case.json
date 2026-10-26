@@ -1,0 +1,166 @@
+{
+ "id": "aacr/comfyanonymous__ComfyUI__6033",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/comfyanonymous/ComfyUI/pull/6033",
+  "owner": "comfyanonymous",
+  "repo": "ComfyUI",
+  "number": 6033,
+  "base_sha": "6c0377f43e7b6ed58d48ae05cff9bc45b52ef5e0",
+  "head_sha": "0bb60235132cc72daea81427107a40ba1ccb5ddf",
+  "title": "Enforce all pyflake lint rules",
+  "description": "Depend on https://github.com/comfyanonymous/ComfyUI/pull/6032",
+  "language": "Python",
+  "category": "Code Style, Linting, Formatting Fixes",
+  "changed_lines": 30
+ },
+ "diffs": [
+  {
+   "old_path": "api_server/routes/internal/internal_routes.py",
+   "new_path": "api_server/routes/internal/internal_routes.py",
+   "diff": "@@ -40,7 +40,7 @@ async def get_logs(request):\n             return web.json_response(\"\".join([(l[\"t\"] + \" - \" + l[\"m\"]) for l in app.logger.get_logs()]))\n \n         @self.routes.get('/logs/raw')\n-        async def get_logs(request):\n+        async def get_raw_logs(request):\n             self.terminal_service.update_size()\n             return web.json_response({\n                 \"entries\": list(app.logger.get_logs()),",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "comfy/controlnet.py",
+   "new_path": "comfy/controlnet.py",
+   "diff": "@@ -821,7 +821,7 @@ def load_t2i_adapter(t2i_data, model_options={}): #TODO: model_options\n         for i in range(4):\n             for j in range(2):\n                 prefix_replace[\"adapter.body.{}.resnets.{}.\".format(i, j)] = \"body.{}.\".format(i * 2 + j)\n-            prefix_replace[\"adapter.body.{}.\".format(i, j)] = \"body.{}.\".format(i * 2)\n+            prefix_replace[\"adapter.body.{}.\".format(i, )] = \"body.{}.\".format(i * 2)\n         prefix_replace[\"adapter.\"] = \"\"\n         t2i_data = comfy.utils.state_dict_prefix_replace(t2i_data, prefix_replace)\n     keys = t2i_data.keys()",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "comfy/ldm/modules/sub_quadratic_attention.py",
+   "new_path": "comfy/ldm/modules/sub_quadratic_attention.py",
+   "diff": "@@ -22,7 +22,6 @@\n \tfrom typing import Optional, NamedTuple, List\n \tfrom typing_extensions import Protocol\n \n-from torch import Tensor\n from typing import List\n \n from comfy import model_management",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "comfy/patcher_extension.py",
+   "new_path": "comfy/patcher_extension.py",
+   "diff": "@@ -113,7 +113,7 @@ def execute(self, *args, **kwargs):\n     def _create_next_executor(self) -> 'WrapperExecutor':\n         new_idx = self.idx + 1\n         if new_idx > len(self.wrappers):\n-            raise Exception(f\"Wrapper idx exceeded available wrappers; something went very wrong.\")\n+            raise Exception(\"Wrapper idx exceeded available wrappers; something went very wrong.\")\n         if self.class_obj is None:\n             return WrapperExecutor.new_executor(self.original, self.wrappers, new_idx)\n         return WrapperExecutor.new_class_executor(self.original, self.class_obj, self.wrappers, new_idx)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "comfy_extras/nodes_clip_sdxl.py",
+   "new_path": "comfy_extras/nodes_clip_sdxl.py",
+   "diff": "@@ -22,14 +22,15 @@ class CLIPTextEncodeSDXL:\n     @classmethod\n     def INPUT_TYPES(s):\n         return {\"required\": {\n+            \"clip\": (\"CLIP\", ),\n             \"width\": (\"INT\", {\"default\": 1024.0, \"min\": 0, \"max\": MAX_RESOLUTION}),\n             \"height\": (\"INT\", {\"default\": 1024.0, \"min\": 0, \"max\": MAX_RESOLUTION}),\n             \"crop_w\": (\"INT\", {\"default\": 0, \"min\": 0, \"max\": MAX_RESOLUTION}),\n             \"crop_h\": (\"INT\", {\"default\": 0, \"min\": 0, \"max\": MAX_RESOLUTION}),\n             \"target_width\": (\"INT\", {\"default\": 1024.0, \"min\": 0, \"max\": MAX_RESOLUTION}),\n             \"target_height\": (\"INT\", {\"default\": 1024.0, \"min\": 0, \"max\": MAX_RESOLUTION}),\n-            \"text_g\": (\"STRING\", {\"multiline\": True, \"dynamicPrompts\": True}), \"clip\": (\"CLIP\", ),\n-            \"text_l\": (\"STRING\", {\"multiline\": True, \"dynamicPrompts\": True}), \"clip\": (\"CLIP\", ),\n+            \"text_g\": (\"STRING\", {\"multiline\": True, \"dynamicPrompts\": True}),\n+            \"text_l\": (\"STRING\", {\"multiline\": True, \"dynamicPrompts\": True}),\n             }}\n     RETURN_TYPES = (\"CONDITIONING\",)\n     FUNCTION = \"encode\"",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "execution.py",
+   "new_path": "execution.py",
+   "diff": "@@ -760,7 +760,7 @@ def validate_prompt(prompt):\n         if 'class_type' not in prompt[x]:\n             error = {\n                 \"type\": \"invalid_prompt\",\n-                \"message\": f\"Cannot execute because a node is missing the class_type property.\",\n+                \"message\": \"Cannot execute because a node is missing the class_type property.\",\n                 \"details\": f\"Node ID '#{x}'\",\n                 \"extra_info\": {}\n             }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "notebooks/comfyui_colab.ipynb",
+   "new_path": "notebooks/comfyui_colab.ipynb",
+   "diff": "@@ -237,11 +237,7 @@\n    \"source\": [\n     \"!npm install -g localtunnel\\n\",\n     \"\\n\",\n-    \"import subprocess\\n\",\n     \"import threading\\n\",\n-    \"import time\\n\",\n-    \"import socket\\n\",\n-    \"import urllib.request\\n\",\n     \"\\n\",\n     \"def iframe_thread(port):\\n\",\n     \"  while True:\\n\",\n@@ -288,8 +284,6 @@\n    \"outputs\": [],\n    \"source\": [\n     \"import threading\\n\",\n-    \"import time\\n\",\n-    \"import socket\\n\",\n     \"def iframe_thread(port):\\n\",\n     \"  while True:\\n\",\n     \"      time.sleep(0.5)\\n\",",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "ruff.toml",
+   "new_path": "ruff.toml",
+   "diff": "@@ -4,8 +4,7 @@ lint.ignore = [\"ALL\"]\n # Enable specific rules\n lint.select = [\n     \"S307\",  # suspicious-eval-usage\n-    \"F401\",  # unused-import\n-    \"F841\",  # unused-local-variable\n-    # TODO: Enable F821 after all errors has been fixed. Remaining errors: 7.\n-    # \"F821\",  # undefined-name\n+    # The \"F\" series in Ruff stands for \"Pyflakes\" rules, which catch various Python syntax errors and undefined names.\n+    # See all rules here: https://docs.astral.sh/ruff/rules/#pyflakes-f\n+    \"F\",\n ]\n\\ No newline at end of file",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "server.py",
+   "new_path": "server.py",
+   "diff": "@@ -584,7 +584,7 @@ async def get_history(request):\n             return web.json_response(self.prompt_queue.get_history(max_items=max_items))\n \n         @routes.get(\"/history/{prompt_id}\")\n-        async def get_history(request):\n+        async def get_history_prompt_id(request):\n             prompt_id = request.match_info.get(\"prompt_id\", None)\n             return web.json_response(self.prompt_queue.get_history(prompt_id=prompt_id))\n \n@@ -831,7 +831,7 @@ def trigger_on_prompt(self, json_data):\n             try:\n                 json_data = handler(json_data)\n             except Exception:\n-                logging.warning(f\"[ERROR] An error occurred during the on_prompt_handler processing\")\n+                logging.warning(\"[ERROR] An error occurred during the on_prompt_handler processing\")\n                 logging.warning(traceback.format_exc())\n \n         return json_data",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "api_server/routes/internal/internal_routes.py",
+   "side": "left",
+   "from_line": 43,
+   "to_line": 43,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The function `get_logs` is redefined for the `/logs/raw` route, overwriting the previous definition for the `/logs` endpoint. Rename one handler function to prevent route collision and ensure both endpoints remain accessible.",
+   "source": "human"
+  },
+  {
+   "path": "comfy/controlnet.py",
+   "side": "right",
+   "from_line": 824,
+   "to_line": 824,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The format string has only one placeholder `{}`, but the argument list contains a trailing comma after `i`. This is a syntax issue - either remove the trailing comma or check if `j` was intended to be used here. Based on the context where `j` was removed from the format string, the trailing comma should be removed.\n\n```suggestion\n            prefix_replace[\"adapter.body.{}.\".format(i)] = \"body.{}.\".format(i * 2)\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "comfy_extras/nodes_clip_sdxl.py",
+   "side": "left",
+   "from_line": 31,
+   "to_line": 31,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The added 'clip' key duplicates an existing key in the INPUT_TYPES dictionary.",
+   "source": "human"
+  },
+  {
+   "path": "notebooks/comfyui_colab.ipynb",
+   "side": "right",
+   "from_line": 241,
+   "to_line": 243,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The `time`, `socket`, `subprocess`, and `urllib.request` module imports were removed. However, if any of these modules are used in the code below (particularly `time` which is commonly used in threading functions with `time.sleep()`), this will cause a `NameError` at runtime.\n\nPlease verify that none of these removed imports are actually used in this code cell. Based on the similar pattern in the cell at line 287 where `time.sleep()` is used, this cell likely also uses `time.sleep()` and requires the `import time` statement.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "notebooks/comfyui_colab.ipynb",
+   "side": "right",
+   "from_line": 287,
+   "to_line": 287,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The `time` module import was removed, but the code below still uses `time.sleep(0.5)` in the `iframe_thread` function. This will cause a `NameError: name 'time' is not defined` at runtime.\n\nThe import statement `import time` must be retained for this cell to function correctly.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "ruff.toml",
+   "side": "right",
+   "from_line": 7,
+   "to_line": 10,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Switching from selecting only F401/F841 to selecting the entire `F` (Pyflakes) rule family will significantly broaden lint coverage (e.g., F821 undefined-name, F811 redefinition, etc.). If the repo still has known F821 violations (as hinted by the removed TODO), CI/lint may start failing unexpectedly. Consider either (1) enabling `F` but explicitly ignoring known-problematic rules for now (e.g., add `lint.ignore += [\"F821\"]`), or (2) keep a narrower select list until remaining violations are fixed. Also, add a trailing newline at EOF to satisfy POSIX/editor conventions and avoid diff noise.\n\n```suggestion\n    # The \"F\" series in Ruff stands for \"Pyflakes\" rules.\n    # See: https://docs.astral.sh/ruff/rules/#pyflakes-f\n    \"F\",\n]\n\n# If there are still legacy violations, consider temporarily ignoring specific rules:\n# lint.ignore = [\"ALL\", \"F821\"]\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "server.py",
+   "side": "left",
+   "from_line": 587,
+   "to_line": 587,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Function name collision where `get_history` was redefined within the same scope. The second definition with `@routes.get(\"/history/{prompt_id}\")` decorator incorrectly overwrote the original implementation.",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

@@ -1,0 +1,337 @@
+{
+ "id": "aacr/appwrite__appwrite__9999",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/appwrite/appwrite/pull/9999",
+  "owner": "appwrite",
+  "repo": "appwrite",
+  "number": 9999,
+  "base_sha": "d205ac457960f73d781547540cde1732f69076ac",
+  "head_sha": "710b8bda565c411ecb23e8b670d0ba7f45d2b3f3",
+  "title": "Use _APP_CONSOLE_DOMAIN, if not found, then use _APP_DOMAIN",
+  "description": "<!--\r\nThank you for sending the PR! We appreciate you spending the time to work on these changes.\r\n\r\nHelp us understand your motivation by explaining why you decided to make this change.\r\n\r\nYou can learn more about contributing to appwrite here: https://github.com/appwrite/appwrite/blob/master/CONTRIBUTING.md\r\n\r\nHappy contributing!\r\n\r\n-->\r\n\r\n## What does this PR do?\r\n\r\nThis would help prevent `region.` prefix from domains.\r\n\r\n## Test Plan\r\n\r\n(Write your test plan here. If you changed any code, please provide us with clear instructions on how you verified your changes work. Screenshots may also be helpful.)\r\n\r\n## Related PRs and Issues\r\n\r\n- (Related PR or issue)\r\n\r\n## Checklist\r\n\r\n- [ ] Have you read the [Contributing Guidelines on issues](https://github.com/appwrite/appwrite/blob/master/CONTRIBUTING.md)?\r\n- [ ] If the PR includes a change to an API's metadata (desc, label, params, etc.), does it also include updated API specs and example docs?",
+  "language": "PHP",
+  "category": "Bug Fix",
+  "changed_lines": 46
+ },
+ "diffs": [
+  {
+   "old_path": "app/config/templates/site.php",
+   "new_path": "app/config/templates/site.php",
+   "diff": "@@ -7,7 +7,7 @@\n  */\n \n $protocol = System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https';\n-$hostname = System::getEnv('_APP_DOMAIN');\n+$hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n \n // TODO: Development override\n if (System::getEnv('_APP_ENV') === 'development') {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "app/controllers/api/console.php",
+   "new_path": "app/controllers/api/console.php",
+   "diff": "@@ -43,8 +43,8 @@\n     ))\n     ->inject('response')\n     ->action(function (Response $response) {\n-        $validator = new Domain(System::getEnv('_APP_DOMAIN'));\n-        $isDomainValid = !empty(System::getEnv('_APP_DOMAIN', '')) && $validator->isKnown() && !$validator->isTest();\n+        $validator = new Domain(System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', '')));\n+        $isDomainValid = !empty(System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''))) && $validator->isKnown() && !$validator->isTest();\n \n         $validator = new Domain(System::getEnv('_APP_DOMAIN_TARGET_CNAME'));\n         $isCNAMEValid = !empty(System::getEnv('_APP_DOMAIN_TARGET_CNAME', '')) && $validator->isKnown() && !$validator->isTest();",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "app/controllers/general.php",
+   "new_path": "app/controllers/general.php",
+   "diff": "@@ -76,7 +76,7 @@ function router(App $utopia, Database $dbForPlatform, callable $getProjectDB, Sw\n     }\n \n     $errorView = __DIR__ . '/../views/general/error.phtml';\n-    $url = (System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https') . '://' . System::getEnv('_APP_DOMAIN', '');\n+    $url = (System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https') . '://' . System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n \n     if ($rule->isEmpty()) {\n         $appDomainFunctionsFallback = System::getEnv('_APP_DOMAIN_FUNCTIONS_FALLBACK', '');\n@@ -262,7 +262,7 @@ function router(App $utopia, Database $dbForPlatform, callable $getProjectDB, Sw\n             }\n \n             if (!$authorized) {\n-                $url = (System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https') . \"://\" . System::getEnv('_APP_DOMAIN');\n+                $url = (System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https') . \"://\" . System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n                 $response\n                     ->addHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')\n                     ->addHeader('Pragma', 'no-cache')\n@@ -448,7 +448,7 @@ function router(App $utopia, Database $dbForPlatform, callable $getProjectDB, Sw\n         }\n \n         $protocol = System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https';\n-        $hostname = System::getEnv('_APP_DOMAIN');\n+        $hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         $endpoint = $protocol . '://' . $hostname . \"/v1\";\n \n         // Appwrite vars\n@@ -809,7 +809,7 @@ function router(App $utopia, Database $dbForPlatform, callable $getProjectDB, Sw\n         * Appwrite Router\n         */\n         $host = $request->getHostname() ?? '';\n-        $mainDomain = System::getEnv('_APP_DOMAIN', '');\n+        $mainDomain = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         // Only run Router when external domain\n         if ($host !== $mainDomain || !empty($previewHostname)) {\n             if (router($utopia, $dbForPlatform, $getProjectDB, $swooleRequest, $request, $response, $queueForEvents, $queueForStatsUsage, $queueForFunctions, $executor, $geodb, $isResourceBlocked, $previewHostname, $apiKey)) {\n@@ -858,7 +858,7 @@ function router(App $utopia, Database $dbForPlatform, callable $getProjectDB, Sw\n             } else {\n                 Authorization::disable();\n \n-                $envDomain = System::getEnv('_APP_DOMAIN', '');\n+                $envDomain = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n                 $mainDomain = null;\n                 if (!empty($envDomain) && $envDomain !== 'localhost') {\n                     $mainDomain = $envDomain;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "app/views/general/error.phtml",
+   "new_path": "app/views/general/error.phtml",
+   "diff": "@@ -15,7 +15,7 @@ $labelClass = '';\n $buttons = [];\n \n $protocol = System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https';\n-$hostname = System::getEnv('_APP_DOMAIN');\n+$hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n // TODO: remove this later\n if (System::getEnv('_APP_ENV') === 'development') {\n     $hostname = 'localhost';",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Appwrite/Platform/Modules/Functions/Http/Executions/Create.php",
+   "new_path": "src/Appwrite/Platform/Modules/Functions/Http/Executions/Create.php",
+   "diff": "@@ -351,7 +351,7 @@ public function action(\n         }\n \n         $protocol = System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https';\n-        $hostname = System::getEnv('_APP_DOMAIN');\n+        $hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         $endpoint = $protocol . '://' . $hostname . \"/v1\";\n \n         // Appwrite vars",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Appwrite/Platform/Modules/Functions/Workers/Builds.php",
+   "new_path": "src/Appwrite/Platform/Modules/Functions/Workers/Builds.php",
+   "diff": "@@ -594,7 +594,7 @@ protected function buildDeployment(\n             ]);\n \n             $protocol = System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https';\n-            $hostname = System::getEnv('_APP_DOMAIN');\n+            $hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n             $endpoint = $protocol . '://' . $hostname . \"/v1\";\n \n             // Appwrite vars\n@@ -1441,7 +1441,7 @@ protected function runGitAction(\n             $name = \"{$resourceName} ({$projectName})\";\n \n             $protocol = System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https';\n-            $hostname = System::getEnv('_APP_DOMAIN');\n+            $hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n \n             $projectId = $project->getId();\n             $resourceId = $resource->getId();",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/API/Create.php",
+   "new_path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/API/Create.php",
+   "diff": "@@ -76,7 +76,7 @@ public function action(string $domain, Response $response, Document $project, Ce\n             APP_HOSTNAME_INTERNAL\n         ];\n \n-        $mainDomain = System::getEnv('_APP_DOMAIN', '');\n+        $mainDomain = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         $deniedDomains[] = $mainDomain;\n \n         $sitesDomain = System::getEnv('_APP_DOMAIN_SITES', '');",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Function/Create.php",
+   "new_path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Function/Create.php",
+   "diff": "@@ -81,7 +81,7 @@ public function action(string $domain, string $functionId, string $branch, Respo\n             APP_HOSTNAME_INTERNAL\n         ];\n \n-        $mainDomain = System::getEnv('_APP_DOMAIN', '');\n+        $mainDomain = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         $deniedDomains[] = $mainDomain;\n \n         $sitesDomain = System::getEnv('_APP_DOMAIN_SITES', '');",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Redirect/Create.php",
+   "new_path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Redirect/Create.php",
+   "diff": "@@ -84,7 +84,7 @@ public function action(string $domain, string $url, int $statusCode, string $res\n             APP_HOSTNAME_INTERNAL\n         ];\n \n-        $mainDomain = System::getEnv('_APP_DOMAIN', '');\n+        $mainDomain = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         $deniedDomains[] = $mainDomain;\n \n         $sitesDomain = System::getEnv('_APP_DOMAIN_SITES', '');",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Site/Create.php",
+   "new_path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Site/Create.php",
+   "diff": "@@ -81,7 +81,7 @@ public function action(string $domain, string $siteId, string $branch, Response\n             APP_HOSTNAME_INTERNAL\n         ];\n \n-        $mainDomain = System::getEnv('_APP_DOMAIN', '');\n+        $mainDomain = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         $deniedDomains[] = $mainDomain;\n \n         $sitesDomain = System::getEnv('_APP_DOMAIN_SITES', '');",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Appwrite/Platform/Workers/Functions.php",
+   "new_path": "src/Appwrite/Platform/Workers/Functions.php",
+   "diff": "@@ -484,7 +484,7 @@ private function execute(\n         }\n \n         $protocol = System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https';\n-        $hostname = System::getEnv('_APP_DOMAIN');\n+        $hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         $endpoint = $protocol . '://' . $hostname . \"/v1\";\n \n         // Appwrite vars",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Appwrite/Vcs/Comment.php",
+   "new_path": "src/Appwrite/Vcs/Comment.php",
+   "diff": "@@ -87,7 +87,7 @@ public function generateComment(): string\n         $i = 0;\n         foreach ($projects as $projectId => $project) {\n             $protocol = System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https';\n-            $hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN'));\n+            $hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n \n             $text .= \"## {$project['name']}\\n\\n\";\n             $text .= \"Project ID: `{$projectId}`\\n\\n\";\n@@ -201,7 +201,7 @@ public function generateComment(): string\n     public function generatImage(string $pathLight, string $pathDark, string $alt, int $width): string\n     {\n         $protocol = System::getEnv('_APP_OPTIONS_FORCE_HTTPS') == 'disabled' ? 'http' : 'https';\n-        $hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN'));\n+        $hostname = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n \n         $imageLight = $protocol . '://' . $hostname . $pathLight;\n         $imageDark = $protocol . '://' . $hostname . $pathDark;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Executor/Executor.php",
+   "new_path": "src/Executor/Executor.php",
+   "diff": "@@ -200,7 +200,7 @@ public function createExecution(\n         int $requestTimeout = null\n     ) {\n         if (empty($headers['host'])) {\n-            $headers['host'] = System::getEnv('_APP_DOMAIN', '');\n+            $headers['host'] = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         }\n \n         $runtimeId = \"$projectId-$deploymentId\";",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "tests/e2e/Services/Projects/ProjectsCustomServerTest.php",
+   "new_path": "tests/e2e/Services/Projects/ProjectsCustomServerTest.php",
+   "diff": "@@ -83,7 +83,7 @@ public function testCreateProjectRule()\n \n         $this->assertEquals(400, $response['headers']['status-code']);\n \n-        $mainDomain = System::getEnv('_APP_DOMAIN', '');\n+        $mainDomain = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n         $sitesDomain = System::getEnv('_APP_DOMAIN_SITES', '');\n         $functionsDomain = System::getEnv('_APP_DOMAIN_FUNCTIONS', '');\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "app/controllers/api/console.php",
+   "side": "right",
+   "from_line": 46,
+   "to_line": 47,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The domain validation logic (intended for proxy/DNS functionality) incorrectly uses `_APP_CONSOLE_DOMAIN`, which is reserved for admin frontend contexts; revert to `_APP_DOMAIN` exclusively to maintain backend integrity.",
+   "source": "human"
+  },
+  {
+   "path": "app/controllers/api/console.php",
+   "side": "right",
+   "from_line": 46,
+   "to_line": 47,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The environment variable lookup `System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''))` is called twice on consecutive lines (lines 46 and 47). This duplicates the logic and is inefficient. Consider storing the domain value in a variable first to avoid redundant calls and improve maintainability.\n\n```suggestion\n        $consoleDomain = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n        $validator = new Domain($consoleDomain);\n        $isDomainValid = !empty($consoleDomain) && $validator->isKnown() && !$validator->isTest();\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "app/controllers/general.php",
+   "side": "right",
+   "from_line": 451,
+   "to_line": 452,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential regression for runtime env vars: `APPWRITE_FUNCTION_API_ENDPOINT` / `APPWRITE_SITE_API_ENDPOINT` is now built from `_APP_CONSOLE_DOMAIN`. If your API is served on `_APP_DOMAIN` (or another dedicated API domain), functions/sites will call the wrong endpoint. Consider using an API-specific env (or keep `_APP_DOMAIN` here) and reserve `_APP_CONSOLE_DOMAIN` for UI redirects only.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "app/controllers/general.php",
+   "side": "right",
+   "from_line": 812,
+   "to_line": 812,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The change replacing `_APP_DOMAIN` with `_APP_CONSOLE_DOMAIN` (with fallback) for `$mainDomain` risks introducing router failures in untested execution contexts; the reviewer advises reverting since the current implementation is proven stable.",
+   "source": "human"
+  },
+  {
+   "path": "app/controllers/general.php",
+   "side": "right",
+   "from_line": 1094,
+   "to_line": 1094,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Inconsistent environment variable usage: This line still uses _APP_DOMAIN directly while other similar usages in this file have been updated to use _APP_CONSOLE_DOMAIN with fallback. For consistency with the other changes in this file, consider updating to use the new pattern: System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''))\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "app/views/general/error.phtml",
+   "side": "right",
+   "from_line": 18,
+   "to_line": 18,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Falling back to an empty string may result in a malformed URL (e.g., 'https://'). Consider ensuring a valid hostname is always available, possibly by defining a system-level default or handling the absence of both env vars explicitly.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Appwrite/Platform/Modules/Functions/Http/Executions/Create.php",
+   "side": "right",
+   "from_line": 354,
+   "to_line": 355,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "If _APP_CONSOLE_DOMAIN and _APP_DOMAIN are both empty or not set, $hostname will be an empty string. This leads to a malformed $endpoint like \"https:///v1\". Consider validating that $hostname is not empty and throwing a clear exception if it is, to fail fast and aid debugging.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Appwrite/Platform/Modules/Functions/Workers/Builds.php",
+   "side": "right",
+   "from_line": 597,
+   "to_line": 597,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Consider specifying a more descriptive default or handling an empty hostname case explicitly to prevent unexpected endpoint construction.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Appwrite/Platform/Modules/Functions/Workers/Builds.php",
+   "side": "right",
+   "from_line": 597,
+   "to_line": 598,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Using `_APP_CONSOLE_DOMAIN` to construct the `APPWRITE_FUNCTION_API_ENDPOINT` carries a risk. If `_APP_CONSOLE_DOMAIN` is configured to point to a separate Console UI (e.g., a static site) that does not serve the API, functions using this endpoint will fail to communicate with Appwrite. \n\nTypically, `_APP_DOMAIN` is used for API endpoints. Unless `_APP_CONSOLE_DOMAIN` is guaranteed to serve the API in all configurations, it might be safer to stick to `_APP_DOMAIN` for the API endpoint, while using `_APP_CONSOLE_DOMAIN` for the Console links (as done below in this file).\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/API/Create.php",
+   "side": "right",
+   "from_line": 79,
+   "to_line": 80,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "It appears that `_APP_CONSOLE_DOMAIN` takes precedence here. If `_APP_CONSOLE_DOMAIN` is defined and different from `_APP_DOMAIN`, `_APP_DOMAIN` (which might be serving the API) is not added to the `$deniedDomains` list. \n\nConsider explicitly adding `_APP_DOMAIN` to `$deniedDomains` as well to prevent users from creating rules that conflict with the main API domain.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/API/Create.php",
+   "side": "right",
+   "from_line": 79,
+   "to_line": 80,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "`$mainDomain` is appended to `$deniedDomains` unconditionally. If both `_APP_CONSOLE_DOMAIN` and `_APP_DOMAIN` are unset/empty, an empty string enters the deny list and can cause unexpected comparisons/edge cases. Also consider normalizing casing/whitespace (and potentially stripping scheme/port if those envs can contain them) to ensure the `in_array` check is reliable. Suggest guarding with `!empty()` (and normalization) before appending, consistent with sites/functions handling.\n\n```suggestion\n        $mainDomain = System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''));\n        $mainDomain = \\trim(\\strtolower($mainDomain));\n        if (!empty($mainDomain)) {\n            $deniedDomains[] = $mainDomain;\n        }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Redirect/Create.php",
+   "side": "right",
+   "from_line": 87,
+   "to_line": 89,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The assignment to `$mainDomain` fails to validate `_APP_CONSOLE_DOMAIN` for non-emptiness, potentially resulting in an empty value when the environment variable is set to a blank string instead of falling back to `_APP_DOMAIN`.",
+   "source": "human"
+  },
+  {
+   "path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Redirect/Create.php",
+   "side": "right",
+   "from_line": 87,
+   "to_line": 88,
+   "category": "Security Vulnerability",
+   "context": "File Level",
+   "note": "When `_APP_CONSOLE_DOMAIN` is set, `_APP_DOMAIN` is used as a fallback but is not independently added to `$deniedDomains`. If `_APP_DOMAIN` differs from `_APP_CONSOLE_DOMAIN` (e.g., separate API and Console domains), `_APP_DOMAIN` remains unprotected. It is recommended to deny both domains to prevent potential hijacking of the API domain.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Site/Create.php",
+   "side": "right",
+   "from_line": 84,
+   "to_line": 86,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Empty `_APP_CONSOLE_DOMAIN` environment variable adds an empty string to `$deniedDomains` when explicitly set, blocking valid user domains. Implement a guarded fallback that uses `_APP_CONSOLE_DOMAIN` only if non-empty, otherwise falling back to `_APP_DOMAIN`.",
+   "source": "human"
+  },
+  {
+   "path": "src/Appwrite/Platform/Workers/Functions.php",
+   "side": "right",
+   "from_line": 487,
+   "to_line": 488,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Setting $hostname to an empty string when both _APP_CONSOLE_DOMAIN and _APP_DOMAIN are not set will result in a malformed $endpoint (e.g., 'https:///v1'). Consider adding validation to ensure a proper hostname is configured to prevent runtime errors in functions consuming APPWRITE_FUNCTION_API_ENDPOINT.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Appwrite/Vcs/Comment.php",
+   "side": "right",
+   "from_line": 90,
+   "to_line": 90,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Setting _APP_DOMAIN to an empty string by default may result in malformed URLs (e.g., https://) when _APP_DOMAIN is not configured. Consider using a more appropriate fallback or throwing an exception if the domain is critical.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Executor/Executor.php",
+   "side": "right",
+   "from_line": 202,
+   "to_line": 204,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Host header assignment fails when `_APP_CONSOLE_DOMAIN` is defined but empty, causing invalid HTTP requests due to empty header values. Implement explicit non-empty validation before assignment instead of relying solely on `getEnv` fallbacks.",
+   "source": "human"
+  },
+  {
+   "path": "src/Executor/Executor.php",
+   "side": "right",
+   "from_line": 203,
+   "to_line": 203,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Behavior change: defaulting the `Host` header to `_APP_CONSOLE_DOMAIN` (falling back to `_APP_DOMAIN`) may unintentionally route/validate requests against the console domain for non-console executions. This can impact signature validation, virtual host routing, or upstream proxies expecting the main domain. Please confirm this executor is only used for console-originated requests, or consider keeping `_APP_DOMAIN` as the default and only using `_APP_CONSOLE_DOMAIN` when explicitly required (e.g., via a flag/parameter). Also consider normalizing header key casing (`Host`) or ensuring downstream treats `host` case-insensitively.\n",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "app/config/templates/site.php",
+   "side": "right",
+   "from_line": 10,
+   "to_line": 10,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The hostname change to prioritize `_APP_CONSOLE_DOMAIN` requires verification that template screenshots load correctly in Console when the environment variable is set.",
+   "source": "human"
+  },
+  {
+   "path": "app/controllers/general.php",
+   "side": "right",
+   "from_line": 79,
+   "to_line": 79,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "In this file, `$url` is used to build CTAs like `.../console` (and preview auth redirects). Switching to `_APP_CONSOLE_DOMAIN` makes sense for console CTAs, but note this same `$url` is also used in non-console contexts (eg deployment errors). Please verify that all CTAs/redirects in this router should always go to console host. If not, consider deriving domain based on the current request host (or a separate `_APP_PUBLIC_DOMAIN`/`_APP_API_DOMAIN`) to avoid cross-domain redirects in multi-domain setups.",
+   "source": "GPT-5.2"
+  }
+ ]
+}

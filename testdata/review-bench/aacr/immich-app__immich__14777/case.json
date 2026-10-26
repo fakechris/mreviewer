@@ -1,0 +1,243 @@
+{
+ "id": "aacr/immich-app__immich__14777",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/immich-app/immich/pull/14777",
+  "owner": "immich-app",
+  "repo": "immich",
+  "number": 14777,
+  "base_sha": "10e569cc1c563ece2eb7e2581cef943829a72440",
+  "head_sha": "91b3b6aebd3a02a4ac158b21ce469138df893178",
+  "title": "fix(server): don't delete offline files from disk when trash empties",
+  "description": "Right now, immich deletes files after 30 days that are excluded or outside of import paths, including original files.\r\n\r\nThis is not intended, if a new exclusion pattern is added or an import path is changed and one or more assets are removed due to it, we should not be deleting original files.\r\n\r\nThis bug is in my opinion quite serious and could cause data loss.\r\n\r\nI can't find the original bug report (github? reddit?)\r\n\r\nEdit: This might be it: https://www.reddit.com/r/immich/comments/1gu61r3/immich_tried_to_remove_my_external_libraries_file/\r\n\r\nAlso adds some e2e tests related to offline files",
+  "language": "TypeScript",
+  "category": "Bug Fix",
+  "changed_lines": 312
+ },
+ "diffs": [
+  {
+   "old_path": "e2e/src/api/specs/asset.e2e-spec.ts",
+   "new_path": "e2e/src/api/specs/asset.e2e-spec.ts",
+   "diff": "@@ -6,6 +6,7 @@ import {\n   LoginResponseDto,\n   SharedLinkType,\n   getAssetInfo,\n+  getAssetStatistics,\n   getConfig,\n   getMyUser,\n   updateConfig,\n@@ -19,7 +20,7 @@ import { Socket } from 'socket.io-client';\n import { createUserDto, uuidDto } from 'src/fixtures';\n import { makeRandomImage } from 'src/generators';\n import { errorDto } from 'src/responses';\n-import { app, asBearerAuth, tempDir, testAssetDir, utils } from 'src/utils';\n+import { app, asBearerAuth, tempDir, testAssetDir, testAssetDirInternal, utils } from 'src/utils';\n import request from 'supertest';\n import { afterAll, beforeAll, describe, expect, it } from 'vitest';\n \n@@ -782,6 +783,32 @@ describe('/asset', () => {\n       expect(after.isTrashed).toBe(true);\n     });\n \n+    it('should permanently delete an asset from trash', async () => {\n+      const { id: assetId } = await utils.createAsset(admin.accessToken);\n+\n+      {\n+        const { status } = await request(app)\n+          .delete('/assets')\n+          .send({ ids: [assetId] })\n+          .set('Authorization', `Bearer ${admin.accessToken}`);\n+        expect(status).toBe(204);\n+      }\n+\n+      const trashed = await utils.getAssetInfo(admin.accessToken, assetId);\n+      expect(trashed.isTrashed).toBe(true);\n+\n+      {\n+        const { status } = await request(app)\n+          .delete('/assets')\n+          .send({ ids: [assetId], force: true })\n+          .set('Authorization', `Bearer ${admin.accessToken}`);\n+        expect(status).toBe(204);\n+      }\n+\n+      const after = await getAssetStatistics({ isTrashed: true }, { headers: asBearerAuth(admin.accessToken) });\n+      expect(after.total).toBe(0);\n+    });\n+\n     it('should clean up live photos', async () => {\n       const { id: motionId } = await utils.createAsset(admin.accessToken, {\n         assetData: { filename: 'test.mp4', bytes: makeRandomImage() },",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "e2e/src/api/specs/library.e2e-spec.ts",
+   "new_path": "e2e/src/api/specs/library.e2e-spec.ts",
+   "diff": "@@ -499,7 +499,7 @@ describe('/libraries', () => {\n       expect(newAssets.items).toEqual([]);\n     });\n \n-    it('should set an asset offline its file is not in any import path', async () => {\n+    it('should set an asset offline if its file is not in any import path', async () => {\n       utils.createImageFile(`${testAssetDir}/temp/offline/offline.png`);\n \n       const library = await utils.createLibrary(admin.accessToken, {\n@@ -515,10 +515,9 @@ describe('/libraries', () => {\n \n       utils.createDirectory(`${testAssetDir}/temp/another-path/`);\n \n-      await request(app)\n-        .put(`/libraries/${library.id}`)\n-        .set('Authorization', `Bearer ${admin.accessToken}`)\n-        .send({ importPaths: [`${testAssetDirInternal}/temp/another-path/`] });\n+      await utils.updateLibrary(admin.accessToken, library.id, {\n+        importPaths: [`${testAssetDirInternal}/temp/another-path/`],\n+      });\n \n       const { status } = await request(app)\n         .post(`/libraries/${library.id}/scan`)\n@@ -555,10 +554,7 @@ describe('/libraries', () => {\n       });\n       expect(assets.count).toBe(1);\n \n-      await request(app)\n-        .put(`/libraries/${library.id}`)\n-        .set('Authorization', `Bearer ${admin.accessToken}`)\n-        .send({ exclusionPatterns: ['**/directoryB/**'] });\n+      await utils.updateLibrary(admin.accessToken, library.id, { exclusionPatterns: ['**/directoryB/**'] });\n \n       await scan(admin.accessToken, library.id);\n       await utils.waitForQueueFinish(admin.accessToken, 'library');\n@@ -577,7 +573,7 @@ describe('/libraries', () => {\n       ]);\n     });\n \n-    it('should not trash an online asset', async () => {\n+    it('should not set an asset offline if its file exists, is in an import path, and not covered by an exclusion pattern', async () => {\n       const library = await utils.createLibrary(admin.accessToken, {\n         ownerId: admin.userId,\n         importPaths: [`${testAssetDirInternal}/temp`],\n@@ -601,6 +597,195 @@ describe('/libraries', () => {\n \n       expect(assets).toEqual(assetsBefore);\n     });\n+\n+    it('should set an offline asset to online if its file exists, is in an import path, and not covered by an exclusion pattern', async () => {\n+      utils.createImageFile(`${testAssetDir}/temp/offline/offline.png`);\n+\n+      const library = await utils.createLibrary(admin.accessToken, {\n+        ownerId: admin.userId,\n+        importPaths: [`${testAssetDirInternal}/temp/offline`],\n+      });\n+\n+      await scan(admin.accessToken, library.id);\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id });\n+\n+      utils.renameImageFile(`${testAssetDir}/temp/offline/offline.png`, `${testAssetDir}/temp/offline.png`);\n+\n+      {\n+        const { status } = await request(app)\n+          .post(`/libraries/${library.id}/scan`)\n+          .set('Authorization', `Bearer ${admin.accessToken}`)\n+          .send();\n+        expect(status).toBe(204);\n+      }\n+\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      const offlineAsset = await utils.getAssetInfo(admin.accessToken, assets.items[0].id);\n+      expect(offlineAsset.isTrashed).toBe(true);\n+      expect(offlineAsset.originalPath).toBe(`${testAssetDirInternal}/temp/offline/offline.png`);\n+      expect(offlineAsset.isOffline).toBe(true);\n+\n+      {\n+        const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id, withDeleted: true });\n+        expect(assets.count).toBe(1);\n+      }\n+\n+      utils.renameImageFile(`${testAssetDir}/temp/offline.png`, `${testAssetDir}/temp/offline/offline.png`);\n+\n+      {\n+        const { status } = await request(app)\n+          .post(`/libraries/${library.id}/scan`)\n+          .set('Authorization', `Bearer ${admin.accessToken}`)\n+          .send();\n+        expect(status).toBe(204);\n+      }\n+\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      const backOnlineAsset = await utils.getAssetInfo(admin.accessToken, assets.items[0].id);\n+\n+      expect(backOnlineAsset.isTrashed).toBe(false);\n+      expect(backOnlineAsset.originalPath).toBe(`${testAssetDirInternal}/temp/offline/offline.png`);\n+      expect(backOnlineAsset.isOffline).toBe(false);\n+\n+      {\n+        const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id });\n+        expect(assets.count).toBe(1);\n+      }\n+    });\n+\n+    it('should not set an offline asset to online if its file exists, is not covered by an exclusion pattern, but is outside of all import paths', async () => {\n+      utils.createImageFile(`${testAssetDir}/temp/offline/offline.png`);\n+\n+      const library = await utils.createLibrary(admin.accessToken, {\n+        ownerId: admin.userId,\n+        importPaths: [`${testAssetDirInternal}/temp/offline`],\n+      });\n+\n+      await scan(admin.accessToken, library.id);\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id });\n+\n+      utils.renameImageFile(`${testAssetDir}/temp/offline/offline.png`, `${testAssetDir}/temp/offline.png`);\n+\n+      {\n+        const { status } = await request(app)\n+          .post(`/libraries/${library.id}/scan`)\n+          .set('Authorization', `Bearer ${admin.accessToken}`)\n+          .send();\n+        expect(status).toBe(204);\n+      }\n+\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      {\n+        const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id, withDeleted: true });\n+        expect(assets.count).toBe(1);\n+      }\n+\n+      const offlineAsset = await utils.getAssetInfo(admin.accessToken, assets.items[0].id);\n+\n+      expect(offlineAsset.isTrashed).toBe(true);\n+      expect(offlineAsset.originalPath).toBe(`${testAssetDirInternal}/temp/offline/offline.png`);\n+      expect(offlineAsset.isOffline).toBe(true);\n+\n+      utils.renameImageFile(`${testAssetDir}/temp/offline.png`, `${testAssetDir}/temp/offline/offline.png`);\n+\n+      utils.createDirectory(`${testAssetDir}/temp/another-path/`);\n+\n+      await utils.updateLibrary(admin.accessToken, library.id, {\n+        importPaths: [`${testAssetDirInternal}/temp/another-path`],\n+      });\n+\n+      {\n+        const { status } = await request(app)\n+          .post(`/libraries/${library.id}/scan`)\n+          .set('Authorization', `Bearer ${admin.accessToken}`)\n+          .send();\n+        expect(status).toBe(204);\n+      }\n+\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      const stillOfflineAsset = await utils.getAssetInfo(admin.accessToken, assets.items[0].id);\n+\n+      expect(stillOfflineAsset.isTrashed).toBe(true);\n+      expect(stillOfflineAsset.originalPath).toBe(`${testAssetDirInternal}/temp/offline/offline.png`);\n+      expect(stillOfflineAsset.isOffline).toBe(true);\n+\n+      {\n+        const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id, withDeleted: true });\n+        expect(assets.count).toBe(1);\n+      }\n+\n+      utils.removeDirectory(`${testAssetDir}/temp/another-path/`);\n+    });\n+\n+    it('should not set an offline asset to online if its file exists, is in an import path, but is covered by an exclusion pattern', async () => {\n+      utils.createImageFile(`${testAssetDir}/temp/offline/offline.png`);\n+\n+      const library = await utils.createLibrary(admin.accessToken, {\n+        ownerId: admin.userId,\n+        importPaths: [`${testAssetDirInternal}/temp/offline`],\n+      });\n+\n+      await scan(admin.accessToken, library.id);\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id });\n+\n+      utils.renameImageFile(`${testAssetDir}/temp/offline/offline.png`, `${testAssetDir}/temp/offline.png`);\n+\n+      {\n+        const { status } = await request(app)\n+          .post(`/libraries/${library.id}/scan`)\n+          .set('Authorization', `Bearer ${admin.accessToken}`)\n+          .send();\n+        expect(status).toBe(204);\n+      }\n+\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      {\n+        const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id, withDeleted: true });\n+        expect(assets.count).toBe(1);\n+      }\n+\n+      const offlineAsset = await utils.getAssetInfo(admin.accessToken, assets.items[0].id);\n+\n+      expect(offlineAsset.isTrashed).toBe(true);\n+      expect(offlineAsset.originalPath).toBe(`${testAssetDirInternal}/temp/offline/offline.png`);\n+      expect(offlineAsset.isOffline).toBe(true);\n+\n+      utils.renameImageFile(`${testAssetDir}/temp/offline.png`, `${testAssetDir}/temp/offline/offline.png`);\n+\n+      await utils.updateLibrary(admin.accessToken, library.id, { exclusionPatterns: ['**/offline/**'] });\n+\n+      {\n+        const { status } = await request(app)\n+          .post(`/libraries/${library.id}/scan`)\n+          .set('Authorization', `Bearer ${admin.accessToken}`)\n+          .send();\n+        expect(status).toBe(204);\n+      }\n+\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      const stillOfflineAsset = await utils.getAssetInfo(admin.accessToken, assets.items[0].id);\n+\n+      expect(stillOfflineAsset.isTrashed).toBe(true);\n+      expect(stillOfflineAsset.originalPath).toBe(`${testAssetDirInternal}/temp/offline/offline.png`);\n+      expect(stillOfflineAsset.isOffline).toBe(true);\n+\n+      {\n+        const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id, withDeleted: true });\n+        expect(assets.count).toBe(1);\n+      }\n+    });\n   });\n \n   describe('POST /libraries/:id/validate', () => {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "e2e/src/api/specs/trash.e2e-spec.ts",
+   "new_path": "e2e/src/api/specs/trash.e2e-spec.ts",
+   "diff": "@@ -73,7 +73,7 @@ describe('/trash', () => {\n       expect(existsSync(before.originalPath)).toBe(false);\n     });\n \n-    it('should not delete offline-trashed assets from disk', async () => {\n+    it('should remove offline assets', async () => {\n       const library = await utils.createLibrary(admin.accessToken, {\n         ownerId: admin.userId,\n         importPaths: [`${testAssetDirInternal}/temp/offline`],\n@@ -88,7 +88,7 @@ describe('/trash', () => {\n       expect(assets.items.length).toBe(1);\n       const asset = assets.items[0];\n \n-      utils.removeImageFile(`${testAssetDir}/temp/offline/offline.png`);\n+      await utils.updateLibrary(admin.accessToken, library.id, { exclusionPatterns: ['**/offline/**'] });\n \n       await scan(admin.accessToken, library.id);\n       await utils.waitForQueueFinish(admin.accessToken, 'library');\n@@ -105,6 +105,41 @@ describe('/trash', () => {\n \n       const assetAfter = await utils.getAssetInfo(admin.accessToken, asset.id);\n       expect(assetAfter).toMatchObject({ isTrashed: true, isOffline: true });\n+    });\n+\n+    it.skip('should not delete offline assets from disk', async () => {\n+      // Can't be tested at the moment due to no mechanism to forward time\n+      const library = await utils.createLibrary(admin.accessToken, {\n+        ownerId: admin.userId,\n+        importPaths: [`${testAssetDirInternal}/temp/offline`],\n+      });\n+\n+      utils.createImageFile(`${testAssetDir}/temp/offline/offline.png`);\n+\n+      await scan(admin.accessToken, library.id);\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      const { assets } = await utils.searchAssets(admin.accessToken, { libraryId: library.id });\n+      expect(assets.items.length).toBe(1);\n+      const asset = assets.items[0];\n+\n+      await utils.updateLibrary(admin.accessToken, library.id, { exclusionPatterns: ['**/offline/**'] });\n+\n+      await scan(admin.accessToken, library.id);\n+      await utils.waitForQueueFinish(admin.accessToken, 'library');\n+\n+      const assetBefore = await utils.getAssetInfo(admin.accessToken, asset.id);\n+      expect(assetBefore).toMatchObject({ isTrashed: true, isOffline: true });\n+\n+      utils.createImageFile(`${testAssetDir}/temp/offline/offline.png`);\n+\n+      const { status } = await request(app).post('/trash/empty').set('Authorization', `Bearer ${admin.accessToken}`);\n+      expect(status).toBe(200);\n+\n+      await utils.waitForQueueFinish(admin.accessToken, 'backgroundTask');\n+\n+      const after = await getAssetStatistics({ isTrashed: true }, { headers: asBearerAuth(admin.accessToken) });\n+      expect(after.total).toBe(0);\n \n       expect(existsSync(`${testAssetDir}/temp/offline/offline.png`)).toBe(true);\n \n@@ -137,7 +172,7 @@ describe('/trash', () => {\n       expect(after).toStrictEqual(expect.objectContaining({ id: assetId, isTrashed: false }));\n     });\n \n-    it('should not restore offline-trashed assets', async () => {\n+    it('should not restore offline assets', async () => {\n       const library = await utils.createLibrary(admin.accessToken, {\n         ownerId: admin.userId,\n         importPaths: [`${testAssetDirInternal}/temp/offline`],\n@@ -152,7 +187,7 @@ describe('/trash', () => {\n       expect(assets.count).toBe(1);\n       const assetId = assets.items[0].id;\n \n-      utils.removeImageFile(`${testAssetDir}/temp/offline/offline.png`);\n+      await utils.updateLibrary(admin.accessToken, library.id, { exclusionPatterns: ['**/offline/**'] });\n \n       await scan(admin.accessToken, library.id);\n \n@@ -195,7 +230,7 @@ describe('/trash', () => {\n       expect(after.isTrashed).toBe(false);\n     });\n \n-    it('should not restore an offline-trashed asset', async () => {\n+    it('should not restore an offline asset', async () => {\n       const library = await utils.createLibrary(admin.accessToken, {\n         ownerId: admin.userId,\n         importPaths: [`${testAssetDirInternal}/temp/offline`],\n@@ -210,7 +245,7 @@ describe('/trash', () => {\n       expect(assets.count).toBe(1);\n       const assetId = assets.items[0].id;\n \n-      utils.removeImageFile(`${testAssetDir}/temp/offline/offline.png`);\n+      await utils.updateLibrary(admin.accessToken, library.id, { exclusionPatterns: ['**/offline/**'] });\n \n       await scan(admin.accessToken, library.id);\n       await utils.waitForQueueFinish(admin.accessToken, 'library');",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "e2e/src/utils.ts",
+   "new_path": "e2e/src/utils.ts",
+   "diff": "@@ -10,6 +10,7 @@ import {\n   Permission,\n   PersonCreateDto,\n   SharedLinkCreateDto,\n+  UpdateLibraryDto,\n   UserAdminCreateDto,\n   UserPreferencesUpdateDto,\n   ValidateLibraryDto,\n@@ -35,14 +36,15 @@ import {\n   updateAlbumUser,\n   updateAssets,\n   updateConfig,\n+  updateLibrary,\n   updateMyPreferences,\n   upsertTags,\n   validate,\n } from '@immich/sdk';\n import { BrowserContext } from '@playwright/test';\n import { exec, spawn } from 'node:child_process';\n import { createHash } from 'node:crypto';\n-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';\n+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';\n import { tmpdir } from 'node:os';\n import path, { dirname } from 'node:path';\n import { setTimeout as setAsyncTimeout } from 'node:timers/promises';\n@@ -392,6 +394,14 @@ export const utils = {\n     rmSync(path);\n   },\n \n+  renameImageFile: (oldPath: string, newPath: string) => {\n+    if (!existsSync(oldPath)) {\n+      return;\n+    }\n+\n+    renameSync(oldPath, newPath);\n+  },\n+\n   removeDirectory: (path: string) => {\n     if (!existsSync(path)) {\n       return;\n@@ -447,6 +457,9 @@ export const utils = {\n   validateLibrary: (accessToken: string, id: string, dto: ValidateLibraryDto) =>\n     validate({ id, validateLibraryDto: dto }, { headers: asBearerAuth(accessToken) }),\n \n+  updateLibrary: (accessToken: string, id: string, dto: UpdateLibraryDto) =>\n+    updateLibrary({ id, updateLibraryDto: dto }, { headers: asBearerAuth(accessToken) }),\n+\n   createPartner: (accessToken: string, id: string) => createPartner({ id }, { headers: asBearerAuth(accessToken) }),\n \n   updateMyPreferences: (accessToken: string, userPreferencesUpdateDto: UserPreferencesUpdateDto) =>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "server/src/services/asset.service.ts",
+   "new_path": "server/src/services/asset.service.ts",
+   "diff": "@@ -188,7 +188,7 @@ export class AssetService extends BaseService {\n           name: JobName.ASSET_DELETION,\n           data: {\n             id: asset.id,\n-            deleteOnDisk: true,\n+            deleteOnDisk: !asset.isOffline,\n           },\n         })),\n       );\n@@ -249,7 +249,18 @@ export class AssetService extends BaseService {\n \n     const { thumbnailFile, previewFile } = getAssetFiles(asset.files);\n     const files = [thumbnailFile?.path, previewFile?.path, asset.encodedVideoPath];\n-    if (deleteOnDisk) {\n+\n+    let willDelete = deleteOnDisk;\n+\n+    if (asset.isOffline) {\n+      /* We don't want to delete an offline asset because it is either...\n+           ...missing from disk => don't delete the file since it doesn't exist where we expect\n+           ...outside of any import path => don't delete the file since we're not responsible for it\n+           ...matching an exclusion pattern => don't delete the file since we're not responsible for it */\n+      willDelete = false;\n+    }\n+\n+    if (willDelete) {\n       files.push(asset.sidecarPath, asset.originalPath);\n     }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "server/src/services/trash.service.ts",
+   "new_path": "server/src/services/trash.service.ts",
+   "diff": "@@ -18,15 +18,15 @@ export class TrashService extends BaseService {\n     await this.trashRepository.restoreAll(ids);\n     await this.eventRepository.emit('assets.restore', { assetIds: ids, userId: auth.user.id });\n \n-    this.logger.log(`Restored ${ids.length} assets from trash`);\n+    this.logger.log(`Restored ${ids.length} asset(s) from trash`);\n \n     return { count: ids.length };\n   }\n \n   async restore(auth: AuthDto): Promise<TrashResponseDto> {\n     const count = await this.trashRepository.restore(auth.user.id);\n     if (count > 0) {\n-      this.logger.log(`Restored ${count} assets from trash`);\n+      this.logger.log(`Restored ${count} asset(s) from trash`);\n     }\n     return { count };\n   }\n@@ -52,7 +52,7 @@ export class TrashService extends BaseService {\n     );\n \n     for await (const assetIds of assetPagination) {\n-      this.logger.debug(`Queueing ${assetIds.length} assets for deletion from the trash`);\n+      this.logger.debug(`Queueing ${assetIds.length} asset(s) for deletion from the trash`);\n       count += assetIds.length;\n       await this.jobRepository.queueAll(\n         assetIds.map((assetId) => ({\n@@ -65,7 +65,7 @@ export class TrashService extends BaseService {\n       );\n     }\n \n-    this.logger.log(`Queued ${count} assets for deletion from the trash`);\n+    this.logger.log(`Queued ${count} asset(s) for deletion from the trash`);\n \n     return JobStatus.SUCCESS;\n   }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "e2e/src/api/specs/asset.e2e-spec.ts",
+   "side": "right",
+   "from_line": 23,
+   "to_line": 23,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The `testAssetDirInternal` is imported but not used in this file. It appears this import was added by mistake, as it's only used in other test files like `library.e2e-spec.ts` and `trash.e2e-spec.ts`. Please remove this unused import to keep the code clean.",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "e2e/src/api/specs/asset.e2e-spec.ts",
+   "side": "right",
+   "from_line": 808,
+   "to_line": 809,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Consider adding direct verification that the asset itself no longer exists, rather than only checking that the count of trashed assets is zero. While this may be implicitly covered by the statistic check, explicit validation would make the test more robust.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "e2e/src/api/specs/library.e2e-spec.ts",
+   "side": "right",
+   "from_line": 614,
+   "to_line": 614,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Consider creating a shared helper function to encapsulate the repeated sequence of actions: rename file → trigger scan → wait for queue completion → assert asset state transitions. This would significantly reduce duplication across these similarly structured test cases.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "e2e/src/api/specs/library.e2e-spec.ts",
+   "side": "right",
+   "from_line": 614,
+   "to_line": 614,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Test isolation/cleanup: this spec renames/moves files and creates directories. If the test fails mid-way, subsequent tests may be affected. Consider wrapping filesystem mutations in `try/finally` to restore the original state (rename back/remove directories) even on assertion failures.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "e2e/src/api/specs/library.e2e-spec.ts",
+   "side": "right",
+   "from_line": 626,
+   "to_line": 626,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential flakiness: directly indexing `assets.items[0]` assumes search order and non-empty results. Add an explicit assertion that `assets.count === 1` (or `items.length === 1`) before accessing, and/or pick the asset by `originalPath` to avoid order dependence.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "e2e/src/api/specs/trash.e2e-spec.ts",
+   "side": "right",
+   "from_line": 76,
+   "to_line": 80,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Test name/intent mismatch: this case now excludes the path via `exclusionPatterns`, which is different from a true \"offline\" scenario (file missing). If the product logic distinguishes \"offline\" vs \"excluded\", consider renaming the test (e.g., \"should trash excluded assets\"), or keep the file-removal approach and add a separate excluded-path test to avoid masking regressions.\n\n```suggestion\n    it('should trash assets when their library path becomes excluded', async () => {\n          const library = await utils.createLibrary(admin.accessToken, {\n            ownerId: admin.userId,\n            importPaths: [`${testAssetDirInternal}/temp/offline`],\n          });\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "e2e/src/api/specs/trash.e2e-spec.ts",
+   "side": "right",
+   "from_line": 91,
+   "to_line": 91,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Hardcoded glob `**/offline/**` appears multiple times in this file after the change. Consider extracting to a constant (e.g., `const OFFLINE_EXCLUSION = ['**/offline/**']`) to reduce duplication and make future changes safer.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "e2e/src/api/specs/trash.e2e-spec.ts",
+   "side": "right",
+   "from_line": 110,
+   "to_line": 111,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Skipping the test is reasonable, but `it.skip` can silently rot. Prefer `it.skip` with a tracked issue reference (ticket/URL) and/or use Jest's `pending()`/`test.todo` so it’s visible in reports. Also consider setting a timeout comment if time-forwarding becomes available later.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "e2e/src/api/specs/trash.e2e-spec.ts",
+   "side": "right",
+   "from_line": 112,
+   "to_line": 129,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "There's significant code duplication between this test case and the skipped test case below ('should not delete offline assets from disk'). Both have nearly identical setup steps: creating a library, creating an image file, scanning, waiting for queue finish, searching assets, updating library exclusion patterns, scanning again, and waiting for queue finish. Consider extracting this common setup into a reusable helper function to reduce duplication and improve maintainability.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "e2e/src/api/specs/trash.e2e-spec.ts",
+   "side": "right",
+   "from_line": 176,
+   "to_line": 192,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "This test case shares almost identical setup code with the previous test case 'should remove offline assets'. The duplicated steps include creating a library, creating an image file, scanning, waiting for queue completion, searching assets, updating library exclusion patterns, etc. Extracting this common setup into a shared helper would significantly reduce code duplication and make future maintenance easier.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "e2e/src/utils.ts",
+   "side": "right",
+   "from_line": 397,
+   "to_line": 403,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `renameImageFile` function lacks error handling for the `renameSync` operation. While it checks if the source file exists, it doesn't handle potential errors from the rename operation itself (e.g., permission denied, destination on different filesystem, destination already exists). This could cause uncaught exceptions during test execution. It is recommended to add try-catch error handling, or decide whether to throw errors based on the usage scenario.\n\n```suggestion\n  renameImageFile: (oldPath: string, newPath: string) => {\n    if (!existsSync(oldPath)) {\n      return;\n    }\n\n    try {\n      renameSync(oldPath, newPath);\n    } catch (error) {\n      // Handle error appropriately or log it\n      console.error(`Failed to rename file from ${oldPath} to ${newPath}:`, error);\n      throw error;\n    }\n  },\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "e2e/src/utils.ts",
+   "side": "right",
+   "from_line": 460,
+   "to_line": 461,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "New `updateLibrary` wrapper looks fine, but ensure the imported `updateLibrary` symbol is unambiguous with the wrapper name (readability). If the generated client function shares the same name, consider aliasing the import (e.g., `updateLibrary as apiUpdateLibrary`) to avoid confusion and ease debugging/stack traces.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "server/src/services/trash.service.ts",
+   "side": "right",
+   "from_line": 21,
+   "to_line": 21,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Log wording change to \"asset(s)\" is readable, but it reduces log searchability/consistency vs. the previous fixed plural form. Consider standardizing pluralization across services (e.g., use a helper like `pluralize('asset', n)` to emit `asset`/`assets`, or keep one consistent convention everywhere) so dashboards/alerts can match reliably.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "server/src/services/trash.service.ts",
+   "side": "right",
+   "from_line": 29,
+   "to_line": 29,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Same note here: consider consistent pluralization strategy for log aggregation (either proper plural via helper or keep one stable phrase).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "server/src/services/trash.service.ts",
+   "side": "right",
+   "from_line": 55,
+   "to_line": 55,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Same log consistency suggestion: if you adopt `asset(s)` here, consider updating other related logs (e.g., in asset.service and e2e expectations) or use a pluralization helper to keep messages consistent for monitoring/search.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "server/src/services/trash.service.ts",
+   "side": "right",
+   "from_line": 68,
+   "to_line": 68,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Same consistency note: prefer stable log phrases or pluralize properly via helper to avoid multiple variants across the codebase.",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "server/src/services/asset.service.ts",
+   "side": "right",
+   "from_line": 253,
+   "to_line": 261,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The deletion job incorrectly re-checks `asset.isOffline` to override `deleteOnDisk`, duplicating logic that should be handled at job queuing time; ensure `deleteOnDisk` is set to `false` for offline assets when the job is scheduled.",
+   "source": "human"
+  }
+ ]
+}

@@ -963,3 +963,32 @@ func isParserError(err error) bool {
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "unparseable")
 }
+
+// unwrapReviewEnvelope strips a single wrapper object such as
+// {"review": {...}} or {"result": {...}} that some models (DeepSeek V4 with
+// thinking off, 2026-10-25 bench) put around the review result. The inner
+// object must look like a review result (carry "findings") and the outer
+// object must have exactly that one key; anything else is returned as is.
+func unwrapReviewEnvelope(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "{") {
+		return raw
+	}
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &outer); err != nil || len(outer) != 1 {
+		return raw
+	}
+	if _, direct := outer["findings"]; direct {
+		return raw
+	}
+	for _, inner := range outer {
+		var innerObj map[string]json.RawMessage
+		if err := json.Unmarshal(inner, &innerObj); err != nil {
+			return raw
+		}
+		if _, ok := innerObj["findings"]; ok {
+			return strings.TrimSpace(string(inner))
+		}
+	}
+	return raw
+}

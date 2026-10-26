@@ -1,0 +1,42 @@
+{
+ "id": "zh/ts-denglu-token",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/ts-denglu-token",
+  "owner": "zh",
+  "repo": "ts-denglu-token",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "登录：记住登录状态",
+  "description": "",
+  "language": "TypeScript",
+  "category": "self-built",
+  "changed_lines": 18
+ },
+ "diffs": [
+  {
+   "old_path": "src/auth/denglu.ts",
+   "new_path": "src/auth/denglu.ts",
+   "diff": "@@ -12,6 +12,24 @@ export interface DengLuJieGuo {\n   token: string;\n }\n \n+/** 登录成功后把 token 存起来，刷新页面也能保持登录 */\n+export function baoCunDengLu(jieGuo: DengLuJieGuo, jiZhuWo: boolean): void {\n+  const cunChu = jiZhuWo ? localStorage : sessionStorage;\n+  cunChu.setItem('token', jieGuo.token);\n+  cunChu.setItem('yongHu', JSON.stringify(jieGuo.yongHu));\n+  // 记录登录时间，用于前端判断是否需要重新登录\n+  cunChu.setItem('dengLuShiJian', Date.now().toString());\n+}\n+\n+export function huoQuToken(): string | null {\n+  return localStorage.getItem('token') ?? sessionStorage.getItem('token');\n+}\n+\n+export function yiDengLu(): boolean {\n+  const shiJian = Number(localStorage.getItem('dengLuShiJian'));\n+  // 7 天内有效\n+  return Date.now() - shiJian < 7 * 24 * 60 * 60 * 1000;\n+}",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/auth/denglu.ts",
+   "side": "right",
+   "from_line": 28,
+   "to_line": 32,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`yiDengLu` 只读 `localStorage`，没勾“记住我”的用户登录时间存在 `sessionStorage`，`Number(null)` 是 0，`Date.now() - 0` 永远大于 7 天，这类用户会被当成未登录。要和 `huoQuToken` 一样两个 storage 都查。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

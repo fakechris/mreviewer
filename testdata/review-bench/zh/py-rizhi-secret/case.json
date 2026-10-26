@@ -1,0 +1,52 @@
+{
+ "id": "zh/py-rizhi-secret",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/py-rizhi-secret",
+  "owner": "zh",
+  "repo": "py-rizhi-secret",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "第三方对接：调用短信网关",
+  "description": "",
+  "language": "Python",
+  "category": "self-built",
+  "changed_lines": 12
+ },
+ "diffs": [
+  {
+   "old_path": "tongzhi/duanxin.py",
+   "new_path": "tongzhi/duanxin.py",
+   "diff": "@@ -5,6 +5,20 @@ import requests\n \n WANGGUAN = \"https://sms.example.com/send\"\n \n+\n+def fasong_duanxin(shouji: str, neirong: str, miyao: str) -> bool:\n+    \"\"\"调用短信网关发送通知，返回是否成功。\"\"\"\n+    canshu = {\"mobile\": shouji, \"content\": neirong, \"sign\": miyao}\n+    logger.info(\"发送短信请求: %s\", canshu)\n+    try:\n+        resp = requests.post(WANGGUAN, json=canshu)\n+    except requests.RequestException as e:\n+        logger.error(\"短信网关异常: %s\", e)\n+        return False\n+    # 网关约定 code=0 表示成功\n+    return resp.json().get(\"code\") == 0",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "tongzhi/duanxin.py",
+   "side": "right",
+   "from_line": 11,
+   "to_line": 12,
+   "category": "Security Vulnerability",
+   "context": "Diff Level",
+   "note": "把包含 `miyao`（签名密钥）和用户手机号的 `canshu` 整个打进 info 日志，密钥和个人信息会进日志平台。日志里应去掉 `sign` 并对手机号脱敏。",
+   "source": "human"
+  },
+  {
+   "path": "tongzhi/duanxin.py",
+   "side": "right",
+   "from_line": 14,
+   "to_line": 14,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`requests.post` 没有设置 `timeout`，网关卡住时这个请求会无限等待，把调用方的 worker 挂死，至少要 `timeout=(3, 10)` 这类配置。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

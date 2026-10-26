@@ -1,0 +1,31 @@
+{
+ "id": "control/acd3a9f4d1",
+ "source": "mreviewer-history",
+ "kind": "control",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/fakechris/mreviewer/commit/acd3a9f4d1ca565f373149645589ca32a0a749c2",
+  "owner": "fakechris",
+  "repo": "mreviewer",
+  "number": 0,
+  "base_sha": "4955f342c344d4cc462f34c0a5fcecb9090a9a3b",
+  "head_sha": "acd3a9f4d1ca565f373149645589ca32a0a749c2",
+  "title": "docs: add quickstart guide for core functionality verification",
+  "description": "",
+  "language": "Go",
+  "category": "control",
+  "changed_lines": 79
+ },
+ "diffs": [
+  {
+   "old_path": "QUICKSTART.md",
+   "new_path": "QUICKSTART.md",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false,
+   "diff": "@@ -0,0 +1,79 @@\n+# 核心功能验证指南\n+\n+## 前提条件\n+\n+1. 已配置 `.env` 文件（从 `.env.example` 复制）\n+2. 填入真实的 GitLab 和 MiniMax 凭证\n+3. Docker 和 Docker Compose 已安装\n+\n+## 验证 1: GitLab Webhook Review（完整流程）\n+\n+### 启动服务\n+\n+```bash\n+docker-compose up -d\n+docker-compose logs -f\n+```\n+\n+### 配置 GitLab Webhook\n+\n+在 GitLab 项目设置中：\n+- URL: `http://your-server:3100/webhook`\n+- Secret: `.env` 中的 `GITLAB_WEBHOOK_SECRET`\n+- 触发器: Merge request events\n+\n+### 测试\n+\n+创建或更新一个 MR，观察：\n+- `docker-compose logs worker` 看到处理日志\n+- GitLab MR 页面出现 AI review 评论\n+\n+## 验证 2: CLI 手动触发 Review\n+\n+### 使用 SQLite（无需 Docker）\n+\n+```bash\n+# 配置 SQLite DSN\n+export MYSQL_DSN=\"sqlite://./mreviewer.db\"\n+\n+# 手动触发指定 MR\n+go run ./cmd/manual-trigger \\\n+  --project-id=123 \\\n+  --mr-iid=456 \\\n+  --wait\n+```\n+\n+### 使用 MySQL（需要 Docker）\n+\n+```bash\n+# 启动 MySQL\n+docker-compose up -d mysql\n+\n+# 运行迁移\n+go run ./cmd/migrate up\n+\n+# 手动触发\n+go run ./cmd/manual-trigger \\\n+  --project-id=123 \\\n+  --mr-iid=456 \\\n+  --wait\n+```\n+\n+## 验证成功标志\n+\n+- ✅ Worker 日志显示 \"review run completed\"\n+- ✅ GitLab MR 出现 discussion 评论\n+- ✅ 数据库中有 review_runs 和 review_findings 记录\n+\n+## 故障排查\n+\n+```bash\n+# 查看 worker 日志\n+docker-compose logs worker\n+\n+# 查看数据库\n+docker-compose exec mysql mysql -u mreviewer -p mreviewer\n+\n+# 检查配置\n+go run ./cmd/manual-trigger --help\n+```"
+  }
+ ],
+ "golden": [],
+ "negatives": []
+}

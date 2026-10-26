@@ -1,0 +1,108 @@
+{
+ "id": "aacr/infiniflow__ragflow__6691",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/infiniflow/ragflow/pull/6691",
+  "owner": "infiniflow",
+  "repo": "ragflow",
+  "number": 6691,
+  "base_sha": "0a42e5777eb966b26aaf8f2a7d593ae99a4aa87a",
+  "head_sha": "a63caa1087852ada98964678be26b7c4d8363af6",
+  "title": "fix: Resolve KnowledgeGraph entity resolution errors (#6653)",
+  "description": "### Related Issue: #6653\r\n### Environment:\r\n\r\nUsing nightly version\r\n\r\nElasticsearch database\r\n\r\n### Bug Description:\r\nWhen clicking the \"Entity Resolution\" button in KnowledgeGraph, encountered the following errors:\r\n\r\ngraphrag/entity_resolution.py\r\n\r\n```\r\nlist(sub_connect_graph.nodes) AttributeError\r\n```\r\n\r\ngraphrag/general/extractor.py\r\n```\r\nnode0_attrs[attr] = sorted(set(node0_attrs[attr].extend(node1_attrs[attr])))\r\nTypeError: 'NoneType' object is not iterable\r\n```\r\n```\r\nfor attr in [\"keywords\", \"source_id\"]:  \r\n KeyError I think attribute \"keywords\" is in edges not nodes\r\n```\r\ngraphrag/utils.py\r\n```\r\nsettings.docStoreConn.delete()  # Sync function called as async\r\n```\r\n### Changes Made:\r\n\r\nFixed AttributeError in entity_resolution.py by properly handling graph nodes\r\n\r\nFixed TypeError and KeyError in extractor.py by separate operations\r\n\r\nCorrected async/sync mismatch in document deletion call",
+  "language": "Python",
+  "category": "Bug Fix",
+  "changed_lines": 11
+ },
+ "diffs": [
+  {
+   "old_path": "graphrag/entity_resolution.py",
+   "new_path": "graphrag/entity_resolution.py",
+   "diff": "@@ -111,7 +111,7 @@ async def __call__(self, graph: nx.Graph,\n         connect_graph.add_edges_from(resolution_result)\n         async with trio.open_nursery() as nursery:\n             for sub_connect_graph in nx.connected_components(connect_graph):\n-                merging_nodes = list(sub_connect_graph.nodes)\n+                merging_nodes = list(sub_connect_graph)\n                 nursery.start_soon(lambda: self._merge_graph_nodes(graph, merging_nodes, change))\n \n         # Update pagerank",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "graphrag/general/extractor.py",
+   "new_path": "graphrag/general/extractor.py",
+   "diff": "@@ -201,8 +201,8 @@ async def _merge_graph_nodes(self, graph: nx.Graph, nodes: list[str], change: Gr\n             # Merge two nodes, keep \"entity_name\", \"entity_type\", \"page_rank\" unchanged.\n             node1_attrs = graph.nodes[node1]\n             node0_attrs[\"description\"] += f\"{GRAPH_FIELD_SEP}{node1_attrs['description']}\"\n-            for attr in [\"keywords\", \"source_id\"]:\n-                node0_attrs[attr] = sorted(set(node0_attrs[attr].extend(node1_attrs[attr])))\n+            node0_attrs[\"source_id\"].extend(node1_attrs[\"source_id\"])\n+            node0_attrs[\"source_id\"] = sorted(set(node0_attrs[\"source_id\"]))\n             for neighbor in graph.neighbors(node1):\n                 change.removed_edges.add(get_from_to(node1, neighbor))\n                 if neighbor not in nodes_set:\n@@ -213,8 +213,10 @@ async def _merge_graph_nodes(self, graph: nx.Graph, nodes: list[str], change: Gr\n                         edge0_attrs = graph.get_edge_data(nodes[0], neighbor)\n                         edge0_attrs[\"weight\"] += edge1_attrs[\"weight\"]\n                         edge0_attrs[\"description\"] += f\"{GRAPH_FIELD_SEP}{edge1_attrs['description']}\"\n-                        edge0_attrs[\"keywords\"] = list(set(edge0_attrs[\"keywords\"].extend(edge1_attrs[\"keywords\"])))\n-                        edge0_attrs[\"source_id\"] = list(set(edge0_attrs[\"source_id\"].extend(edge1_attrs[\"source_id\"])))\n+                        edge0_attrs[\"keywords\"].extend(edge1_attrs[\"keywords\"])\n+                        edge0_attrs[\"keywords\"] = list(set(edge0_attrs[\"keywords\"]))\n+                        edge0_attrs[\"source_id\"].extend(edge1_attrs[\"source_id\"])\n+                        edge0_attrs[\"source_id\"] = list(set(edge0_attrs[\"source_id\"]))\n                         edge0_attrs[\"description\"] = await self._handle_entity_relation_summary(f\"({nodes[0]}, {neighbor})\", edge0_attrs[\"description\"])\n                         graph.add_edge(nodes[0], neighbor, **edge0_attrs)\n                     else:",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "graphrag/utils.py",
+   "new_path": "graphrag/utils.py",
+   "diff": "@@ -439,7 +439,7 @@ async def set_graph(tenant_id: str, kb_id: str, embd_mdl, graph: nx.Graph, chang\n     if change.removed_edges:\n         async with trio.open_nursery() as nursery:\n             for from_node, to_node in change.removed_edges:\n-                nursery.start_soon(lambda: settings.docStoreConn.delete({\"knowledge_graph_kwd\": [\"relation\"], \"from_entity_kwd\": from_node, \"to_entity_kwd\": to_node}, search.index_name(tenant_id), kb_id))\n+                 await trio.to_thread.run_sync(lambda: settings.docStoreConn.delete({\"knowledge_graph_kwd\": [\"relation\"], \"from_entity_kwd\": from_node, \"to_entity_kwd\": to_node}, search.index_name(tenant_id), kb_id))\n     now = trio.current_time()\n     if callback:\n         callback(msg=f\"set_graph removed {len(change.removed_nodes)} nodes and {len(change.removed_edges)} edges from index in {now - start:.2f}s.\")",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "graphrag/entity_resolution.py",
+   "side": "right",
+   "from_line": 114,
+   "to_line": 114,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Accessing `.nodes` on the result of `nx.connected_components` (which returns node sets, not graph objects) causes AttributeError; use the set of nodes directly.",
+   "source": "human"
+  },
+  {
+   "path": "graphrag/entity_resolution.py",
+   "side": "right",
+   "from_line": 115,
+   "to_line": 115,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Critical bug: Lambda function captures loop variable by reference. All async tasks will use the last value of `merging_nodes` instead of their intended values. This will cause incorrect node merging behavior. Fix by using a default argument to capture the value: `lambda nodes=merging_nodes: self._merge_graph_nodes(graph, nodes, change)`\n\n```suggestion\n                nursery.start_soon(lambda nodes=merging_nodes: self._merge_graph_nodes(graph, nodes, change))\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "graphrag/general/extractor.py",
+   "side": "right",
+   "from_line": 205,
+   "to_line": 205,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The direct access to `node1_attrs[\"source_id\"]` risks KeyError if the attribute is missing; replace with `.get(\"source_id\", [])` to safely handle absent attributes during list extension.",
+   "source": "human"
+  },
+  {
+   "path": "graphrag/general/extractor.py",
+   "side": "right",
+   "from_line": 216,
+   "to_line": 217,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Similar to prior corrections applied to node merging logic, suggest applying consistent idiom here too i.e., prefer creating new combined collection over mutating existing one e.g.: `edge0_attrs[\"keywords\"] = list(set(edge0_attrs[\"keywords\"] + edge1_attrs[\"keywords\"]))`. Improves readability & reduces mutation-related confusion.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "graphrag/general/extractor.py",
+   "side": "right",
+   "from_line": 216,
+   "to_line": 219,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Type/ordering consistency: for edges you deduplicate with `list(set(...))`, which produces non-deterministic order. Elsewhere you use `sorted(set(...))` (node source_id). If downstream relies on stable ordering (e.g., tests, hashing, serialization diffs), consider using `sorted(set(...))` consistently for both `keywords` and `source_id`. Also ensure the attributes exist and are lists before calling `extend`.\n\n```suggestion\n                        if isinstance(edge0_attrs.get(\"keywords\"), list) and isinstance(edge1_attrs.get(\"keywords\"), list):\n                            edge0_attrs[\"keywords\"].extend(edge1_attrs[\"keywords\"])\n                            edge0_attrs[\"keywords\"] = sorted(set(edge0_attrs[\"keywords\"]))\n                        \n                        if isinstance(edge0_attrs.get(\"source_id\"), list) and isinstance(edge1_attrs.get(\"source_id\"), list):\n                            edge0_attrs[\"source_id\"].extend(edge1_attrs[\"source_id\"])\n                            edge0_attrs[\"source_id\"] = sorted(set(edge0_attrs[\"source_id\"]))\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "graphrag/utils.py",
+   "side": "right",
+   "from_line": 442,
+   "to_line": 442,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "The change replaces concurrent edge deletion (via `nursery.start_soon`) with sequential execution (via `await trio.to_thread.run_sync`), causing unnecessary performance degradation when removing multiple edges.",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

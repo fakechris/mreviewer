@@ -1,0 +1,119 @@
+{
+ "id": "aacr/linera-io__linera-protocol__4639",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/linera-io/linera-protocol/pull/4639",
+  "owner": "linera-io",
+  "repo": "linera-protocol",
+  "number": 4639,
+  "base_sha": "c31634e52d719fdf60694f47812e2f007022ae26",
+  "head_sha": "3535ddb83de7dfae5db1732a7f1535031d31380a",
+  "title": "Add a limit for the number of received_log entries in a chain info response",
+  "description": "## Motivation\r\n\r\nThe huge amount of entries in the `received_log` seems to be making it impossible to sync the old GoL chain on Testnet Conway.\r\n\r\n## Proposal\r\n\r\nLimit the number of returned entries in a single response. Client should request more entries with an increased offset until the number of returned entries is less than the limit (indicating that there are no more entries).\r\n\r\n## Test Plan\r\n\r\nCI; Manual testing on the testnet will show whether this fixes the syncing issue\r\n\r\n## Release Plan\r\n\r\n- These changes should be backported to the latest `testnet` branch, then\r\n    - be released in a new SDK,\r\n    - be released in a validator hotfix.\r\n\r\n## Links\r\n\r\n- [reviewer checklist](https://github.com/linera-io/linera-protocol/blob/main/CONTRIBUTING.md#reviewer-checklist)\r\n",
+  "language": "Rust",
+  "category": "Bug Fix",
+  "changed_lines": 40
+ },
+ "diffs": [
+  {
+   "old_path": "linera-core/src/chain_worker/mod.rs",
+   "new_path": "linera-core/src/chain_worker/mod.rs",
+   "diff": "@@ -14,5 +14,5 @@ pub(crate) use self::state::CrossChainUpdateHelper;\n pub(crate) use self::{\n     actor::{ChainWorkerActor, ChainWorkerRequest},\n     config::ChainWorkerConfig,\n-    state::BlockOutcome,\n+    state::{BlockOutcome, CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES},\n };",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "linera-core/src/chain_worker/state.rs",
+   "new_path": "linera-core/src/chain_worker/state.rs",
+   "diff": "@@ -48,6 +48,10 @@ use crate::{\n     worker::{NetworkActions, Notification, Reason, WorkerError},\n };\n \n+/// The maximum number of entries in a received_log included in a ChainInfo response.\n+// TODO(#4638): Revisit the number.\n+pub const CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES: usize = 1000;\n+\n /// The state of the chain worker.\n pub(crate) struct ChainWorkerState<StorageClient>\n where\n@@ -1411,7 +1415,9 @@ where\n         info.requested_sent_certificate_hashes = hashes;\n         if let Some(start) = query.request_received_log_excluding_first_n {\n             let start = usize::try_from(start).map_err(|_| ArithmeticError::Overflow)?;\n-            info.requested_received_log = chain.received_log.read(start..).await?;\n+            let end = (start.saturating_add(CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES))\n+                .min(chain.received_log.count());\n+            info.requested_received_log = chain.received_log.read(start..end).await?;\n         }\n         if query.request_manager_values {\n             info.manager.add_values(&chain.manager);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "linera-core/src/client/mod.rs",
+   "new_path": "linera-core/src/client/mod.rs",
+   "diff": "@@ -69,6 +69,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;\n use tracing::{debug, error, info, instrument, trace, warn, Instrument as _};\n \n use crate::{\n+    chain_worker::CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES,\n     data_types::{ChainInfo, ChainInfoQuery, ChainInfoResponse, ClientOutcome, RoundTimeout},\n     environment::Environment,\n     local_node::{LocalChainInfoExt as _, LocalNodeClient, LocalNodeError},\n@@ -842,9 +843,18 @@ impl<Env: Environment> Client<Env> {\n         let (max_epoch, committees) = self.admin_committees().await?;\n \n         // Retrieve the list of newly received certificates from this validator.\n-        let query = ChainInfoQuery::new(chain_id).with_received_log_excluding_first_n(tracker);\n-        let info = remote_node.handle_chain_info_query(query).await?;\n-        let remote_log = info.requested_received_log;\n+        let mut remote_log = Vec::new();\n+        let mut offset = tracker;\n+        loop {\n+            let query = ChainInfoQuery::new(chain_id).with_received_log_excluding_first_n(offset);\n+            let info = remote_node.handle_chain_info_query(query).await?;\n+            let received_entries = info.requested_received_log.len();\n+            offset += received_entries as u64;\n+            remote_log.extend(info.requested_received_log);\n+            if received_entries < CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES {\n+                break;\n+            }\n+        }\n         let remote_heights = Self::heights_per_chain(&remote_log);\n \n         // Obtain the next block height we need in the local node, for each chain.",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "linera-core/src/chain_worker/state.rs",
+   "side": "right",
+   "from_line": 51,
+   "to_line": 51,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Doc comment should format `received_log` and `ChainInfo` as code identifiers using backticks.",
+   "source": "human"
+  },
+  {
+   "path": "linera-core/src/chain_worker/state.rs",
+   "side": "right",
+   "from_line": 53,
+   "to_line": 53,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Making this `pub` exposes a protocol/behavior constant outside the crate. If this limit is only an internal safeguard for responses, consider `pub(crate)` to avoid accidental external coupling. If it must be public, document whether it’s a hard API guarantee and whether changing it is a breaking change.\n\n```suggestion\npub(crate) const CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES: usize = 1000;\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "linera-core/src/chain_worker/state.rs",
+   "side": "right",
+   "from_line": 1418,
+   "to_line": 1420,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Consider adding validation to handle the case where `start >= chain.received_log.count()`. Currently, if start exceeds the log count, the range `start..end` could be invalid or empty. It might be better to return early with an empty result or an error to make the behavior explicit.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "linera-core/src/chain_worker/state.rs",
+   "side": "right",
+   "from_line": 1418,
+   "to_line": 1419,
+   "category": "Performance",
+   "context": "Repo Level",
+   "note": "The pagination loop condition might result in an extra unnecessary request when exactly CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES entries are returned. Consider using <= comparison to break when the number of received entries is less than or equal to the maximum.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "linera-core/src/client/mod.rs",
+   "side": "right",
+   "from_line": 846,
+   "to_line": 857,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The pagination loop lacks a safeguard against infinite iteration. If entries are being added to the `received_log` faster than the client paginates through it (e.g., during concurrent writes), the condition `received_entries < CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES` might never be met, potentially causing an infinite loop.\n\nConsider adding a maximum iteration limit or a timeout safeguard to prevent this edge case. For example:\n```rust\nlet mut iterations = 0;\nconst MAX_ITERATIONS: u32 = 1000;\nloop {\n    let query = ChainInfoQuery::new(chain_id).with_received_log_excluding_first_n(offset);\n    let info = remote_node.handle_chain_info_query(query).await?;\n    let received_entries = info.requested_received_log.len();\n    offset += received_entries as u64;\n    remote_log.extend(info.requested_received_log);\n    if received_entries < CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES {\n        break;\n    }\n    iterations += 1;\n    if iterations >= MAX_ITERATIONS {\n        warn!(\"Reached maximum iterations while paginating received log for chain {:?}\", chain_id);\n        break;\n    }\n}\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "linera-core/src/client/mod.rs",
+   "side": "right",
+   "from_line": 848,
+   "to_line": 857,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "The pagination loop will make an extra unnecessary query when the total number of entries is exactly a multiple of CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES (1000). For example, if there are exactly 2000 new entries, it will make 3 queries returning (1000, 1000, 0) instead of stopping after 2 queries. While this doesn't affect correctness, consider adding a check to avoid the extra query, such as tracking if we've reached the expected end or checking if the response is empty before extending the vector.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "linera-core/src/chain_worker/mod.rs",
+   "side": "right",
+   "from_line": 17,
+   "to_line": 17,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Re-exporting `CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES` from `chain_worker::mod` makes it part of the `chain_worker` module API surface and encourages cross-module coupling (e.g., `client` now imports it). If this constant is intended as an internal implementation detail of ChainInfo pagination, consider keeping it in `state` and exposing a dedicated helper/API instead, or at least making the re-export `pub(crate)`/documenting stability guarantees (semver) if this is meant to be consumed outside the crate.\n\n```suggestion\n    // Consider limiting visibility if not part of the public API:\n    // pub(crate) use state::CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES;\n    state::BlockOutcome,\n```",
+   "source": "GPT-5.2"
+  }
+ ]
+}

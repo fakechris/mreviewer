@@ -1,0 +1,42 @@
+{
+ "id": "zh/go-peizhi-default",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/go-peizhi-default",
+  "owner": "zh",
+  "repo": "go-peizhi-default",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "配置加载：支持环境变量覆盖超时",
+  "description": "",
+  "language": "Go",
+  "category": "self-built",
+  "changed_lines": 11
+ },
+ "diffs": [
+  {
+   "old_path": "internal/peizhi/load.go",
+   "new_path": "internal/peizhi/load.go",
+   "diff": "@@ -15,10 +15,21 @@ type PeiZhi struct {\n \tChaoShi time.Duration\n }\n \n func Load() (*PeiZhi, error) {\n \tpz := &PeiZhi{ChaoShi: 30 * time.Second}\n+\t// 允许用 CHAOSHI_MIAO 覆盖默认超时（单位：秒）\n+\tif v := os.Getenv(\"CHAOSHI_MIAO\"); v != \"\" {\n+\t\tmiao, err := strconv.Atoi(v)\n+\t\tif err != nil {\n+\t\t\treturn nil, fmt.Errorf(\"CHAOSHI_MIAO 不是整数: %q\", v)\n+\t\t}\n+\t\tpz.ChaoShi = time.Duration(miao)\n+\t}\n+\tif pz.ChaoShi <= 0 {\n+\t\tpz.ChaoShi = 30 * time.Second\n+\t}\n \treturn pz, nil\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "internal/peizhi/load.go",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 26,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`time.Duration(miao)` 的单位是纳秒，不是注释里说的秒，配 `CHAOSHI_MIAO=30` 实际超时只有 30ns，所有请求都会立刻超时。应该写 `time.Duration(miao) * time.Second`。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

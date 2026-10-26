@@ -242,6 +242,7 @@ Key flags:
 Related subcommand:
 
 - `mreviewer structured-output-probe --route <configured-route> --mode tool --runs 10`: live probe for route-level structured output behavior
+- `mreviewer bench review --config config.bench.yaml --route <route> --judge-route <openai-compatible-route>`: score a route on the offline review corpus under `testdata/review-bench/` (AACR-Bench samples, self-built Chinese cases, control cases) and print precision / recall / F1, findings and tokens per case, control-group false positives and Chinese naturalness; `--findings <json>` scores another tool's output on the same corpus
 
 JSON output includes:
 - `review_brief`

@@ -1,0 +1,55 @@
+{
+ "id": "control/a32754e330",
+ "source": "mreviewer-history",
+ "kind": "control",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/fakechris/mreviewer/commit/a32754e3306b067ec790e7018469b55ae9d93df7",
+  "owner": "fakechris",
+  "repo": "mreviewer",
+  "number": 0,
+  "base_sha": "7d6197412c1b6e33c8f2dfd8a691af0a4d5ece33",
+  "head_sha": "a32754e3306b067ec790e7018469b55ae9d93df7",
+  "title": "docs: fix README links and add deployment guides",
+  "description": "- Fix broken documentation links in README\n- Add DEPLOYMENT.md for Docker build and deployment\n- Add WEBHOOK.md for GitLab webhook configuration (project/group/system level)\n- Update both English and Chinese READMEs",
+  "language": "Go",
+  "category": "control",
+  "changed_lines": 154
+ },
+ "diffs": [
+  {
+   "old_path": "DEPLOYMENT.md",
+   "new_path": "DEPLOYMENT.md",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false,
+   "diff": "@@ -0,0 +1,83 @@\n+# Docker 部署指南\n+\n+## 一键启动（本地测试）\n+\n+```bash\n+# 1. 配置环境变量\n+cp .env.example .env\n+# 编辑 .env 填入 GitLab 和 MiniMax 凭证\n+\n+# 2. 启动所有服务\n+docker-compose up -d\n+\n+# 3. 查看日志\n+docker-compose logs -f worker\n+```\n+\n+## 构建和推送到私有仓库\n+\n+### 1. 构建镜像\n+\n+```bash\n+# 构建 worker\n+docker build --build-arg TARGET_CMD=./cmd/worker -t your-registry/mreviewer-worker:latest .\n+\n+# 构建 ingress\n+docker build --build-arg TARGET_CMD=./cmd/ingress -t your-registry/mreviewer-ingress:latest .\n+```\n+\n+### 2. 推送到仓库\n+\n+```bash\n+docker push your-registry/mreviewer-worker:latest\n+docker push your-registry/mreviewer-ingress:latest\n+```\n+\n+### 3. 服务器部署\n+\n+在服务器上创建 `docker-compose.prod.yaml`:\n+\n+```yaml\n+services:\n+  mysql:\n+    image: mysql:8.4\n+    restart: unless-stopped\n+    environment:\n+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}\n+      MYSQL_DATABASE: mreviewer\n+      MYSQL_USER: mreviewer\n+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}\n+    volumes:\n+      - mysql_data:/var/lib/mysql\n+\n+  redis:\n+    image: redis:7\n+    restart: unless-stopped\n+\n+  ingress:\n+    image: your-registry/mreviewer-ingress:latest\n+    restart: unless-stopped\n+    ports:\n+      - \"3100:3100\"\n+    env_file: .env\n+    depends_on:\n+      - mysql\n+      - redis\n+\n+  worker:\n+    image: your-registry/mreviewer-worker:latest\n+    restart: unless-stopped\n+    env_file: .env\n+    depends_on:\n+      - mysql\n+      - redis\n+\n+volumes:\n+  mysql_data:\n+```\n+\n+启动：\n+\n+```bash\n+docker-compose -f docker-compose.prod.yaml up -d\n+```"
+  },
+  {
+   "old_path": "README.md",
+   "new_path": "README.md",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false,
+   "diff": "@@ -62,9 +62,14 @@ GitLab → ingress (webhook) → MySQL/SQLite\n \n ## Documentation\n \n-- [Configuration Guide](./docs/configuration.md)\n-- [Deployment Options](./docs/deployment.md)\n-- [Provider Setup](./docs/providers.md)\n+- [Quick Start Guide](./QUICKSTART.md)\n+- [GitLab Webhook Setup](./WEBHOOK.md)\n+- [Docker Deployment](./DEPLOYMENT.md)\n+- [Configuration File](./config.yaml)\n+\n+## Roadmap\n+\n+See [TODOS.md](./TODOS.md) for current priorities and [Strategic Direction](./docs/designs/strategic-direction.md) for long-term vision.\n \n ## License\n "
+  },
+  {
+   "old_path": "README.zh-CN.md",
+   "new_path": "README.zh-CN.md",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false,
+   "diff": "@@ -62,9 +62,14 @@ GitLab → ingress (webhook) → MySQL/SQLite\n \n ## 文档\n \n-- [配置指南](./docs/configuration.md)\n-- [部署选项](./docs/deployment.md)\n-- [模型配置](./docs/providers.md)\n+- [快速开始](./QUICKSTART.md)\n+- [GitLab Webhook 配置](./WEBHOOK.md)\n+- [Docker 部署](./DEPLOYMENT.md)\n+- [配置文件](./config.yaml)\n+\n+## Roadmap\n+\n+查看 [TODOS.md](./TODOS.md) 了解当前优先级，[战略方向](./docs/designs/strategic-direction.md) 了解长期愿景。\n \n ## 许可证\n "
+  },
+  {
+   "old_path": "WEBHOOK.md",
+   "new_path": "WEBHOOK.md",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false,
+   "diff": "@@ -0,0 +1,49 @@\n+# GitLab Webhook 配置指南\n+\n+## 方式 1: 逐个项目配置（所有版本适用）\n+\n+在每个 GitLab 项目中：\n+\n+1. 进入 **Settings → Webhooks**\n+2. 填写：\n+   - URL: `http://your-server:3100/webhook`\n+   - Secret Token: `.env` 中的 `GITLAB_WEBHOOK_SECRET`\n+   - Trigger: 勾选 **Merge request events**\n+3. 点击 **Add webhook**\n+\n+## 方式 2: 组级别配置（Premium/Ultimate）\n+\n+如果你有 GitLab Premium 或 Ultimate：\n+\n+1. 进入 **Group → Settings → Webhooks**\n+2. 配置同上\n+3. 组内所有项目自动生效\n+\n+## 方式 3: 全实例配置（管理员）\n+\n+如果你是 GitLab 管理员：\n+\n+1. 进入 **Admin Area → System Hooks**\n+2. 填写：\n+   - URL: `http://your-server:3100/webhook`\n+   - Secret Token: `.env` 中的 `GITLAB_WEBHOOK_SECRET`\n+   - Trigger: 勾选 **Merge Request Hook**\n+3. 点击 **Add system hook**\n+4. 全实例所有项目自动生效\n+\n+## 验证 Webhook\n+\n+创建或更新一个 MR，检查：\n+\n+```bash\n+# 查看 ingress 日志\n+docker-compose logs ingress | grep webhook\n+\n+# 查看 worker 处理日志\n+docker-compose logs worker | grep \"review run\"\n+```\n+\n+成功标志：\n+- Ingress 收到 webhook 请求（200 响应）\n+- Worker 开始处理 review run\n+- GitLab MR 页面出现 AI 评论"
+  }
+ ],
+ "golden": [],
+ "negatives": []
+}

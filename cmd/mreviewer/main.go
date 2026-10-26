@@ -104,6 +104,8 @@ func runCLI(args []string, reviewDeps runtimeDeps) int {
 		return runSchemaBenchmarkCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
 	case "structured-output-probe":
 		return runStructuredOutputProbeCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
+	case "bench":
+		return runBenchCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
 	case "init":
 		return runInitCommand(args[1:], reviewDeps.stdout, reviewDeps.stderr)
 	case "doctor":
@@ -132,6 +134,9 @@ func runHelpCommand(args []string, deps runtimeDeps) int {
 		return runSchemaBenchmarkCommand([]string{"--help"}, deps.stdout, deps.stderr)
 	case "structured-output-probe":
 		return runStructuredOutputProbeCommand([]string{"--help"}, deps.stdout, deps.stderr)
+	case "bench":
+		printBenchHelp(deps.stdout)
+		return 0
 	case "init":
 		return runInitCommand([]string{"--help"}, deps.stdout, deps.stderr)
 	case "doctor":

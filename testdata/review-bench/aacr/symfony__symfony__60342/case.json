@@ -1,0 +1,83 @@
+{
+ "id": "aacr/symfony__symfony__60342",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/symfony/symfony/pull/60342",
+  "owner": "symfony",
+  "repo": "symfony",
+  "number": 60342,
+  "base_sha": "0b4d21c3f91dd2cd2cc49739ab31a1457cf001ea",
+  "head_sha": "2b9721f04744fb213808f754ac98cd563384b3e5",
+  "title": "[Notifier] document the array shape of the content option",
+  "description": "| Q             | A\r\n| ------------- | ---\r\n| Branch?       | 7.3\r\n| Bug fix?      | no\r\n| New feature?  | no\r\n| Deprecations? | no\r\n| Issues        | Fix https://github.com/symfony/symfony/pull/60140#discussion_r2028459056\r\n| License       | MIT\r\n\r\nbut I wonder: is it actually correct that `$content` is an array, according to https://www.w3.org/TR/activitystreams-vocabulary/#dfn-content I would have guessed that it needs to be a string or (if it was an array), we would have to call it `contentMap` in the payload instead",
+  "language": "PHP",
+  "category": "Documentation Update",
+  "changed_lines": 32
+ },
+ "diffs": [
+  {
+   "old_path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+   "new_path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+   "diff": "@@ -22,6 +22,22 @@ final class MercureOptions implements MessageOptionsInterface\n \n     /**\n      * @param string|string[]|null $topics\n+     * @param array{\n+     *     actions?: array,\n+     *     badge?: string,\n+     *     body?: string,\n+     *     data?: mixed,\n+     *     dir?: 'auto'|'ltr'|'rtl',\n+     *     icon?: string,\n+     *     image?: string,\n+     *     lang?: string,\n+     *     renotify?: bool,\n+     *     requireInteraction?: bool,\n+     *     silent?: bool,\n+     *     tag?: string,\n+     *     timestamp?: int,\n+     *     vibrate?: int[],\n+     * }|null $content\n      */\n     public function __construct(\n         string|array|null $topics = null,\n@@ -62,6 +78,24 @@ public function getRetry(): ?int\n         return $this->retry;\n     }\n \n+    /**\n+     * @return array{\n+     *      actions?: array,\n+     *      badge?: string,\n+     *      body?: string,\n+     *      data?: mixed,\n+     *      dir?: 'auto'|'ltr'|'rtl',\n+     *      icon?: string,\n+     *      image?: string,\n+     *      lang?: string,\n+     *      renotify?: bool,\n+     *      requireInteraction?: bool,\n+     *      silent?: bool,\n+     *      tag?: string,\n+     *      timestamp?: int,\n+     *      vibrate?: int[],\n+     *  }|null\n+     */\n     public function getContent(): ?array\n     {\n         return $this->content;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+   "side": "right",
+   "from_line": 25,
+   "to_line": 27,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The array-shape type is very broad for `actions?: array`. If this is intended to model the Web Notification API, consider specifying the element shape (e.g., `list<array{action?: string,title?: string,icon?: string}>`) or at least `list<array>` to avoid `array` meaning `array<string|int, mixed>` which defeats static analysis.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+   "side": "right",
+   "from_line": 39,
+   "to_line": 39,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The `vibrate` option's type annotation is incorrect; it should be `int|list<int>` instead of `int[]` to properly support both single integers and integer arrays as defined by the Vibration API specification.",
+   "source": "human"
+  },
+  {
+   "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+   "side": "right",
+   "from_line": 82,
+   "to_line": 84,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "The docblock duplicates the same array-shape in both `@param $content` and `@return`. Consider extracting to a `@phpstan-type`/`@psalm-type` alias (if the project uses them) to keep the shapes in sync and reduce maintenance risk.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+   "side": "right",
+   "from_line": 97,
+   "to_line": 99,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Minor formatting inconsistency: There's an extra space before the closing brace in the return type annotation. The line shows `*  }|null` (two spaces) instead of `* }|null` (one space), which is inconsistent with the constructor's PHPDoc formatting above.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 26,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The added `actions` parameter in notification options is invalid because the Notification API restricts it to persistent notifications; including it in non-persistent contexts would cause runtime errors.",
+   "source": "human"
+  }
+ ]
+}

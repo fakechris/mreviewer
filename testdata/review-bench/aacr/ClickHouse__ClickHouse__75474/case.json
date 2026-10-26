@@ -1,0 +1,483 @@
+{
+ "id": "aacr/ClickHouse__ClickHouse__75474",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/ClickHouse/ClickHouse/pull/75474",
+  "owner": "ClickHouse",
+  "repo": "ClickHouse",
+  "number": 75474,
+  "base_sha": "1ac5c4a6a23b4742624d64db210f10ca95133b11",
+  "head_sha": "3eee8866fb55acab61eaba6dc9eebd847f483913",
+  "title": "Stricter checks when attaching/detaching threads to groups",
+  "description": "### Changelog category (leave one):\r\n- Not for changelog (changelog entry is not required)\r\n\r\nCloses https://github.com/ClickHouse/ClickHouse/issues/59114\r\n\r\nIn https://s3.amazonaws.com/clickhouse-test-reports/74014/dcdccd54f13e74c5018f6d40e5a4caa77858dc22/stress_test__debug_.html `CurrentThread::getGroup()` returned nullptr when called from `TCPHandler::processOrdinaryQuery`. This means that calls to `CurrentThread::attachToGroup`/`detachFromGroupIfNotDetached` are not properly nested: someone detached a thread that they didn't attach. (The thread is expected to be attached to a group because the caller of `processOrdinaryQuery` holds a QueryScope for the duration of the call.)\r\n\r\nAlmost all calls to `CurrentThread::attachToGroupIfDetached`/`detachFromGroupIfNotDetached` follow this pattern that looks incorrect:\r\n```\r\n    auto thread_func = [thread_group = CurrentThread::getGroup()]\r\n    {\r\n        SCOPE_EXIT_SAFE(\r\n            if (thread_group)\r\n                CurrentThread::detachFromGroupIfNotDetached();\r\n        );\r\n\r\n        if (thread_group)\r\n            CurrentThread::attachToGroupIfDetached(thread_group);\r\n\r\n        ...\r\n    };\r\n```\r\nIf the thread is already attached to a group, it'll end up detached after this function returns. Normally such `thread_func` is immediately scheduled on a thread pool; then the thread shouldn't be already attached to a group (... or so I'm assuming; there were no asserts about this, so CI on this PR may prove this analysis wrong). But some code sites sometimes call such function directly, e.g. `Aggregator::prepareBlocksAndFillTwoLevelImpl`. AFAICT, this would incorrectly detach the thread from the thread group. I'm guessing this is what caused these test failures (but I didn't try to reproduce this and don't have an explanation for why the crash happens so rarely.)\r\n\r\nThis PR replaces this pattern with a more correct one, with a bunch of asserts, wrapped in a RAII thing.\r\n\r\nMost changes are mechanical. Most substantial ones ar",
+  "language": "C++",
+  "category": "Bug Fix",
+  "changed_lines": 412
+ },
+ "diffs": [
+  {
+   "old_path": "src/AggregateFunctions/UniqExactSet.h",
+   "new_path": "src/AggregateFunctions/UniqExactSet.h",
+   "diff": "@@ -65,14 +65,7 @@ class UniqExactSet\n                 auto data_vec_atomic_index = std::make_shared<std::atomic_uint32_t>(0);\n                 auto thread_func = [data_vec, data_vec_atomic_index, &is_cancelled, thread_group = CurrentThread::getGroup()]()\n                 {\n-                    SCOPE_EXIT_SAFE(\n-                        if (thread_group)\n-                            CurrentThread::detachFromGroupIfNotDetached();\n-                    );\n-                    if (thread_group)\n-                        CurrentThread::attachToGroupIfDetached(thread_group);\n-\n-                    setThreadName(\"UniqExaConvert\");\n+                    ThreadGroupSwitcher switcher(thread_group, \"UniqExaConvert\");\n \n                     while (true)\n                     {\n@@ -135,13 +128,7 @@ class UniqExactSet\n \n                     auto thread_func = [&lhs, &rhs, next_bucket_to_merge, is_cancelled, thread_group = CurrentThread::getGroup()]()\n                     {\n-                        SCOPE_EXIT_SAFE(\n-                            if (thread_group)\n-                                CurrentThread::detachFromGroupIfNotDetached();\n-                        );\n-                        if (thread_group)\n-                            CurrentThread::attachToGroupIfDetached(thread_group);\n-                        setThreadName(\"UniqExactMerger\");\n+                        ThreadGroupSwitcher switcher(thread_group, \"UniqExactMerger\");\n \n                         while (true)\n                         {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Common/CurrentMetrics.cpp",
+   "new_path": "src/Common/CurrentMetrics.cpp",
+   "diff": "@@ -250,6 +250,9 @@\n     M(OutdatedPartsLoadingThreads, \"Number of threads in the threadpool for loading Outdated data parts.\") \\\n     M(OutdatedPartsLoadingThreadsActive, \"Number of active threads in the threadpool for loading Outdated data parts.\") \\\n     M(OutdatedPartsLoadingThreadsScheduled, \"Number of queued or active jobs in the threadpool for loading Outdated data parts.\") \\\n+    M(PolygonDictionaryThreads, \"Number of threads in the threadpool for polygon dictionaries.\") \\\n+    M(PolygonDictionaryThreadsActive, \"Number of active threads in the threadpool for polygon dictionaries.\") \\\n+    M(PolygonDictionaryThreadsScheduled, \"Number of queued or active jobs in the threadpool for polygon dictionaries.\") \\\n     M(DistributedBytesToInsert, \"Number of pending bytes to process for asynchronous insertion into Distributed tables. Number of bytes for every shard is summed.\") \\\n     M(BrokenDistributedBytesToInsert, \"Number of bytes for asynchronous insertion into Distributed tables that has been marked as broken. Number of bytes for every shard is summed.\") \\\n     M(DistributedFilesToInsert, \"Number of pending files to process for asynchronous insertion into Distributed tables. Number of files for every shard is summed.\") \\",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Common/ThreadPool.cpp",
+   "new_path": "src/Common/ThreadPool.cpp",
+   "diff": "@@ -1,4 +1,6 @@\n #include <Common/ThreadPool.h>\n+\n+#include <Common/CurrentThread.h>\n #include <Common/ProfileEvents.h>\n #include <Common/setThreadName.h>\n #include <Common/Exception.h>\n@@ -769,6 +771,11 @@ void ThreadPoolImpl<Thread>::ThreadFromThreadPool::worker()\n \n             CurrentMetrics::Increment metric_active_pool_threads(parent_pool.metric_active_threads);\n \n+#ifdef DEBUG_OR_SANITIZER_BUILD\n+            DB::ThreadStatus * initial_thread = DB::current_thread;\n+            DB::ThreadGroupPtr initial_thread_group = DB::CurrentThread::getGroup();\n+#endif\n+\n             if constexpr (!std::is_same_v<Thread, std::thread>)\n             {\n                 Stopwatch watch;\n@@ -785,6 +792,12 @@ void ThreadPoolImpl<Thread>::ThreadFromThreadPool::worker()\n                 job_data->job();\n             }\n \n+#ifdef DEBUG_OR_SANITIZER_BUILD\n+            DB::ThreadStatus * final_thread = DB::current_thread;\n+            DB::ThreadGroupPtr final_thread_group = DB::CurrentThread::getGroup();\n+            if (final_thread != initial_thread || final_thread_group != initial_thread_group)\n+                throw DB::Exception(DB::ErrorCodes::LOGICAL_ERROR, \"Thread pool job changed current ThreadStatus pointer ({} -> {}) or ThreadGroup ({} -> {}).\", initial_thread ? \"non-nullptr\" : \"nullptr\", final_thread ? \"non-nullptr\" : \"nullptr\", initial_thread_group ? \"master_thread_id \" + std::to_string(initial_thread_group->master_thread_id) : \"nullptr\", final_thread_group ? \"master_thread_id \" + std::to_string(final_thread_group->master_thread_id) : \"nullptr\");\n+#endif\n \n             if (thread_trace_context.root_span.isTraceEnabled())\n             {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Common/ThreadStatus.h",
+   "new_path": "src/Common/ThreadStatus.h",
+   "diff": "@@ -141,17 +141,31 @@ class ThreadGroup\n };\n \n /**\n- * Since merge is executed with multiple threads, this class\n- * switches the parent MemoryTracker as part of the thread group to account all the memory used.\n+ * RAII wrapper around CurrentThread::attachToGroup/detachFromGroupIfNotDetached.\n+ *\n+ * Typically used for inheriting thread group when scheduling tasks on a thread pool:\n+ *   pool->scheduleOrThrow([thread_group = CurrentThread::getGroup()]()\n+ *       {\n+ *           ThreadGroupSwitcher switcher(thread_group, \"MyThread\");\n+ *           ...\n+ *       });\n  */\n class ThreadGroupSwitcher : private boost::noncopyable\n {\n public:\n-    explicit ThreadGroupSwitcher(ThreadGroupPtr thread_group);\n-    ~ThreadGroupSwitcher();\n+    /// If thread_group_ is nullptr or equal to current thread group, does nothing.\n+    /// allow_existing_group:\n+    ///  * If false, asserts that the thread is not already attached to a different group.\n+    ///    Use this when running a task in a thread pool.\n+    ///  * If true, remembers the current group and restores it in destructor.\n+    /// If thread_name is not empty, calls setThreadName along the way; should be at most 15 bytes long.\n+    explicit ThreadGroupSwitcher(ThreadGroupPtr thread_group_, const char * thread_name, bool allow_existing_group = false) noexcept;\n+    ~ThreadGroupSwitcher() noexcept;\n \n private:\n+    ThreadStatus * prev_thread = nullptr;\n     ThreadGroupPtr prev_thread_group;\n+    ThreadGroupPtr thread_group;\n };\n \n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Common/threadPoolCallbackRunner.h",
+   "new_path": "src/Common/threadPoolCallbackRunner.h",
+   "diff": "@@ -32,24 +32,16 @@ ThreadPoolCallbackRunnerUnsafe<Result, Callback> threadPoolCallbackRunnerUnsafe(\n     {\n         auto task = std::make_shared<std::packaged_task<Result()>>([thread_group, thread_name, my_callback = std::move(callback)]() mutable -> Result\n         {\n-            if (thread_group)\n-                CurrentThread::attachToGroup(thread_group);\n+            ThreadGroupSwitcher switcher(thread_group, thread_name.c_str());\n \n             SCOPE_EXIT_SAFE(\n             {\n-                {\n-                    /// Release all captured resources before detaching thread group\n-                    /// Releasing has to use proper memory tracker which has been set here before callback\n+                /// Release all captured resources before detaching thread group\n+                /// Releasing has to use proper memory tracker which has been set here before callback\n \n-                    [[maybe_unused]] auto tmp = std::move(my_callback);\n-                }\n-\n-                if (thread_group)\n-                    CurrentThread::detachFromGroupIfNotDetached();\n+                [[maybe_unused]] auto tmp = std::move(my_callback);\n             });\n \n-            setThreadName(thread_name.data());\n-\n             return my_callback();\n         });\n \n@@ -76,6 +68,8 @@ std::future<Result> scheduleFromThreadPoolUnsafe(T && task, ThreadPool & pool, c\n template <typename Result, typename PoolT = ThreadPool, typename Callback = std::function<Result()>>\n class ThreadPoolCallbackRunnerLocal final\n {\n+    static_assert(!std::is_same_v<PoolT, GlobalThreadPool>, \"Scheduling tasks directly on GlobalThreadPool is not allowed because it doesn't set up CurrentThread. Create a new ThreadPool (local or in SharedThreadPools.h) or use ThreadFromGlobalPool.\");\n+\n     PoolT & pool;\n     std::string thread_name;\n \n@@ -164,6 +158,8 @@ class ThreadPoolCallbackRunnerLocal final\n \n         auto task_func = [task, thread_group = CurrentThread::getGroup(), my_thread_name = thread_name, my_callback = std::move(callback), promise]() mutable -> void\n         {\n+            ThreadGroupSwitcher switcher(thread_group, my_thread_name.c_str());\n+\n             TaskState expected = SCHEDULED;\n             if (!task->state.compare_exchange_strong(expected, RUNNING))\n             {\n@@ -179,16 +175,6 @@ class ThreadPoolCallbackRunnerLocal final\n                     throw Exception(ErrorCodes::LOGICAL_ERROR, \"Unexpected state {} when finishing a task in {}\", expected, my_thread_name);\n             });\n \n-            if (thread_group)\n-                CurrentThread::attachToGroup(thread_group);\n-\n-            SCOPE_EXIT_SAFE(\n-            {\n-                if (thread_group)\n-                    CurrentThread::detachFromGroupIfNotDetached();\n-            });\n-\n-            setThreadName(my_thread_name.data());\n             executeCallback(*promise, std::move(my_callback));\n         };\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Compression/ParallelCompressedWriteBuffer.cpp",
+   "new_path": "src/Compression/ParallelCompressedWriteBuffer.cpp",
+   "diff": "@@ -48,14 +48,7 @@ void ParallelCompressedWriteBuffer::nextImpl()\n     current_buffer->uncompressed_size = offset();\n     pool.scheduleOrThrowOnError([this, my_current_buffer = current_buffer, thread_group = CurrentThread::getGroup()]\n     {\n-        SCOPE_EXIT_SAFE(\n-            if (thread_group)\n-                CurrentThread::detachFromGroupIfNotDetached();\n-        );\n-\n-        if (thread_group)\n-            CurrentThread::attachToGroupIfDetached(thread_group);\n-        setThreadName(\"ParallelCompres\");\n+        ThreadGroupSwitcher switcher(thread_group, \"ParallelCompres\");\n \n         compress(my_current_buffer);\n     });",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Dictionaries/HashedDictionary.h",
+   "new_path": "src/Dictionaries/HashedDictionary.h",
+   "diff": "@@ -335,18 +335,11 @@ HashedDictionary<dictionary_key_type, sparse, sharded>::~HashedDictionary()\n \n         if (!pool.trySchedule([&container, thread_group = CurrentThread::getGroup()]\n             {\n-                SCOPE_EXIT_SAFE(\n-                    if (thread_group)\n-                        CurrentThread::detachFromGroupIfNotDetached();\n-                );\n+                ThreadGroupSwitcher switcher(thread_group, \"HashedDictDtor\");\n \n                 /// Do not account memory that was occupied by the dictionaries for the query/user context.\n                 MemoryTrackerBlockerInThread memory_blocker;\n \n-                if (thread_group)\n-                    CurrentThread::attachToGroupIfDetached(thread_group);\n-                setThreadName(\"HashedDictDtor\");\n-\n                 clearContainer(container);\n             }))\n         {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Dictionaries/HashedDictionaryParallelLoader.h",
+   "new_path": "src/Dictionaries/HashedDictionaryParallelLoader.h",
+   "diff": "@@ -68,22 +68,17 @@ class HashedDictionaryParallelLoader : public boost::noncopyable\n             {\n                 pool.scheduleOrThrowOnError([this, shard, thread_group = CurrentThread::getGroup()]\n                 {\n+                    ThreadGroupSwitcher switcher(thread_group, \"HashedDictLoad\");\n+\n                     WorkerStatistic statistic;\n                     SCOPE_EXIT_SAFE(\n                         LOG_TRACE(dictionary.log, \"Finished worker for dictionary {} shard {}, processed {} blocks, {} rows, total time {}ms\",\n                             dictionary_name, shard, statistic.total_blocks, statistic.total_rows, statistic.total_elapsed_ms);\n-\n-                        if (thread_group)\n-                            CurrentThread::detachFromGroupIfNotDetached();\n                     );\n \n                     /// Do not account memory that was occupied by the dictionaries for the query/user context.\n                     MemoryTrackerBlockerInThread memory_blocker;\n \n-                    if (thread_group)\n-                        CurrentThread::attachToGroupIfDetached(thread_group);\n-                    setThreadName(\"HashedDictLoad\");\n-\n                     LOG_TRACE(dictionary.log, \"Starting worker for dictionary {}, shard {}\", dictionary_name, shard);\n \n                     threadWorker(shard, statistic);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Dictionaries/PolygonDictionaryUtils.h",
+   "new_path": "src/Dictionaries/PolygonDictionaryUtils.h",
+   "diff": "@@ -15,6 +15,12 @@\n \n #include <numeric>\n \n+namespace CurrentMetrics\n+{\n+    extern const Metric PolygonDictionaryThreads;\n+    extern const Metric PolygonDictionaryThreadsActive;\n+    extern const Metric PolygonDictionaryThreadsScheduled;\n+}\n \n namespace DB\n {\n@@ -252,7 +258,8 @@ class GridRoot : public ICell<ReturnCell>\n         std::vector<std::unique_ptr<ICell<ReturnCell>>> children;\n         children.resize(DividedCell<ReturnCell>::kSplit * DividedCell<ReturnCell>::kSplit);\n \n-        ThreadPoolCallbackRunnerLocal<void, GlobalThreadPool> runner(GlobalThreadPool::instance(), \"PolygonDict\");\n+        ThreadPool pool(CurrentMetrics::PolygonDictionaryThreads, CurrentMetrics::PolygonDictionaryThreadsActive, CurrentMetrics::PolygonDictionaryThreadsScheduled, 128);\n+        ThreadPoolCallbackRunnerLocal<void> runner(pool, \"PolygonDict\");\n         for (size_t i = 0; i < DividedCell<ReturnCell>::kSplit; current_min_x += x_shift, ++i)\n         {\n             auto handle_row = [this, &children, &y_shift, &x_shift, &possible_ids, &depth, i, x = current_min_x, y = current_min_y]() mutable",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Interpreters/Aggregator.cpp",
+   "new_path": "src/Interpreters/Aggregator.cpp",
+   "diff": "@@ -2333,15 +2333,8 @@ BlocksList Aggregator::prepareBlocksAndFillTwoLevelImpl(\n \n     std::atomic<UInt32> next_bucket_to_merge = 0;\n \n-    auto converter = [&](size_t thread_id, ThreadGroupPtr thread_group)\n+    auto converter = [&](size_t thread_id)\n     {\n-        SCOPE_EXIT_SAFE(\n-            if (thread_group)\n-                CurrentThread::detachFromGroupIfNotDetached();\n-        );\n-        if (thread_group)\n-            CurrentThread::attachToGroupIfDetached(thread_group);\n-\n         BlocksList blocks;\n         while (true)\n         {\n@@ -2369,10 +2362,14 @@ BlocksList Aggregator::prepareBlocksAndFillTwoLevelImpl(\n         for (size_t thread_id = 0; thread_id < max_threads; ++thread_id)\n         {\n             tasks[thread_id] = std::packaged_task<BlocksList()>(\n-                [group = CurrentThread::getGroup(), thread_id, &converter] { return converter(thread_id, group); });\n+                [thread_id, &converter] { return converter(thread_id); });\n \n             if (thread_pool)\n-                thread_pool->scheduleOrThrowOnError([thread_id, &tasks] { tasks[thread_id](); });\n+                thread_pool->scheduleOrThrowOnError([thread_id, &tasks, thread_group = CurrentThread::getGroup()]\n+                    {\n+                        ThreadGroupSwitcher switcher(thread_group, \"\");\n+                        tasks[thread_id]();\n+                    });\n             else\n                 tasks[thread_id]();\n         }\n@@ -3098,15 +3095,8 @@ void Aggregator::mergeBlocks(BucketToBlocks bucket_to_blocks, AggregatedDataVari\n \n         LOG_TRACE(log, \"Merging partially aggregated two-level data.\");\n \n-        auto merge_bucket = [&bucket_to_blocks, &result, this](Int32 bucket, Arena * aggregates_pool, ThreadGroupPtr thread_group)\n+        auto merge_bucket = [&bucket_to_blocks, &result, this](Int32 bucket, Arena * aggregates_pool)\n         {\n-            SCOPE_EXIT_SAFE(\n-                if (thread_group)\n-                    CurrentThread::detachFromGroupIfNotDetached();\n-            );\n-            if (thread_group)\n-                CurrentThread::attachToGroupIfDetached(thread_group);\n-\n             for (Block & block : bucket_to_blocks[bucket])\n             {\n                 /// Copy to avoid race.\n@@ -3141,15 +3131,14 @@ void Aggregator::mergeBlocks(BucketToBlocks bucket_to_blocks, AggregatedDataVari\n             result.aggregates_pools.push_back(std::make_shared<Arena>());\n             Arena * aggregates_pool = result.aggregates_pools.back().get();\n \n-            /// if we don't use thread pool we don't need to attach and definitely don't want to detach from the thread group\n-            /// because this thread is already attached\n-            auto task = [group = thread_pool != nullptr ? CurrentThread::getGroup() : nullptr, bucket, &merge_bucket, aggregates_pool]\n-            { merge_bucket(bucket, aggregates_pool, group); };\n-\n             if (thread_pool)\n-                thread_pool->scheduleOrThrowOnError(task);\n+                thread_pool->scheduleOrThrowOnError([bucket, &merge_bucket, aggregates_pool, thread_group = CurrentThread::getGroup()]\n+                {\n+                    ThreadGroupSwitcher switcher(thread_group, \"\");\n+                    merge_bucket(bucket, aggregates_pool);\n+                });\n             else\n-                task();\n+                merge_bucket(bucket, aggregates_pool);\n         }\n \n         if (thread_pool)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Interpreters/ConcurrentHashJoin.cpp",
+   "new_path": "src/Interpreters/ConcurrentHashJoin.cpp",
+   "diff": "@@ -134,14 +134,7 @@ void reserveSpaceInHashMaps(\n             pool->scheduleOrThrow(\n                 [&, i, thread_group = CurrentThread::getGroup()]()\n                 {\n-                    SCOPE_EXIT_SAFE({\n-                        if (thread_group)\n-                            CurrentThread::detachFromGroupIfNotDetached();\n-                    });\n-\n-                    if (thread_group)\n-                        CurrentThread::attachToGroupIfDetached(thread_group);\n-                    setThreadName(\"ConcurrentJoin\");\n+                    ThreadGroupSwitcher switcher(thread_group, \"ConcurrentJoin\");\n \n                     const auto & right_data = getData(hash_joins[i]);\n                     std::visit([&](auto & maps) { return reserve_space_in_buckets(maps, right_data->type, i); }, right_data->maps.at(0));\n@@ -195,14 +188,7 @@ ConcurrentHashJoin::ConcurrentHashJoin(\n             pool->scheduleOrThrow(\n                 [&, i, thread_group = CurrentThread::getGroup()]()\n                 {\n-                    SCOPE_EXIT_SAFE({\n-                        if (thread_group)\n-                            CurrentThread::detachFromGroupIfNotDetached();\n-                    });\n-\n-                    if (thread_group)\n-                        CurrentThread::attachToGroupIfDetached(thread_group);\n-                    setThreadName(\"ConcurrentJoin\");\n+                    ThreadGroupSwitcher switcher(thread_group, \"ConcurrentJoin\");\n \n                     /// reserve is not needed anyway - either we will use fixed-size hash map or shared two-level map (then reserve will be done in a special way below)\n                     const size_t reserve_size = 0;\n@@ -251,14 +237,7 @@ ConcurrentHashJoin::~ConcurrentHashJoin()\n             pool->scheduleOrThrow(\n                 [join = hash_joins[0], i, this, thread_group = CurrentThread::getGroup()]()\n                 {\n-                    SCOPE_EXIT_SAFE({\n-                        if (thread_group)\n-                            CurrentThread::detachFromGroupIfNotDetached();\n-                    });\n-\n-                    if (thread_group)\n-                        CurrentThread::attachToGroupIfDetached(thread_group);\n-                    setThreadName(\"ConcurrentJoin\");\n+                    ThreadGroupSwitcher switcher(thread_group, \"ConcurrentJoin\");\n \n                     auto clear_space_in_buckets = [&](auto & maps, HashJoin::Type type, size_t idx)\n                     {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Interpreters/ExternalLoader.cpp",
+   "new_path": "src/Interpreters/ExternalLoader.cpp",
+   "diff": "@@ -969,13 +969,7 @@ class ExternalLoader::LoadingDispatcher : private boost::noncopyable\n     /// Does the loading, possibly in the separate thread.\n     void doLoading(const String & name, size_t loading_id, bool forced_to_reload, size_t min_id_to_finish_loading_dependencies_, bool async, ThreadGroupPtr thread_group = {})\n     {\n-        SCOPE_EXIT_SAFE(\n-            if (thread_group)\n-                CurrentThread::detachFromGroupIfNotDetached();\n-        );\n-\n-        if (thread_group)\n-            CurrentThread::attachToGroup(thread_group);\n+        ThreadGroupSwitcher switcher(thread_group, \"ExternalLoader\");\n \n         /// Do not account memory that was occupied by the dictionaries for the query/user context.\n         MemoryTrackerBlockerInThread memory_blocker;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Interpreters/ProfileEventsExt.cpp",
+   "new_path": "src/Interpreters/ProfileEventsExt.cpp",
+   "diff": "@@ -12,6 +12,11 @@\n #include <DataTypes/DataTypeString.h>\n #include <DataTypes/DataTypeDateTime.h>\n \n+namespace DB::ErrorCodes\n+{\n+    extern const int LOGICAL_ERROR;\n+}\n+\n namespace ProfileEvents\n {\n \n@@ -124,7 +129,14 @@ DB::Block getProfileEvents(\n {\n     using namespace DB;\n \n+    if (!CurrentThread::isInitialized())\n+        throw Exception(ErrorCodes::LOGICAL_ERROR, \"CurrentThread is not initialized\");\n+\n     auto thread_group = CurrentThread::getGroup();\n+\n+    if (!thread_group)\n+        throw Exception(ErrorCodes::LOGICAL_ERROR, \"Current thread is not attached to any thread group\");\n+\n     ThreadIdToCountersSnapshot new_snapshots;\n \n     ProfileEventsSnapshot group_snapshot;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Interpreters/ThreadStatusExt.cpp",
+   "new_path": "src/Interpreters/ThreadStatusExt.cpp",
+   "diff": "@@ -170,22 +170,74 @@ void ThreadGroup::attachInternalProfileEventsQueue(const InternalProfileEventsQu\n     shared_data.profile_queue_ptr = profile_queue;\n }\n \n-ThreadGroupSwitcher::ThreadGroupSwitcher(ThreadGroupPtr thread_group)\n+ThreadGroupSwitcher::ThreadGroupSwitcher(ThreadGroupPtr thread_group_, const char * thread_name, bool allow_existing_group) noexcept : thread_group(std::move(thread_group_))\n {\n-    chassert(thread_group);\n+    try\n+    {\n+        if (!thread_group)\n+            return;\n+\n+        prev_thread = current_thread;\n+        prev_thread_group = CurrentThread::getGroup();\n+        if (prev_thread_group)\n+        {\n+            if (prev_thread_group == thread_group)\n+            {\n+                thread_group = nullptr;\n+                prev_thread_group = nullptr;\n+                return;\n+            }\n+            else if (!allow_existing_group)\n+                throw Exception(ErrorCodes::LOGICAL_ERROR, \"Thread ({}) is already attached to a group (master_thread_id {})\", thread_name, prev_thread_group->master_thread_id);\n+            else\n+                CurrentThread::detachFromGroupIfNotDetached();\n+        }\n+\n+        if (!prev_thread)\n+            throw Exception(ErrorCodes::LOGICAL_ERROR, \"Tried to attach thread ({}) to a group, but the ThreadStatus is not initialized\", thread_name);\n \n-    /// might be nullptr\n-    prev_thread_group = CurrentThread::getGroup();\n+        LockMemoryExceptionInThread lock_memory_tracker(VariableContext::Global);\n \n-    CurrentThread::detachFromGroupIfNotDetached();\n-    CurrentThread::attachToGroup(thread_group);\n+        CurrentThread::attachToGroup(thread_group);\n+        if (thread_name[0] != '\\0')\n+            setThreadName(thread_name);\n+    }\n+    catch (...)\n+    {\n+        /// Unexpected. For caller's convenience avoid throwing exceptions.\n+        DB::tryLogCurrentException(__PRETTY_FUNCTION__);\n+        thread_group = nullptr;\n+        prev_thread_group = nullptr;\n+    }\n }\n \n-ThreadGroupSwitcher::~ThreadGroupSwitcher()\n+ThreadGroupSwitcher::~ThreadGroupSwitcher() noexcept\n {\n-    CurrentThread::detachFromGroupIfNotDetached();\n-    if (prev_thread_group)\n-        CurrentThread::attachToGroup(prev_thread_group);\n+    if (!thread_group)\n+        return;\n+\n+    try\n+    {\n+        ThreadStatus * cur_thread = current_thread;\n+        ThreadGroupPtr cur_thread_group = CurrentThread::getGroup();\n+        if (cur_thread != prev_thread)\n+            throw Exception(ErrorCodes::LOGICAL_ERROR, \"ThreadGroupSwitcher-s are not properly nested: current thread changed between scope start ({}) and end ({})\", prev_thread ? std::to_string(prev_thread->thread_id) : \"nullptr\", cur_thread ? std::to_string(cur_thread->thread_id) : \"nullptr\");\n+        if (cur_thread_group != thread_group)\n+            throw Exception(ErrorCodes::LOGICAL_ERROR, \"ThreadGroupSwitcher-s are not properly nested: current thread group changed between scope start (master_thread_id {}) and end ({})\", thread_group->master_thread_id, cur_thread_group ? \"master_thread_id \" + std::to_string(cur_thread_group->master_thread_id) : \"nullptr\");\n+        thread_group.reset();\n+\n+        CurrentThread::detachFromGroupIfNotDetached();\n+\n+        if (prev_thread_group)\n+        {\n+            LockMemoryExceptionInThread lock_memory_tracker(VariableContext::Global);\n+            CurrentThread::attachToGroup(prev_thread_group);\n+        }\n+    }\n+    catch (...)\n+    {\n+        DB::tryLogCurrentException(__PRETTY_FUNCTION__);\n+    }\n }\n \n void ThreadStatus::attachInternalProfileEventsQueue(const InternalProfileEventsQueuePtr & profile_queue)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Executors/CompletedPipelineExecutor.cpp",
+   "new_path": "src/Processors/Executors/CompletedPipelineExecutor.cpp",
+   "diff": "@@ -35,16 +35,9 @@ struct CompletedPipelineExecutor::Data\n static void threadFunction(\n     CompletedPipelineExecutor::Data & data, ThreadGroupPtr thread_group, size_t num_threads, bool concurrency_control)\n {\n-    SCOPE_EXIT_SAFE(\n-        if (thread_group)\n-            CurrentThread::detachFromGroupIfNotDetached();\n-    );\n-    setThreadName(\"QueryCompPipeEx\");\n-\n     try\n     {\n-        if (thread_group)\n-            CurrentThread::attachToGroup(thread_group);\n+        ThreadGroupSwitcher switcher(thread_group, \"QueryCompPipeEx\");\n \n         data.executor->execute(num_threads, concurrency_control);\n     }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Executors/PipelineExecutor.cpp",
+   "new_path": "src/Processors/Executors/PipelineExecutor.cpp",
+   "diff": "@@ -404,14 +404,7 @@ void PipelineExecutor::spawnThreadsImpl()\n         /// Start new thread\n         pool->scheduleOrThrowOnError([this, thread_num, thread_group = CurrentThread::getGroup(), my_slot = std::move(slot)]\n         {\n-            SCOPE_EXIT_SAFE(\n-                if (thread_group)\n-                    CurrentThread::detachFromGroupIfNotDetached();\n-            );\n-            setThreadName(\"QueryPipelineEx\");\n-\n-            if (thread_group)\n-                CurrentThread::attachToGroup(thread_group);\n+            ThreadGroupSwitcher switcher(thread_group, \"QueryPipelineEx\");\n \n             try\n             {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Executors/PullingAsyncPipelineExecutor.cpp",
+   "new_path": "src/Processors/Executors/PullingAsyncPipelineExecutor.cpp",
+   "diff": "@@ -69,16 +69,9 @@ const Block & PullingAsyncPipelineExecutor::getHeader() const\n static void threadFunction(\n     PullingAsyncPipelineExecutor::Data & data, ThreadGroupPtr thread_group, size_t num_threads, bool concurrency_control)\n {\n-    SCOPE_EXIT_SAFE(\n-        if (thread_group)\n-            CurrentThread::detachFromGroupIfNotDetached();\n-    );\n-    setThreadName(\"QueryPullPipeEx\");\n-\n     try\n     {\n-        if (thread_group)\n-            CurrentThread::attachToGroup(thread_group);\n+        ThreadGroupSwitcher switcher(thread_group, \"QueryPullPipeEx\");\n \n         data.executor->execute(num_threads, concurrency_control);\n     }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Executors/PushingAsyncPipelineExecutor.cpp",
+   "new_path": "src/Processors/Executors/PushingAsyncPipelineExecutor.cpp",
+   "diff": "@@ -99,16 +99,9 @@ struct PushingAsyncPipelineExecutor::Data\n static void threadFunction(\n     PushingAsyncPipelineExecutor::Data & data, ThreadGroupPtr thread_group, size_t num_threads, bool concurrency_control)\n {\n-    SCOPE_EXIT_SAFE(\n-        if (thread_group)\n-            CurrentThread::detachFromGroupIfNotDetached();\n-    );\n-    setThreadName(\"QueryPushPipeEx\");\n-\n     try\n     {\n-        if (thread_group)\n-            CurrentThread::attachToGroup(thread_group);\n+        ThreadGroupSwitcher switcher(thread_group, \"QueryPushPipeEx\");\n \n         data.executor->execute(num_threads, concurrency_control);\n     }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Formats/Impl/DWARFBlockInputFormat.cpp",
+   "new_path": "src/Processors/Formats/Impl/DWARFBlockInputFormat.cpp",
+   "diff": "@@ -243,12 +243,9 @@ void DWARFBlockInputFormat::initializeIfNeeded()\n         pool->scheduleOrThrowOnError(\n             [this, thread_group = CurrentThread::getGroup()]()\n             {\n-                if (thread_group)\n-                    CurrentThread::attachToGroupIfDetached(thread_group);\n-                SCOPE_EXIT_SAFE(if (thread_group) CurrentThread::detachFromGroupIfNotDetached(););\n                 try\n                 {\n-                    setThreadName(\"DWARFDecoder\");\n+                    ThreadGroupSwitcher switcher(thread_group, \"DWARFDecoder\");\n \n                     std::unique_lock lock(mutex);\n                     while (!units_queue.empty() && !is_stopped)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Formats/Impl/ParallelFormattingOutputFormat.cpp",
+   "new_path": "src/Processors/Formats/Impl/ParallelFormattingOutputFormat.cpp",
+   "diff": "@@ -129,13 +129,7 @@ namespace DB\n \n     void ParallelFormattingOutputFormat::collectorThreadFunction(const ThreadGroupPtr & thread_group)\n     {\n-        SCOPE_EXIT_SAFE(\n-            if (thread_group)\n-                CurrentThread::detachFromGroupIfNotDetached();\n-        );\n-        setThreadName(\"Collector\");\n-        if (thread_group)\n-            CurrentThread::attachToGroupIfDetached(thread_group);\n+        ThreadGroupSwitcher switcher(thread_group, \"Collector\");\n \n         try\n         {\n@@ -200,13 +194,7 @@ namespace DB\n \n     void ParallelFormattingOutputFormat::formatterThreadFunction(size_t current_unit_number, size_t first_row_num, const ThreadGroupPtr & thread_group)\n     {\n-        SCOPE_EXIT_SAFE(\n-            if (thread_group)\n-                CurrentThread::detachFromGroupIfNotDetached();\n-        );\n-        setThreadName(\"Formatter\");\n-        if (thread_group)\n-            CurrentThread::attachToGroupIfDetached(thread_group);\n+        ThreadGroupSwitcher switcher(thread_group, \"Formatter\");\n \n         try\n         {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Formats/Impl/ParallelParsingInputFormat.cpp",
+   "new_path": "src/Processors/Formats/Impl/ParallelParsingInputFormat.cpp",
+   "diff": "@@ -10,14 +10,7 @@ namespace DB\n \n void ParallelParsingInputFormat::segmentatorThreadFunction(ThreadGroupPtr thread_group)\n {\n-    SCOPE_EXIT_SAFE(\n-        if (thread_group)\n-            CurrentThread::detachFromGroupIfNotDetached();\n-    );\n-    if (thread_group)\n-        CurrentThread::attachToGroup(thread_group);\n-\n-    setThreadName(\"Segmentator\");\n+    ThreadGroupSwitcher switcher(thread_group, \"Segmentator\");\n \n     try\n     {\n@@ -67,20 +60,13 @@ void ParallelParsingInputFormat::segmentatorThreadFunction(ThreadGroupPtr thread\n \n void ParallelParsingInputFormat::parserThreadFunction(ThreadGroupPtr thread_group, size_t current_ticket_number)\n {\n-    SCOPE_EXIT_SAFE(\n-        if (thread_group)\n-            CurrentThread::detachFromGroupIfNotDetached();\n-    );\n-    if (thread_group)\n-        CurrentThread::attachToGroupIfDetached(thread_group);\n+    ThreadGroupSwitcher switcher(thread_group, \"ChunkParser\");\n \n     const auto parser_unit_number = current_ticket_number % processing_units.size();\n     auto & unit = processing_units[parser_unit_number];\n \n     try\n     {\n-        setThreadName(\"ChunkParser\");\n-\n         /*\n          * This is kind of suspicious -- the input_process_creator contract with\n          * respect to multithreaded use is not clear, but we hope that it is",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Formats/Impl/ParquetBlockInputFormat.cpp",
+   "new_path": "src/Processors/Formats/Impl/ParquetBlockInputFormat.cpp",
+   "diff": "@@ -878,13 +878,9 @@ void ParquetBlockInputFormat::scheduleRowGroup(size_t row_group_batch_idx)\n     pool->scheduleOrThrowOnError(\n         [this, row_group_batch_idx, thread_group = CurrentThread::getGroup()]()\n         {\n-            if (thread_group)\n-                CurrentThread::attachToGroupIfDetached(thread_group);\n-            SCOPE_EXIT_SAFE(if (thread_group) CurrentThread::detachFromGroupIfNotDetached(););\n-\n             try\n             {\n-                setThreadName(\"ParquetDecoder\");\n+                ThreadGroupSwitcher switcher(thread_group, \"ParquetDecoder\");\n \n                 threadFunction(row_group_batch_idx);\n             }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Formats/Impl/ParquetBlockOutputFormat.cpp",
+   "new_path": "src/Processors/Formats/Impl/ParquetBlockOutputFormat.cpp",
+   "diff": "@@ -471,13 +471,9 @@ void ParquetBlockOutputFormat::startMoreThreadsIfNeeded(const std::unique_lock<s\n     {\n         auto job = [this, thread_group = CurrentThread::getGroup()]()\n         {\n-            if (thread_group)\n-                CurrentThread::attachToGroupIfDetached(thread_group);\n-            SCOPE_EXIT_SAFE(if (thread_group) CurrentThread::detachFromGroupIfNotDetached(););\n-\n             try\n             {\n-                setThreadName(\"ParquetEncoder\");\n+                ThreadGroupSwitcher switcher(thread_group, \"ParquetEncoder\");\n \n                 threadFunction();\n             }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Formats/Impl/PrettyBlockOutputFormat.cpp",
+   "new_path": "src/Processors/Formats/Impl/PrettyBlockOutputFormat.cpp",
+   "diff": "@@ -159,14 +159,8 @@ void PrettyBlockOutputFormat::write(Chunk chunk, PortKind port_kind)\n             {\n                 thread.emplace([this, thread_group = CurrentThread::getGroup()]\n                 {\n-                    SCOPE_EXIT_SAFE(\n-                        if (thread_group)\n-                            CurrentThread::detachFromGroupIfNotDetached();\n-                    );\n-                    if (thread_group)\n-                        CurrentThread::attachToGroupIfDetached(thread_group);\n-\n-                    setThreadName(\"PrettyWriter\");\n+                    ThreadGroupSwitcher switcher(thread_group, \"PrettyWriter\");\n+\n                     writingThread();\n                 });\n             }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Processors/Transforms/AggregatingTransform.h",
+   "new_path": "src/Processors/Transforms/AggregatingTransform.h",
+   "diff": "@@ -106,18 +106,12 @@ struct ManyAggregatedData\n                 // It doesn't make sense to spawn a thread if the variant is not going to actually destroy anything.\n                 if (variant->aggregator)\n                 {\n-                    // variant is moved here and will be destroyed in the destructor of the lambda function.\n                     pool->scheduleOrThrowOnError(\n-                        [my_variant = std::move(variant), thread_group = CurrentThread::getGroup()]()\n+                        [my_variant = std::move(variant), thread_group = CurrentThread::getGroup()]() mutable\n                         {\n-                            SCOPE_EXIT_SAFE(\n-                                if (thread_group)\n-                                    CurrentThread::detachFromGroupIfNotDetached();\n-                            );\n-                            if (thread_group)\n-                                CurrentThread::attachToGroupIfDetached(thread_group);\n-\n-                            setThreadName(\"AggregDestruct\");\n+                            ThreadGroupSwitcher switcher(thread_group, \"AggregDestruct\");\n+\n+                            my_variant.reset();\n                         });\n                 }\n             }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Storages/Distributed/DistributedSink.cpp",
+   "new_path": "src/Storages/Distributed/DistributedSink.cpp",
+   "diff": "@@ -331,15 +331,9 @@ DistributedSink::runWritingJob(JobReplica & job, const Block & current_block, si\n         if (isCancelled())\n             throw Exception(ErrorCodes::ABORTED, \"Writing job was cancelled\");\n \n-        SCOPE_EXIT_SAFE(\n-            if (thread_group)\n-                CurrentThread::detachFromGroupIfNotDetached();\n-        );\n-        OpenTelemetry::SpanHolder span(__PRETTY_FUNCTION__);\n+        ThreadGroupSwitcher switcher(thread_group, \"DistrOutStrProc\");\n \n-        if (thread_group)\n-            CurrentThread::attachToGroupIfDetached(thread_group);\n-        setThreadName(\"DistrOutStrProc\");\n+        OpenTelemetry::SpanHolder span(__PRETTY_FUNCTION__);\n \n         ++job.blocks_started;\n \n@@ -599,12 +593,7 @@ void DistributedSink::onFinish()\n                     {\n                         pool->scheduleOrThrowOnError([&job, thread_group = CurrentThread::getGroup()]()\n                         {\n-                            SCOPE_EXIT_SAFE(\n-                                if (thread_group)\n-                                    CurrentThread::detachFromGroupIfNotDetached();\n-                            );\n-                            if (thread_group)\n-                                CurrentThread::attachToGroupIfDetached(thread_group);\n+                            ThreadGroupSwitcher switcher(thread_group, \"\");\n \n                             job.executor->finish();\n                         });",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Storages/MergeTree/MergePlainMergeTreeTask.cpp",
+   "new_path": "src/Storages/MergeTree/MergePlainMergeTreeTask.cpp",
+   "diff": "@@ -39,7 +39,7 @@ bool MergePlainMergeTreeTask::executeStep()\n     std::optional<ThreadGroupSwitcher> switcher;\n     if (merge_list_entry)\n     {\n-        switcher.emplace((*merge_list_entry)->thread_group);\n+        switcher.emplace((*merge_list_entry)->thread_group, \"\", /*allow_existing_group*/ true);\n     }\n \n     switch (state)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Storages/MergeTree/MergeTreeDataSelectExecutor.cpp",
+   "new_path": "src/Storages/MergeTree/MergeTreeDataSelectExecutor.cpp",
+   "diff": "@@ -803,11 +803,7 @@ RangesInDataParts MergeTreeDataSelectExecutor::filterPartsByPrimaryKeyAndSkipInd\n                 pool.scheduleOrThrow(\n                     [&, part_index, thread_group = CurrentThread::getGroup()]\n                     {\n-                        setThreadName(\"MergeTreeIndex\");\n-\n-                        SCOPE_EXIT_SAFE(if (thread_group) CurrentThread::detachFromGroupIfNotDetached(););\n-                        if (thread_group)\n-                            CurrentThread::attachToGroupIfDetached(thread_group);\n+                        ThreadGroupSwitcher switcher(thread_group, \"MergeTreeIndex\");\n \n                         process_part(part_index);\n                     },",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Storages/MergeTree/MutatePlainMergeTreeTask.cpp",
+   "new_path": "src/Storages/MergeTree/MutatePlainMergeTreeTask.cpp",
+   "diff": "@@ -83,7 +83,7 @@ bool MutatePlainMergeTreeTask::executeStep()\n     /// Make out memory tracker a parent of current thread memory tracker\n     std::optional<ThreadGroupSwitcher> switcher;\n     if (merge_list_entry)\n-        switcher.emplace((*merge_list_entry)->thread_group);\n+        switcher.emplace((*merge_list_entry)->thread_group, \"\", /*allow_existing_group*/ true);\n \n     switch (state)\n     {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Storages/MergeTree/ReplicatedMergeMutateTaskBase.cpp",
+   "new_path": "src/Storages/MergeTree/ReplicatedMergeMutateTaskBase.cpp",
+   "diff": "@@ -144,7 +144,7 @@ bool ReplicatedMergeMutateTaskBase::executeImpl()\n {\n     std::optional<ThreadGroupSwitcher> switcher;\n     if (merge_mutate_entry)\n-        switcher.emplace((*merge_mutate_entry)->thread_group);\n+        switcher.emplace((*merge_mutate_entry)->thread_group, \"\", /*allow_existing_group*/ true);\n \n     auto remove_processed_entry = [&] () -> bool\n     {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Storages/System/StorageSystemReplicas.cpp",
+   "new_path": "src/Storages/System/StorageSystemReplicas.cpp",
+   "diff": "@@ -138,11 +138,7 @@ class StatusRequestsPool\n \n             auto get_status_task = [this, storage, with_zk_fields, promise, thread_group = CurrentThread::getGroup()]() mutable\n             {\n-                SCOPE_EXIT_SAFE(if (thread_group) CurrentThread::detachFromGroupIfNotDetached(););\n-                if (thread_group)\n-                    CurrentThread::attachToGroupIfDetached(thread_group);\n-\n-                setThreadName(\"SystemReplicas\");\n+                ThreadGroupSwitcher switcher(thread_group, \"SystemReplicas\");\n \n                 try\n                 {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/Common/CurrentMetrics.cpp",
+   "side": "right",
+   "from_line": 253,
+   "to_line": 255,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Minor wording consistency: nearby metrics use both “thread pool” and “threadpool”. Consider using one style consistently (e.g., “thread pool”) in these new descriptions to match most surrounding strings and improve readability/searchability.\n\n```suggestion\n    M(PolygonDictionaryThreads, \"Number of threads in the thread pool for polygon dictionaries.\") \\\n    M(PolygonDictionaryThreadsActive, \"Number of active threads in the thread pool for polygon dictionaries.\") \\\n    M(PolygonDictionaryThreadsScheduled, \"Number of queued or active jobs in the thread pool for polygon dictionaries.\") \\\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Common/ThreadPool.cpp",
+   "side": "right",
+   "from_line": 774,
+   "to_line": 777,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The variables `initial_thread` and `initial_thread_group` are initialized once and never changed. They should be marked as `const` to clearly communicate their immutability and prevent accidental modification. This improves code safety and readability.\n\n```suggestion\n#ifdef DEBUG_OR_SANITIZER_BUILD\n            DB::ThreadStatus * const initial_thread = DB::current_thread;\n            const DB::ThreadGroupPtr initial_thread_group = DB::CurrentThread::getGroup();\n#endif\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Common/ThreadPool.cpp",
+   "side": "right",
+   "from_line": 795,
+   "to_line": 800,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Throwing an exception from a thread-pool worker after executing a job can call std::terminate if it propagates out of the worker loop (common for std::thread entrypoints). Even in DEBUG builds, this can crash the whole process during testing. Consider turning this into a non-throwing diagnostic (e.g., LOG_FATAL/abort with clearer intent, or ASSERT with controlled handling), or ensure the worker catches DB::Exception and reports it without unwinding past the thread entry.\n\nAlso, the check compares ThreadGroupPtr by pointer identity; if getGroup() can return different shared_ptr instances referring to the same underlying group, this may false-positive. Prefer comparing a stable identifier (e.g., master_thread_id) when both non-null.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Common/ThreadPool.cpp",
+   "side": "right",
+   "from_line": 798,
+   "to_line": 799,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Consider using safer string conversion for nullptr values to prevent potential crashes in exception message formatting when pointers are null. Also, the master_thread_id access might not be safe if thread groups are null.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Common/ThreadStatus.h",
+   "side": "right",
+   "from_line": 161,
+   "to_line": 162,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Doc/contract mismatch risk: comment says “If thread_name is not empty” but `const char *` could be `nullptr`. Either explicitly forbid nullptr (and assert) or handle nullptr as empty to avoid UB in `setThreadName` / strlen-like operations. Also the “at most 15 bytes” requirement should ideally be enforced/validated (or explicitly documented as truncation) to prevent unexpected behavior.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Common/ThreadStatus.h",
+   "side": "right",
+   "from_line": 163,
+   "to_line": 163,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The noexcept specifier in the ThreadGroupSwitcher destructor is redundant since destructors are implicitly noexcept by default; remove it.",
+   "source": "human"
+  },
+  {
+   "path": "src/Common/threadPoolCallbackRunner.h",
+   "side": "right",
+   "from_line": 71,
+   "to_line": 71,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "This new restriction may break existing valid usages: `PoolT` could be `GlobalThreadPool` via alias/typedef or `const GlobalThreadPool` etc. If the intent is to forbid scheduling on the global pool, consider covering cv/ref qualifiers (e.g., `std::remove_cvref_t<PoolT>`) to avoid bypassing the check accidentally.\n\n```suggestion\n    static_assert(!std::is_same_v<std::remove_cvref_t<PoolT>, GlobalThreadPool>,\n        \"Scheduling tasks directly on GlobalThreadPool is not allowed because it doesn't set up CurrentThread. \"\n        \"Create a new ThreadPool (local or in SharedThreadPools.h) or use ThreadFromGlobalPool.\");\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Common/threadPoolCallbackRunner.h",
+   "side": "right",
+   "from_line": 161,
+   "to_line": 161,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Same potential dangling `c_str()` issue as above if `ThreadGroupSwitcher` stores the pointer. Ensure it copies the name or change API/usage to pass an owning string buffer that lives for the whole switcher lifetime.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Compression/ParallelCompressedWriteBuffer.cpp",
+   "side": "right",
+   "from_line": 51,
+   "to_line": 51,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Spelling error: The thread name \"ParallelCompres\" is missing an 's' at the end. It should be \"ParallelCompress\" to match the class name ParallelCompressedWriteBuffer.\n\n```suggestion\n        ThreadGroupSwitcher switcher(thread_group, \"ParallelCompress\");\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/Compression/ParallelCompressedWriteBuffer.cpp",
+   "side": "right",
+   "from_line": 51,
+   "to_line": 51,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "ThreadGroupSwitcher ctor is noexcept and *swallows* exceptions (logs and sets thread_group=nullptr). In this compression task, failure to attach to the inherited ThreadGroup would silently run compression outside the query/background group, potentially affecting memory tracking/accounting and diagnostics. Consider whether this code path should be fail-fast (e.g., allow throwing here, or at least assert/terminate on failure) since the previous code would deterministically attach/detach when thread_group was non-null.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Interpreters/Aggregator.cpp",
+   "side": "right",
+   "from_line": 2368,
+   "to_line": 2372,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Empty string is used as thread name for ThreadGroupSwitcher. Consider providing a meaningful thread name (e.g., \"AggregatorConv\") to improve debuggability and monitoring, similar to how other files use descriptive names like \"QueryPipelineEx\".\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Interpreters/Aggregator.cpp",
+   "side": "right",
+   "from_line": 3135,
+   "to_line": 3139,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Empty string is used as thread name for ThreadGroupSwitcher. Consider providing a meaningful thread name (e.g., \"AggregatorMerge\") to improve debuggability and monitoring, similar to how other files use descriptive names like \"QueryPipelineEx\".\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Interpreters/ProfileEventsExt.cpp",
+   "side": "right",
+   "from_line": 132,
+   "to_line": 138,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Inconsistent capitalization in error messages: The first error message uses 'CurrentThread' while the second uses 'Current thread'. Consider using consistent terminology for better readability and consistency across error messages.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Interpreters/ThreadStatusExt.cpp",
+   "side": "right",
+   "from_line": 202,
+   "to_line": 203,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Constructor takes `const char * thread_name` but later does `if (thread_name[0] != '\\0') ...`. If caller passes nullptr this is UB. Either require non-null explicitly (e.g., `chassert(thread_name)` / document contract) or safely handle null by checking `thread_name && thread_name[0] != '\\0'` (and use a fallback like \"\" in exception messages).\n\n```suggestion\n        if (thread_name && thread_name[0] != '\\0')\n            setThreadName(thread_name);\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Interpreters/ThreadStatusExt.cpp",
+   "side": "right",
+   "from_line": 205,
+   "to_line": 211,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Catching all exceptions and silently continuing may hide important initialization failures. Consider whether callers need to know about these failures or if they should be propagated.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Storages/Distributed/DistributedSink.cpp",
+   "side": "right",
+   "from_line": 596,
+   "to_line": 596,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Potential behavior change: `ThreadGroupSwitcher` only calls `setThreadName` when `thread_name` is non-empty. Passing empty string here likely leaves the worker thread name unchanged, making debugging/profiling harder vs the previous code path (which at least didn’t set a name either, but other call sites now set names). Consider providing a meaningful name (e.g. \"DistrOnFinish\"/\"DistrFinish\") or explicitly documenting why empty is desired.\n\nAlso confirm `allow_existing_group` default (=false) is correct for thread-pool jobs here; if this lambda can run on a thread that is already attached to another group, it may assert/LOGICAL_ERROR. If that situation is possible, pass `allow_existing_group=true` to restore the previous group on exit.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Storages/MergeTree/MergePlainMergeTreeTask.cpp",
+   "side": "right",
+   "from_line": 42,
+   "to_line": 42,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider documenting purpose empty string literal \"\" and allow_existing_group flag clearly explaining their respective impacts on ThreadGroupSwitcher behavior.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/Storages/MergeTree/ReplicatedMergeMutateTaskBase.cpp",
+   "side": "right",
+   "from_line": 147,
+   "to_line": 147,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Using an empty string \"\" as the thread name reduces traceability/debugging capabilities. Consider providing a descriptive name reflecting the operation/task being performed.\n",
+   "source": "Qwen-Coder-480B"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "src/Dictionaries/PolygonDictionaryUtils.h",
+   "side": "right",
+   "from_line": 261,
+   "to_line": 262,
+   "category": "Performance",
+   "context": "File Level",
+   "note": "Creating a `ThreadPool` instance locally within a recursive function is highly inefficient. This constructs a new thread pool (and potentially spawns threads) for every internal node of the polygon structure, even when `depth > kMultiProcessingDepth` where it is not used. This can lead to significant performance overhead and resource exhaustion (e.g., creating 128 threads for every node). \n\nSuggestion: Instantiate the `ThreadPool` once at the top-level entry point and pass it down to `makeCell` by reference, or revert to using `GlobalThreadPool` if appropriate. Also, ensure the pool is only used when `depth <= kMultiProcessingDepth`.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/Interpreters/Aggregator.cpp",
+   "side": "right",
+   "from_line": 3135,
+   "to_line": 3139,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Same concern in mergeBlocks: unconditional `ThreadGroupSwitcher` may behave differently than prior guarded attach/detach logic. If null groups are possible, guard it. Also consider capturing `thread_group` once before the loop if it must be consistent across all scheduled tasks (clarifies intent and avoids surprises if group changes between iterations).\n\n```suggestion\n                auto thread_group = CurrentThread::getGroup();\n                ...\n                thread_pool->scheduleOrThrowOnError([bucket, &merge_bucket, aggregates_pool, thread_group]\n                {\n                    if (thread_group)\n                    {\n                        ThreadGroupSwitcher switcher(thread_group, \"\");\n                        merge_bucket(bucket, aggregates_pool);\n                    }\n                    else\n                    {\n                        merge_bucket(bucket, aggregates_pool);\n                    }\n                });\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Interpreters/ThreadStatusExt.cpp",
+   "side": "right",
+   "from_line": 214,
+   "to_line": 214,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "ThreadGroupSwitcher destructor marked noexcept may be problematic if cleanup operations could potentially throw exceptions during stack unwinding.",
+   "source": "human"
+  }
+ ]
+}

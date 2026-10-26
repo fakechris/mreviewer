@@ -1,0 +1,124 @@
+{
+ "id": "aacr/dotnet__aspnetcore__61006",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/dotnet/aspnetcore/pull/61006",
+  "owner": "dotnet",
+  "repo": "aspnetcore",
+  "number": 61006,
+  "base_sha": "f83c97fa0b91f83bd20511d1abf235dc48b596e2",
+  "head_sha": "0ce67cdee87e9fee014ba95c11e8e36b8913041c",
+  "title": "Remove unneeded 'fixed' statements from SocketAddress",
+  "description": "Part of the \"reduce unsafe\" effort across the dotnet org.\r\n\r\nA prototype static analysis rule identified SocketAddress as being a good candidate to remove a `fixed` statement. We can't entirely remove unsafe from the target method because the value passed in is a pointer, but at least we can remove the unsafe code surrounding the buffer access.",
+  "language": "C#",
+  "category": "Code Refactoring / Architectural Improvement",
+  "changed_lines": 115
+ },
+ "diffs": [
+  {
+   "old_path": "src/Servers/HttpSys/src/NativeMethods.txt",
+   "new_path": "src/Servers/HttpSys/src/NativeMethods.txt",
+   "diff": "@@ -57,3 +57,5 @@ HttpSetRequestQueueProperty\n HttpSetUrlGroupProperty\n HttpSetUrlGroupProperty\n SetFileCompletionNotificationModes\n+SOCKADDR_IN\n+SOCKADDR_IN6",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Servers/IIS/IIS/src/NativeMethods.txt",
+   "new_path": "src/Servers/IIS/IIS/src/NativeMethods.txt",
+   "diff": "@@ -14,3 +14,5 @@ HTTP_REQUEST_PROPERTY_SNI_HOST_MAX_LENGTH\n HTTP_REQUEST_V1\n HTTP_REQUEST_V2\n HTTP_SSL_PROTOCOL_INFO\n+SOCKADDR_IN\n+SOCKADDR_IN6",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Shared/HttpSys/NativeInterop/SocketAddress.cs",
+   "new_path": "src/Shared/HttpSys/NativeInterop/SocketAddress.cs",
+   "diff": "@@ -1,96 +1,73 @@\n // Licensed to the .NET Foundation under one or more agreements.\n // The .NET Foundation licenses this file to you under the MIT license.\n \n-using System.Diagnostics.Contracts;\n using System.Net;\n-using System.Net.Sockets;\n+using Windows.Win32.Networking.WinSock;\n \n namespace Microsoft.AspNetCore.HttpSys.Internal;\n \n-internal sealed class SocketAddress\n+internal abstract class SocketAddress\n {\n-    private const int NumberOfIPv6Labels = 8;\n-    private const int IPv6AddressSize = 28;\n-    private const int IPv4AddressSize = 16;\n-    private const int WriteableOffset = 2;\n+    internal abstract int GetPort();\n \n-    private readonly byte[] _buffer;\n-    private readonly int _size;\n+    internal abstract IPAddress? GetIPAddress();\n \n-    private SocketAddress(AddressFamily family, int size)\n+    internal static unsafe SocketAddress? CopyOutAddress(SOCKADDR* pSockaddr)\n     {\n-        ArgumentOutOfRangeException.ThrowIfLessThan(size, WriteableOffset);\n-        Family = family;\n-        _size = size;\n-        // Sized to match the native structure\n-        _buffer = new byte[((size / IntPtr.Size) + 2) * IntPtr.Size]; // sizeof DWORD\n+        // Per https://learn.microsoft.com/windows/win32/api/ws2def/ns-ws2def-sockaddr,\n+        // use the SOCKADDR* pointer only to read the address family, then cast the pointer to\n+        // the appropriate family type and continue processing.\n+        return pSockaddr->sa_family switch\n+        {\n+            ADDRESS_FAMILY.AF_INET => new SocketAddressIPv4(*(SOCKADDR_IN*)pSockaddr),\n+            ADDRESS_FAMILY.AF_INET6 => new SocketAddressIPv6(*(SOCKADDR_IN6*)pSockaddr),\n+            _ => null\n+        };\n     }\n \n-    internal AddressFamily Family { get; }\n-\n-    internal int GetPort()\n+    private sealed class SocketAddressIPv4 : SocketAddress\n     {\n-        return (_buffer[2] << 8 & 0xFF00) | (_buffer[3]);\n-    }\n+        private readonly SOCKADDR_IN _sockaddr;\n \n-    internal IPAddress? GetIPAddress()\n-    {\n-        if (Family == AddressFamily.InterNetworkV6)\n+        internal SocketAddressIPv4(in SOCKADDR_IN sockaddr)\n         {\n-            return GetIpv6Address();\n+            _sockaddr = sockaddr;\n         }\n-        else if (Family == AddressFamily.InterNetwork)\n+\n+        internal override int GetPort()\n         {\n-            return GetIPv4Address();\n+            // sin_port is network byte order\n+            return IPAddress.NetworkToHostOrder((short)_sockaddr.sin_port);\n         }\n-        else\n+\n+        internal override IPAddress? GetIPAddress()\n         {\n-            return null;\n+            // address is network byte order\n+            return new IPAddress(_sockaddr.sin_addr.S_un.S_addr);\n         }\n     }\n \n-    private IPAddress GetIpv6Address()\n-    {\n-        Contract.Assert(_size >= IPv6AddressSize);\n-        var bytes = new byte[NumberOfIPv6Labels * 2];\n-        Array.Copy(_buffer, 8, bytes, 0, NumberOfIPv6Labels * 2);\n-        return new IPAddress(bytes); // TODO: Does scope id matter?\n-    }\n-\n-    private IPAddress GetIPv4Address()\n+    private sealed class SocketAddressIPv6 : SocketAddress\n     {\n-        Contract.Assert(_size >= IPv4AddressSize);\n-        return new IPAddress(new byte[] { _buffer[4], _buffer[5], _buffer[6], _buffer[7] });\n-    }\n+        private readonly SOCKADDR_IN6 _sockaddr;\n \n-    internal static unsafe SocketAddress? CopyOutAddress(IntPtr address)\n-    {\n-        var addressFamily = *((ushort*)address);\n-        if (addressFamily == (ushort)AddressFamily.InterNetwork)\n+        internal SocketAddressIPv6(in SOCKADDR_IN6 sockaddr)\n         {\n-            var v4address = new SocketAddress(AddressFamily.InterNetwork, IPv4AddressSize);\n-            fixed (byte* pBuffer = v4address._buffer)\n-            {\n-                for (var index = 2; index < IPv4AddressSize; index++)\n-                {\n-                    pBuffer[index] = ((byte*)address)[index];\n-                }\n-            }\n-            return v4address;\n+            _sockaddr = sockaddr;\n         }\n-        if (addressFamily == (ushort)AddressFamily.InterNetworkV6)\n+\n+        internal override int GetPort()\n         {\n-            var v6address = new SocketAddress(AddressFamily.InterNetworkV6, IPv6AddressSize);\n-            fixed (byte* pBuffer = v6address._buffer)\n-            {\n-                for (var index = 2; index < IPv6AddressSize; index++)\n-                {\n-                    pBuffer[index] = ((byte*)address)[index];\n-                }\n-            }\n-            return v6address;\n+            // sin6_port is network byte order\n+            return IPAddress.NetworkToHostOrder((short)_sockaddr.sin6_port);\n         }\n \n-        return null;\n+        internal override IPAddress? GetIPAddress()\n+        {\n+            // address is network byte order\n+            // when CsWin32 gets support for inline arrays, remove 'AsReadOnlySpan' call below.\n+            // https://github.com/microsoft/CsWin32/issues/1086\n+            return new IPAddress(_sockaddr.sin6_addr.u.Byte.AsReadOnlySpan()); // TODO: Does scope id matter?\n+        }\n     }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Shared/HttpSys/RequestProcessing/NativeRequestContext.cs",
+   "new_path": "src/Shared/HttpSys/RequestProcessing/NativeRequestContext.cs",
+   "diff": "@@ -17,6 +17,7 @@\n using Microsoft.Extensions.Primitives;\n using Windows.Win32;\n using Windows.Win32.Networking.HttpServer;\n+using Windows.Win32.Networking.WinSock;\n \n namespace Microsoft.AspNetCore.HttpSys.Internal;\n \n@@ -656,7 +657,8 @@ private void GetUnknownHeadersHelper(IDictionary<string, StringValues> unknownHe\n         {\n             return null;\n         }\n-        var address = (IntPtr)(pMemoryBlob + _bufferAlignment - (byte*)_originalBufferAddress + source);\n+\n+        var address = (SOCKADDR*)(pMemoryBlob + _bufferAlignment - (byte*)_originalBufferAddress + source);\n         return SocketAddress.CopyOutAddress(address);\n     }\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/Shared/test/Shared.Tests/NativeMethods.txt",
+   "new_path": "src/Shared/test/Shared.Tests/NativeMethods.txt",
+   "diff": "@@ -1,2 +1,4 @@\n // https://github.com/microsoft/cswin32\n Windows.Win32.Networking.HttpServer\n+SOCKADDR_IN\n+SOCKADDR_IN6",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/Shared/HttpSys/NativeInterop/SocketAddress.cs",
+   "side": "right",
+   "from_line": 15,
+   "to_line": 20,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "`CopyOutAddress` dereferences `pSockaddr` without a null check. If any caller can pass a null pointer (e.g., error paths from native interop), this will AV. Consider guarding (`if (pSockaddr is null) return null;`) or documenting/enforcing non-null at the call site.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/Shared/HttpSys/NativeInterop/SocketAddress.cs",
+   "side": "right",
+   "from_line": 46,
+   "to_line": 46,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "**Critical Bug**: The `IPAddress(long)` constructor expects the address in host byte order, but `S_addr` is in network byte order. On little-endian systems (x86/x64), this will produce incorrect IP addresses. For example, 192.168.1.1 (0xC0A80101 in network order) would be interpreted as 1.1.168.192.\n\nThe old implementation correctly used a byte array. Consider one of these fixes:\n\n1. Extract bytes in network byte order:\n```csharp\nvar addr = _sockaddr.sin_addr.S_un.S_addr;\nreturn new IPAddress(new byte[] \n{ \n    (byte)(addr >> 24), \n    (byte)(addr >> 16), \n    (byte)(addr >> 8), \n    (byte)addr \n});\n```\n\n2. Or use span if available:\n```csharp\nvar addr = _sockaddr.sin_addr.S_un.S_addr;\nSpan<byte> bytes = stackalloc byte[4];\nBitConverter.TryWriteBytes(bytes, addr);\nif (BitConverter.IsLittleEndian)\n    bytes.Reverse();\nreturn new IPAddress(bytes);\n```\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/Shared/HttpSys/NativeInterop/SocketAddress.cs",
+   "side": "right",
+   "from_line": 62,
+   "to_line": 62,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The port conversion uses (short) cast which may cause issues with ports above 32767. Consider using ushort instead to handle the full port range (0-65535).\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "src/Shared/HttpSys/NativeInterop/SocketAddress.cs",
+   "side": "right",
+   "from_line": 68,
+   "to_line": 70,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The AsReadOnlySpan() call is marked as a temporary workaround pending CsWin32 inline array support. This should be tracked and updated when the dependency issue is resolved to avoid technical debt.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "src/Shared/HttpSys/NativeInterop/SocketAddress.cs",
+   "side": "right",
+   "from_line": 70,
+   "to_line": 70,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "IPv6 address implementation omits scope ID handling despite IPAddress supporting it for link-local addresses, potentially affecting address resolution correctness. The TODO comment indicates uncertainty about whether scope ID is required in this context.",
+   "source": "human"
+  },
+  {
+   "path": "src/Shared/HttpSys/RequestProcessing/NativeRequestContext.cs",
+   "side": "right",
+   "from_line": 661,
+   "to_line": 662,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Casting `address` to `SOCKADDR*` changes the type-safety assumptions here. Please double-check that `source` is always aligned for `SOCKADDR` and that the underlying blob contains at least `sizeof(SOCKADDR)` (or the actual sockaddr length) at this offset; otherwise this can lead to misaligned access/AV in unsafe code. If `SocketAddress.CopyOutAddress` only needs an untyped pointer, consider keeping it as `byte*`/`void*` and letting `CopyOutAddress` perform any required casting based on the actual `sa_family`/length.",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": []
+}

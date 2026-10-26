@@ -1,0 +1,188 @@
+{
+ "id": "aacr/keycloak__keycloak__38723",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/keycloak/keycloak/pull/38723",
+  "owner": "keycloak",
+  "repo": "keycloak",
+  "number": 38723,
+  "base_sha": "8521b9952a989d0dac17697278610b053c613528",
+  "head_sha": "805c204a9dbfb5b8128de8f70c9f3fbd6d6583f9",
+  "title": "Sorting the chapters of the HA guide",
+  "description": "Closes #38721\r\n\r\n<!---\r\nPlease read https://github.com/keycloak/keycloak/blob/main/CONTRIBUTING.md and follow these guidelines when contributing to Keycloak\r\n-->\r\n",
+  "language": "Java",
+  "category": "Documentation Update",
+  "changed_lines": 83
+ },
+ "diffs": [
+  {
+   "old_path": "docs/guides/high-availability/pinned-guides",
+   "new_path": "docs/guides/high-availability/pinned-guides",
+   "diff": "@@ -1,13 +1,16 @@\n introduction\n concepts-multi-site\n bblocks-multi-site\n+concepts-database-connections\n+concepts-threads\n+concepts-memory-and-cpu-sizing\n+concepts-infinispan-cli-batch\n deploy-aurora-multi-az\n deploy-infinispan-kubernetes-crossdc\n deploy-keycloak-kubernetes\n-deploy-aws-route53-loadbalancer\n-deploy-aws-route53-failover-lambda\n-health-checks-multi-site\n-operate-failover\n-operate-switch-over\n-operate-network-partition-recovery\n-operate-switch-back\n\\ No newline at end of file\n+deploy-aws-accelerator-loadbalancer\n+deploy-aws-accelerator-fencing-lambda\n+operate-site-offline\n+operate-site-online\n+operate-synchronize\n+health-checks-multi-site\n\\ No newline at end of file",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "docs/guides/operator/basic-deployment.adoc",
+   "new_path": "docs/guides/operator/basic-deployment.adoc",
+   "diff": "@@ -6,7 +6,6 @@\n \n <@tmpl.guide\n title=\"Basic {project_name} deployment\"\n-priority=20\n summary=\"How to install {project_name} using the Operator\">\n \n == Performing a basic {project_name} deployment\n@@ -100,9 +99,9 @@ When running on OpenShift, with ingress enabled, and with the spec.ingress.class\n The operator will assign a default hostname to the stored version of the CR similar to what would be created by an OpenShift Route without an explicit host - that is ingress-namespace.appsDomain\n If the appsDomain changes, or should you need a different hostname for any reason, then update the Keycloak CR.\n \n-NOTE: If you set the `hostname-admin`, or the deprecated `hostname-admin-url`, even if you enable ingress, no ingress will be created specifically for admin access. \n-Admin access via a separate hostname is generally expected to have access restrictions, which are not currently expressible via the Keycloak CR. \n-Also the default ingress does not prevent accessing admin endpoints, so you may not want to enable ingress handling via the Keycloak CR at all when you have a separate hostname for admin endpoints.       \n+NOTE: If you set the `hostname-admin`, or the deprecated `hostname-admin-url`, even if you enable ingress, no ingress will be created specifically for admin access.\n+Admin access via a separate hostname is generally expected to have access restrictions, which are not currently expressible via the Keycloak CR.\n+Also the default ingress does not prevent accessing admin endpoints, so you may not want to enable ingress handling via the Keycloak CR at all when you have a separate hostname for admin endpoints.\n \n ==== TLS Certificate and key\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "docs/guides/operator/installation.adoc",
+   "new_path": "docs/guides/operator/installation.adoc",
+   "diff": "@@ -6,7 +6,6 @@\n \n <@tmpl.guide\n title=\"{project_name} Operator Installation\"\n-priority=10\n summary=\"How to install the {project_name} Operator on Kubernetes and OpenShift\">\n \n == Installing the {project_name} Operator\n@@ -64,7 +63,7 @@ kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resourc\n kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/{version}/kubernetes/kubernetes.yml\n ----\n \n-The Operator will watch the namespace where it is installed. You may optionally select a namespace with the `-n` option. \n+The Operator will watch the namespace where it is installed. You may optionally select a namespace with the `-n` option.\n </@profile.ifCommunity>\n \n === Installing Multiple Operators\n@@ -79,6 +78,6 @@ If you do this please be aware:\n - older CRDs may not be forwards compatible with new fields used by newer operators. When using OLM it will check if your custom resources are compatible with the CRDs being installed, so the usage of new fields can prevent the simultaneous installation of older operator versions.\n - fields introduced by newer CRDs will not be supported by older Operators. Older Operator will fail to handle CRs that use such new fields with an error deserializing an unrecognized field.\n \n-It is therefore recommended in a multiple Operator install scenario that you keep versions aligned as closely as possible to minimize the potential problems with different versions. \n+It is therefore recommended in a multiple Operator install scenario that you keep versions aligned as closely as possible to minimize the potential problems with different versions.\n \n </@tmpl.guide>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "docs/guides/operator/realm-import.adoc",
+   "new_path": "docs/guides/operator/realm-import.adoc",
+   "diff": "@@ -5,7 +5,6 @@\n \n <@tmpl.guide\n title=\"{project_name} Realm Import\"\n-priority=30\n summary=\"How to perform an automated {project_name} Realm Import using the operator\">\n \n == Importing a {project_name} Realm\n@@ -85,18 +84,18 @@ When the import has successfully completed, the output will look like the follow\n ----\n CONDITION: Done\n   STATUS: true\n-  MESSAGE: \n+  MESSAGE:\n CONDITION: Started\n   STATUS: false\n-  MESSAGE: \n+  MESSAGE:\n CONDITION: HasErrors\n   STATUS: false\n   MESSAGE:\n ----\n \n === Placeholders\n \n-Imports support placeholders referencing environment variables, see <@links.server id=\"importExport\"/> for more. \n+Imports support placeholders referencing environment variables, see <@links.server id=\"importExport\"/> for more.\n The `KeycloakRealmImport` CR allows you to leverage this functionality via the `spec.placeholders` stanza, for example:\n \n [source,yaml]\n@@ -115,7 +114,7 @@ spec:\n     ...\n ----\n \n-In the above example placeholder replacement will be enabled and an environment variable with key `ENV_KEY` will be created from the Secret `SECRET_NAME`'s value for key `SECRET_KEY`. \n+In the above example placeholder replacement will be enabled and an environment variable with key `ENV_KEY` will be created from the Secret `SECRET_NAME`'s value for key `SECRET_KEY`.\n Currently only Secrets are supported and they must be in the same namespace as the Keycloak CR.\n-  \n+\n </@tmpl.guide>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "docs/guides/server/vault.adoc",
+   "new_path": "docs/guides/server/vault.adoc",
+   "diff": "@@ -4,7 +4,6 @@\n <@tmpl.guide\n title=\"Using a vault\"\n summary=\"Learn how to use and configure a vault in {project_name}\"\n-priority=30\n includedOptions=\"vault vault-*\">\n \n {project_name} provides two out-of-the-box implementations of the Vault SPI: a plain-text file-based vault and Java KeyStore-based vault.",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+   "new_path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+   "diff": "@@ -9,6 +9,7 @@\n import java.util.LinkedList;\n import java.util.List;\n import java.util.Map;\n+import java.util.Objects;\n \n public class Context {\n \n@@ -31,16 +32,30 @@ public Context(File srcDir) throws IOException {\n         for (File f : srcDir.listFiles((dir, f) -> f.endsWith(\".adoc\") && !f.equals(\"index.adoc\"))) {\n             Guide guide = parser.parse(f);\n \n-            if (guidePriorities != null && guide != null) {\n-                Integer priority = guidePriorities.get(guide.getId());\n-                guide.setPriority(priority != null ? priority : Integer.MAX_VALUE);\n-            }\n-\n             if (guide != null) {\n+                if (guidePriorities != null) {\n+                    Integer priority = guidePriorities.get(guide.getId());\n+                    if (priority != null) {\n+                        if (guide.getPriority() != Integer.MAX_VALUE) {\n+                            throw new RuntimeException(\"Guide is pinned, but has a priority specified: \" + f.getName());\n+                        }\n+                        guidePriorities.remove(guide.getId());\n+                        guide.setPriority(priority);\n+                    }\n+                }\n+\n+                if (Objects.equals(guide.getTileVisible(), Boolean.FALSE) && guide.getPriority() == Integer.MAX_VALUE) {\n+                    throw new RuntimeException(\"Invisible tiles should be pinned or have an explicit priority: \" + f.getName());\n+                }\n+\n                 guides.add(guide);\n             }\n         }\n \n+        if (guidePriorities != null && !guidePriorities.isEmpty()) {\n+            throw new RuntimeException(\"File pinned-guides contained files that do no longer exist or are mis-spelled: \" + guidePriorities.keySet());\n+        }\n+\n         Collections.sort(guides, (o1, o2) -> {\n             if (o1.getPriority() == o2.getPriority()) {\n                 return o1.getTitle().compareTo(o2.getTitle());",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java",
+   "new_path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java",
+   "diff": "@@ -6,7 +6,8 @@ public class Guide {\n     private String id;\n     private String title;\n     private String summary;\n-    private int priority;\n+    private int priority = Integer.MAX_VALUE;\n+    private Boolean tileVisible;\n \n     public String getTemplate() {\n         return template;\n@@ -47,4 +48,12 @@ public int getPriority() {\n     public void setPriority(int priority) {\n         this.priority = priority;\n     }\n+\n+    public Boolean getTileVisible() {\n+        return tileVisible;\n+    }\n+\n+    public void setTileVisible(Boolean tileVisible) {\n+        this.tileVisible = tileVisible;\n+    }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java",
+   "new_path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java",
+   "diff": "@@ -9,8 +9,8 @@\n \n public class GuideParser {\n \n-    private Pattern TEMPLATE_IMPORT_PATTERN = Pattern.compile(\"<#import \\\"/templates/guide.adoc\\\" as (?<importName>[^ ]*)>\");\n-    private Pattern GUIDE_ELEMENT_PATTERN = Pattern.compile(\"(?<key>priority|title|summary)=(\\\\\\\"(?<valueString>[^\\\\\\\"]*)\\\\\\\"|(?<valueInt>[\\\\d]*))\");\n+    private final Pattern TEMPLATE_IMPORT_PATTERN = Pattern.compile(\"<#import \\\"/templates/guide.adoc\\\" as (?<importName>[^ ]*)>\");\n+    private final Pattern GUIDE_ELEMENT_PATTERN = Pattern.compile(\"(?<key>priority|title|summary|tileVisible)=(\\\\\\\"(?<valueString>[^\\\\\\\"]*)\\\\\\\"|(?<valueInt>[\\\\d]*))\");\n \n     /**\n      * Parses a FreeMarker template to retrieve Guide attributes\n@@ -26,7 +26,6 @@ public Guide parse(File file) throws IOException {\n             if (importElement != null) {\n                 Guide guide = new Guide();\n                 guide.setTemplate(file.getName());\n-                guide.setPriority(999);\n \n                 guide.setId(file.getName().replaceAll(\".adoc\", \"\"));\n \n@@ -79,6 +78,8 @@ private void setAttributes(String importElement, Guide guide) {\n                     break;\n                 case \"priority\":\n                     guide.setPriority(Integer.parseInt(attributeMatcher.group(\"valueInt\")));\n+                case \"tileVisible\":\n+                    guide.setTileVisible(Boolean.parseBoolean(attributeMatcher.group(\"valueString\")));\n             }\n         }\n     }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+   "side": "right",
+   "from_line": 32,
+   "to_line": 32,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Potential NullPointerException: listFiles() can return null if srcDir is not a directory or if an I/O error occurs. Consider adding a null check before the loop.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+   "side": "right",
+   "from_line": 39,
+   "to_line": 41,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The validation error mentions \"has a priority specified\" but the code checks `guide.getPriority() != Integer.MAX_VALUE` (i.e., any non-default priority). This could also be set programmatically by the parser for reasons other than an explicit user priority. Consider improving the message to reflect what is actually checked, or validate against the exact source of the priority (if available). Also, message includes only filename; consider including `guide.getId()` to make it actionable.\n\n```suggestion\n                        if (guide.getPriority() != Integer.MAX_VALUE) {\n                                                    throw new RuntimeException(\"Guide is pinned but already has a non-default priority (id=\" + guide.getId() + \"): \" + f.getName());\n                                                }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+   "side": "right",
+   "from_line": 50,
+   "to_line": 50,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The error message could be more clear. Consider: `\"Invisible tiles (tileVisible=false) should be pinned or have an explicit priority: \" + f.getName()` to make the requirement more explicit.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+   "side": "right",
+   "from_line": 56,
+   "to_line": 56,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The exception message for leftover pinned guides contains grammatical errors and missing quotes; correct to: \"File 'pinned-guides' contains files that no longer exist or are misspelled: \".",
+   "source": "human"
+  },
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+   "side": "right",
+   "from_line": 59,
+   "to_line": 65,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Potential NPE during sorting: comparator calls `o1.getTitle().compareTo(o2.getTitle())` without null checks. If any parsed guide has a null title (e.g., missing/invalid front matter), this will throw at runtime. Consider using `Comparator.nullsLast(String::compareTo)` or normalizing title to empty string during parsing/validation.\n\n```suggestion\n        Collections.sort(guides, (o1, o2) -> {\n                    int p = Integer.compare(o1.getPriority(), o2.getPriority());\n                    if (p != 0) {\n                        return p;\n                    }\n                    return java.util.Comparator.nullsLast(String::compareTo)\n                            .compare(o1.getTitle(), o2.getTitle());\n                });\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java",
+   "side": "right",
+   "from_line": 9,
+   "to_line": 9,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`priority` now defaults to `Integer.MAX_VALUE`. This changes the previous implicit default of `0` and may affect ordering/sorting semantics if any callers treated the default as meaningful. If the intent is “unspecified priority goes last”, consider making this explicit (e.g., constant like `DEFAULT_PRIORITY`) or switching `priority` to `Integer` to distinguish “unset” from “explicitly set”, and handle fallback at the comparator layer.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java",
+   "side": "right",
+   "from_line": 10,
+   "to_line": 10,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The tileVisible field uses Boolean wrapper type allowing null values. The current logic treats null differently from false, but this could be confusing. Consider either: 1) Using primitive boolean with clear default behavior, or 2) Adding documentation explaining the three-state semantics (true=visible, false=invisible, null=default/undefined). This would help clarify the intended behavior when the attribute is not specified.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java",
+   "side": "right",
+   "from_line": 52,
+   "to_line": 52,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Unnecessary use of `Boolean` wrapper in `getTileVisible`; change to primitive `boolean` since the value is always initialized (default `true`) and null state is not required.",
+   "source": "human"
+  },
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java",
+   "side": "right",
+   "from_line": 13,
+   "to_line": 13,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`tileVisible` is a boolean-like attribute but the regex allows either a quoted string (valueString) OR digits (valueInt). If the template uses unquoted `true/false` (common in FreeMarker), it will not match at all; if it uses digits, `valueString` will be null and `Boolean.parseBoolean(null)` returns false silently.\nRecommend updating the pattern to support unquoted booleans, and in parsing, read the non-null group (or use a single group). Also consider guarding against empty `valueInt` for `priority` (`[\\\\d]*` matches empty string), which can throw NumberFormatException.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java",
+   "side": "right",
+   "from_line": 81,
+   "to_line": 82,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Missing break statement in switch case. This will cause fall-through to the next case (if any), potentially executing unexpected logic. Add a break statement after the tileVisible case.\n\n```suggestion\n                case \"tileVisible\":\n                    guide.setTileVisible(Boolean.parseBoolean(attributeMatcher.group(\"valueString\")));\n                    break;\n```",
+   "source": "GLM-4.7"
+  }
+ ],
+ "negatives": []
+}

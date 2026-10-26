@@ -1,0 +1,31 @@
+{
+ "id": "control/7d6197412c",
+ "source": "mreviewer-history",
+ "kind": "control",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/fakechris/mreviewer/commit/7d6197412c1b6e33c8f2dfd8a691af0a4d5ece33",
+  "owner": "fakechris",
+  "repo": "mreviewer",
+  "number": 0,
+  "base_sha": "acd3a9f4d1ca565f373149645589ca32a0a749c2",
+  "head_sha": "7d6197412c1b6e33c8f2dfd8a691af0a4d5ece33",
+  "title": "docs: mark open source readiness package as completed",
+  "description": "",
+  "language": "Go",
+  "category": "control",
+  "changed_lines": 11
+ },
+ "diffs": [
+  {
+   "old_path": "TODOS.md",
+   "new_path": "TODOS.md",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false,
+   "diff": "@@ -54,6 +54,17 @@\n \n ## Completed\n \n+### Open Source Readiness Package — v0.21.0\n+\n+**Completed:** 2026-03-29\n+**What:** Essential files for open source release: bilingual documentation, license, contribution guidelines, CI.\n+**Delivered:**\n+- Bilingual README (English + Chinese)\n+- MIT License\n+- CONTRIBUTING.md\n+- GitHub Actions CI workflow\n+- QUICKSTART.md for core functionality verification\n+\n ### Review Dashboard (Grafana templates) — v0.20.0\n \n **Completed:** 2026-03-27"
+  }
+ ],
+ "golden": [],
+ "negatives": []
+}

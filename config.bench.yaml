@@ -1,0 +1,64 @@
+# Config used for `mreviewer bench review` baselines (docs/acceptance/*review-bench*).
+# Keys come from the environment; nothing secret lives here.
+app_env: development
+port: "3100"
+database_dsn: "sqlite://.mreviewer/state/bench.db"
+models:
+  deepseek_v4_pro:
+    provider: deepseek
+    base_url: https://api.deepseek.com
+    api_key: ${DEEPSEEK_API_KEY}
+    model: deepseek-v4-pro
+    output_mode: tool_call
+    max_tokens: 8192
+    temperature: 0.2
+  deepseek_flash:
+    provider: deepseek
+    base_url: https://api.deepseek.com
+    api_key: ${DEEPSEEK_API_KEY}
+    model: deepseek-flash
+    output_mode: tool_call
+    max_tokens: 8192
+    temperature: 0.2
+  # MiniMax over its Anthropic-compatible endpoint: the forced submit_review
+  # tool call is reliable there, while the OpenAI-compatible endpoint answered
+  # 48/64 corpus cases in prose instead of calling the tool (2026-10-25).
+  # M2.7-highspeed rather than M3.1-Flash for now: the minimax provider calls
+  # the Anthropic API without streaming, and the SDK refuses non-streaming
+  # requests above roughly 21k max_tokens. Thinking tokens count against that
+  # budget, so a model that reasons through a 23-file change (M3.1 used ~19k
+  # thinking tokens on one such case, legitimately) hits the cap before it can
+  # call the tool. That is a provider limitation, not a model fault; once the
+  # provider streams, re-run M3.1 on the same corpus.
+  minimax_m27_highspeed:
+    provider: minimax
+    base_url: https://api.minimaxi.com/anthropic
+    api_key: ${MINIMAX_API_KEY}
+    model: MiniMax-M2.7-highspeed
+    output_mode: tool_call
+    max_tokens: 20000
+    temperature: 0.2
+  # OpenAI-compatible MiniMax route, only used as the LLM judge (plain chat).
+  minimax_m27_judge:
+    provider: openai
+    base_url: https://api.minimaxi.com/v1
+    api_key: ${MINIMAX_API_KEY}
+    model: MiniMax-M2.7-highspeed
+    output_mode: tool_call
+    max_tokens: 4096
+    temperature: 0.2
+model_chains:
+  review_primary:
+    primary: deepseek_v4_pro
+    fallbacks: []
+  advisor_primary:
+    primary: deepseek_flash
+    fallbacks: []
+review:
+  config_ref: base
+  coverage_threshold: 0.8
+  model_chain: review_primary
+  packs:
+    - security
+    - architecture
+    - database

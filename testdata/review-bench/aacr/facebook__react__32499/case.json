@@ -1,0 +1,272 @@
+{
+ "id": "aacr/facebook__react__32499",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/facebook/react/pull/32499",
+  "owner": "facebook",
+  "repo": "react",
+  "number": 32499,
+  "base_sha": "99563e91736e9de473c4865d5cb6fd9eb1a26bcb",
+  "head_sha": "b045f18e378341876ee69e729fc855cab501c3cd",
+  "title": "[refactor] Add element type for Activity",
+  "description": "This PR separates Activity to it's own element type separate from Offscreen. The goal is to allow us to add Activity element boundary semantics during hydration similar to Suspense semantics, without impacting the Offscreen behavior in suspended children. ",
+  "language": "JavaScript",
+  "category": "Code Refactoring / Architectural Improvement",
+  "changed_lines": 599
+ },
+ "diffs": [
+  {
+   "old_path": "packages/react-devtools-shared/src/backend/fiber/renderer.js",
+   "new_path": "packages/react-devtools-shared/src/backend/fiber/renderer.js",
+   "diff": "@@ -146,6 +146,7 @@ import type {\n import type {Source} from 'react-devtools-shared/src/shared/types';\n import {getSourceLocationByFiber} from './DevToolsFiberComponentStack';\n import {formatOwnerStack} from '../shared/DevToolsOwnerStack';\n+import {ActivityComponent} from 'react-reconciler/src/ReactWorkTags';\n \n // Kinds\n const FIBER_INSTANCE = 0;\n@@ -385,6 +386,7 @@ export function getInternalReactConstants(version: string): {\n       YieldComponent: -1, // Removed\n       Throw: 29,\n       ViewTransitionComponent: 30, // Experimental\n+      ActivityComponent: 31,\n     };\n   } else if (gte(version, '17.0.0-alpha')) {\n     ReactTypeOfWork = {\n@@ -421,6 +423,7 @@ export function getInternalReactConstants(version: string): {\n       YieldComponent: -1, // Removed\n       Throw: -1, // Doesn't exist yet\n       ViewTransitionComponent: -1, // Doesn't exist yet\n+      ActivityComponent: -1, // Doesn't exist yet\n     };\n   } else if (gte(version, '16.6.0-beta.0')) {\n     ReactTypeOfWork = {\n@@ -457,6 +460,7 @@ export function getInternalReactConstants(version: string): {\n       YieldComponent: -1, // Removed\n       Throw: -1, // Doesn't exist yet\n       ViewTransitionComponent: -1, // Doesn't exist yet\n+      ActivityComponent: -1, // Doesn't exist yet\n     };\n   } else if (gte(version, '16.4.3-alpha')) {\n     ReactTypeOfWork = {\n@@ -493,6 +497,7 @@ export function getInternalReactConstants(version: string): {\n       YieldComponent: -1, // Removed\n       Throw: -1, // Doesn't exist yet\n       ViewTransitionComponent: -1, // Doesn't exist yet\n+      ActivityComponent: -1, // Doesn't exist yet\n     };\n   } else {\n     ReactTypeOfWork = {\n@@ -529,6 +534,7 @@ export function getInternalReactConstants(version: string): {\n       YieldComponent: 9,\n       Throw: -1, // Doesn't exist yet\n       ViewTransitionComponent: -1, // Doesn't exist yet\n+      ActivityComponent: -1, // Doesn't exist yet\n     };\n   }\n   // **********************************************************\n@@ -622,6 +628,8 @@ export function getInternalReactConstants(version: string): {\n     }\n \n     switch (tag) {\n+      case ActivityComponent:\n+        return 'Activity';\n       case CacheComponent:\n         return 'Cache';\n       case ClassComponent:\n@@ -1480,6 +1488,7 @@ export function attach(\n         return true;\n       case HostPortal:\n       case HostText:\n+      case ActivityComponent:\n       case LegacyHiddenComponent:\n       case OffscreenComponent:\n       case Throw:",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/react-devtools-shared/src/backend/types.js",
+   "new_path": "packages/react-devtools-shared/src/backend/types.js",
+   "diff": "@@ -77,6 +77,7 @@ export type WorkTagMap = {\n   YieldComponent: WorkTag,\n   Throw: WorkTag,\n   ViewTransitionComponent: WorkTag,\n+  ActivityComponent: WorkTag,\n };\n \n export type HostInstance = Object;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/react-reconciler/src/ReactFiber.js",
+   "new_path": "packages/react-reconciler/src/ReactFiber.js",
+   "diff": "@@ -72,6 +72,7 @@ import {\n   TracingMarkerComponent,\n   Throw,\n   ViewTransitionComponent,\n+  ActivityComponent,\n } from './ReactWorkTags';\n import {OffscreenVisible} from './ReactFiberActivityComponent';\n import {getComponentNameFromOwner} from 'react-reconciler/src/getComponentNameFromFiber';\n@@ -108,6 +109,7 @@ import {\n   REACT_TRACING_MARKER_TYPE,\n   REACT_ELEMENT_TYPE,\n   REACT_VIEW_TRANSITION_TYPE,\n+  REACT_ACTIVITY_TYPE,\n } from 'shared/ReactSymbols';\n import {TransitionTracingMarker} from './ReactFiberTracingMarkerComponent';\n import {\n@@ -595,6 +597,8 @@ export function createFiberFromTypeAndProps(\n     }\n   } else {\n     getTag: switch (type) {\n+      case REACT_ACTIVITY_TYPE:\n+        return createFiberFromActivity(pendingProps, mode, lanes, key);\n       case REACT_FRAGMENT_TYPE:\n         return createFiberFromFragment(pendingProps.children, mode, lanes, key);\n       case REACT_STRICT_MODE_TYPE:\n@@ -874,6 +878,17 @@ export function createFiberFromOffscreen(\n   fiber.stateNode = primaryChildInstance;\n   return fiber;\n }\n+export function createFiberFromActivity(\n+  pendingProps: OffscreenProps,\n+  mode: TypeOfMode,\n+  lanes: Lanes,\n+  key: null | string,\n+): Fiber {\n+  const fiber = createFiber(ActivityComponent, pendingProps, key, mode);\n+  fiber.elementType = REACT_ACTIVITY_TYPE;\n+  fiber.lanes = lanes;\n+  return fiber;\n+}\n \n export function createFiberFromViewTransition(\n   pendingProps: ViewTransitionProps,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/react-reconciler/src/ReactFiberBeginWork.js",
+   "new_path": "packages/react-reconciler/src/ReactFiberBeginWork.js",
+   "diff": "@@ -77,6 +77,7 @@ import {\n   TracingMarkerComponent,\n   Throw,\n   ViewTransitionComponent,\n+  ActivityComponent,\n } from './ReactWorkTags';\n import {\n   NoFlags,\n@@ -867,6 +868,46 @@ function deferHiddenOffscreenComponent(\n // fork the function.\n const updateLegacyHiddenComponent = updateOffscreenComponent;\n \n+function updateActivityComponent(\n+  current: null | Fiber,\n+  workInProgress: Fiber,\n+  renderLanes: Lanes,\n+) {\n+  const nextProps = workInProgress.pendingProps;\n+  const nextChildren = nextProps.children;\n+  const nextMode = nextProps.mode;\n+  const mode = workInProgress.mode;\n+  const offscreenChildProps: OffscreenProps = {\n+    mode: nextMode,\n+    children: nextChildren,\n+  };\n+\n+  if (current === null) {\n+    const primaryChildFragment = mountWorkInProgressOffscreenFiber(\n+      offscreenChildProps,\n+      mode,\n+      renderLanes,\n+    );\n+    primaryChildFragment.ref = workInProgress.ref;\n+    workInProgress.child = primaryChildFragment;\n+    primaryChildFragment.return = workInProgress;\n+\n+    return primaryChildFragment;\n+  } else {\n+    const currentChild: Fiber = (current.child: any);\n+\n+    const primaryChildFragment = updateWorkInProgressOffscreenFiber(\n+      currentChild,\n+      offscreenChildProps,\n+    );\n+\n+    primaryChildFragment.ref = workInProgress.ref;\n+    workInProgress.child = primaryChildFragment;\n+    primaryChildFragment.return = workInProgress;\n+    return primaryChildFragment;\n+  }\n+}\n+\n function updateCacheComponent(\n   current: Fiber | null,\n   workInProgress: Fiber,\n@@ -4024,6 +4065,9 @@ function beginWork(\n       }\n       break;\n     }\n+    case ActivityComponent: {\n+      return updateActivityComponent(current, workInProgress, renderLanes);\n+    }\n     case OffscreenComponent: {\n       return updateOffscreenComponent(current, workInProgress, renderLanes);\n     }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/react-reconciler/src/ReactFiberCompleteWork.js",
+   "new_path": "packages/react-reconciler/src/ReactFiberCompleteWork.js",
+   "diff": "@@ -76,6 +76,7 @@ import {\n   TracingMarkerComponent,\n   Throw,\n   ViewTransitionComponent,\n+  ActivityComponent,\n } from './ReactWorkTags';\n import {NoMode, ConcurrentMode, ProfileMode} from './ReactTypeOfMode';\n import {\n@@ -959,6 +960,7 @@ function completeWork(\n       }\n       // Fallthrough\n     }\n+    case ActivityComponent:\n     case LazyComponent:\n     case SimpleMemoComponent:\n     case FunctionComponent:",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/react-reconciler/src/ReactWorkTags.js",
+   "new_path": "packages/react-reconciler/src/ReactWorkTags.js",
+   "diff": "@@ -38,7 +38,8 @@ export type WorkTag =\n   | 27\n   | 28\n   | 29\n-  | 30;\n+  | 30\n+  | 31;\n \n export const FunctionComponent = 0;\n export const ClassComponent = 1;\n@@ -69,3 +70,4 @@ export const HostSingleton = 27;\n export const IncompleteFunctionComponent = 28;\n export const Throw = 29;\n export const ViewTransitionComponent = 30;\n+export const ActivityComponent = 31;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/react-reconciler/src/getComponentNameFromFiber.js",
+   "new_path": "packages/react-reconciler/src/getComponentNameFromFiber.js",
+   "diff": "@@ -47,6 +47,7 @@ import {\n   TracingMarkerComponent,\n   Throw,\n   ViewTransitionComponent,\n+  ActivityComponent,\n } from 'react-reconciler/src/ReactWorkTags';\n import getComponentNameFromType from 'shared/getComponentNameFromType';\n import {REACT_STRICT_MODE_TYPE} from 'shared/ReactSymbols';\n@@ -85,6 +86,8 @@ export function getComponentNameFromOwner(\n export default function getComponentNameFromFiber(fiber: Fiber): string | null {\n   const {tag, type} = fiber;\n   switch (tag) {\n+    case ActivityComponent:\n+      return 'Activity';\n     case CacheComponent:\n       return 'Cache';\n     case ContextConsumer:",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/react-server/src/ReactFizzServer.js",
+   "new_path": "packages/react-server/src/ReactFizzServer.js",
+   "diff": "@@ -154,6 +154,7 @@ import {\n   REACT_OFFSCREEN_TYPE,\n   REACT_POSTPONE_TYPE,\n   REACT_VIEW_TRANSITION_TYPE,\n+  REACT_ACTIVITY_TYPE,\n } from 'shared/ReactSymbols';\n import ReactSharedInternals from 'shared/ReactSharedInternals';\n import {\n@@ -2261,6 +2262,7 @@ function renderElement(\n       task.keyPath = prevKeyPath;\n       return;\n     }\n+    case REACT_ACTIVITY_TYPE:\n     case REACT_OFFSCREEN_TYPE: {\n       renderOffscreen(request, task, keyPath, props);\n       return;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/react/src/ReactClient.js",
+   "new_path": "packages/react/src/ReactClient.js",
+   "diff": "@@ -15,7 +15,7 @@ import {\n   REACT_SUSPENSE_TYPE,\n   REACT_SUSPENSE_LIST_TYPE,\n   REACT_LEGACY_HIDDEN_TYPE,\n-  REACT_OFFSCREEN_TYPE,\n+  REACT_ACTIVITY_TYPE,\n   REACT_SCOPE_TYPE,\n   REACT_TRACING_MARKER_TYPE,\n   REACT_VIEW_TRANSITION_TYPE,\n@@ -116,7 +116,7 @@ export {\n   useDeferredValue,\n   REACT_SUSPENSE_LIST_TYPE as unstable_SuspenseList,\n   REACT_LEGACY_HIDDEN_TYPE as unstable_LegacyHidden,\n-  REACT_OFFSCREEN_TYPE as unstable_Activity,\n+  REACT_ACTIVITY_TYPE as unstable_Activity,\n   getCacheForType as unstable_getCacheForType,\n   useCacheRefresh as unstable_useCacheRefresh,\n   use,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/shared/ReactSymbols.js",
+   "new_path": "packages/shared/ReactSymbols.js",
+   "diff": "@@ -34,6 +34,7 @@ export const REACT_MEMO_TYPE: symbol = Symbol.for('react.memo');\n export const REACT_LAZY_TYPE: symbol = Symbol.for('react.lazy');\n export const REACT_SCOPE_TYPE: symbol = Symbol.for('react.scope');\n export const REACT_OFFSCREEN_TYPE: symbol = Symbol.for('react.offscreen');\n+export const REACT_ACTIVITY_TYPE: symbol = Symbol.for('react.activity');\n export const REACT_LEGACY_HIDDEN_TYPE: symbol = Symbol.for(\n   'react.legacy_hidden',\n );",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/shared/isValidElementType.js",
+   "new_path": "packages/shared/isValidElementType.js",
+   "diff": "@@ -24,6 +24,7 @@ import {\n   REACT_OFFSCREEN_TYPE,\n   REACT_TRACING_MARKER_TYPE,\n   REACT_VIEW_TRANSITION_TYPE,\n+  REACT_ACTIVITY_TYPE,\n } from 'shared/ReactSymbols';\n import {\n   enableScopeAPI,\n@@ -50,6 +51,7 @@ export default function isValidElementType(type: mixed): boolean {\n     type === REACT_SUSPENSE_TYPE ||\n     type === REACT_SUSPENSE_LIST_TYPE ||\n     (enableLegacyHidden && type === REACT_LEGACY_HIDDEN_TYPE) ||\n+    type === REACT_ACTIVITY_TYPE ||\n     type === REACT_OFFSCREEN_TYPE ||\n     (enableScopeAPI && type === REACT_SCOPE_TYPE) ||\n     (enableTransitionTracing && type === REACT_TRACING_MARKER_TYPE) ||",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "packages/react-devtools-shared/src/backend/fiber/renderer.js",
+   "side": "right",
+   "from_line": 149,
+   "to_line": 149,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The added import of `ActivityComponent` from `react-reconciler/src/ReactWorkTags` violates React's public API boundary by accessing internal implementation details, risking instability and future breakage.",
+   "source": "human"
+  },
+  {
+   "path": "packages/react-devtools-shared/src/backend/fiber/renderer.js",
+   "side": "right",
+   "from_line": 1491,
+   "to_line": 1491,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "ActivityComponent must be visible in React DevTools as it represents user-rendered content, not an internal implementation detail; adding it to the hidden components list is incorrect.",
+   "source": "human"
+  },
+  {
+   "path": "packages/react-reconciler/src/ReactFiber.js",
+   "side": "right",
+   "from_line": 593,
+   "to_line": 593,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "The Offscreen case in the `createFiberFromTypeAndProps` type switch appears redundant with the new `REACT_ACTIVITY_TYPE` addition and should be removed.",
+   "source": "human"
+  },
+  {
+   "path": "packages/react-reconciler/src/ReactFiber.js",
+   "side": "right",
+   "from_line": 879,
+   "to_line": 879,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Setting `fiber.elementType` to `REACT_ACTIVITY_TYPE` in `createFiberFromActivity` overrides the element's actual type (e.g., when wrapped in `React.lazy`), breaking reconciliation. Remove this assignment to preserve the original element type, as fixed for portals in PR #32640.",
+   "source": "human"
+  },
+  {
+   "path": "packages/react-reconciler/src/ReactFiber.js",
+   "side": "right",
+   "from_line": 881,
+   "to_line": 886,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`createFiberFromActivity` currently types `pendingProps` as `OffscreenProps`. If Activity has different props (or a dedicated `ActivityProps` type), this will silently allow incorrect shapes and reduce type safety. Consider introducing/using a specific props type for Activity (and importing it) or, if it truly reuses Offscreen props, add a brief rationale and ensure the name reflects that reuse.\n",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/react-reconciler/src/ReactFiber.js",
+   "side": "right",
+   "from_line": 881,
+   "to_line": 881,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The `createFiberFromActivity` function doesn't initialize the `stateNode` property like `createFiberFromOffscreen` does (see line 878). \n\nShould this function also include:\n```javascript\nconst primaryChildInstance: OffscreenInstance = {\n  _visibility: OffscreenVisible,\n  _pendingVisibility: OffscreenVisible,\n  _pendingMarkers: null,\n  _retryCache: null,\n  _transitions: null,\n  _current: null,\n  detach: () => detachOffscreenInstance(primaryChildInstance),\n  attach: () => attachOffscreenInstance(primaryChildInstance),\n};\nfiber.stateNode = primaryChildInstance;\n```\n\nOr does Activity intentionally not need state management? If intentional, a comment explaining why would be helpful.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "packages/react-reconciler/src/ReactFiberBeginWork.js",
+   "side": "right",
+   "from_line": 871,
+   "to_line": 883,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "This function largely duplicates the Offscreen/LegacyHidden mounting+updating pattern (creating/updating an Offscreen fiber, wiring `ref`, `child`, and `return`). Consider extracting a shared helper (or reusing `updateOffscreenComponent`/`updateLegacyHiddenComponent` if semantics match) to reduce divergence risk when Offscreen behavior changes (e.g. flags, lanes, ref handling). If semantics intentionally differ, add a short comment explaining why Activity needs its own fork.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/react-reconciler/src/ReactFiberBeginWork.js",
+   "side": "right",
+   "from_line": 871,
+   "to_line": 871,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The `updateActivityComponent` function creates an Offscreen child fiber internally. A few questions:\n\n1. Should there be a feature flag check for Activity support, similar to how other experimental features are gated?\n2. The function always creates an Offscreen fiber as a child - is this the intended behavior? This seems to indicate Activity is a wrapper around Offscreen rather than a replacement.\n3. Consider adding a JSDoc comment explaining the relationship between Activity and Offscreen components, especially since this is a new abstraction separating hydration semantics.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "packages/react-reconciler/src/ReactFiberBeginWork.js",
+   "side": "right",
+   "from_line": 897,
+   "to_line": 897,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The use of `any` type casting violates the code quality guideline. According to the TypeScript type rules, avoid using `any` type; if necessary, please add a comment explaining the reason. Consider following the pattern used in `updateOffscreenComponent` (line 687) which assigns directly without type casting: `let currentChild = (workInProgress.child = current.child);`\n",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "packages/react-reconciler/src/ReactWorkTags.js",
+   "side": "right",
+   "from_line": 73,
+   "to_line": 73,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider adding a brief comment explaining what ActivityComponent represents, similar to other exported tags, to maintain consistency and aid future maintenance.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "packages/react-reconciler/src/getComponentNameFromFiber.js",
+   "side": "right",
+   "from_line": 90,
+   "to_line": 90,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider verifying if 'Activity' as a component name aligns with naming conventions used elsewhere in the codebase. If there's a constant or shared definition for this name, it might be better to reuse it instead of hardcoding the string here.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "packages/react-server/src/ReactFizzServer.js",
+   "side": "right",
+   "from_line": 2265,
+   "to_line": 2268,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "REACT_ACTIVITY_TYPE is now rendered via `renderOffscreen` by falling through to the Offscreen case. Please confirm this is intended for server rendering (Fizz):\n- Activity’s props/semantics are fully compatible with `renderOffscreen` (e.g. expected prop names/shape, visibility/hidden behavior, and any special Activity-only behavior).\n- If this is only a temporary implementation detail, consider adding a short inline note (or a thin `renderActivity` wrapper calling `renderOffscreen`) to make the coupling explicit and reduce regression risk if Activity and Offscreen behavior diverge later.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/shared/ReactSymbols.js",
+   "side": "right",
+   "from_line": 36,
+   "to_line": 36,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "REACT_OFFSCREEN_TYPE symbol is unnecessary and should be removed; Offscreen is handled internally by tag without requiring reconciliation via elementType.",
+   "source": "human"
+  },
+  {
+   "path": "packages/shared/ReactSymbols.js",
+   "side": "right",
+   "from_line": 37,
+   "to_line": 37,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Adding a new well-known symbol is fine, but please double-check API surface consistency: this symbol string ('react.activity') must remain stable and unique (it becomes part of the public/DevTools contract). Also, since ReactClient switched unstable_Activity from REACT_OFFSCREEN_TYPE to REACT_ACTIVITY_TYPE, verify any other codepaths still expecting Offscreen for Activity semantics won’t break (e.g., reconciler/server/DevTools symbol/type checks). Consider adding/adjusting tests that validate unstable_Activity maps to the intended tag/type and is accepted by isValidElementType.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/shared/ReactSymbols.js",
+   "side": "right",
+   "from_line": 37,
+   "to_line": 37,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider placing `REACT_ACTIVITY_TYPE` before `REACT_OFFSCREEN_TYPE` for alphabetical ordering. This would make the symbol definitions more maintainable and consistent with the rest of the file where symbols appear to follow alphabetical order (lazy, memo, offscreen, scope, etc.).",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "packages/shared/isValidElementType.js",
+   "side": "right",
+   "from_line": 54,
+   "to_line": 54,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The REACT_ACTIVITY_TYPE check should be wrapped with the enableActivity feature flag for consistency with other experimental element types. Similar to how REACT_LEGACY_HIDDEN_TYPE uses enableLegacyHidden, REACT_SCOPE_TYPE uses enableScopeAPI, etc., this check should be: (enableActivity && type === REACT_ACTIVITY_TYPE). You'll also need to import enableActivity from './ReactFeatureFlags'.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ],
+ "negatives": []
+}

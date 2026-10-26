@@ -153,6 +153,9 @@ type OpenAICompatMode struct {
 	// ToolChoiceMode overrides the default named-function tool_choice payload.
 	// Example: "auto" for providers that only support automatic tool selection.
 	ToolChoiceMode string
+	// ExtraBody is merged into every chat request payload for vendor fields
+	// the OpenAI surface does not have, e.g. DeepSeek's {"thinking": {...}}.
+	ExtraBody map[string]any
 }
 
 type ProviderConfig struct {

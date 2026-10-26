@@ -81,6 +81,7 @@ func (ReviewSchemaHarness) Execute(ctx context.Context, request ctxpkg.ReviewReq
 		return executeRepair(ctx, request, raw, candidate.MissingStructuredOutput, report.Initial.Issues, repair, report)
 	}
 
+	candidate.RawText = unwrapReviewEnvelope(candidate.RawText)
 	initialIssues, initialErr := validateReviewResultStrictIssues(candidate.RawText)
 	report.Initial.Valid = initialErr == nil
 	report.Initial.Issues = initialIssues

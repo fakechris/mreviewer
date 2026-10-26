@@ -1,0 +1,325 @@
+{
+ "id": "aacr/opencv__opencv__27284",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/opencv/opencv/pull/27284",
+  "owner": "opencv",
+  "repo": "opencv",
+  "number": 27284,
+  "base_sha": "868fc5c581228f8f47bf4bc3ee84427acc99226a",
+  "head_sha": "79afad939ecfaa332af0541db473fa94f8f425b6",
+  "title": "Java VideoCapture buffered stream constructor",
+  "description": "### Pull Request Readiness Checklist\r\n\r\nresolves #26809\r\n\r\nSee details at https://github.com/opencv/opencv/wiki/How_to_contribute#making-a-good-pull-request\r\n\r\n- [x] I agree to contribute to the project under Apache 2 License.\r\n- [x] To the best of my knowledge, the proposed patch is not based on a code under GPL or another license that is incompatible with OpenCV\r\n- [x] The PR is proposed to the proper branch\r\n- [x] There is a reference to the original bug report and related work\r\n- [x] There is accuracy test, performance test and test data in opencv_extra repository, if applicable\r\n      Patch to opencv_extra has the same branch name.\r\n- [x] The feature is well documented and sample code can be built with the project CMake\r\n",
+  "language": "C++",
+  "category": "New Feature Additions",
+  "changed_lines": 307
+ },
+ "diffs": [
+  {
+   "old_path": "modules/java/generator/gen_java.py",
+   "new_path": "modules/java/generator/gen_java.py",
+   "diff": "@@ -65,6 +65,7 @@ def checkFileRemap(path):\n     \"char\"    : { \"j_type\" : \"char\", \"jn_type\" : \"char\", \"jni_type\" : \"jchar\", \"suffix\" : \"C\" },\n     \"int\"     : { \"j_type\" : \"int\", \"jn_type\" : \"int\", \"jni_type\" : \"jint\", \"suffix\" : \"I\" },\n     \"long\"    : { \"j_type\" : \"int\", \"jn_type\" : \"int\", \"jni_type\" : \"jint\", \"suffix\" : \"I\" },\n+    \"long long\" : { \"j_type\" : \"long\", \"jn_type\" : \"long\", \"jni_type\" : \"jlong\", \"suffix\" : \"J\" },\n     \"float\"   : { \"j_type\" : \"float\", \"jn_type\" : \"float\", \"jni_type\" : \"jfloat\", \"suffix\" : \"F\" },\n     \"double\"  : { \"j_type\" : \"double\", \"jn_type\" : \"double\", \"jni_type\" : \"jdouble\", \"suffix\" : \"D\" },\n     \"size_t\"  : { \"j_type\" : \"long\", \"jn_type\" : \"long\", \"jni_type\" : \"jlong\", \"suffix\" : \"J\" },\n@@ -89,6 +90,13 @@ def checkFileRemap(path):\n         'v_type': 'string',\n         'j_import': 'java.lang.String'\n     },\n+    \"byte[]\": {\n+        \"j_type\" : \"byte[]\",\n+        \"jn_type\": \"byte[]\",\n+        \"jni_type\": \"jbyteArray\",\n+        \"jni_name\": \"n_%(n)s\",\n+        \"jni_var\": \"char* n_%(n)s = reinterpret_cast<char*>(env->GetByteArrayElements(%(n)s, NULL))\",\n+    },\n }\n \n # Defines a rule to add extra prefixes for names from specific namespaces.\n@@ -511,14 +519,14 @@ def add_class(self, decl):\n \n         if classinfo.base:\n             classinfo.addImports(classinfo.base)\n-        type_dict.setdefault(\"Ptr_\"+name, {}).update(\n-            { \"j_type\" : classinfo.jname,\n-              \"jn_type\" : \"long\", \"jn_args\" : ((\"__int64\", \".getNativeObjAddr()\"),),\n-              \"jni_name\" : \"*((Ptr<\"+classinfo.fullNameCPP()+\">*)%(n)s_nativeObj)\", \"jni_type\" : \"jlong\",\n-              \"suffix\" : \"J\",\n-              \"j_import\" : \"org.opencv.%s.%s\" % (self.module, classinfo.jname)\n+        if (\"Ptr_\"+name) not in type_dict:\n+            type_dict[\"Ptr_\"+name] = {\n+                \"j_type\" : classinfo.jname,\n+                \"jn_type\" : \"long\", \"jn_args\" : ((\"__int64\", \".getNativeObjAddr()\"),),\n+                \"jni_name\" : \"*((Ptr<\"+classinfo.fullNameCPP()+\">*)%(n)s_nativeObj)\", \"jni_type\" : \"jlong\",\n+                \"suffix\" : \"J\",\n+                \"j_import\" : \"org.opencv.%s.%s\" % (self.module, classinfo.jname)\n             }\n-        )\n         logging.info('ok: class %s, name: %s, base: %s', classinfo, name, classinfo.base)\n \n     def add_const(self, decl, enumType=None): # [ \"const cname\", val, [], [] ]",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "modules/python/src2/cv2_convert.hpp",
+   "new_path": "modules/python/src2/cv2_convert.hpp",
+   "diff": "@@ -182,6 +182,29 @@ struct PyOpenCV_Converter\n     }\n };\n \n+// There is conflict between \"long long\" and \"int64\".\n+// They are the same type on some 32-bit platforms.\n+template<typename T>\n+struct PyOpenCV_Converter\n+    < T, typename std::enable_if< std::is_same<long long, T>::value && !std::is_same<long long, int64>::value >::type >\n+{\n+    static inline PyObject* from(const long long& value)\n+    {\n+        return PyLong_FromLongLong(value);\n+    }\n+\n+    static inline bool to(PyObject* obj, long long& value, const ArgInfo& info)\n+    {\n+        CV_UNUSED(info);\n+        if(!obj || obj == Py_None)\n+            return true;\n+        else if(PyLong_Check(obj))\n+            value = PyLong_AsLongLong(obj);\n+        else\n+            return false;\n+        return value != (long long)-1 || !PyErr_Occurred();\n+    }\n+};\n \n // --- uchar\n template<> bool pyopencv_to(PyObject* obj, uchar& value, const ArgInfo& info);",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "modules/python/src2/hdr_parser.py",
+   "new_path": "modules/python/src2/hdr_parser.py",
+   "diff": "@@ -190,6 +190,8 @@ def parse_arg(self, arg_str, argno):\n                 angle_stack[-1] += 1\n             elif arg_type == \"struct\":\n                 arg_type += \" \" + w\n+            elif prev_w in [\"signed\", \"unsigned\", \"short\", \"long\"] and w in [\"char\", \"short\", \"int\", \"long\"]:\n+                arg_type += \" \" + w\n             elif arg_type and arg_type != \"~\":\n                 arg_name = \" \".join(word_list[wi:])\n                 break",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "modules/python/src2/typing_stubs_generation/predefined_types.py",
+   "new_path": "modules/python/src2/typing_stubs_generation/predefined_types.py",
+   "diff": "@@ -28,6 +28,7 @@\n     PrimitiveTypeNode.int_(\"uint32_t\"),\n     PrimitiveTypeNode.int_(\"size_t\"),\n     PrimitiveTypeNode.int_(\"int64_t\"),\n+    PrimitiveTypeNode.int_(\"long long\"),\n     PrimitiveTypeNode.float_(\"float\"),\n     PrimitiveTypeNode.float_(\"double\"),\n     PrimitiveTypeNode.bool_(\"bool\"),",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "modules/videoio/include/opencv2/videoio.hpp",
+   "new_path": "modules/videoio/include/opencv2/videoio.hpp",
+   "diff": "@@ -727,7 +727,7 @@ class CV_EXPORTS_W IStreamReader\n     virtual ~IStreamReader();\n \n     /** @brief Read bytes from stream */\n-    virtual long long read(char* buffer, long long size) = 0;\n+    CV_WRAP virtual long long read(char* buffer, long long size) = 0;\n \n     /** @brief Sets the stream position\n      *\n@@ -736,7 +736,7 @@ class CV_EXPORTS_W IStreamReader\n      *\n      * @see fseek\n      */\n-    virtual long long seek(long long offset, int origin) = 0;\n+    CV_WRAP virtual long long seek(long long offset, int origin) = 0;\n };\n \n class IVideoCapture;",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "modules/videoio/misc/java/filelist_common",
+   "new_path": "modules/videoio/misc/java/filelist_common",
+   "diff": "@@ -0,0 +1 @@\n+misc/java/src/cpp/videoio_converters.hpp",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "modules/videoio/misc/java/gen_dict.json",
+   "new_path": "modules/videoio/misc/java/gen_dict.json",
+   "diff": "@@ -0,0 +1,23 @@\n+{\n+    \"func_arg_fix\" : {\n+        \"read\": { \"buffer\": {\"ctype\" : \"byte[]\"} }\n+    },\n+    \"type_dict\": {\n+        \"Ptr_IStreamReader\": {\n+            \"j_type\": \"IStreamReader\",\n+            \"jn_type\": \"IStreamReader\",\n+            \"jni_name\": \"n_%(n)s\",\n+            \"jni_type\": \"jobject\",\n+            \"jni_var\": \"auto n_%(n)s = makePtr<JavaStreamReader>(env, source)\",\n+            \"j_import\": \"org.opencv.videoio.IStreamReader\"\n+        },\n+        \"vector_VideoCaptureAPIs\": {\n+            \"j_type\": \"List<Integer>\",\n+            \"jn_type\": \"List<Integer>\",\n+            \"jni_type\": \"jobject\",\n+            \"jni_var\": \"std::vector< cv::VideoCaptureAPIs > %(n)s\",\n+            \"suffix\": \"Ljava_util_List\",\n+            \"v_type\": \"vector_VideoCaptureAPIs\"\n+        }\n+    }\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "new_path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "diff": "@@ -0,0 +1,54 @@\n+#include \"videoio_converters.hpp\"\n+\n+JavaStreamReader::JavaStreamReader(JNIEnv* _env, jobject _obj) : env(_env)\n+{\n+    obj = env->NewGlobalRef(_obj);\n+    jclass cls = env->GetObjectClass(obj);\n+    m_read = env->GetMethodID(cls, \"read\", \"([BJ)J\");\n+    m_seek = env->GetMethodID(cls, \"seek\", \"(JI)J\");\n+}\n+\n+JavaStreamReader::~JavaStreamReader()\n+{\n+    env->DeleteGlobalRef(obj);\n+}\n+\n+long long JavaStreamReader::read(char* buffer, long long size)\n+{\n+    if (!m_read)\n+        return 0;\n+    jbyteArray jBuffer = env->NewByteArray(static_cast<jsize>(size));\n+    if (!jBuffer)\n+        return 0;\n+    jlong res = env->CallLongMethod(obj, m_read, jBuffer, size);\n+    env->GetByteArrayRegion(jBuffer, 0, static_cast<jsize>(size), reinterpret_cast<jbyte*>(buffer));\n+    env->DeleteLocalRef(jBuffer);\n+    return res;\n+}\n+\n+long long JavaStreamReader::seek(long long offset, int way)\n+{\n+    if (!m_seek)\n+        return 0;\n+    return env->CallLongMethod(obj, m_seek, offset, way);\n+}\n+\n+// Same as dnn::vector_Target_to_List\n+jobject vector_VideoCaptureAPIs_to_List(JNIEnv* env, std::vector<cv::VideoCaptureAPIs>& vs)\n+{\n+    static jclass juArrayList   = ARRAYLIST(env);\n+    static jmethodID m_create   = CONSTRUCTOR(env, juArrayList);\n+    jmethodID m_add       = LIST_ADD(env, juArrayList);\n+\n+    static jclass jInteger = env->FindClass(\"java/lang/Integer\");\n+    static jmethodID m_create_Integer = env->GetMethodID(jInteger, \"<init>\", \"(I)V\");\n+\n+    jobject result = env->NewObject(juArrayList, m_create, vs.size());\n+    for (size_t i = 0; i < vs.size(); ++i)\n+    {\n+        jobject element = env->NewObject(jInteger, m_create_Integer, vs[i]);\n+        env->CallBooleanMethod(result, m_add, element);\n+        env->DeleteLocalRef(element);\n+    }\n+    return result;\n+}",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "modules/videoio/misc/java/src/cpp/videoio_converters.hpp",
+   "new_path": "modules/videoio/misc/java/src/cpp/videoio_converters.hpp",
+   "diff": "@@ -0,0 +1,25 @@\n+#ifndef VIDEOIO_CONVERTERS_HPP\n+#define VIDEOIO_CONVERTERS_HPP\n+\n+#include <jni.h>\n+#include \"opencv_java.hpp\"\n+#include \"opencv2/core.hpp\"\n+#include \"opencv2/videoio/videoio.hpp\"\n+\n+class JavaStreamReader : public cv::IStreamReader\n+{\n+public:\n+    JavaStreamReader(JNIEnv* env, jobject obj);\n+    ~JavaStreamReader();\n+    long long read(char* buffer, long long size) CV_OVERRIDE;\n+    long long seek(long long offset, int way) CV_OVERRIDE;\n+\n+private:\n+    JNIEnv* env;\n+    jobject obj;\n+    jmethodID m_read, m_seek;\n+};\n+\n+jobject vector_VideoCaptureAPIs_to_List(JNIEnv* env, std::vector<cv::VideoCaptureAPIs>& vs);\n+\n+#endif",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "modules/videoio/misc/java/test/VideoCaptureTest.java",
+   "new_path": "modules/videoio/misc/java/test/VideoCaptureTest.java",
+   "diff": "@@ -1,27 +1,41 @@\n package org.opencv.test.videoio;\n \n import java.util.List;\n+import java.io.File;\n+import java.io.RandomAccessFile;\n+import java.io.IOException;\n+import java.io.FileNotFoundException;\n \n+import org.opencv.core.Mat;\n import org.opencv.core.Size;\n+import org.opencv.core.MatOfInt;\n import org.opencv.videoio.Videoio;\n import org.opencv.videoio.VideoCapture;\n+import org.opencv.videoio.IStreamReader;\n \n import org.opencv.test.OpenCVTestCase;\n \n public class VideoCaptureTest extends OpenCVTestCase {\n+    private final static String ENV_OPENCV_TEST_DATA_PATH = \"OPENCV_TEST_DATA_PATH\";\n \n     private VideoCapture capture;\n     private boolean isOpened;\n     private boolean isSucceed;\n+    private File testDataPath;\n \n     @Override\n     protected void setUp() throws Exception {\n         super.setUp();\n \n         capture = null;\n-        isTestCaseEnabled = false;\n         isSucceed = false;\n         isOpened = false;\n+\n+        String envTestDataPath = System.getenv(ENV_OPENCV_TEST_DATA_PATH);\n+\n+        if(envTestDataPath == null) throw new Exception(ENV_OPENCV_TEST_DATA_PATH + \" has to be defined!\");\n+\n+        testDataPath = new File(envTestDataPath);\n     }\n \n     public void testGrab() {\n@@ -61,4 +75,69 @@ public void testConstructorWithIndexAndExplicitlySpecifiedAPI() {\n         assertNotNull(capture);\n     }\n \n+    public void testConstructorStream() throws FileNotFoundException {\n+        // Check backend is available\n+        Integer apiPref = Videoio.CAP_ANY;\n+        for (Integer backend : Videoio.getStreamBufferedBackends())\n+        {\n+            if (!Videoio.hasBackend(backend))\n+                continue;\n+            if (!Videoio.isBackendBuiltIn(backend))\n+            {\n+                int[] abi = new int[1], api = new int[1];\n+                Videoio.getStreamBufferedBackendPluginVersion(backend, abi, api);\n+                if (abi[0] < 1 || (abi[0] == 1 && api[0] < 2))\n+                    continue;\n+            }\n+            apiPref = backend;\n+            break;\n+        }\n+        if (apiPref == Videoio.CAP_ANY)\n+        {\n+            throw new TestSkipException();\n+        }\n+\n+        RandomAccessFile f = new RandomAccessFile(new File(testDataPath, \"cv/video/768x576.avi\"), \"r\");\n+\n+        IStreamReader stream = new IStreamReader(0)\n+        {\n+            @Override\n+            public long read(byte[] buffer, long size)\n+            {\n+                try\n+                {\n+                    return Math.max(f.read(buffer), 0);\n+                }\n+                catch (IOException e)\n+                {\n+                    System.out.println(e.getMessage());\n+                    return 0;\n+                }\n+            }\n+\n+            @Override\n+            public long seek(long offset, int origin)\n+            {\n+                try\n+                {\n+                    if (origin == 0)\n+                        f.seek(offset);\n+                    return f.getFilePointer();\n+                }\n+                catch (IOException e)\n+                {\n+                    System.out.println(e.getMessage());\n+                    return 0;\n+                }\n+            }\n+        };\n+        capture = new VideoCapture(stream, apiPref, new MatOfInt());\n+        assertNotNull(capture);\n+        assertTrue(capture.isOpened());\n+\n+        Mat frame = new Mat();\n+        assertTrue(capture.read(frame));\n+        assertEquals(frame.rows(), 576);\n+        assertEquals(frame.cols(), 768);\n+    }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "modules/java/generator/gen_java.py",
+   "side": "right",
+   "from_line": 93,
+   "to_line": 99,
+   "category": "Performance",
+   "context": "File Level",
+   "note": "Memory leak: GetByteArrayElements must be paired with ReleaseByteArrayElements. The current implementation only acquires the array elements but never releases them, causing a memory leak. Similar to the string type handling on line 80, the jni_var should include the release call. Consider: \"char* n_%(n)s = reinterpret_cast<char*>(env->GetByteArrayElements(%(n)s, NULL)); ... env->ReleaseByteArrayElements(%(n)s, reinterpret_cast<jbyte*>(n_%(n)s), 0);\"\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "modules/java/generator/gen_java.py",
+   "side": "right",
+   "from_line": 522,
+   "to_line": 529,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Behavior change: previously `type_dict.setdefault(\"Ptr_\"+name, {}).update({...})` would refresh/update an existing `Ptr_...` mapping. Now it only sets the entry when missing. If `Ptr_...` can be created earlier (e.g., multiple passes, cross-module deps, or preloaded gen_dict overrides) this can leave stale `j_type`/`j_import`/`jni_name` values and break generated code.\n\nIf the goal is to avoid overwriting user overrides, consider updating only missing keys (merge), or preserve the old `setdefault(...).update(...)` behavior.\n\n```suggestion\n        type_dict.setdefault(\"Ptr_\"+name, {}).update({\n            \"j_type\" : classinfo.jname,\n            \"jn_type\" : \"long\", \"jn_args\" : ((\"__int64\", \".getNativeObjAddr()\"),),\n            \"jni_name\" : \"*((Ptr<\"+classinfo.fullNameCPP()+\">*)%(n)s_nativeObj)\", \"jni_type\" : \"jlong\",\n            \"suffix\" : \"J\",\n            \"j_import\" : \"org.opencv.%s.%s\" % (self.module, classinfo.jname)\n        })\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/python/src2/cv2_convert.hpp",
+   "side": "right",
+   "from_line": 196,
+   "to_line": 206,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `to` function only handles `PyLong_Check(obj)` but doesn't handle `PyInt_Check(obj)`. Similar converters in this file (e.g., unsigned int, uint64_t) handle both PyInt and PyLong for Python 2 compatibility. This could cause conversion failures when the Python object is a PyInt instance.\n\n```suggestion\n    static inline bool to(PyObject* obj, long long& value, const ArgInfo& info)\n    {\n        CV_UNUSED(info);\n        if(!obj || obj == Py_None)\n            return true;\n        if(PyInt_Check(obj))\n            value = (long long)PyInt_AsLong(obj);\n        else if(PyLong_Check(obj))\n            value = PyLong_AsLongLong(obj);\n        else\n            return false;\n        return value != (long long)-1 || !PyErr_Occurred();\n    }\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "modules/python/src2/hdr_parser.py",
+   "side": "right",
+   "from_line": 193,
+   "to_line": 194,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Logic issue: This condition allows invalid C++ type combinations. For example:\n- 'short char', 'short short', 'short long' are not valid C++ types\n- 'long char', 'long short' are not valid C++ types\n\nValid combinations should be:\n- signed/unsigned + char/short/int/long\n- short + int\n- long + int/long\n\nConsider refining the logic to only accept valid C++ type modifier combinations.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "modules/python/src2/typing_stubs_generation/predefined_types.py",
+   "side": "right",
+   "from_line": 31,
+   "to_line": 31,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Potential coverage issue: the generator/parser may output canonical spellings like `long long int`, `signed long long`, or `unsigned long long`. Adding only `\"long long\"` might not match and won’t fix the original missing-type case. Also consider whether this becomes redundant with the existing `int64_t` entry, which could lead to inconsistent mapping depending on platform/type-emission. Suggest normalizing native type strings before lookup or adding the canonical variants explicitly.\n\n```suggestion\n    # Prefer canonical spellings (or normalize the native type string upstream)\n    PrimitiveTypeNode.int_(\"long long int\"),\n    PrimitiveTypeNode.int_(\"signed long long\"),\n    PrimitiveTypeNode.int_(\"unsigned long long\"),\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "side": "right",
+   "from_line": 3,
+   "to_line": 6,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Missing NULL check for GetObjectClass result. If GetObjectClass returns NULL (e.g., OutOfMemoryError), calling NewGlobalRef on NULL jclass will cause a crash. Also, if NewGlobalRef fails (returns NULL), the global ref is invalid but the destructor will still call DeleteGlobalRef on it. Consider adding proper error handling and cleanup.\n\n```suggestion\nJavaStreamReader::JavaStreamReader(JNIEnv* _env, jobject _obj) : env(_env)\n{\n    obj = env->NewGlobalRef(_obj);\n    if (!obj) return; // Handle allocation failure\n    jclass cls = env->GetObjectClass(obj);\n    if (!cls) return; // Handle allocation failure\n    m_read = env->GetMethodID(cls, \"read\", \"([BJ)J\");\n    m_seek = env->GetMethodID(cls, \"seek\", \"(JI)J\");\n}\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "side": "right",
+   "from_line": 3,
+   "to_line": 5,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`JNIEnv*` is thread-affine; storing it as a member and using it later from another thread is undefined and can crash. Prefer storing `JavaVM*` and attaching/detaching per call (or document/enforce same-thread usage).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "side": "right",
+   "from_line": 6,
+   "to_line": 8,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential JNI local reference leak: `GetObjectClass(obj)` returns a local ref that should be `DeleteLocalRef(cls)` after `GetMethodID` calls. In long-running/native loops this can exhaust the local ref table.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "side": "right",
+   "from_line": 7,
+   "to_line": 7,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "**Missing error handling**: The code doesn't check if `GetMethodID` succeeds. If the Java class doesn't implement the required methods correctly, `m_read` or `m_seek` will be null, which could lead to crashes.\n\n**Suggested fix**: Add error checking:\n```cpp\nif (!m_read || !m_seek) {\n    // Handle error - throw exception or log error\n}\n```",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "side": "right",
+   "from_line": 19,
+   "to_line": 19,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "**Missing JNI exception check**: After calling `NewByteArray`, you should check for JNI exceptions. If memory allocation fails, this could throw an OutOfMemoryError that needs to be handled.\n\n**Suggested fix**:\n```cpp\njbyteArray jBuffer = env->NewByteArray(static_cast<jsize>(size));\nif (!jBuffer || env->ExceptionCheck()) {\n    if (env->ExceptionCheck()) env->ExceptionClear();\n    return 0;\n}\n```",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "side": "right",
+   "from_line": 20,
+   "to_line": 20,
+   "category": "Security Vulnerability",
+   "context": "Diff Level",
+   "note": "Size truncation risk: casting `size` (long long) to `jsize` can overflow for large values, leading to negative/incorrect allocation and memory issues. Validate `size` <= std::numeric_limits<jsize>::max() before `NewByteArray` / `GetByteArrayRegion`.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "side": "right",
+   "from_line": 37,
+   "to_line": 37,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Const correctness: The function only reads from the vector, so the parameter should be const reference to prevent unintended modifications and enable const correctness.\n\n```suggestion\njobject vector_VideoCaptureAPIs_to_List(JNIEnv* env, const std::vector<cv::VideoCaptureAPIs>& vs)\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.hpp",
+   "side": "right",
+   "from_line": 12,
+   "to_line": 12,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Storing a thread-specific `JNIEnv*` in `JavaStreamReader` risks undefined behavior when accessed from non-creation threads. Replace with `JavaVM*` storage and use `GetEnv`/`AttachCurrentThread` for thread-safe JNI access.",
+   "source": "human"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.hpp",
+   "side": "right",
+   "from_line": 23,
+   "to_line": 23,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "Header completeness: this header uses `std::vector` in the declaration but doesn’t include `<vector>`. Relying on transitive includes is fragile; include `<vector>` here or forward declare with `namespace std { template<class T, class Allocator> class vector; }` (including `<vector>` is preferred).\n\n```suggestion\n#include <vector>\n\njobject vector_VideoCaptureAPIs_to_List(JNIEnv* env, std::vector<cv::VideoCaptureAPIs>& vs);\n```",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "modules/python/src2/cv2_convert.hpp",
+   "side": "right",
+   "from_line": 187,
+   "to_line": 189,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The type trait condition '!std::is_same<long long, int64>::value' may not work correctly since 'int64' is not a standard type. Consider using 'std::int64_t' instead if that's what's intended.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "modules/python/src2/hdr_parser.py",
+   "side": "right",
+   "from_line": 193,
+   "to_line": 194,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Logic issue: when parsing primitives like `unsigned int`, `arg_type` already contains `\"unsigned\"` from the previous iteration (since the default `else` appended it). This new branch then appends `\" int\"` but the loop will later hit the default `else` again for `w == \"int\"` and append `\"int\"` a second time, producing `\"unsigned intint\"` (or `\"unsigned int int\"` depending on spacing). Same risk for `long long`, etc. Fix by making this branch *consume* the token (e.g., `continue`) and/or preventing the default appending when this branch fires, and also consider basing the condition on `arg_type` (e.g., `arg_type in qualifiers`) rather than `prev_w` alone.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/videoio/include/opencv2/videoio.hpp",
+   "side": "right",
+   "from_line": 730,
+   "to_line": 730,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The `read` method uses `char* buffer` as an output buffer. I noticed you added `CV_WRAP`. While Java bindings are explicitly handled in `gen_dict.json` (mapping to `byte[]`), please ensure Python bindings are also correct. Standard Python bindings usually map `char*` to input string, which would be incorrect here (as strings are immutable and this is an output buffer). You might need a custom converter or manual mapping for Python if this method is intended to be used from Python.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "modules/videoio/include/opencv2/videoio.hpp",
+   "side": "right",
+   "from_line": 739,
+   "to_line": 739,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Adding `CV_WRAP` to pure virtual methods exposes them to OpenCV’s language bindings. Please verify this is intended and safe for all generators:\n- Wrapping methods with a raw `char*` buffer parameter can be problematic for Java/Python (ownership, buffer length, mutability) and may require `CV_OUT`/`CV_INOUT`, `uchar*`, or special handling.\n- For abstract interfaces, wrappers typically cannot instantiate/override from target languages unless there is explicit director/proxy support; otherwise this may generate unusable APIs or generator errors.\n- Ensure this change doesn’t break binary compatibility expectations for existing bindings (added methods in wrappers / signature mapping). Consider adding/adjusting binding tests (e.g., Java/Python) if the intent is to make `IStreamReader` overridable/usable from bindings.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/videoio/misc/java/filelist_common",
+   "side": "right",
+   "from_line": 1,
+   "to_line": 1,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "This filelist entry adds only the header path. Please double-check how `filelist_common` is consumed (CMake/packaging): (1) whether paths are expected to be relative to `modules/videoio` or `modules/videoio/misc/java` (the current `misc/java/...` prefix may be wrong if the base is already `misc/java`), and (2) whether the corresponding implementation file (`misc/java/src/cpp/videoio_converters.cpp`) also needs to be listed for compilation/installation. If this list is used for Java wrapper sources, omitting the .cpp could cause build/link issues depending on the build scripts.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/videoio/misc/java/gen_dict.json",
+   "side": "right",
+   "from_line": 2,
+   "to_line": 2,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Potential typo / inconsistent naming: key `func_arg_fix` differs from more common `func_args_fix`/`func_arg_fixes` style. If the generator expects an exact key name, verify this matches the consumer code to avoid the section being ignored.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.cpp",
+   "side": "right",
+   "from_line": 43,
+   "to_line": 44,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential local reference leak in `vector_VideoCaptureAPIs_to_List`: `FindClass` returns a local ref; since `jInteger` is declared `static jclass` it should be promoted to a global ref (and local deleted), or re-fetched each call without `static`. As-is, the static will hold a local ref that becomes invalid across calls/threads.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "modules/videoio/misc/java/src/cpp/videoio_converters.hpp",
+   "side": "right",
+   "from_line": 14,
+   "to_line": 15,
+   "category": "Maintainability and Readability",
+   "context": "Repo Level",
+   "note": "The member functions `read` and `seek` do not modify any member variables, so they should be marked as `const` to properly express their const-correctness and allow them to be called on const instances of the class.\n\n```suggestion\n    long long read(char* buffer, long long size) const CV_OVERRIDE;\n    long long seek(long long offset, int way) const CV_OVERRIDE;\n```",
+   "source": "GLM-4.7"
+  }
+ ]
+}

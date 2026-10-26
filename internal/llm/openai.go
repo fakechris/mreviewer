@@ -153,6 +153,11 @@ func (p *OpenAIProvider) requestPayloadWithUserContent(systemPrompt string, user
 	if p.reasoningEffort != "" && (p.compat == nil || !p.compat.DropReasoningEffort) {
 		payload["reasoning_effort"] = p.reasoningEffort
 	}
+	if p.compat != nil {
+		for k, v := range p.compat.ExtraBody {
+			payload[k] = v
+		}
+	}
 	strict := p.compat == nil || !p.compat.DropStrictSchema
 	switch p.outputMode {
 	case openAIOutputModeJSONSchema:
@@ -369,8 +374,13 @@ func openAIMessageText(raw json.RawMessage) string {
 }
 
 // DeepSeekCompatMode returns an OpenAICompatMode suitable for DeepSeek models.
-// DeepSeek uses "system" role (not "developer"), does not support strict schema
-// validation, parallel_tool_calls, or reasoning_effort.
+// DeepSeek uses "system" role (not "developer") and does not support strict
+// schema validation, parallel_tool_calls, or reasoning_effort. Its V4
+// thinking models reject a forced tool_choice ("Thinking mode does not
+// support this tool_choice") and with tool_choice auto they answer large
+// diffs in prose instead of calling the tool (40/64 corpus cases in the
+// 2026-10-25 bench), so thinking is switched off for the review call and the
+// named tool is forced, which the API accepts.
 func DeepSeekCompatMode() *OpenAICompatMode {
 	return &OpenAICompatMode{
 		UseSystemRole:         true,
@@ -378,6 +388,7 @@ func DeepSeekCompatMode() *OpenAICompatMode {
 		DropStrictSchema:      true,
 		DropReasoningEffort:   true,
 		UseMaxTokens:          true,
+		ExtraBody:             map[string]any{"thinking": map[string]any{"type": "disabled"}},
 	}
 }
 
@@ -400,6 +411,16 @@ func ZhipuAICompatMode() *OpenAICompatMode {
 		UseMaxTokens:          true,
 		ToolChoiceMode:        "auto",
 	}
+}
+
+// NewDeepSeekProvider wires DeepSeekCompatMode: DeepSeek's first-party API
+// rejects the `developer` role and the strict/parallel_tool_calls/
+// reasoning_effort fields the plain OpenAI mode sends.
+func NewDeepSeekProvider(cfg ProviderConfig) (*OpenAIProvider, error) {
+	if cfg.CompatMode == nil {
+		cfg.CompatMode = DeepSeekCompatMode()
+	}
+	return NewOpenAIProvider(cfg)
 }
 
 func NewArkOpenAIProvider(cfg ProviderConfig) (*OpenAIProvider, error) {

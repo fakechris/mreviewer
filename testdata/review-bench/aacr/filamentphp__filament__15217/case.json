@@ -1,0 +1,81 @@
+{
+ "id": "aacr/filamentphp__filament__15217",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/filamentphp/filament/pull/15217",
+  "owner": "filamentphp",
+  "repo": "filament",
+  "number": 15217,
+  "base_sha": "e4a7ecf0e65574522eb9fbe70b7339f41de0bbe2",
+  "head_sha": "871ec75815e1f92da141e9aef80f287f7779dfe7",
+  "title": "Added TimePicker and time method with generate argument",
+  "description": "<!-- FILL OUT ALL RELEVANT SECTIONS, OR THE PULL REQUEST WILL BE CLOSED. -->\r\n\r\n## Description\r\n\r\nWhen using `--generate` with `php artisan make:filament-resource`, it detects `date`, `datetime`, and `timestamps` but not `time`.\r\nSo, I added the time field and column generation.\r\n\r\n## Visual changes\r\n\r\nThe description seems clear but here is what it generates:\r\n\r\n<img width=\"483\" alt=\"image\" src=\"https://github.com/user-attachments/assets/35657557-1232-4845-a317-e20bbf10ef7b\" />\r\n\r\n<img width=\"488\" alt=\"image\" src=\"https://github.com/user-attachments/assets/c614e53c-3659-4a36-a817-57f06b60d291\" />\r\n\r\n## Functional changes\r\n\r\n- [x] Code style has been fixed by running the `composer cs` command.\r\n- [x] Changes have been tested to not break existing functionality.\r\n- [x] Documentation is up-to-date.\r\n",
+  "language": "PHP",
+  "category": "New Feature Additions",
+  "changed_lines": 11
+ },
+ "diffs": [
+  {
+   "old_path": "packages/forms/src/Commands/FileGenerators/Concerns/CanGenerateModelForms.php",
+   "new_path": "packages/forms/src/Commands/FileGenerators/Concerns/CanGenerateModelForms.php",
+   "diff": "@@ -8,6 +8,7 @@\n use Filament\\Forms\\Components\\Select;\n use Filament\\Forms\\Components\\Textarea;\n use Filament\\Forms\\Components\\TextInput;\n+use Filament\\Forms\\Components\\TimePicker;\n use Filament\\Forms\\Components\\Toggle;\n use Illuminate\\Database\\Eloquent\\Model;\n use Illuminate\\Support\\Str;\n@@ -89,6 +90,7 @@ public function getFormComponents(?string $model = null, array $exceptColumns =\n             $componentData['type'] = match (true) {\n                 $type['name'] === 'boolean' => Toggle::class,\n                 $type['name'] === 'date' => DatePicker::class,\n+                $type['name'] === 'time' => TimePicker::class,\n                 in_array($type['name'], ['datetime', 'timestamp']) => DateTimePicker::class,\n                 $type['name'] === 'text' => Textarea::class,\n                 $componentName === 'image', str($componentName)->startsWith('image_'), str($componentName)->contains('_image_'), str($componentName)->endsWith('_image') => FileUpload::class,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/tables/src/Commands/FileGenerators/Concerns/CanGenerateModelTables.php",
+   "new_path": "packages/tables/src/Commands/FileGenerators/Concerns/CanGenerateModelTables.php",
+   "diff": "@@ -142,6 +142,13 @@ public function getTableColumns(?string $model = null, array $exceptColumns = []\n                     $columnData['sortable'] = [];\n                 }\n \n+                if (in_array($type['name'], [\n+                    'time',\n+                ])) {\n+                    $columnData['time'] = [];\n+                    $columnData['sortable'] = [];\n+                }\n+\n                 if (in_array($type['name'], [\n                     'datetime',\n                     'timestamp',",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "packages/tables/src/Commands/FileGenerators/Concerns/CanGenerateModelTables.php",
+   "side": "right",
+   "from_line": 145,
+   "to_line": 147,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The condition for the 'time' type incorrectly uses `in_array` for a single string comparison; replace it with a direct `===` check for efficiency and readability.",
+   "source": "human"
+  },
+  {
+   "path": "packages/tables/src/Commands/FileGenerators/Concerns/CanGenerateModelTables.php",
+   "side": "right",
+   "from_line": 145,
+   "to_line": 150,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "This block unconditionally overwrites `$columnData['sortable']` with an empty array. If earlier logic (or user config) already set `sortable` (e.g., `true`, `false`, or options), this will wipe it out. Consider only setting it when not already defined, or merging with existing config to avoid unexpected behavior.\n\n```suggestion\n                if (in_array($type['name'], [\n                    'time',\n                ])) {\n                    $columnData['time'] = [];\n\n                    // Preserve existing sortable configuration if already set.\n                    $columnData['sortable'] ??= [];\n                }\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/tables/src/Commands/FileGenerators/Concerns/CanGenerateModelTables.php",
+   "side": "right",
+   "from_line": 148,
+   "to_line": 148,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Consider adding default formatting for 'time' columns to align with conventions used for datetime/timestamp columns.\n",
+   "source": "Qwen-Coder-480B"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "packages/forms/src/Commands/FileGenerators/Concerns/CanGenerateModelForms.php",
+   "side": "right",
+   "from_line": 93,
+   "to_line": 93,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Adding `time` -> `TimePicker` is sensible, but please double-check that `$type['name']` is exactly `'time'` for all supported DB drivers/introspection paths (e.g., MySQL `time`, Postgres `time without time zone`, Laravel schema types). If some drivers normalize to `'string'`/`'datetime'`-like names, this mapping won’t trigger. Consider normalizing type names (lowercase, strip modifiers) or handling common variants (e.g., `'time'`, `'timetz'`) to avoid silently generating the wrong component.",
+   "source": "GPT-5.2"
+  }
+ ]
+}

@@ -1,0 +1,369 @@
+{
+ "id": "aacr/ollama__ollama__12185",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/ollama/ollama/pull/12185",
+  "owner": "ollama",
+  "repo": "ollama",
+  "number": 12185,
+  "base_sha": "92b96d54efd6b49322b7cf046f9a0dc16b00cd0a",
+  "head_sha": "b6002f6b6c69370f8c18a9e6c1cafa8463273a6b",
+  "title": "batch: use tensors for outputs",
+  "description": "this cleans up the model interface slightly without too much impact in other areas",
+  "language": "Go",
+  "category": "Code Refactoring / Architectural Improvement",
+  "changed_lines": 64
+ },
+ "diffs": [
+  {
+   "old_path": "kvcache/causal.go",
+   "new_path": "kvcache/causal.go",
+   "diff": "@@ -199,9 +199,9 @@ func (c *Causal) Close() {\n \n func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {\n \tc.curReserve = reserve\n-\tc.curBatchSize = len(batch.Positions)\n \tc.curSequences = batch.Sequences\n-\tc.curPositions = batch.Positions\n+\tc.curPositions = batch.Positions.Ints()\n+\tc.curBatchSize = len(c.curPositions)\n \tc.opts.Except = nil\n \n \tif !c.curReserve {\n@@ -218,7 +218,7 @@ func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) e\n \t\t\treturn err\n \t\t}\n \n-\t\tfor i, pos := range batch.Positions {\n+\t\tfor i, pos := range c.curPositions {\n \t\t\tseq := batch.Sequences[i]\n \n \t\t\tc.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "kvcache/causal_test.go",
+   "new_path": "kvcache/causal_test.go",
+   "diff": "@@ -391,7 +391,10 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase)\n \t\t\tcontext := backend.NewContext()\n \t\t\tdefer context.Close()\n \n-\t\t\terr := cache.StartForward(context, input.Batch{Positions: test.pos, Sequences: test.seqs}, false)\n+\t\t\terr := cache.StartForward(context, input.Batch{\n+\t\t\t\tPositions: context.FromIntSlice(test.pos, len(test.pos)),\n+\t\t\t\tSequences: test.seqs,\n+\t\t\t}, false)\n \t\t\tif err != nil {\n \t\t\t\tpanic(err)\n \t\t\t}\n@@ -431,7 +434,7 @@ func TestCanResume(t *testing.T) {\n \tdefer context.Close()\n \n \terr := cache.StartForward(context, input.Batch{\n-\t\tPositions: []int32{0, 1, 2, 3},\n+\t\tPositions: context.FromIntSlice([]int32{0, 1, 2, 3}, 4),\n \t\tSequences: []int{0, 0, 0, 0},\n \t}, false)\n \tif err != nil {\n@@ -458,7 +461,7 @@ func TestCanResume(t *testing.T) {\n \n \t// shift window by adding position 4\n \terr = cache.StartForward(context, input.Batch{\n-\t\tPositions: []int32{4, 5},\n+\t\tPositions: context.FromIntSlice([]int32{4, 5}, 2),\n \t\tSequences: []int{0, 0},\n \t}, false)\n \tif err != nil {\n@@ -503,7 +506,7 @@ func TestCanResumeSWAMem(t *testing.T) {\n \tdefer context.Close()\n \n \terr := cache.StartForward(context, input.Batch{\n-\t\tPositions: []int32{0, 1, 2, 3, 4, 5},\n+\t\tPositions: context.FromIntSlice([]int32{0, 1, 2, 3, 4, 5}, 6),\n \t\tSequences: []int{0, 0, 0, 0, 0, 0},\n \t}, false)\n \tif err != nil {\n@@ -516,7 +519,7 @@ func TestCanResumeSWAMem(t *testing.T) {\n \n \t// shift window by adding position 6\n \terr = cache.StartForward(context, input.Batch{\n-\t\tPositions: []int32{6, 7},\n+\t\tPositions: context.FromIntSlice([]int32{6, 7}, 2),\n \t\tSequences: []int{0, 0},\n \t}, false)\n \tif err != nil {\n@@ -669,6 +672,14 @@ func (t *testTensor) Floats() []float32 {\n \treturn out\n }\n \n+func (t *testTensor) Ints() []int32 {\n+\tout := make([]int32, len(t.data))\n+\tfor i := range out {\n+\t\tout[i] = int32(t.data[i])\n+\t}\n+\treturn out\n+}\n+\n func (t *testTensor) Neg(ctx ml.Context) ml.Tensor {\n \tout := ctx.Empty(t.DType(), t.Shape()...).(*testTensor)\n \tfor i := range out.data {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "kvcache/encoder.go",
+   "new_path": "kvcache/encoder.go",
+   "diff": "@@ -91,7 +91,7 @@ func (c *EncoderCache) Close() {\n func (c *EncoderCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {\n \t// We work with the most recent image\n \tif len(batch.Multimodal) > 0 {\n-\t\tc.curPos = batch.Positions[batch.Multimodal[len(batch.Multimodal)-1].Index]\n+\t\tc.curPos = batch.Positions.Ints()[batch.Multimodal[len(batch.Multimodal)-1].Index]\n \t}\n \n \tc.curReserve = reserve",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "kvcache/wrapper.go",
+   "new_path": "kvcache/wrapper.go",
+   "diff": "@@ -47,8 +47,9 @@ func (c *WrapperCache) StartForward(ctx ml.Context, batch input.Batch, reserve b\n \t\tif err != nil {\n \t\t\t// unwind on error - Remove with endIndex set to math.MaxInt32 does not fail\n \t\t\tfor j := i - 1; j >= 0; j-- {\n-\t\t\t\tfor k := range batch.Positions {\n-\t\t\t\t\t_ = c.caches[j].Remove(batch.Sequences[k], batch.Positions[k], math.MaxInt32)\n+\t\t\t\tcurPositions := batch.Positions.Ints()\n+\t\t\t\tfor k := range curPositions {\n+\t\t\t\t\t_ = c.caches[j].Remove(batch.Sequences[k], curPositions[k], math.MaxInt32)\n \t\t\t\t}\n \t\t\t}\n \t\t\treturn err",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "ml/backend.go",
+   "new_path": "ml/backend.go",
+   "diff": "@@ -401,6 +401,7 @@ type Tensor interface {\n \n \tBytes() []byte\n \tFloats() []float32\n+\tInts() []int32\n \n \tSetValueFromIntSlice(s []int32)\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "ml/backend/ggml/ggml.go",
+   "new_path": "ml/backend/ggml/ggml.go",
+   "diff": "@@ -1004,6 +1004,9 @@ func (t *Tensor) Bytes() (data []byte) {\n \n \t\tt.sync()\n \t\tC.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))\n+\t} else if bts := C.ggml_get_data(t.t); bts != nil {\n+\t\t// tensor is in cpu memory\n+\t\tdata = C.GoBytes(bts, C.int(C.ggml_nbytes(t.t)))\n \t}\n \n \treturn\n@@ -1015,6 +1018,23 @@ func (t *Tensor) Floats() (data []float32) {\n \n \t\tt.sync()\n \t\tC.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))\n+\t} else if bts := C.ggml_get_data(t.t); bts != nil {\n+\t\t// tensor is in cpu memory\n+\t\tdata = unsafe.Slice((*float32)(bts), C.ggml_nelements(t.t))\n+\t}\n+\n+\treturn\n+}\n+\n+func (t *Tensor) Ints() (data []int32) {\n+\tif t.sync != nil {\n+\t\tdata = make([]int32, C.ggml_nelements(t.t))\n+\n+\t\tt.sync()\n+\t\tC.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))\n+\t} else if bts := C.ggml_get_data(t.t); bts != nil {\n+\t\t// tensor is in cpu memory\n+\t\tdata = unsafe.Slice((*int32)(bts), C.ggml_nelements(t.t))\n \t}\n \n \treturn",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/input/input.go",
+   "new_path": "model/input/input.go",
+   "diff": "@@ -54,19 +54,19 @@ type Batch struct {\n \t// Inputs is the input tokens, including placeholders for multimodal inputs.\n \tInputs ml.Tensor\n \n-\t// Multimodal is a set of multimodal embeddings previously created by\n-\t// EncodeMultimodal, along with an index into Inputs. Unused for text-only\n-\t// models or for batches without multimodal elements.\n-\tMultimodal []MultimodalIndex\n-\n \t// Positions is the position for each Input, relative to its sequence. Equal\n \t// in length to Inputs.\n-\tPositions []int32\n+\tPositions ml.Tensor\n+\n+\t// Outputs are the set of indicies into Inputs for which output data should\n+\t// be returned.\n+\tOutputs ml.Tensor\n \n \t// Sequences is the sequence for each Input. Equal in length to Inputs.\n \tSequences []int\n \n-\t// Outputs are the set of indicies into Inputs for which output data should\n-\t// be returned.\n-\tOutputs []int32\n+\t// Multimodal is a set of multimodal embeddings previously created by\n+\t// EncodeMultimodal, along with an index into Inputs. Unused for text-only\n+\t// models or for batches without multimodal elements.\n+\tMultimodal []MultimodalIndex\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/model.go",
+   "new_path": "model/model.go",
+   "diff": "@@ -282,11 +282,11 @@ func canNil(t reflect.Type) bool {\n }\n \n func Forward(ctx ml.Context, m Model, batch input.Batch) (ml.Tensor, error) {\n-\tif len(batch.Positions) != len(batch.Sequences) {\n-\t\treturn nil, fmt.Errorf(\"length of positions (%v) must match length of seqs (%v)\", len(batch.Positions), len(batch.Sequences))\n+\tif batch.Positions.Dim(0) != len(batch.Sequences) {\n+\t\treturn nil, fmt.Errorf(\"length of positions (%v) must match length of seqs (%v)\", batch.Positions.Dim(0), len(batch.Sequences))\n \t}\n \n-\tif len(batch.Positions) < 1 {\n+\tif batch.Positions.Dim(0) < 1 {\n \t\treturn nil, errors.New(\"batch size cannot be less than 1\")\n \t}\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/gemma2/model.go",
+   "new_path": "model/models/gemma2/model.go",
+   "diff": "@@ -175,9 +175,6 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten\n }\n \n func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n-\toutputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n-\n \thiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)\n \thiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.Options.hiddenSize)))\n \n@@ -193,10 +190,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n \n \t\tvar lastLayerOutputs ml.Tensor\n \t\tif i == len(m.Layers)-1 {\n-\t\t\tlastLayerOutputs = outputs\n+\t\t\tlastLayerOutputs = batch.Outputs\n \t\t}\n \n-\t\thiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, m.Cache, m.Options)\n+\t\thiddenState = layer.Forward(ctx, hiddenState, batch.Positions, lastLayerOutputs, m.Cache, m.Options)\n \t}\n \n \thiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/gemma3/model_text.go",
+   "new_path": "model/models/gemma3/model_text.go",
+   "diff": "@@ -160,9 +160,6 @@ func (l *TextLayer) Forward(ctx ml.Context, layer int, hiddenState, positionIDs,\n }\n \n func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) ml.Tensor {\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n-\toutputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n-\n \thiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)\n \thiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.TextConfig.hiddenSize)))\n \n@@ -194,10 +191,10 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac\n \n \t\tvar lastLayerOutputs ml.Tensor\n \t\tif i == len(m.Layers)-1 {\n-\t\t\tlastLayerOutputs = outputs\n+\t\t\tlastLayerOutputs = batch.Outputs\n \t\t}\n \n-\t\thiddenState = layer.Forward(ctx, i, hiddenState, positions, lastLayerOutputs, cache, m.TextConfig)\n+\t\thiddenState = layer.Forward(ctx, i, hiddenState, batch.Positions, lastLayerOutputs, cache, m.TextConfig)\n \t}\n \n \thiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/gemma3n/model_text.go",
+   "new_path": "model/models/gemma3n/model_text.go",
+   "diff": "@@ -29,7 +29,6 @@ type TextModel struct {\n }\n \n func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) (ml.Tensor, error) {\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n \t// Create a tensor of a single float32 value of 1.0 to use for altup correction\n \tone := ctx.Input().FromFloatSlice([]float32{1.0}, 1)\n \n@@ -66,7 +65,7 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac\n \n \t\t// inputPerLayer = inputsPerLayer[:, i, :]\n \t\tinputPerLayer := inputsPerLayer.View(ctx, i*inputsPerLayer.Stride(1), inputsPerLayer.Dim(0), inputsPerLayer.Stride(2), inputsPerLayer.Dim(2))\n-\t\thiddenStates = layer.Forward(ctx, hiddenStates, inputPerLayer, positions, one, cache, i >= firstSharedKeyValue, ropeBase, float64(m.activationSparsityScale[i]), &m.TextOptions)\n+\t\thiddenStates = layer.Forward(ctx, hiddenStates, inputPerLayer, batch.Positions, one, cache, i >= firstSharedKeyValue, ropeBase, float64(m.activationSparsityScale[i]), &m.TextOptions)\n \t}\n \n \t// hiddenStates = hiddenStates[:, :, 0]\n@@ -83,7 +82,7 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac\n \n \thiddenStates = hiddenStates.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx).Mean(ctx)\n \thiddenStates = hiddenStates.Permute(ctx, 2, 0, 1, 3).Contiguous(ctx)\n-\thiddenStates = hiddenStates.Rows(ctx, ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs)))\n+\thiddenStates = hiddenStates.Rows(ctx, batch.Outputs)\n \n \thiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)\n \treturn m.Output.Forward(ctx, hiddenStates), nil",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/gptoss/model.go",
+   "new_path": "model/models/gptoss/model.go",
+   "diff": "@@ -30,7 +30,6 @@ type Transformer struct {\n // Forward implements model.Model.\n func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n \thiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n \n \tone := ctx.Input().FromFloatSlice([]float32{1}, 1)\n \tfor i, block := range m.TransformerBlocks {\n@@ -41,11 +40,11 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err\n \t\t}\n \n \t\tvar outputs ml.Tensor\n-\t\tif len(batch.Outputs) > 0 && i == len(m.TransformerBlocks)-1 {\n-\t\t\toutputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n+\t\tif i == len(m.TransformerBlocks)-1 {\n+\t\t\toutputs = batch.Outputs\n \t\t}\n \n-\t\thiddenStates = block.Forward(ctx, hiddenStates, positions, outputs, one, m.Cache, &m.Options)\n+\t\thiddenStates = block.Forward(ctx, hiddenStates, batch.Positions, outputs, one, m.Cache, &m.Options)\n \t}\n \n \thiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/llama/model.go",
+   "new_path": "model/models/llama/model.go",
+   "diff": "@@ -151,19 +151,17 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tenso\n }\n \n func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n-\n \thiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)\n \n \tfor i, layer := range m.Layers {\n \t\tm.Cache.SetLayer(i)\n \n \t\tvar outputs ml.Tensor\n \t\tif i == len(m.Layers)-1 {\n-\t\t\toutputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n+\t\t\toutputs = batch.Outputs\n \t\t}\n \n-\t\thiddenState = layer.Forward(ctx, hiddenState, positions, outputs, m.Cache, m.Options)\n+\t\thiddenState = layer.Forward(ctx, hiddenState, batch.Positions, outputs, m.Cache, m.Options)\n \t}\n \n \thiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/llama4/model.go",
+   "new_path": "model/models/llama4/model.go",
+   "diff": "@@ -175,10 +175,7 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {\n }\n \n func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n-\toutputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n-\n-\treturn m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache), nil\n+\treturn m.TextModel.Forward(ctx, batch, m.Cache), nil\n }\n \n func init() {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/llama4/model_text.go",
+   "new_path": "model/models/llama4/model_text.go",
+   "diff": "@@ -208,8 +208,8 @@ func newTextModel(c fs.Config) *TextModel {\n \t}\n }\n \n-func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {\n-\thiddenStates := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)\n+func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) ml.Tensor {\n+\thiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs).Duplicate(ctx)\n \n \tfor _, mi := range batch.Multimodal {\n \t\timg := mi.Multimodal[0].Tensor\n@@ -218,8 +218,8 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor\n \n \tvar attentionScales ml.Tensor\n \tif m.attentionTemperatureTuning {\n-\t\tscales := make([]float32, len(batch.Positions))\n-\t\tfor i, p := range batch.Positions {\n+\t\tscales := make([]float32, batch.Positions.Dim(0))\n+\t\tfor i, p := range batch.Positions.Ints() {\n \t\t\tscales[i] = float32(math.Log(math.Floor(((float64(p)+1.0)/float64(m.attentionFloorScale))+1.0))*m.attentionScale + 1.0)\n \t\t}\n \n@@ -237,10 +237,10 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor\n \n \t\tvar lastLayerOutputs ml.Tensor\n \t\tif i == len(m.Layers)-1 {\n-\t\t\tlastLayerOutputs = outputs\n+\t\t\tlastLayerOutputs = batch.Outputs\n \t\t}\n \n-\t\thiddenStates = layer.Forward(ctx, hiddenStates, positions, attentionScales, lastLayerOutputs, cache, useChunkedAttention, m.TextOptions)\n+\t\thiddenStates = layer.Forward(ctx, hiddenStates, batch.Positions, attentionScales, lastLayerOutputs, cache, useChunkedAttention, m.TextOptions)\n \t}\n \n \thiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/mistral3/model.go",
+   "new_path": "model/models/mistral3/model.go",
+   "diff": "@@ -158,10 +158,7 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {\n }\n \n func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n-\toutputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n-\n-\treturn m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache), nil\n+\treturn m.TextModel.Forward(ctx, batch, m.Cache), nil\n }\n \n func init() {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/mistral3/model_text.go",
+   "new_path": "model/models/mistral3/model_text.go",
+   "diff": "@@ -97,8 +97,8 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten\n \treturn hiddenState.Add(ctx, residual)\n }\n \n-func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {\n-\thiddenState := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)\n+func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) ml.Tensor {\n+\thiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs).Duplicate(ctx)\n \n \t// image embeddings\n \tfor _, image := range batch.Multimodal {\n@@ -111,10 +111,10 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor\n \n \t\tvar lastLayerOutputs ml.Tensor\n \t\tif i == len(m.Layers)-1 {\n-\t\t\tlastLayerOutputs = outputs\n+\t\t\tlastLayerOutputs = batch.Outputs\n \t\t}\n \n-\t\thiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, cache, m.TextOptions)\n+\t\thiddenState = layer.Forward(ctx, hiddenState, batch.Positions, lastLayerOutputs, cache, m.TextOptions)\n \t}\n \n \thiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/mllama/model.go",
+   "new_path": "model/models/mllama/model.go",
+   "diff": "@@ -106,11 +106,8 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n \t\tcrossAttentionStates = batch.Multimodal[len(batch.Multimodal)-1].Multimodal[0].Tensor\n \t}\n \n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n-\toutputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n-\n \t// TODO: attention mask, cross attention mask\n-\treturn m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, crossAttentionStates, nil, m.Cache.(*kvcache.WrapperCache)), nil\n+\treturn m.TextModel.Forward(ctx, batch.Inputs, batch.Positions, batch.Outputs, crossAttentionStates, nil, m.Cache.(*kvcache.WrapperCache)), nil\n }\n \n func init() {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/qwen2/model.go",
+   "new_path": "model/models/qwen2/model.go",
+   "diff": "@@ -102,19 +102,17 @@ type Model struct {\n \n // Forward implements model.Model.\n func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n-\n \thiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)\n \n \tfor i, layer := range m.Layers {\n \t\tm.Cache.SetLayer(i)\n \n \t\tvar outputs ml.Tensor\n \t\tif i == len(m.Layers)-1 {\n-\t\t\toutputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n+\t\t\toutputs = batch.Outputs\n \t\t}\n \n-\t\thiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, &m.Options)\n+\t\thiddenStates = layer.Forward(ctx, hiddenStates, batch.Positions, outputs, m.Cache, &m.Options)\n \t}\n \n \thiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/qwen25vl/model.go",
+   "new_path": "model/models/qwen25vl/model.go",
+   "diff": "@@ -139,10 +139,7 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {\n }\n \n func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n-\toutputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n-\n-\treturn m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache)\n+\treturn m.TextModel.Forward(ctx, batch, m.Cache)\n }\n \n func init() {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/qwen25vl/model_text.go",
+   "new_path": "model/models/qwen25vl/model_text.go",
+   "diff": "@@ -125,9 +125,9 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten\n \treturn hiddenState.Add(ctx, residual)\n }\n \n-func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) (ml.Tensor, error) {\n+func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) (ml.Tensor, error) {\n \t// Initial token embedding\n-\thiddenStates := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)\n+\thiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs).Duplicate(ctx)\n \n \tfor _, mi := range batch.Multimodal {\n \t\timg := mi.Multimodal[0].Tensor\n@@ -140,10 +140,10 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor\n \n \t\tvar lastLayerOutputs ml.Tensor\n \t\tif i == len(m.Layers)-1 {\n-\t\t\tlastLayerOutputs = outputs\n+\t\t\tlastLayerOutputs = batch.Outputs\n \t\t}\n \n-\t\thiddenStates = layer.Forward(ctx, hiddenStates, positions, lastLayerOutputs, cache, m.TextOptions)\n+\t\thiddenStates = layer.Forward(ctx, hiddenStates, batch.Positions, lastLayerOutputs, cache, m.TextOptions)\n \t}\n \n \thiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "model/models/qwen3/model.go",
+   "new_path": "model/models/qwen3/model.go",
+   "diff": "@@ -156,19 +156,17 @@ type Model struct {\n \n // Forward implements model.Model.\n func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {\n-\tpositions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n-\n \thiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)\n \n \tfor i, layer := range m.Layers {\n \t\tm.Cache.SetLayer(i)\n \n \t\tvar outputs ml.Tensor\n \t\tif i == len(m.Layers)-1 {\n-\t\t\toutputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n+\t\t\toutputs = batch.Outputs\n \t\t}\n \n-\t\thiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options)\n+\t\thiddenStates = layer.Forward(ctx, hiddenStates, batch.Positions, outputs, m.Cache, m.Options)\n \t}\n \n \thiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "runner/ollamarunner/runner.go",
+   "new_path": "runner/ollamarunner/runner.go",
+   "diff": "@@ -469,6 +469,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er\n \n \t// Prepare the seqs and batch, but defer the input token values as we may not be ready yet\n \tvar batchInputs []*input.Input\n+\tvar batchPositions, batchOutputs []int32\n \tvar batch input.Batch\n \n \tresumeSeq := -1\n@@ -548,12 +549,12 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er\n \t\t\t\tbatch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: len(batchInputs) - 1, Multimodal: mm})\n \t\t\t}\n \n-\t\t\tbatch.Positions = append(batch.Positions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))\n+\t\t\tbatchPositions = append(batchPositions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))\n \t\t\tbatch.Sequences = append(batch.Sequences, seq.cache.Id)\n \n-\t\t\tseq.iBatch = len(batch.Outputs)\n+\t\t\tseq.iBatch = len(batchOutputs)\n \t\t\tif i+1 == len(seq.inputs) {\n-\t\t\t\tbatch.Outputs = append(batch.Outputs, int32(len(batchInputs)-1))\n+\t\t\t\tbatchOutputs = append(batchOutputs, int32(len(batchInputs)-1))\n \t\t\t}\n \t\t\tlogutil.Trace(\"forwardBatch iBatch\", \"batchID\", s.batchID, \"seqIdx\", seqIdx, \"seq.iBatch\", seq.iBatch, \"i+1\", i+1, \"len(seq.inputs)\", len(seq.inputs))\n \t\t\tseq.pendingInputs = append(seq.pendingInputs, inp)\n@@ -578,6 +579,8 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er\n \n \t// Actual batchInputs values will be injected into the batch.Inputs tensor before calling Compute\n \tbatch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))\n+\tbatch.Positions = nextBatch.ctx.Input().FromIntSlice(batchPositions, len(batchPositions))\n+\tbatch.Outputs = nextBatch.ctx.Input().FromIntSlice(batchOutputs, len(batchOutputs))\n \tnextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)\n \tif err != nil {\n \t\terr = fmt.Errorf(\"failed to build graph: %w\", err)\n@@ -705,8 +708,8 @@ func (s *Server) computeBatch(activeBatch batchState) {\n \t\t}\n \n \t\t// sample a token\n-\t\tvocabSize := len(outputs) / len(activeBatch.batch.Outputs)\n-\t\tlogutil.Trace(\"computeBatch: vocab details\", \"batchID\", activeBatch.id, \"seqIdx\", i, \"len(logits)\", len(outputs), \"len(activeBatch.batch.Outputs)\", len(activeBatch.batch.Outputs), \"vocabSize\", vocabSize, \"iBatches\", iBatches)\n+\t\tvocabSize := len(outputs) / activeBatch.batch.Outputs.Dim(0)\n+\t\tlogutil.Trace(\"computeBatch: vocab details\", \"batchID\", activeBatch.id, \"seqIdx\", i, \"len(logits)\", len(outputs), \"len(activeBatch.batch.Outputs)\", activeBatch.batch.Outputs.Dim(0), \"vocabSize\", vocabSize, \"iBatches\", iBatches)\n \t\ttoken, err := seq.sampler.Sample(outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize])\n \t\tif err != nil {\n \t\t\ts.hardErrCh <- fmt.Errorf(\"failed to sample token: %w\", err)\n@@ -1047,8 +1050,7 @@ func (s *Server) reserveWorstCaseGraph() error {\n \tvar batch input.Batch\n \n \tbatchInputs := make([]int32, len(inputs))\n-\tbatch.Positions = make([]int32, len(inputs))\n-\tbatch.Sequences = make([]int, len(inputs))\n+\tbatchPositions := make([]int32, len(inputs))\n \tfor i, inp := range inputs {\n \t\tbatchInputs[i] = inp.Token\n \t\tif inp.Multimodal != nil {\n@@ -1059,15 +1061,13 @@ func (s *Server) reserveWorstCaseGraph() error {\n \t\t\tbatch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: i, Multimodal: mm})\n \t\t}\n \n-\t\tbatch.Positions[i] = int32(i)\n-\t}\n-\n-\tbatch.Outputs = make([]int32, s.parallel)\n-\tfor i := range batch.Outputs {\n-\t\tbatch.Outputs[i] = int32(i)\n+\t\tbatchPositions[i] = int32(i)\n \t}\n \n+\tbatch.Sequences = make([]int, len(batchInputs))\n \tbatch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))\n+\tbatch.Positions = ctx.Input().FromIntSlice(batchPositions, len(batchPositions))\n+\tbatch.Outputs = ctx.Input().Arange(0, float32(s.parallel), 1, ml.DTypeI32)\n \n \tcache := s.model.Config().Cache\n \tif cache != nil {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "kvcache/causal.go",
+   "side": "right",
+   "from_line": 202,
+   "to_line": 202,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "The call to `batch.Positions.Ints()` to convert the tensor back to a slice is necessary here for iteration. However, this creates a performance concern: we're converting from slice to tensor when building the batch, then back to slice for cache operations. Consider whether the cache layer could work directly with tensors to avoid this round-trip conversion, though that may be out of scope for this PR.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "kvcache/encoder.go",
+   "side": "right",
+   "from_line": 94,
+   "to_line": 94,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential panic/semantic change: switching to `batch.Positions.Ints()[...]` assumes `Ints()` returns a non-nil slice with at least the required length and that it stays consistent with `batch.Multimodal[*].Index`. If `Ints()` can return nil/empty (or a newly allocated slice with different length), this will panic at runtime. Consider guarding (e.g., check `idx < len(batch.Positions.Ints())`) or caching the slice once and validating its length before indexing to preserve previous behavior.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "kvcache/wrapper.go",
+   "side": "right",
+   "from_line": 49,
+   "to_line": 54,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Potential issue: `batch.Positions.Ints()` is called inside the unwind loop. If `Ints()` materializes/copies tensor data, this can be unnecessarily expensive (and potentially unsafe if it depends on ctx/lifetime). Also you iterate `range curPositions` but index `batch.Sequences[k]`; this assumes `len(batch.Sequences)==len(curPositions)`—consider validating once or using a shared length variable.\n\nSuggestion: hoist `curPositions := batch.Positions.Ints()` outside the `for j := ...` loop and iterate up to `min(len(batch.Sequences), len(curPositions))` (or assert equality).\n\n```suggestion\n\t\t\tcurPositions := batch.Positions.Ints()\n\t\t\tfor j := i - 1; j >= 0; j-- {\n\t\t\t\t// assuming sequences and positions align\n\t\t\t\tfor k := 0; k < len(curPositions) && k < len(batch.Sequences); k++ {\n\t\t\t\t\t_ = c.caches[j].Remove(batch.Sequences[k], curPositions[k], math.MaxInt32)\n\t\t\t\t}\n\t\t\t}\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "ml/backend.go",
+   "side": "right",
+   "from_line": 402,
+   "to_line": 404,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Adding `Ints() []int32` to the `Tensor` interface is an API-breaking change: all concrete tensor implementations and any test fakes/mocks must implement it or compilation will fail. Please ensure every backend/wrapper that implements `Tensor` is updated, and define expected behavior when the underlying tensor dtype is not int32 (e.g., return nil, convert, or panic) to keep implementations consistent.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "ml/backend/ggml/ggml.go",
+   "side": "right",
+   "from_line": 1007,
+   "to_line": 1010,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The use of `C.GoBytes` with `C.int` cast for the length creates a risk of data truncation. `C.int` is typically 32-bit, so if the tensor size exceeds ~2GB, the data will be truncated. It is recommended to manually allocate the slice and copy the data to support larger tensors, ensuring consistency with the `t.sync != nil` branch.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "ml/backend/ggml/ggml.go",
+   "side": "right",
+   "from_line": 1007,
+   "to_line": 1007,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "The `Bytes()` method now handles CPU tensors by using `C.GoBytes()` which creates a copy of the data. However, there's a potential issue: if the tensor is neither on a backend (sync == nil) nor in CPU memory (bts == nil), the function will return a nil slice without any error or warning. Consider adding an error return or at least logging this edge case to prevent silent failures.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "ml/backend/ggml/ggml.go",
+   "side": "right",
+   "from_line": 1029,
+   "to_line": 1029,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Good addition of the `Ints()` method to complement `Floats()` and `Bytes()`. However, the same concern applies here: when both `sync` is nil and `C.ggml_get_data(t.t)` returns nil, the function silently returns a nil slice. This could lead to nil pointer dereferences in calling code. Consider adding error handling or defensive checks.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "model/input/input.go",
+   "side": "right",
+   "from_line": 61,
+   "to_line": 63,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The word 'indicies' is misspelled. It should be 'indices'.\n\n```suggestion\n\t// Outputs are the set of indices into Inputs for which output data should\n\t// be returned.\n\tOutputs ml.Tensor\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "model/model.go",
+   "side": "right",
+   "from_line": 285,
+   "to_line": 285,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The change from `len(batch.Positions)` to `batch.Positions.Dim(0)` is correct for the new tensor-based API. However, there's a potential nil pointer dereference risk if `batch.Positions` is nil. Consider adding a nil check before calling `Dim(0)`, or ensure that batch validation happens earlier in the call chain to guarantee `Positions` is always initialized.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "model/models/llama4/model_text.go",
+   "side": "right",
+   "from_line": 238,
+   "to_line": 241,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Behavior change: lastLayerOutputs now comes from `batch.Outputs` instead of an explicit `outputs` argument. If `batch.Outputs` can be nil/zero (or not sized for the current forward), the last layer may silently skip writing requested outputs or panic later. Consider validating `batch.Outputs` when `i==len(m.Layers)-1` (or keep the explicit parameter) to preserve previous contract.\n",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "runner/ollamarunner/runner.go",
+   "side": "right",
+   "from_line": 581,
+   "to_line": 581,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Good refactoring - moving tensor creation closer to where it's used. The code now creates `batchPositions` and `batchOutputs` as slices first, then converts them to tensors just before the Forward call. This is cleaner and more efficient. However, ensure that the `ctx.Input()` calls for creating tensors don't fail silently if the context is invalid.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "runner/ollamarunner/runner.go",
+   "side": "right",
+   "from_line": 711,
+   "to_line": 712,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential runtime panic: vocabSize := len(outputs) / activeBatch.batch.Outputs.Dim(0) will divide by zero if Outputs is empty (Dim(0)==0). Even if normally non-empty, add a defensive guard (and ideally validate Outputs is 1-D) to avoid panics and hard-to-debug slice bound errors when sampling.\n\n```suggestion\n\t\toutN := activeBatch.batch.Outputs.Dim(0)\n\t\tif outN <= 0 {\n\t\t\ts.hardErrCh <- fmt.Errorf(\"invalid Outputs dimension: %d\", outN)\n\t\t\treturn\n\t\t}\n\t\tvocabSize := len(outputs) / outN\n\t\tlogutil.Trace(\"computeBatch: vocab details\", \"batchID\", activeBatch.id, \"seqIdx\", i, \"len(logits)\", len(outputs), \"len(activeBatch.batch.Outputs)\", outN, \"vocabSize\", vocabSize, \"iBatches\", iBatches)\n```",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "kvcache/causal.go",
+   "side": "right",
+   "from_line": 203,
+   "to_line": 204,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Potential type mismatch / compile error: `batch.Positions.Ints()` (ml.Tensor.Ints) returns `[]int32` (see ml/backend/ggml/ggml.go), but `c.curPositions` appears to be used as `[]int` positions (previously assigned from `batch.Positions` when it was likely `[]int`). Please verify `c.curPositions` type and downstream uses (e.g., cacheCell.pos, comparisons, arithmetic). If `c.curPositions` is `[]int`, you need an explicit conversion loop to `[]int`, or change all related types to `int32` consistently to avoid implicit narrowing/architecture-dependent bugs.\n\n```suggestion\n // Option A: keep int positions\n pos32 := batch.Positions.Ints()\n c.curPositions = make([]int, len(pos32))\n for i, p := range pos32 {\n \tc.curPositions[i] = int(p)\n }\n c.curBatchSize = len(c.curPositions)\n \n // Option B: switch all position-related fields to []int32 consistently\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "ml/backend/ggml/ggml.go",
+   "side": "right",
+   "from_line": 1036,
+   "to_line": 1036,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The added branch for direct tensor data access via `ggml_get_data` is unsafe as it assumes non-NULL pointers always indicate accessible CPU memory, but may instead point to GPU memory (causing access violations) or uncomputed intermediate tensor data.",
+   "source": "human"
+  },
+  {
+   "path": "model/models/mllama/model.go",
+   "side": "right",
+   "from_line": 110,
+   "to_line": 110,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "TextModel.Forward signature is `Forward(ctx ml.Context, inputIDs, positionIDs, outputs, ... ml.Tensor, ...)` (see model_text.go). This call now passes `batch.Positions` / `batch.Outputs` directly, but those are not `ml.Tensor` here (previous code converted via `ctx.Input().FromIntSlice`). This is likely a compile-time type mismatch or an unintended API change. If batch.Positions/Outputs were changed to tensors, please confirm; otherwise revert to building tensors (and ensure correct dtype/shape).\n\n```suggestion\n positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))\n outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))\n \n // TODO: attention mask, cross attention mask\n return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, crossAttentionStates, nil, m.Cache.(*kvcache.WrapperCache)), nil\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "runner/ollamarunner/runner.go",
+   "side": "right",
+   "from_line": 1069,
+   "to_line": 1069,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Nice use of `Arange()` to generate sequential indices for outputs instead of manually creating a slice. This is more idiomatic and efficient. The change from creating and populating `batch.Outputs` slice to using `ctx.Input().Arange(0, float32(s.parallel), 1, ml.DTypeI32)` is a good improvement.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ]
+}

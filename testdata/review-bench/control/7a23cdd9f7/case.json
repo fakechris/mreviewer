@@ -1,0 +1,31 @@
+{
+ "id": "control/7a23cdd9f7",
+ "source": "mreviewer-history",
+ "kind": "control",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/fakechris/mreviewer/commit/7a23cdd9f717cca20659ded8dd36a5031c2b5c48",
+  "owner": "fakechris",
+  "repo": "mreviewer",
+  "number": 0,
+  "base_sha": "3fc8048a269384540d24bf7455c7d93a4711d264",
+  "head_sha": "7a23cdd9f717cca20659ded8dd36a5031c2b5c48",
+  "title": "docs: add release playbook",
+  "description": "",
+  "language": "Go",
+  "category": "control",
+  "changed_lines": 59
+ },
+ "diffs": [
+  {
+   "old_path": "docs/operations/release-distribution.md",
+   "new_path": "docs/operations/release-distribution.md",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false,
+   "diff": "@@ -57,3 +57,62 @@ bash scripts/verify-onboarding.sh\n bash scripts/verify-onboarding_test.sh\n go test ./... -count=1\n ```\n+\n+## Release playbook\n+\n+`mreviewer` does not create a formal release for every PR.\n+\n+Normal flow:\n+\n+1. Every PR runs CI and review checks.\n+2. PRs merge to `main` once they are stable.\n+3. A formal release is cut only when there is a batch of user-visible improvements or an important distribution/runtime fix worth shipping.\n+\n+In practice, the release action is explicit:\n+\n+1. The human decides a version should ship, for example `v0.1.4`.\n+2. The release operator verifies `main` is green and runs the local smoke checks above.\n+3. The release operator cuts the tag:\n+\n+```bash\n+git tag v1.2.3\n+git push origin v1.2.3\n+```\n+\n+4. `Release CLI` publishes the GitHub Release assets.\n+5. The release workflow opens the Homebrew formula sync PR.\n+6. That PR is reviewed and merged.\n+7. The installer path and Homebrew install path are verified against the real published release.\n+\n+This keeps the release surface understandable:\n+\n+- PRs validate code.\n+- Tags publish versions.\n+- Homebrew follows the tagged release, not individual feature branches.\n+\n+## What counts as a successful release\n+\n+A release is only considered fully successful when all of these are true:\n+\n+1. GitHub Release assets exist for `darwin/linux` on `amd64/arm64`.\n+2. Per-archive `.sha256` files and `checksums.txt` are present.\n+3. The release workflow successfully creates the formula-sync PR.\n+4. `Formula/mreviewer.rb` is merged back to `main`.\n+5. The installer works against the real release assets.\n+6. The Homebrew tap/install path works against the merged formula.\n+\n+Publishing only the GitHub Release assets is a partial success, not the full release closure.\n+\n+## Current expectation for first full release success\n+\n+As of `2026-04-02`, GitHub Release asset publishing has already succeeded on real tags, but the full end-to-end release closure has not yet been completed in one pass.\n+\n+The next candidate, expected to be `v0.1.4`, should be the first release that exercises the full path:\n+\n+1. tag push\n+2. Release CLI asset publish\n+3. automatic formula-sync PR creation\n+4. formula PR merge\n+5. installer and Homebrew verification\n+\n+That is the point where the project can say it has completed its first full production release cycle."
+  }
+ ],
+ "golden": [],
+ "negatives": []
+}

@@ -12,6 +12,7 @@ const (
 	ProviderKindAnthropic           = "anthropic"
 	ProviderKindOpenAI              = "openai"
 	ProviderKindZhipuAI             = "zhipuai"
+	ProviderKindDeepSeek            = "deepseek"
 	ProviderKindArkAnthropic        = "ark_anthropic"
 	ProviderKindArkOpenAI           = "ark_openai"
 	ProviderKindFireworksRouter     = "fireworks_router"
@@ -31,6 +32,8 @@ func NewProviderFromConfig(cfg ProviderConfig) (Provider, error) {
 		return NewOpenAIProvider(cfg)
 	case ProviderKindZhipuAI:
 		return NewZhipuAIProvider(cfg)
+	case ProviderKindDeepSeek:
+		return NewDeepSeekProvider(cfg)
 	case ProviderKindArkAnthropic:
 		return NewArkAnthropicProvider(cfg)
 	case ProviderKindArkOpenAI:

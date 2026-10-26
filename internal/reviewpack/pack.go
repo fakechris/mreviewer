@@ -232,6 +232,8 @@ func (r *LegacyProviderRunner) Run(ctx context.Context, input core.ReviewInput, 
 	}
 	artifact := core.ArtifactFromLegacyResult(input.Target, r.contract.ID, response.Result)
 	artifact.ReviewerKind = "pack"
+	artifact.TokensTotal = response.Tokens
+	artifact.LatencyMillis = response.Latency.Milliseconds()
 	artifact.Findings = filterFindings(r.contract, artifact.Findings)
 	return artifact, nil
 }

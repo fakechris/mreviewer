@@ -1,0 +1,386 @@
+{
+ "id": "aacr/mrdoob__three.js__30076",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/mrdoob/three.js/pull/30076",
+  "owner": "mrdoob",
+  "repo": "three.js",
+  "number": 30076,
+  "base_sha": "1fc010cb7bd1e17d94c1a33ba8dacdf9e34193cb",
+  "head_sha": "7388f600209ce8a98f7211cd0e93a170b6e98d61",
+  "title": "Eslint: enforce valid JSdoc format",
+  "description": "**Description**\r\n\r\nEnsure that functions using JSdoc are properlly documented (no more parameter naming mistake and better editor linting support)",
+  "language": "JavaScript",
+  "category": "Code Style, Linting, Formatting Fixes",
+  "changed_lines": 151
+ },
+ "diffs": [
+  {
+   "old_path": ".eslintrc.json",
+   "new_path": ".eslintrc.json",
+   "diff": "@@ -63,6 +63,16 @@\n     ],\n     \"no-duplicate-imports\": [\n       \"error\"\n+    ],\n+    \"valid-jsdoc\": [\n+      \"error\",\n+      {\n+        \"requireReturn\": false,\n+        \"requireReturnType\": true,\n+        \"requireParamDescription\": false,\n+        \"requireReturnDescription\": false,\n+        \"requireParamType\": true\n+      }\n     ]\n   }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/cameras/PerspectiveCamera.js",
+   "new_path": "src/cameras/PerspectiveCamera.js",
+   "diff": "@@ -62,7 +62,7 @@ class PerspectiveCamera extends Camera {\n \t * The default film gauge is 35, so that the focal length can be specified for\n \t * a 35mm (full frame) camera.\n \t *\n-\t * Values for focal length and film gauge must have the same unit.\n+\t * @param {number} focalLength - Values for focal length and film gauge must have the same unit.\n \t */\n \tsetFocalLength( focalLength ) {\n \n@@ -76,6 +76,8 @@ class PerspectiveCamera extends Camera {\n \n \t/**\n \t * Calculates the focal length from the current .fov and .filmGauge.\n+\t *\n+\t * @returns {number}\n \t */\n \tgetFocalLength() {\n \n@@ -109,6 +111,10 @@ class PerspectiveCamera extends Camera {\n \t/**\n \t * Computes the 2D bounds of the camera's viewable rectangle at a given distance along the viewing direction.\n \t * Sets minTarget and maxTarget to the coordinates of the lower-left and upper-right corners of the view rectangle.\n+\t *\n+\t * @param {number} distance\n+\t * @param {number} minTarget\n+\t * @param {number} maxTarget\n \t */\n \tgetViewBounds( distance, minTarget, maxTarget ) {\n \n@@ -124,7 +130,10 @@ class PerspectiveCamera extends Camera {\n \n \t/**\n \t * Computes the width and height of the camera's viewable rectangle at a given distance along the viewing direction.\n-\t * Copies the result into the target Vector2, where x is width and y is height.\n+\t *\n+\t * @param {number} distance\n+\t * @param {Vector2} target - Vector2 target used to store result where x is width and y is height.\n+\t * @returns {Vector2}\n \t */\n \tgetViewSize( distance, target ) {\n \n@@ -168,6 +177,13 @@ class PerspectiveCamera extends Camera {\n \t *   camera.setViewOffset( fullWidth, fullHeight, w * 2, h * 1, w, h );\n \t *\n \t *   Note there is no reason monitors have to be the same size or in a grid.\n+\t *\n+\t * @param {number} fullWidth\n+\t * @param {number} fullHeight\n+\t * @param {number} x\n+\t * @param {number} y\n+\t * @param {number} width\n+\t * @param {number} height\n \t */\n \tsetViewOffset( fullWidth, fullHeight, x, y, width, height ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/extras/PMREMGenerator.js",
+   "new_path": "src/extras/PMREMGenerator.js",
+   "diff": "@@ -102,6 +102,12 @@ class PMREMGenerator {\n \t * in radians to be applied to the scene before PMREM generation. Optional near\n \t * and far planes ensure the scene is rendered in its entirety (the cubeCamera\n \t * is placed at the origin).\n+\t *\n+\t * @param {Scene} scene\n+\t * @param {number} sigma\n+\t * @param {number} near\n+\t * @param {number} far\n+\t * @return {WebGLRenderTarget}\n \t */\n \tfromScene( scene, sigma = 0, near = 0.1, far = 100 ) {\n \n@@ -137,6 +143,10 @@ class PMREMGenerator {\n \t * or HDR. The ideal input image size is 1k (1024 x 512),\n \t * as this matches best with the 256 x 256 cubemap output.\n \t * The smallest supported equirectangular image size is 64 x 32.\n+\t *\n+\t * @param {Texture} equirectangular\n+\t * @param {WebGLRenderTarget} [renderTarget=null] - Optional render target.\n+\t * @return {WebGLRenderTarget}\n \t */\n \tfromEquirectangular( equirectangular, renderTarget = null ) {\n \n@@ -149,6 +159,10 @@ class PMREMGenerator {\n \t * or HDR. The ideal input cube size is 256 x 256,\n \t * as this matches best with the 256 x 256 cubemap output.\n \t * The smallest supported cube size is 16 x 16.\n+\t *\n+\t * @param {Texture} cubemap\n+\t * @param {null} [renderTarget=null] - Optional render target.\n+\t * @return {WebGLRenderTarget}\n \t */\n \tfromCubemap( cubemap, renderTarget = null ) {\n \n@@ -466,6 +480,12 @@ class PMREMGenerator {\n \t * the blur latitudinally (around the poles), and then longitudinally (towards\n \t * the poles) to approximate the orthogonally-separable blur. It is least\n \t * accurate at the poles, but still does a decent job.\n+\t *\n+\t * @param {WebGLRenderTarget} cubeUVRenderTarget\n+\t * @param {number} lodIn\n+\t * @param {number} lodOut\n+\t * @param {number} sigma\n+\t * @param {Vector3} [poleAxis]\n \t */\n \t_blur( cubeUVRenderTarget, lodIn, lodOut, sigma, poleAxis ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/extras/TextureUtils.js",
+   "new_path": "src/extras/TextureUtils.js",
+   "diff": "@@ -69,6 +69,12 @@ function fill( texture ) {\n /**\n  * Given the width, height, format, and type of a texture. Determines how many\n  * bytes must be used to represent the texture.\n+ *\n+ * @param {Number} width\n+ * @param {Number} height\n+ * @param {Number} format\n+ * @param {Number} type\n+ * @return {Number} The number of bytes required to represent the texture.\n  */\n function getByteLength( width, height, format, type ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/code/ExpressionNode.js",
+   "new_path": "src/nodes/code/ExpressionNode.js",
+   "diff": "@@ -19,7 +19,7 @@ class ExpressionNode extends Node {\n \t * Constructs a new expression node.\n \t *\n \t * @param {String} [snippet=''] - The native code snippet.\n-\t * @param {String} [includes='void'] - The node type.\n+\t * @param {String} [nodeType='void'] - The node type.\n \t */\n \tconstructor( snippet = '', nodeType = 'void' ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/core/IndexNode.js",
+   "new_path": "src/nodes/core/IndexNode.js",
+   "diff": "@@ -25,7 +25,7 @@ class IndexNode extends Node {\n \t/**\n \t * Constructs a new index node.\n \t *\n-\t * @param {('vertex'|'instance'|'subgroup'|'invocationLocal'|'invocationSubgroup'|'draw')} value - The scope of the index node.\n+\t * @param {('vertex'|'instance'|'subgroup'|'invocationLocal'|'invocationSubgroup'|'draw')} scope - The scope of the index node.\n \t */\n \tconstructor( scope ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/core/Node.js",
+   "new_path": "src/nodes/core/Node.js",
+   "diff": "@@ -125,6 +125,7 @@ class Node extends EventDispatcher {\n \t *\n \t * @type {Boolean}\n \t * @default false\n+\t * @param {boolean} value\n \t */\n \tset needsUpdate( value ) {\n \n@@ -531,9 +532,9 @@ class Node extends EventDispatcher {\n \t/**\n \t * The method can be implemented to update the node's internal state before it is used to render an object.\n \t * The {@link Node#updateBeforeType} property defines how often the update is executed.\n+\t * This method should return an optional bool that indicates whether the implementation actually performed an update or not (e.g. due to caching).\n \t *\n \t * @param {NodeFrame} frame - A reference to the current node frame.\n-\t * @return {Boolean?} An optional bool that indicates whether the implementation actually performed an update or not (e.g. due to caching).\n \t */\n \tupdateBefore( /*frame*/ ) {\n \n@@ -544,9 +545,9 @@ class Node extends EventDispatcher {\n \t/**\n \t * The method can be implemented to update the node's internal state after it was used to render an object.\n \t * The {@link Node#updateAfterType} property defines how often the update is executed.\n+\t * This method should return an optional bool that indicates whether the implementation actually performed an update or not (e.g. due to caching).\n \t *\n \t * @param {NodeFrame} frame - A reference to the current node frame.\n-\t * @return {Boolean?} An optional bool that indicates whether the implementation actually performed an update or not (e.g. due to caching).\n \t */\n \tupdateAfter( /*frame*/ ) {\n \n@@ -557,9 +558,9 @@ class Node extends EventDispatcher {\n \t/**\n \t * The method can be implemented to update the node's internal state when it is used to render an object.\n \t * The {@link Node#updateType} property defines how often the update is executed.\n+\t * This method should return an optional bool that indicates whether the implementation actually performed an update or not (e.g. due to caching).\n \t *\n \t * @param {NodeFrame} frame - A reference to the current node frame.\n-\t * @return {Boolean?} An optional bool that indicates whether the implementation actually performed an update or not (e.g. due to caching).\n \t */\n \tupdate( /*frame*/ ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/core/NodeBuilder.js",
+   "new_path": "src/nodes/core/NodeBuilder.js",
+   "diff": "@@ -797,7 +797,7 @@ class NodeBuilder {\n \t * resolved to `textureSize` in GLSL.\n \t *\n \t * @abstract\n-\t * @param {String} name - The method name to resolve.\n+\t * @param {String} method - The method name to resolve.\n \t * @return {String} The resolved method name.\n \t */\n \tgetMethod( method ) {\n@@ -896,7 +896,7 @@ class NodeBuilder {\n \t/**\n \t * Returns a cache for the given node.\n \t *\n-\t * @param {Node} Node - The node.\n+\t * @param {Node} node - The node.\n \t * @param {Boolean} [parent=true] - Whether this node refers to a shared parent cache or not.\n \t * @return {NodeCache} The cache.\n \t */\n@@ -999,7 +999,7 @@ class NodeBuilder {\n \t/**\n \t * Calling this method increases the usage count for the given node by one.\n \t *\n-\t * @param {Node} Node - The node to increase the usage count for.\n+\t * @param {Node} node - The node to increase the usage count for.\n \t * @return {Number} The updated usage count.\n \t */\n \tincreaseUsage( node ) {\n@@ -1319,7 +1319,7 @@ class NodeBuilder {\n \t/**\n \t * Returns the type for a given typed array.\n \t *\n-\t * @param {TypedArray} type - The typed array.\n+\t * @param {TypedArray} array - The typed array.\n \t * @return {String} The type.\n \t */\n \tgetTypeFromArray( array ) {\n@@ -1871,7 +1871,7 @@ class NodeBuilder {\n \t/**\n \t * Generates a code flow based on a TSL function: Fn().\n \t *\n-\t * @param {ShaderNodeInternal} node - A function code will be generated based on the input.\n+\t * @param {ShaderNodeInternal} shaderNode - A function code will be generated based on the input.\n \t * @return {Object}\n \t */\n \tflowShaderNode( shaderNode ) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/core/TempNode.js",
+   "new_path": "src/nodes/core/TempNode.js",
+   "diff": "@@ -19,7 +19,7 @@ class TempNode extends Node {\n \t/**\n \t * Constructs a temp node.\n \t *\n-\t * @param {String} nodeType - The node type.\n+\t * @param {String} type - The node type.\n \t */\n \tconstructor( type ) {\n \n@@ -39,6 +39,7 @@ class TempNode extends Node {\n \t/**\n \t * Whether this node is used more than once in context of other nodes.\n \t *\n+\t * @param {NodeBuilder} builder - The node builder.\n \t * @return {Boolean} A flag that indicates if there is more than one dependency to other nodes.\n \t */\n \thasDependencies( builder ) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/display/NormalMapNode.js",
+   "new_path": "src/nodes/display/NormalMapNode.js",
+   "diff": "@@ -57,7 +57,7 @@ class NormalMapNode extends TempNode {\n \t/**\n \t * Constructs a new normal map node.\n \t *\n-\t * @param {Node} textureNode - Represents the normal map data.\n+\t * @param {Node} node - Represents the normal map data.\n \t * @param {Node?} [scaleNode=null] - Controls the intensity of the effect.\n \t */\n \tconstructor( node, scaleNode = null ) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/display/ScreenNode.js",
+   "new_path": "src/nodes/display/ScreenNode.js",
+   "diff": "@@ -93,7 +93,6 @@ class ScreenNode extends Node {\n \t * from the current renderer.\n \t *\n \t * @param {NodeFrame} frame - A reference to the current node frame.\n-\t * @return {Boolean?} An optional bool that indicates whether the implementation actually performed an update or not (e.g. due to caching).\n \t */\n \tupdate( { renderer } ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/functions/BasicLightingModel.js",
+   "new_path": "src/nodes/functions/BasicLightingModel.js",
+   "diff": "@@ -26,7 +26,7 @@ class BasicLightingModel extends LightingModel {\n \t/**\n \t * Implements the baked indirect lighting with its modulation.\n \t *\n-\t * @param {ContextNode} input - The current node context.\n+\t * @param {ContextNode} context - The current node context.\n \t * @param {StackNode} stack - The current stack.\n \t * @param {NodeBuilder} builder - The current node builder.\n \t */\n@@ -61,7 +61,7 @@ class BasicLightingModel extends LightingModel {\n \t/**\n \t * Implements the environment mapping.\n \t *\n-\t * @param {ContextNode} input - The current node context.\n+\t * @param {ContextNode} context - The current node context.\n \t * @param {StackNode} stack - The current stack.\n \t * @param {NodeBuilder} builder - The current node builder.\n \t */",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/functions/PhysicalLightingModel.js",
+   "new_path": "src/nodes/functions/PhysicalLightingModel.js",
+   "diff": "@@ -473,7 +473,7 @@ class PhysicalLightingModel extends LightingModel {\n \t * Depending on what features are requested, the method prepares certain node variables\n \t * which are later used for lighting computations.\n \t *\n-\t * @param {ContextNode} input - The current node context.\n+\t * @param {ContextNode} context - The current node context.\n \t */\n \tstart( context ) {\n \n@@ -641,7 +641,7 @@ class PhysicalLightingModel extends LightingModel {\n \t/**\n \t * Implements the indirect lighting.\n \t *\n-\t * @param {ContextNode} input - The current node context.\n+\t * @param {ContextNode} context - The current node context.\n \t * @param {StackNode} stack - The current stack.\n \t * @param {NodeBuilder} builder - The current node builder.\n \t */\n@@ -758,7 +758,7 @@ class PhysicalLightingModel extends LightingModel {\n \t/**\n \t * Used for final lighting accumulations depending on the requested features.\n \t *\n-\t * @param {ContextNode} input - The current node context.\n+\t * @param {ContextNode} context - The current node context.\n \t * @param {StackNode} stack - The current stack.\n \t * @param {NodeBuilder} builder - The current node builder.\n \t */",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/functions/ShadowMaskModel.js",
+   "new_path": "src/nodes/functions/ShadowMaskModel.js",
+   "diff": "@@ -39,7 +39,7 @@ class ShadowMaskModel extends LightingModel {\n \t/**\n \t * Uses the shadow mask to produce the final color.\n \t *\n-\t * @param {ContextNode} input - The current node context.\n+\t * @param {ContextNode} context - The current node context.\n \t */\n \tfinish( context ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/geometry/RangeNode.js",
+   "new_path": "src/nodes/geometry/RangeNode.js",
+   "diff": "@@ -62,6 +62,7 @@ class RangeNode extends Node {\n \t/**\n \t * Returns the vector length which is computed based on the range definition.\n \t *\n+\t * @param {NodeBuilder} builder - The current node builder.\n \t * @return {Number} The vector length.\n \t */\n \tgetVectorLength( builder ) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/lighting/PointLightNode.js",
+   "new_path": "src/nodes/lighting/PointLightNode.js",
+   "diff": "@@ -90,6 +90,8 @@ class PointLightNode extends AnalyticLightNode {\n \n \t/**\n \t * Overwritten to setup point light specific shadow.\n+\t *\n+\t * @return {Node}\n \t */\n \tsetupShadowNode() {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/pmrem/PMREMNode.js",
+   "new_path": "src/nodes/pmrem/PMREMNode.js",
+   "diff": "@@ -107,7 +107,7 @@ class PMREMNode extends TempNode {\n \t/**\n \t * Constructs a new function overloading node.\n \t *\n-\t * @param {Texture} texture - The input texture.\n+\t * @param {Texture} value - The input texture.\n \t * @param {Node<vec2>} [uvNode=null] - The uv node.\n \t * @param {Node<float>} [levelNode=null] - The level node.\n \t */\n@@ -203,6 +203,7 @@ class PMREMNode extends TempNode {\n \t/**\n \t * The node's texture value.\n \t *\n+\t * @param {Texture} value\n \t * @type {Texture}\n \t */\n \tset value( value ) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/utils/MaxMipLevelNode.js",
+   "new_path": "src/nodes/utils/MaxMipLevelNode.js",
+   "diff": "@@ -23,7 +23,7 @@ class MaxMipLevelNode extends UniformNode {\n \t/**\n \t * Constructs a new max mip level node.\n \t *\n-\t * @param {TextureNode} node - The texture node to compute the max mip level for.\n+\t * @param {TextureNode} textureNode - The texture node to compute the max mip level for.\n \t */\n \tconstructor( textureNode ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/utils/Oscillators.js",
+   "new_path": "src/nodes/utils/Oscillators.js",
+   "diff": "@@ -6,7 +6,7 @@ import { time } from './Timer.js';\n  * Generates a sine wave oscillation based on a timer.\n  *\n  * @method\n- * @param {Node<float>} time - The timer to generate the oscillation with.\n+ * @param {Node<float>} t - The timer to generate the oscillation with.\n  * @return {Node<float>} The oscillation node.\n  */\n export const oscSine = ( t = time ) => t.add( 0.75 ).mul( Math.PI * 2 ).sin().mul( 0.5 ).add( 0.5 );\n@@ -15,7 +15,7 @@ export const oscSine = ( t = time ) => t.add( 0.75 ).mul( Math.PI * 2 ).sin().mu\n  * Generates a square wave oscillation based on a timer.\n  *\n  * @method\n- * @param {Node<float>} time - The timer to generate the oscillation with.\n+ * @param {Node<float>} t - The timer to generate the oscillation with.\n  * @return {Node<float>} The oscillation node.\n  */\n export const oscSquare = ( t = time ) => t.fract().round();\n@@ -24,7 +24,7 @@ export const oscSquare = ( t = time ) => t.fract().round();\n  * Generates a triangle wave oscillation based on a timer.\n  *\n  * @method\n- * @param {Node<float>} time - The timer to generate the oscillation with.\n+ * @param {Node<float>} t - The timer to generate the oscillation with.\n  * @return {Node<float>} The oscillation node.\n  */\n export const oscTriangle = ( t = time ) => t.add( 0.5 ).fract().mul( 2 ).sub( 1 ).abs();\n@@ -33,7 +33,7 @@ export const oscTriangle = ( t = time ) => t.add( 0.5 ).fract().mul( 2 ).sub( 1\n  * Generates a sawtooth wave oscillation based on a timer.\n  *\n  * @method\n- * @param {Node<float>} time - The timer to generate the oscillation with.\n+ * @param {Node<float>} t - The timer to generate the oscillation with.\n  * @return {Node<float>} The oscillation node.\n  */\n export const oscSawtooth = ( t = time ) => t.fract();",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/utils/Packing.js",
+   "new_path": "src/nodes/utils/Packing.js",
+   "diff": "@@ -15,7 +15,7 @@ export const directionToColor = ( node ) => nodeObject( node ).mul( 0.5 ).add( 0\n  * Unpacks a color value into a direction vector.\n  *\n  * @method\n- * @param {Node<vec3>} color - The color to unpack.\n+ * @param {Node<vec3>} node - The color to unpack.\n  * @return {Node<vec3>} The direction.\n  */\n export const colorToDirection = ( node ) => nodeObject( node ).mul( 2.0 ).sub( 1 );",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/utils/RemapNode.js",
+   "new_path": "src/nodes/utils/RemapNode.js",
+   "diff": "@@ -21,7 +21,7 @@ class RemapNode extends Node {\n \t *\n \t * @param {Node} node - The node that should be remapped.\n \t * @param {Node} inLowNode - The source or current lower bound of the range.\n-\t * @param {Node} inLowNode - The source or current upper bound of the range.\n+\t * @param {Node} inHighNode - The source or current upper bound of the range.\n \t * @param {Node} [outLowNode=float(0)] - The target lower bound of the range.\n \t * @param {Node} [outHighNode=float(1)] - The target upper bound of the range.\n \t */",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/nodes/utils/StorageArrayElementNode.js",
+   "new_path": "src/nodes/utils/StorageArrayElementNode.js",
+   "diff": "@@ -23,7 +23,7 @@ class StorageArrayElementNode extends ArrayElementNode {\n \t/**\n \t * Constructs storage buffer element node.\n \t *\n-\t * @param {StorageBufferNode} node - The storage buffer node.\n+\t * @param {StorageBufferNode} storageBufferNode - The storage buffer node.\n \t * @param {Node} indexNode - The index node that defines the element access.\n \t */\n \tconstructor( storageBufferNode, indexNode ) {\n@@ -44,6 +44,7 @@ class StorageArrayElementNode extends ArrayElementNode {\n \t/**\n \t * The storage buffer node.\n \t *\n+\t * @param {Node} value\n \t * @type {StorageBufferNode}\n \t */\n \tset storageBufferNode( value ) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderers/common/extras/PMREMGenerator.js",
+   "new_path": "src/renderers/common/extras/PMREMGenerator.js",
+   "diff": "@@ -128,6 +128,13 @@ class PMREMGenerator {\n \t * in radians to be applied to the scene before PMREM generation. Optional near\n \t * and far planes ensure the scene is rendered in its entirety (the cubeCamera\n \t * is placed at the origin).\n+\t *\n+\t * @param {Scene} scene - The scene to be captured.\n+\t * @param {Number} [sigma=0] - The blur radius in radians.\n+\t * @param {Number} [near=0.1] - The near plane distance.\n+\t * @param {Number} [far=100] - The far plane distance.\n+\t * @param {RenderTarget?} [renderTarget=null] - The render target to use.\n+\t * @return {RenderTarget} The resulting PMREM.\n \t */\n \tfromScene( scene, sigma = 0, near = 0.1, far = 100, renderTarget = null ) {\n \n@@ -180,6 +187,10 @@ class PMREMGenerator {\n \t * Generates a PMREM from an equirectangular texture, which can be either LDR\n \t * or HDR. The ideal input image size is 1k (1024 x 512),\n \t * as this matches best with the 256 x 256 cubemap output.\n+\t *\n+\t * @param {Texture} equirectangular - The equirectangular texture to be converted.\n+\t * @param {RenderTarget?} [renderTarget=null] - The render target to use.\n+\t * @return {RenderTarget} The resulting PMREM.\n \t */\n \tfromEquirectangular( equirectangular, renderTarget = null ) {\n \n@@ -213,6 +224,10 @@ class PMREMGenerator {\n \t * Generates a PMREM from an cubemap texture, which can be either LDR\n \t * or HDR. The ideal input cube size is 256 x 256,\n \t * as this matches best with the 256 x 256 cubemap output.\n+\t *\n+\t * @param {Texture} cubemap - The cubemap texture to be converted.\n+\t * @param {RenderTarget?} [renderTarget=null] - The render target to use.\n+\t * @return {RenderTarget} The resulting PMREM.\n \t */\n \tfromCubemap( cubemap, renderTarget = null ) {\n \n@@ -562,6 +577,12 @@ class PMREMGenerator {\n \t * the blur latitudinally (around the poles), and then longitudinally (towards\n \t * the poles) to approximate the orthogonally-separable blur. It is least\n \t * accurate at the poles, but still does a decent job.\n+\t *\n+\t * @param {RenderTarget} cubeUVRenderTarget - The cubemap render target.\n+\t * @param {Number} lodIn - The input level-of-detail.\n+\t * @param {Number} lodOut - The output level-of-detail.\n+\t * @param {Number} sigma - The blur radius in radians.\n+\t * @param {Vector3} [poleAxis] - The pole axis.\n \t */\n \t_blur( cubeUVRenderTarget, lodIn, lodOut, sigma, poleAxis ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/renderers/webxr/WebXRManager.js",
+   "new_path": "src/renderers/webxr/WebXRManager.js",
+   "diff": "@@ -457,6 +457,10 @@ class WebXRManager extends EventDispatcher {\n \t\t * the cameras' projection and world matrices have already been set.\n \t\t * And that near and far planes are identical for both cameras.\n \t\t * Visualization of this technique: https://computergraphics.stackexchange.com/a/4765\n+\t\t *\n+\t\t * @param {ArrayCamera} camera - The camera to update.\n+\t\t * @param {PerspectiveCamera} cameraL - The left camera.\n+\t\t * @param {PerspectiveCamera} cameraR - The right camera.\n \t\t */\n \t\tfunction setProjectionFromUnion( camera, cameraL, cameraR ) {\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/cameras/PerspectiveCamera.js",
+   "side": "right",
+   "from_line": 115,
+   "to_line": 117,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The parameters `minTarget` and `maxTarget` are used as objects (likely `Vector2` as they store 2D coordinates), but are documented as `{number}`. Please correct the type to `{Vector2}`.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/extras/PMREMGenerator.js",
+   "side": "right",
+   "from_line": 106,
+   "to_line": 112,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The parameters `sigma`, `near`, and `far` have default values in the function signature. It is recommended to document them as optional parameters with their default values in the JSDoc, consistent with the style used in `fromEquirectangular`.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/extras/PMREMGenerator.js",
+   "side": "right",
+   "from_line": 164,
+   "to_line": 164,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Consider revising the JSDoc type expression from '{null}' to '{WebGLRenderTarget|null}' for better semantic clarity and alignment with common practices seen elsewhere in ThreeJS codebase where nullable object references are expressed via union syntax.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/nodes/core/Node.js",
+   "side": "right",
+   "from_line": 128,
+   "to_line": 128,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The @param tag is incorrectly placed within a property setter's JSDoc block. For setters, the parameter type should be documented using @type in the property description, not @param. Consider removing this @param tag as it doesn't follow standard JSDoc conventions for property setters.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/nodes/core/Node.js",
+   "side": "right",
+   "from_line": 128,
+   "to_line": 128,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Inconsistent type casing: `@type {Boolean}` uses capitalized `Boolean`, while `@param {boolean}` uses lowercase. It is recommended to use `Boolean` to maintain consistency with the existing style in this file.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/nodes/core/Node.js",
+   "side": "right",
+   "from_line": 535,
+   "to_line": 537,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Removing the @return tag and moving its content to the description reduces documentation quality. The @return tag should be retained for proper JSDoc parsing and IDE support. Standard JSDoc format should be: '@return {Boolean} An optional bool that indicates whether the implementation actually performed an update or not (e.g. due to caching).'\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/nodes/core/Node.js",
+   "side": "left",
+   "from_line": 536,
+   "to_line": 536,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The abstract method lacks `@abstract` in JSDoc, causing ESLint errors and forcing return documentation into the description; mark it as `@abstract` to properly document the return type via `@return` and resolve linting issues.",
+   "source": "human"
+  },
+  {
+   "path": "src/nodes/geometry/RangeNode.js",
+   "side": "right",
+   "from_line": 65,
+   "to_line": 66,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "JSDoc: consider using primitive type `number` (lowercase) for `@return` to align with JSDoc conventions (and many linters). The added `@param {NodeBuilder} builder` is good; if your doc tooling supports it, you could also reference/import the type for better linking.\n\n```suggestion\n\t * @param {NodeBuilder} builder - The current node builder.\n\t * @return {number} The vector length.\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/nodes/lighting/PointLightNode.js",
+   "side": "right",
+   "from_line": 94,
+   "to_line": 94,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "JSDoc return type for the point light shadow setup method must specify `PointShadowNode` instead of the generic `Node` to accurately reflect the concrete return type.",
+   "source": "human"
+  },
+  {
+   "path": "src/nodes/pmrem/PMREMNode.js",
+   "side": "right",
+   "from_line": 206,
+   "to_line": 206,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Invalid `@param` tag in setter JSDoc; setters should not use parameter documentation and should instead be covered by the getter's JSDoc to satisfy linting rules.",
+   "source": "human"
+  },
+  {
+   "path": "src/nodes/utils/Oscillators.js",
+   "side": "right",
+   "from_line": 9,
+   "to_line": 9,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "JSDoc: parameter name changed from `time` to `t`. This is fine, but please ensure all related docs/usages elsewhere reference `t` (e.g., generated docs/typedoc links). If the public API previously documented `time`, consider keeping `@param {Node<float>} t` but mentioning it's the time node to preserve searchability (e.g., `@param ... t - Time node ...`).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/nodes/utils/StorageArrayElementNode.js",
+   "side": "right",
+   "from_line": 47,
+   "to_line": 50,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The parameter type should be `StorageBufferNode` to match the property type definition and the constructor parameter. Using `Node` is too generic here.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/renderers/common/extras/PMREMGenerator.js",
+   "side": "right",
+   "from_line": 132,
+   "to_line": 137,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "In JSDoc, it is standard to use `number` (lowercase) for the primitive number type, rather than `Number` (which refers to the object wrapper).\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "src/renderers/common/extras/PMREMGenerator.js",
+   "side": "right",
+   "from_line": 191,
+   "to_line": 193,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Same JSDoc nullable marker concern: replace `RenderTarget?` with `{RenderTarget|null}` (or your project’s preferred nullable syntax) to keep docs/tooling consistent.\n\n```suggestion\n\t * @param {Texture} equirectangular - The equirectangular texture to be converted.\n\t * @param {RenderTarget|null} [renderTarget=null] - The render target to use.\n\t * @return {RenderTarget} The resulting PMREM.\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/renderers/common/extras/PMREMGenerator.js",
+   "side": "right",
+   "from_line": 224,
+   "to_line": 224,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Grammar issue: Should use 'a' instead of 'an' before 'cubemap' since 'cubemap' begins with a consonant sound.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/renderers/common/extras/PMREMGenerator.js",
+   "side": "right",
+   "from_line": 228,
+   "to_line": 230,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Same JSDoc nullable marker concern here as well: prefer `{RenderTarget|null}` over `RenderTarget?`.\n\n```suggestion\n\t * @param {Texture} cubemap - The cubemap texture to be converted.\n\t * @param {RenderTarget|null} [renderTarget=null] - The render target to use.\n\t * @return {RenderTarget} The resulting PMREM.\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/renderers/common/extras/PMREMGenerator.js",
+   "side": "right",
+   "from_line": 581,
+   "to_line": 585,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "In JSDoc, it is standard to use `number` (lowercase) for the primitive number type, rather than `Number` (which refers to the object wrapper).\n",
+   "source": "Gemini-3-Pro"
+  }
+ ],
+ "negatives": []
+}

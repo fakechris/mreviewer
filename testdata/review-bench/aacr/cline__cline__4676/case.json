@@ -1,0 +1,275 @@
+{
+ "id": "aacr/cline__cline__4676",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/cline/cline/pull/4676",
+  "owner": "cline",
+  "repo": "cline",
+  "number": 4676,
+  "base_sha": "0262e13ac48bbbc29f6c76b6b9a72e7e2ed2eb4b",
+  "head_sha": "d0a8db831cbe657faf792f00c0e3325de0b75fb4",
+  "title": "Optimize provider switching performance with batched storage operations",
+  "description": "### Description\n\nThis PR dramatically improves provider switching performance by optimizing storage operations, reducing switching time from ~550ms to ~30ms (18x improvement).\n\n**Problem:** Provider switching was extremely slow due to inefficient storage operations. Performance analysis revealed that switching providers triggered 70+ individual VSCode storage API calls:\n- 47 sequential `updateGlobalState()` calls taking ~527ms\n\n\n**Solution:** Implemented batched storage operations using `Promise.all()` to reduce API overhead:\n- Consolidated 47 global state updates into 1 batched operation\n- Consolidated 24 secret updates into 1 batched operation  \n- Execute both batches in parallel for maximum performance\n\n**Impact:** Provider switching now feels instant to users, improving the overall UX significantly.\n\n**Performance Logs - Before Optimization:**\n```\n[PERF] Global state updates took: 307.86ms\n[PERF] Ephemeral model config updates took: 219.65ms  \n[PERF] Total updateApiConfiguration took: 535.62ms\n```\n\n**Performance Logs - After Optimization:**\n```\n[PERF] Batched global state update took: 17.52ms\n[PERF] Batched secrets update took: 9.06ms\n[PERF] OPTIMIZED updateApiConfiguration took: 18.17ms (was ~535ms)\n[PERF] Total updateApiConfigurationProto took: 29.98ms\n```\n\n### Test Procedure\n\n**Performance Testing:**\n1. Added comprehensive timing measurements throughout the pipeline\n2. Tested provider switching before/after optimization using browser console logs\n3. Verified 18x performance improvement (550ms → 30ms) across multiple provider switches\n4. Confirmed all existing functionality remains intact\n\n**Compatibility Testing:**\n- Verified backward compatibility - all existing APIs unchanged\n- Tested with multiple provider types (Anthropic, OpenRouter, OpenAI, etc.)\n- Confirmed no breaking changes to storage interface\n- Validated that all provider-specific settings are preserved correctly\n\n**Code Quality:**\n- Added detailed performance logging for future debugging\n- Mainta",
+  "language": "TypeScript",
+  "category": "Performance Optimizations",
+  "changed_lines": 179
+ },
+ "diffs": [
+  {
+   "old_path": ".changeset/purple-rings-hide.md",
+   "new_path": ".changeset/purple-rings-hide.md",
+   "diff": "@@ -0,0 +1,5 @@\n+---\n+\"claude-dev\": patch\n+---\n+\n+Optimizing provider switching performance with batched storage operations",
+   "new_file": true,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/core/controller/models/updateApiConfigurationProto.ts",
+   "new_path": "src/core/controller/models/updateApiConfigurationProto.ts",
+   "diff": "@@ -15,29 +15,48 @@ export async function updateApiConfigurationProto(\n \tcontroller: Controller,\n \trequest: UpdateApiConfigurationRequest,\n ): Promise<Empty> {\n+\tconst startTime = performance.now()\n+\tconsole.log(\"[PERF] updateApiConfigurationProto: Starting provider switch\")\n+\n \ttry {\n \t\tif (!request.apiConfiguration) {\n \t\t\tconsole.log(\"[APICONFIG: updateApiConfigurationProto] API configuration is required\")\n \t\t\tthrow new Error(\"API configuration is required\")\n \t\t}\n \n \t\t// Convert proto ApiConfiguration to application ApiConfiguration\n+\t\tconst conversionStart = performance.now()\n \t\tconst appApiConfiguration = convertProtoToApiConfiguration(request.apiConfiguration)\n+\t\tconst conversionEnd = performance.now()\n+\t\tconsole.log(`[PERF] Proto conversion took: ${conversionEnd - conversionStart}ms`)\n \n \t\t// Update the API configuration in storage\n+\t\tconst storageStart = performance.now()\n \t\tawait updateApiConfiguration(controller.context, appApiConfiguration)\n+\t\tconst storageEnd = performance.now()\n+\t\tconsole.log(`[PERF] Storage update took: ${storageEnd - storageStart}ms`)\n \n \t\t// Update the task's API handler if there's an active task\n+\t\tconst apiHandlerStart = performance.now()\n \t\tif (controller.task) {\n \t\t\tcontroller.task.api = buildApiHandler(appApiConfiguration)\n \t\t}\n+\t\tconst apiHandlerEnd = performance.now()\n+\t\tconsole.log(`[PERF] API handler update took: ${apiHandlerEnd - apiHandlerStart}ms`)\n \n \t\t// Post updated state to webview\n+\t\tconst statePostStart = performance.now()\n \t\tawait controller.postStateToWebview()\n+\t\tconst statePostEnd = performance.now()\n+\t\tconsole.log(`[PERF] State post to webview took: ${statePostEnd - statePostStart}ms`)\n+\n+\t\tconst totalTime = performance.now() - startTime\n+\t\tconsole.log(`[PERF] Total updateApiConfigurationProto took: ${totalTime}ms`)\n \n \t\treturn Empty.create()\n \t} catch (error) {\n-\t\tconsole.error(`Failed to update API configuration: ${error}`)\n+\t\tconst totalTime = performance.now() - startTime\n+\t\tconsole.error(`[PERF] Failed to update API configuration after ${totalTime}ms: ${error}`)\n \t\tthrow error\n \t}\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "src/core/storage/state.ts",
+   "new_path": "src/core/storage/state.ts",
+   "diff": "@@ -28,6 +28,29 @@ export async function getGlobalState(context: vscode.ExtensionContext, key: Glob\n \treturn await context.globalState.get(key)\n }\n \n+// Batched operations for performance optimization\n+export async function updateGlobalStateBatch(context: vscode.ExtensionContext, updates: Record<string, any>) {\n+\tconst batchStart = performance.now()\n+\tconsole.log(`[PERF] Starting batched global state update with ${Object.keys(updates).length} keys`)\n+\n+\t// Use Promise.all to batch the updates\n+\tawait Promise.all(Object.entries(updates).map(([key, value]) => context.globalState.update(key as GlobalStateKey, value)))\n+\n+\tconst batchEnd = performance.now()\n+\tconsole.log(`[PERF] Batched global state update took: ${batchEnd - batchStart}ms`)\n+}\n+\n+export async function updateSecretsBatch(context: vscode.ExtensionContext, updates: Record<string, string | undefined>) {\n+\tconst batchStart = performance.now()\n+\tconsole.log(`[PERF] Starting batched secrets update with ${Object.keys(updates).length} keys`)\n+\n+\t// Use Promise.all to batch the secret updates\n+\tawait Promise.all(Object.entries(updates).map(([key, value]) => storeSecret(context, key as SecretKey, value)))\n+\n+\tconst batchEnd = performance.now()\n+\tconsole.log(`[PERF] Batched secrets update took: ${batchEnd - batchStart}ms`)\n+}\n+\n // secrets\n \n export async function storeSecret(context: vscode.ExtensionContext, key: SecretKey, value?: string) {\n@@ -53,6 +76,10 @@ export async function getWorkspaceState(context: vscode.ExtensionContext, key: L\n }\n \n export async function getAllExtensionState(context: vscode.ExtensionContext) {\n+\tconst startTime = performance.now()\n+\tconsole.log(\"[PERF] getAllExtensionState: Starting state retrieval\")\n+\n+\tconst firstBatchStart = performance.now()\n \tconst [\n \t\tisNewUser,\n \t\twelcomeViewCompleted,\n@@ -200,9 +227,15 @@ export async function getAllExtensionState(context: vscode.ExtensionContext) {\n \t\tgetGlobalState(context, \"sapAiResourceGroup\") as Promise<string | undefined>,\n \t\tgetGlobalState(context, \"claudeCodePath\") as Promise<string | undefined>,\n \t])\n+\tconst firstBatchEnd = performance.now()\n+\tconsole.log(`[PERF] First batch (66 state reads) took: ${firstBatchEnd - firstBatchStart}ms`)\n \n+\tconst workspaceStart = performance.now()\n \tconst localClineRulesToggles = (await getWorkspaceState(context, \"localClineRulesToggles\")) as ClineRulesToggles\n+\tconst workspaceEnd = performance.now()\n+\tconsole.log(`[PERF] Workspace state read took: ${workspaceEnd - workspaceStart}ms`)\n \n+\tconst secondBatchStart = performance.now()\n \tconst [\n \t\tchatSettings,\n \t\tstoredApiProvider,\n@@ -266,7 +299,10 @@ export async function getAllExtensionState(context: vscode.ExtensionContext) {\n \t\tgetGlobalState(context, \"previousModeSapAiCoreModelId\") as Promise<string | undefined>,\n \t\tgetGlobalState(context, \"sapAiCoreModelId\") as Promise<string | undefined>,\n \t])\n+\tconst secondBatchEnd = performance.now()\n+\tconsole.log(`[PERF] Second batch (30 state reads) took: ${secondBatchEnd - secondBatchStart}ms`)\n \n+\tconst processingStart = performance.now()\n \tlet apiProvider: ApiProvider\n \tif (storedApiProvider) {\n \t\tapiProvider = storedApiProvider\n@@ -302,6 +338,11 @@ export async function getAllExtensionState(context: vscode.ExtensionContext) {\n \t\t// persist so next time state is retrieved it's set to the correct value.\n \t\tawait updateGlobalState(context, \"planActSeparateModelsSetting\", planActSeparateModelsSetting)\n \t}\n+\tconst processingEnd = performance.now()\n+\tconsole.log(`[PERF] State processing took: ${processingEnd - processingStart}ms`)\n+\n+\tconst totalTime = performance.now() - startTime\n+\tconsole.log(`[PERF] Total getAllExtensionState took: ${totalTime}ms`)\n \n \treturn {\n \t\tapiConfiguration: {\n@@ -416,6 +457,9 @@ export async function getAllExtensionState(context: vscode.ExtensionContext) {\n }\n \n export async function updateApiConfiguration(context: vscode.ExtensionContext, apiConfiguration: ApiConfiguration) {\n+\tconst startTime = performance.now()\n+\tconsole.log(\"[PERF] updateApiConfiguration: Starting OPTIMIZED storage updates\")\n+\n \tconst {\n \t\tapiProvider,\n \t\tapiModelId,\n@@ -491,84 +535,95 @@ export async function updateApiConfiguration(context: vscode.ExtensionContext, a\n \t\tclaudeCodePath,\n \t} = apiConfiguration\n \n-\t// Ephemeral model config updates\n-\tawait updateGlobalState(context, \"apiProvider\", apiProvider)\n-\tawait updateGlobalState(context, \"apiModelId\", apiModelId)\n-\tawait updateGlobalState(context, \"thinkingBudgetTokens\", thinkingBudgetTokens)\n-\tawait updateGlobalState(context, \"reasoningEffort\", reasoningEffort)\n-\tawait updateGlobalState(context, \"vsCodeLmModelSelector\", vsCodeLmModelSelector)\n-\tawait updateGlobalState(context, \"awsBedrockCustomSelected\", awsBedrockCustomSelected)\n-\tawait updateGlobalState(context, \"awsBedrockCustomModelBaseId\", awsBedrockCustomModelBaseId)\n-\tawait updateGlobalState(context, \"openRouterModelId\", openRouterModelId)\n-\tawait updateGlobalState(context, \"openRouterModelInfo\", openRouterModelInfo)\n-\tawait updateGlobalState(context, \"openAiModelId\", openAiModelId)\n-\tawait updateGlobalState(context, \"openAiModelInfo\", openAiModelInfo)\n-\tawait updateGlobalState(context, \"ollamaModelId\", ollamaModelId)\n-\tawait updateGlobalState(context, \"lmStudioModelId\", lmStudioModelId)\n-\tawait updateGlobalState(context, \"liteLlmModelId\", liteLlmModelId)\n-\tawait updateGlobalState(context, \"liteLlmModelInfo\", liteLlmModelInfo)\n-\tawait updateGlobalState(context, \"requestyModelId\", requestyModelId)\n-\tawait updateGlobalState(context, \"requestyModelInfo\", requestyModelInfo)\n-\tawait updateGlobalState(context, \"togetherModelId\", togetherModelId)\n-\tawait updateGlobalState(context, \"fireworksModelId\", fireworksModelId)\n-\tawait updateGlobalState(context, \"sapAiCoreModelId\", sapAiCoreModelId)\n-\n-\t// Global state updates\n-\tawait updateGlobalState(context, \"awsRegion\", awsRegion)\n-\tawait updateGlobalState(context, \"awsUseCrossRegionInference\", awsUseCrossRegionInference)\n-\tawait updateGlobalState(context, \"awsBedrockUsePromptCache\", awsBedrockUsePromptCache)\n-\tawait updateGlobalState(context, \"awsBedrockEndpoint\", awsBedrockEndpoint)\n-\tawait updateGlobalState(context, \"awsProfile\", awsProfile)\n-\tawait updateGlobalState(context, \"awsUseProfile\", awsUseProfile)\n-\tawait updateGlobalState(context, \"vertexProjectId\", vertexProjectId)\n-\tawait updateGlobalState(context, \"vertexRegion\", vertexRegion)\n-\tawait updateGlobalState(context, \"openAiBaseUrl\", openAiBaseUrl)\n-\tawait updateGlobalState(context, \"openAiHeaders\", openAiHeaders || {})\n-\tawait updateGlobalState(context, \"ollamaBaseUrl\", ollamaBaseUrl)\n-\tawait updateGlobalState(context, \"ollamaApiOptionsCtxNum\", ollamaApiOptionsCtxNum)\n-\tawait updateGlobalState(context, \"lmStudioBaseUrl\", lmStudioBaseUrl)\n-\tawait updateGlobalState(context, \"anthropicBaseUrl\", anthropicBaseUrl)\n-\tawait updateGlobalState(context, \"geminiBaseUrl\", geminiBaseUrl)\n-\tawait updateGlobalState(context, \"azureApiVersion\", azureApiVersion)\n-\tawait updateGlobalState(context, \"openRouterProviderSorting\", openRouterProviderSorting)\n-\tawait updateGlobalState(context, \"liteLlmBaseUrl\", liteLlmBaseUrl)\n-\tawait updateGlobalState(context, \"liteLlmUsePromptCache\", liteLlmUsePromptCache)\n-\tawait updateGlobalState(context, \"qwenApiLine\", qwenApiLine)\n-\tawait updateGlobalState(context, \"asksageApiUrl\", asksageApiUrl)\n-\tawait updateGlobalState(context, \"favoritedModelIds\", favoritedModelIds)\n-\tawait updateGlobalState(context, \"requestTimeoutMs\", apiConfiguration.requestTimeoutMs)\n-\tawait updateGlobalState(context, \"fireworksModelMaxCompletionTokens\", fireworksModelMaxCompletionTokens)\n-\tawait updateGlobalState(context, \"fireworksModelMaxTokens\", fireworksModelMaxTokens)\n-\tawait updateGlobalState(context, \"sapAiCoreBaseUrl\", sapAiCoreBaseUrl)\n-\tawait updateGlobalState(context, \"sapAiCoreTokenUrl\", sapAiCoreTokenUrl)\n-\tawait updateGlobalState(context, \"sapAiResourceGroup\", sapAiResourceGroup)\n-\tawait updateGlobalState(context, \"claudeCodePath\", claudeCodePath)\n-\n-\t// Secret updates\n-\tawait storeSecret(context, \"apiKey\", apiKey)\n-\tawait storeSecret(context, \"openRouterApiKey\", openRouterApiKey)\n-\tawait storeSecret(context, \"clineApiKey\", clineApiKey)\n-\tawait storeSecret(context, \"awsAccessKey\", awsAccessKey)\n-\tawait storeSecret(context, \"awsSecretKey\", awsSecretKey)\n-\tawait storeSecret(context, \"awsSessionToken\", awsSessionToken)\n-\tawait storeSecret(context, \"openAiApiKey\", openAiApiKey)\n-\tawait storeSecret(context, \"geminiApiKey\", geminiApiKey)\n-\tawait storeSecret(context, \"openAiNativeApiKey\", openAiNativeApiKey)\n-\tawait storeSecret(context, \"deepSeekApiKey\", deepSeekApiKey)\n-\tawait storeSecret(context, \"requestyApiKey\", requestyApiKey)\n-\tawait storeSecret(context, \"togetherApiKey\", togetherApiKey)\n-\tawait storeSecret(context, \"qwenApiKey\", qwenApiKey)\n-\tawait storeSecret(context, \"doubaoApiKey\", doubaoApiKey)\n-\tawait storeSecret(context, \"mistralApiKey\", mistralApiKey)\n-\tawait storeSecret(context, \"liteLlmApiKey\", liteLlmApiKey)\n-\tawait storeSecret(context, \"fireworksApiKey\", fireworksApiKey)\n-\tawait storeSecret(context, \"asksageApiKey\", asksageApiKey)\n-\tawait storeSecret(context, \"xaiApiKey\", xaiApiKey)\n-\tawait storeSecret(context, \"sambanovaApiKey\", sambanovaApiKey)\n-\tawait storeSecret(context, \"cerebrasApiKey\", cerebrasApiKey)\n-\tawait storeSecret(context, \"nebiusApiKey\", nebiusApiKey)\n-\tawait storeSecret(context, \"sapAiCoreClientId\", sapAiCoreClientId)\n-\tawait storeSecret(context, \"sapAiCoreClientSecret\", sapAiCoreClientSecret)\n+\t// OPTIMIZED: Batch all global state updates into 2 operations instead of 47\n+\tconst batchedGlobalUpdates = {\n+\t\t// Ephemeral model config updates (20 keys)\n+\t\tapiProvider,\n+\t\tapiModelId,\n+\t\tthinkingBudgetTokens,\n+\t\treasoningEffort,\n+\t\tvsCodeLmModelSelector,\n+\t\tawsBedrockCustomSelected,\n+\t\tawsBedrockCustomModelBaseId,\n+\t\topenRouterModelId,\n+\t\topenRouterModelInfo,\n+\t\topenAiModelId,\n+\t\topenAiModelInfo,\n+\t\tollamaModelId,\n+\t\tlmStudioModelId,\n+\t\tliteLlmModelId,\n+\t\tliteLlmModelInfo,\n+\t\trequestyModelId,\n+\t\trequestyModelInfo,\n+\t\ttogetherModelId,\n+\t\tfireworksModelId,\n+\t\tsapAiCoreModelId,\n+\n+\t\t// Global state updates (27 keys)\n+\t\tawsRegion,\n+\t\tawsUseCrossRegionInference,\n+\t\tawsBedrockUsePromptCache,\n+\t\tawsBedrockEndpoint,\n+\t\tawsProfile,\n+\t\tawsUseProfile,\n+\t\tvertexProjectId,\n+\t\tvertexRegion,\n+\t\topenAiBaseUrl,\n+\t\topenAiHeaders: openAiHeaders || {},\n+\t\tollamaBaseUrl,\n+\t\tollamaApiOptionsCtxNum,\n+\t\tlmStudioBaseUrl,\n+\t\tanthropicBaseUrl,\n+\t\tgeminiBaseUrl,\n+\t\tazureApiVersion,\n+\t\topenRouterProviderSorting,\n+\t\tliteLlmBaseUrl,\n+\t\tliteLlmUsePromptCache,\n+\t\tqwenApiLine,\n+\t\tasksageApiUrl,\n+\t\tfavoritedModelIds,\n+\t\trequestTimeoutMs: apiConfiguration.requestTimeoutMs,\n+\t\tfireworksModelMaxCompletionTokens,\n+\t\tfireworksModelMaxTokens,\n+\t\tsapAiCoreBaseUrl,\n+\t\tsapAiCoreTokenUrl,\n+\t\tsapAiResourceGroup,\n+\t\tclaudeCodePath,\n+\t}\n+\n+\t// OPTIMIZED: Batch all secret updates into 1 operation instead of 23\n+\tconst batchedSecretUpdates = {\n+\t\tapiKey,\n+\t\topenRouterApiKey,\n+\t\tclineApiKey,\n+\t\tawsAccessKey,\n+\t\tawsSecretKey,\n+\t\tawsSessionToken,\n+\t\topenAiApiKey,\n+\t\tgeminiApiKey,\n+\t\topenAiNativeApiKey,\n+\t\tdeepSeekApiKey,\n+\t\trequestyApiKey,\n+\t\ttogetherApiKey,\n+\t\tqwenApiKey,\n+\t\tdoubaoApiKey,\n+\t\tmistralApiKey,\n+\t\tliteLlmApiKey,\n+\t\tfireworksApiKey,\n+\t\tasksageApiKey,\n+\t\txaiApiKey,\n+\t\tsambanovaApiKey,\n+\t\tcerebrasApiKey,\n+\t\tnebiusApiKey,\n+\t\tsapAiCoreClientId,\n+\t\tsapAiCoreClientSecret,\n+\t}\n+\n+\t// Execute batched operations in parallel for maximum performance\n+\tawait Promise.all([updateGlobalStateBatch(context, batchedGlobalUpdates), updateSecretsBatch(context, batchedSecretUpdates)])\n+\n+\tconst totalTime = performance.now() - startTime\n+\tconsole.log(`[PERF] OPTIMIZED updateApiConfiguration took: ${totalTime}ms (was ~535ms, now should be <50ms)`)\n }\n \n export async function resetWorkspaceState(context: vscode.ExtensionContext) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "webview-ui/src/components/history/HistoryPreview.tsx",
+   "new_path": "webview-ui/src/components/history/HistoryPreview.tsx",
+   "diff": "@@ -65,6 +65,7 @@ const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {\n \t\t\t\t\t\t\t\t\t\t\tbackgroundColor:\n \t\t\t\t\t\t\t\t\t\t\t\t\"color-mix(in srgb, var(--vscode-toolbar-hoverBackground) 30%, transparent)\",\n \t\t\t\t\t\t\t\t\t\t\tborder: \"1px solid color-mix(in srgb, var(--vscode-panel-border) 50%, transparent)\",\n+\t\t\t\t\t\t\t\t\t\t\tbackdropFilter: \"blur(8px)\",\n \t\t\t\t\t\t\t\t\t\t}}\n \t\t\t\t\t\t\t\t\t\tonClick={() => handleHistorySelect(item.id)}>\n \t\t\t\t\t\t\t\t\t\t{/* Subtle gradient overlay for extra depth */}\n@@ -152,6 +153,7 @@ const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {\n \t\t\t\t\t\t\t\tfontSize: \"var(--vscode-font-size)\",\n \t\t\t\t\t\t\t\tbackgroundColor: \"color-mix(in srgb, var(--vscode-toolbar-hoverBackground) 20%, transparent)\",\n \t\t\t\t\t\t\t\tborder: \"1px solid color-mix(in srgb, var(--vscode-panel-border) 30%, transparent)\",\n+\t\t\t\t\t\t\t\tbackdropFilter: \"blur(8px)\",\n \t\t\t\t\t\t\t}}>\n \t\t\t\t\t\t\tNo recent tasks\n \t\t\t\t\t\t</div>",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts",
+   "new_path": "webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts",
+   "diff": "@@ -18,6 +18,9 @@ export const useApiConfigurationHandlers = () => {\n \t * @param value - The new value for the field\n \t */\n \tconst handleFieldChange = <K extends keyof ApiConfiguration>(field: K, value: ApiConfiguration[K]) => {\n+\t\tconst startTime = performance.now()\n+\t\tconsole.log(`[PERF] Frontend: Starting provider switch for field ${field}`)\n+\n \t\tconst updatedConfig = {\n \t\t\t...apiConfiguration,\n \t\t\t[field]: value,\n@@ -28,9 +31,15 @@ export const useApiConfigurationHandlers = () => {\n \t\t\tUpdateApiConfigurationRequest.create({\n \t\t\t\tapiConfiguration: protoConfig,\n \t\t\t}),\n-\t\t).catch((error) => {\n-\t\t\tconsole.error(`Failed to update API configuration field ${field}:`, error)\n-\t\t})\n+\t\t)\n+\t\t\t.then(() => {\n+\t\t\t\tconst totalTime = performance.now() - startTime\n+\t\t\t\tconsole.log(`[PERF] Frontend: Provider switch completed in ${totalTime}ms`)\n+\t\t\t})\n+\t\t\t.catch((error) => {\n+\t\t\t\tconst totalTime = performance.now() - startTime\n+\t\t\t\tconsole.error(`[PERF] Frontend: Failed to update API configuration field ${field} after ${totalTime}ms:`, error)\n+\t\t\t})\n \t}\n \n \t/**",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/core/controller/models/updateApiConfigurationProto.ts",
+   "side": "right",
+   "from_line": 19,
+   "to_line": 19,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Temporary debugging console logs added for provider switch verification must be removed before merging to prevent unintended production logging.",
+   "source": "human"
+  },
+  {
+   "path": "src/core/controller/models/updateApiConfigurationProto.ts",
+   "side": "right",
+   "from_line": 28,
+   "to_line": 31,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "The performance logging pattern is repeated 5 times with the same structure. Consider extracting this into a reusable utility function to reduce code duplication and improve maintainability. For example:\n\n```typescript\nfunction measurePerformance<T>(name: string, fn: () => Promise<T>): Promise<T> {\n  const start = performance.now()\n  return fn().finally(() => {\n    const duration = performance.now() - start\n    console.log(`[PERF] ${name} took: ${duration}ms`)\n  })\n}\n```\n\nOr for synchronous operations:\n```typescript\nfunction measurePerformanceSync<T>(name: string, fn: () => T): T {\n  const start = performance.now()\n  const result = fn()\n  const duration = performance.now() - start\n  console.log(`[PERF] ${name} took: ${duration}ms`)\n  return result\n}\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 32,
+   "to_line": 32,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `updateGlobalStateBatch` function's `updates` parameter uses `Record<string, any>`, which compromises type safety by allowing unvalidated value types and risking runtime errors during state updates.",
+   "source": "human"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 79,
+   "to_line": 80,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Consider using a conditional check or a dedicated logging utility instead of direct console.log for performance monitoring. This avoids unnecessary console output in production environments where verbose logging might not be desired.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 230,
+   "to_line": 231,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Consider using a conditional check or a dedicated logging utility instead of direct console.log for performance monitoring. This avoids unnecessary console output in production environments where verbose logging might not be desired.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 302,
+   "to_line": 303,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Consider using a conditional check or a dedicated logging utility instead of direct console.log for performance monitoring. This avoids unnecessary console output in production environments where verbose logging might not be desired.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 341,
+   "to_line": 342,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Consider using a conditional check or a dedicated logging utility instead of direct console.log for performance monitoring. This avoids unnecessary console output in production environments where verbose logging might not be desired.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 460,
+   "to_line": 461,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Consider using a conditional check or a dedicated logging utility instead of direct console.log for performance monitoring. This avoids unnecessary console output in production environments where verbose logging might not be desired.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 622,
+   "to_line": 623,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "**Error Handling**: The parallel execution of batched operations lacks error handling. If either batch operation fails, the error will propagate but the state may be partially updated (e.g., global state updated but secrets not updated, or vice versa).\n\nSuggestion: Add try-catch blocks or use Promise.allSettled to handle partial failures gracefully and provide meaningful error messages.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 625,
+   "to_line": 626,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Consider using a conditional check or a dedicated logging utility instead of direct console.log for performance monitoring. This avoids unnecessary console output in production environments where verbose logging might not be desired.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "webview-ui/src/components/history/HistoryPreview.tsx",
+   "side": "right",
+   "from_line": 67,
+   "to_line": 68,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "`backdropFilter` can be expensive (triggers extra compositing) and is not supported in some environments/themes. Consider providing a fallback (e.g., keep existing translucent bg/border only), and avoid duplicating the same inline style in multiple places by extracting a shared style object / className.\n\nIf you keep it inline, consider adding `WebkitBackdropFilter` for Safari-based webviews, or validate VS Code webview support for `backdrop-filter` to prevent inconsistent rendering.\n\n```suggestion\n \t\t\t\t\t\t\t\t\t\tborder: \"1px solid color-mix(in srgb, var(--vscode-panel-border) 50%, transparent)\",\n \t\t\t\t\t\t\t\t\t\t// Optional: ensure webview support / add fallback\n \t\t\t\t\t\t\t\t\t\tbackdropFilter: \"blur(8px)\",\n \t\t\t\t\t\t\t\t\t\tWebkitBackdropFilter: \"blur(8px)\",\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "webview-ui/src/components/history/HistoryPreview.tsx",
+   "side": "right",
+   "from_line": 68,
+   "to_line": 68,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "This backdropFilter style is repeated in another location (line 156). Consider extracting this common style into a shared constant to improve maintainability and reduce duplication. For example: const blurredBackgroundStyle = { backdropFilter: \"blur(8px)\" };\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts",
+   "side": "right",
+   "from_line": 21,
+   "to_line": 22,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "**Hard-coded strings**: The log prefix `[PERF] Frontend:` is repeated multiple times. Consider extracting it as a constant at the top of the file for better maintainability (e.g., `const PERF_LOG_PREFIX = '[PERF] Frontend:'`).\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts",
+   "side": "right",
+   "from_line": 22,
+   "to_line": 22,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Unconditional console.log for performance tracing in handleFieldChange should be gated behind a debug flag to prevent production console clutter.",
+   "source": "human"
+  },
+  {
+   "path": "webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts",
+   "side": "right",
+   "from_line": 37,
+   "to_line": 37,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Same consideration applies here—these logs could be disabled in production environments to reduce noise while keeping diagnostic capabilities intact during development/testing phases.\n",
+   "source": "Qwen-Coder-480B"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "src/core/controller/models/updateApiConfigurationProto.ts",
+   "side": "right",
+   "from_line": 18,
+   "to_line": 18,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Using `performance.now()` assumes a global `performance` is available in this runtime. In some Node/Electron main-process contexts it may be undefined unless `node:perf_hooks` is used. Consider using a shared timing util (e.g., `Date.now()` or a `now()` wrapper that falls back) to avoid runtime crashes when switching providers.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 33,
+   "to_line": 33,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Be careful with `performance.now()` in VS Code extension host: in Node it exists under `node:perf_hooks` (or `globalThis.performance` only in newer Node versions). Consider importing `performance` from `node:perf_hooks` to avoid runtime errors in older environments.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 80,
+   "to_line": 80,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Log statement in `getAllExtensionState` uses inconsistent \"[PERF]\" prefix format; standardize to match the function's existing logging conventions for consistency and filterability.",
+   "source": "human"
+  },
+  {
+   "path": "src/core/storage/state.ts",
+   "side": "right",
+   "from_line": 538,
+   "to_line": 538,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Clarification: The optimization here is about making the operations concurrent (using Promise.all) rather than sequential. The total number of individual update operations remains the same (around 47), but they are now executed in parallel, which significantly improves performance.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "webview-ui/src/components/history/HistoryPreview.tsx",
+   "side": "right",
+   "from_line": 68,
+   "to_line": 68,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "This styling change (`backdropFilter: \"blur(8px)\"`) appears unrelated to the performance optimization described in this PR. According to the PR description, this MR focuses on \"optimizing storage operations to reduce switching time from ~550ms to ~30ms.\"\n\nAdding UI styling changes (backdrop filters) in the same PR as performance optimizations makes the PR harder to review and potentially harder to revert if issues arise with either change.\n\n**Suggestion:** Consider removing these unrelated styling changes and submitting them in a separate PR focused on UI improvements. This keeps changes atomic and easier to review/revert.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts",
+   "side": "right",
+   "from_line": 35,
+   "to_line": 42,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "**Duplicate code**: The calculation `performance.now() - startTime` is repeated in both `.then()` and `.catch()` blocks. Consider extracting this into a helper function or calculating it once in a `.finally()` block to improve maintainability.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ]
+}

@@ -1,0 +1,307 @@
+{
+ "id": "aacr/gofr-dev__gofr__1395",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/gofr-dev/gofr/pull/1395",
+  "owner": "gofr-dev",
+  "repo": "gofr",
+  "number": 1395,
+  "base_sha": "c2ab1eb3308afa4f29842f0a982751bf65c059d0",
+  "head_sha": "2c0c0997cad66a1ee1e47f95db6a830394157c00",
+  "title": "add test support for port and env",
+  "description": "## Pull Request Template\r\n\r\n\r\n**Description:**\r\n\r\n-  Added a new ServerConfigsProvider function to simplify the process of generating and managing server configurations for testing.\r\n-  The function dynamically assigns free ports for HTTP, Metrics, and gRPC services, and sets corresponding environment variables.\r\n-   Closes issue Remove boilerplate with ports when booting the tests #1352\r\n\r\n\r\n\r\n**Breaking Changes (if applicable):**\r\n\r\n-   None.\r\n\r\n**Checklist:**\r\n\r\n-   [x] I have formatted my code using  `goimport`  and  `golangci-lint`.\r\n-   [x] All new code is covered by unit tests.\r\n-   [x] This PR does not decrease the overall code coverage.\r\n-   [x] I have reviewed the code comments and documentation for clarity.\r\n\r\n**Thank you for your contribution!**\r\n\r\n",
+  "language": "Go",
+  "category": "Test Suite / CI Enhancements",
+  "changed_lines": 348
+ },
+ "diffs": [
+  {
+   "old_path": "examples/grpc/grpc-server/main_test.go",
+   "new_path": "examples/grpc/grpc-server/main_test.go",
+   "diff": "@@ -2,27 +2,21 @@ package main\n \n import (\n \t\"context\"\n-\t\"fmt\"\n-\t\"gofr.dev/examples/grpc/grpc-server/server\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n \t\"github.com/stretchr/testify/assert\"\n \t\"github.com/stretchr/testify/require\"\n+\t\"gofr.dev/pkg/gofr/testutil\"\n \t\"google.golang.org/grpc\"\n \t\"google.golang.org/grpc/credentials/insecure\"\n \n-\t\"gofr.dev/pkg/gofr/testutil\"\n+\t\"gofr.dev/examples/grpc/grpc-server/server\"\n )\n \n func TestGRPCServer(t *testing.T) {\n-\tgRPCPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"GRPC_PORT\", strconv.Itoa(gRPCPort))\n-\thost := fmt.Sprint(\"localhost:\", gRPCPort)\n-\n-\tport := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\tconfigs := testutil.NewServerConfigs(t)\n+\thost := configs.GRPCHost\n \n \tgo main()\n \ttime.Sleep(100 * time.Millisecond)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/http-server-using-redis/main_test.go",
+   "new_path": "examples/http-server-using-redis/main_test.go",
+   "diff": "@@ -5,7 +5,6 @@ import (\n \t\"context\"\n \t\"fmt\"\n \t\"net/http\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n@@ -23,12 +22,7 @@ import (\n )\n \n func TestHTTPServerUsingRedis(t *testing.T) {\n-\thttpPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n-\thost := fmt.Sprint(\"http://localhost:\", httpPort)\n-\n-\tport := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tgo main()\n \ttime.Sleep(100 * time.Millisecond) // Giving some time to start the server\n@@ -51,7 +45,7 @@ func TestHTTPServerUsingRedis(t *testing.T) {\n \t}\n \n \tfor i, tc := range tests {\n-\t\treq, _ := http.NewRequest(tc.method, host+tc.path, bytes.NewBuffer(tc.body))\n+\t\treq, _ := http.NewRequest(tc.method, configs.HTTPHost+tc.path, bytes.NewBuffer(tc.body))\n \t\treq.Header.Set(\"content-type\", \"application/json\")\n \t\tc := http.Client{}\n \t\tresp, err := c.Do(req)\n@@ -63,11 +57,7 @@ func TestHTTPServerUsingRedis(t *testing.T) {\n }\n \n func TestRedisSetHandler(t *testing.T) {\n-\tmetricsPort := testutil.GetFreePort(t)\n-\thttpPort := testutil.GetFreePort(t)\n-\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \ta := gofr.New()\n \tlogger := logging.NewLogger(logging.DEBUG)\n@@ -78,7 +68,7 @@ func TestRedisSetHandler(t *testing.T) {\n \n \tmock.ExpectSet(\"key\", \"value\", 5*time.Minute).SetErr(testutil.CustomError{ErrorMessage: \"redis get error\"})\n \n-\treq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf(\"http://localhost:%d/handle\", httpPort), bytes.NewBuffer([]byte(`{\"key\":\"value\"}`)))\n+\treq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf(\"http://localhost:%d/handle\", configs.HTTPPort), bytes.NewBuffer([]byte(`{\"key\":\"value\"}`)))\n \treq.Header.Set(\"content-type\", \"application/json\")\n \tgofrReq := gofrHTTP.NewRequest(req)\n \n@@ -92,11 +82,7 @@ func TestRedisSetHandler(t *testing.T) {\n }\n \n func TestRedisPipelineHandler(t *testing.T) {\n-\tmetricsPort := testutil.GetFreePort(t)\n-\thttpPort := testutil.GetFreePort(t)\n-\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \ta := gofr.New()\n \tlogger := logging.NewLogger(logging.DEBUG)\n@@ -108,7 +94,7 @@ func TestRedisPipelineHandler(t *testing.T) {\n \tmock.ExpectSet(\"testKey1\", \"testValue1\", time.Minute*5).SetErr(testutil.CustomError{ErrorMessage: \"redis get error\"})\n \tmock.ClearExpect()\n \n-\treq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprint(\"http://localhost:\", httpPort, \"/handle\"), bytes.NewBuffer([]byte(`{\"key\":\"value\"}`)))\n+\treq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprint(\"http://localhost:\", configs.HTTPPort, \"/handle\"), bytes.NewBuffer([]byte(`{\"key\":\"value\"}`)))\n \treq.Header.Set(\"content-type\", \"application/json\")\n \n \tgofrReq := gofrHTTP.NewRequest(req)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/http-server/main_test.go",
+   "new_path": "examples/http-server/main_test.go",
+   "diff": "@@ -22,10 +22,7 @@ import (\n )\n \n func TestIntegration_SimpleAPIServer(t *testing.T) {\n-\thost := \"http://localhost:9000\"\n-\n-\tport := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tgo main()\n \ttime.Sleep(100 * time.Millisecond) // Giving some time to start the server\n@@ -43,7 +40,7 @@ func TestIntegration_SimpleAPIServer(t *testing.T) {\n \t}\n \n \tfor i, tc := range tests {\n-\t\treq, _ := http.NewRequest(http.MethodGet, host+tc.path, nil)\n+\t\treq, _ := http.NewRequest(http.MethodGet, configs.HTTPHost+tc.path, nil)\n \t\treq.Header.Set(\"content-type\", \"application/json\")\n \n \t\tc := http.Client{}\n@@ -70,7 +67,7 @@ func TestIntegration_SimpleAPIServer(t *testing.T) {\n }\n \n func TestIntegration_SimpleAPIServer_Errors(t *testing.T) {\n-\thost := \"http://localhost:9000\"\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \ttests := []struct {\n \t\tdesc       string\n@@ -99,7 +96,7 @@ func TestIntegration_SimpleAPIServer_Errors(t *testing.T) {\n \t}\n \n \tfor i, tc := range tests {\n-\t\treq, _ := http.NewRequest(http.MethodGet, host+tc.path, nil)\n+\t\treq, _ := http.NewRequest(http.MethodGet, configs.HTTPHost+tc.path, nil)\n \t\treq.Header.Set(\"content-type\", \"application/json\")\n \n \t\tc := http.Client{}\n@@ -126,7 +123,7 @@ func TestIntegration_SimpleAPIServer_Errors(t *testing.T) {\n }\n \n func TestIntegration_SimpleAPIServer_Health(t *testing.T) {\n-\thost := \"http://localhost:9000\"\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \ttests := []struct {\n \t\tdesc       string\n@@ -138,7 +135,7 @@ func TestIntegration_SimpleAPIServer_Health(t *testing.T) {\n \t}\n \n \tfor i, tc := range tests {\n-\t\treq, _ := http.NewRequest(http.MethodGet, host+tc.path, nil)\n+\t\treq, _ := http.NewRequest(http.MethodGet, configs.HTTPHost+tc.path, nil)\n \t\treq.Header.Set(\"content-type\", \"application/json\")\n \n \t\tc := http.Client{}\n@@ -151,17 +148,13 @@ func TestIntegration_SimpleAPIServer_Health(t *testing.T) {\n }\n \n func TestRedisHandler(t *testing.T) {\n-\tmetricsPort := testutil.GetFreePort(t)\n-\thttpPort := testutil.GetFreePort(t)\n-\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \ta := gofr.New()\n \tlogger := logging.NewLogger(logging.DEBUG)\n \tredisClient, mock := redismock.NewClientMock()\n \n-\trc := redis.NewClient(config.NewMockConfig(map[string]string{\"REDIS_HOST\": \"localhost\", \"REDIS_PORT\": \"2001\"}), logger, a.Metrics())\n+\trc := redis.NewClient(config.NewMockConfig(map[string]string{\"REDIS_HOST\": \"localhost\", \"REDIS_PORT\": strconv.Itoa(configs.MetricsPort)}), logger, a.Metrics())\n \trc.Client = redisClient\n \n \tmock.ExpectGet(\"test\").SetErr(testutil.CustomError{ErrorMessage: \"redis get error\"})",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/using-add-rest-handlers/main_test.go",
+   "new_path": "examples/using-add-rest-handlers/main_test.go",
+   "diff": "@@ -2,9 +2,7 @@ package main\n \n import (\n \t\"bytes\"\n-\t\"fmt\"\n \t\"net/http\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n@@ -15,12 +13,7 @@ import (\n )\n \n func TestIntegration_AddRESTHandlers(t *testing.T) {\n-\thttpPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n-\thost := fmt.Sprint(\"http://localhost:\", httpPort)\n-\n-\tport := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tgo main()\n \ttime.Sleep(100 * time.Millisecond) // Giving some time to start the server\n@@ -43,7 +36,7 @@ func TestIntegration_AddRESTHandlers(t *testing.T) {\n \t}\n \n \tfor i, tc := range tests {\n-\t\treq, _ := http.NewRequest(tc.method, host+tc.path, bytes.NewReader(tc.body))\n+\t\treq, _ := http.NewRequest(tc.method, configs.HTTPHost+tc.path, bytes.NewReader(tc.body))\n \t\treq.Header.Set(\"content-type\", \"application/json\")\n \n \t\tc := http.Client{}",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/using-cron-jobs/main_test.go",
+   "new_path": "examples/using-cron-jobs/main_test.go",
+   "diff": "@@ -1,18 +1,16 @@\n package main\n \n import (\n-\t\"strconv\"\n+\t\"gofr.dev/pkg/gofr/testutil\"\n \t\"testing\"\n \t\"time\"\n \n \t\"github.com/stretchr/testify/assert\"\n-\n \t\"gofr.dev/pkg/gofr/testutil\"\n )\n \n func Test_UserPurgeCron(t *testing.T) {\n-\tport := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tgo main()\n \ttime.Sleep(1100 * time.Millisecond)\n@@ -26,4 +24,5 @@ func Test_UserPurgeCron(t *testing.T) {\n \tmu.Unlock()\n \n \tassert.Equal(t, expected, m)\n+\tt.Logf(\"Metrics server running at: %s\", configs.MetricsHost)\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/using-custom-metrics/main_test.go",
+   "new_path": "examples/using-custom-metrics/main_test.go",
+   "diff": "@@ -4,7 +4,6 @@ import (\n \t\"fmt\"\n \t\"io\"\n \t\"net/http\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n@@ -14,38 +13,33 @@ import (\n )\n \n func TestIntegration(t *testing.T) {\n-\thttpPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n-\thost := fmt.Sprint(\"http://localhost:\", httpPort)\n-\n-\tmetricsPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tgo main()\n \ttime.Sleep(100 * time.Millisecond) // Giving some time to start the server\n \n \tc := http.Client{}\n \n-\treq, _ := http.NewRequest(http.MethodPost, host+\"/transaction\", nil)\n+\treq, _ := http.NewRequest(http.MethodPost, configs.HTTPHost+\"/transaction\", nil)\n \treq.Header.Set(\"content-type\", \"application/json\")\n \n \t_, err := c.Do(req)\n \tif err != nil {\n \t\tt.Fatalf(\"request to /transaction failed %v\", err)\n \t}\n \n-\treq, _ = http.NewRequest(http.MethodPost, host+\"/return\", nil)\n+\treq, _ = http.NewRequest(http.MethodPost, configs.HTTPHost+\"/return\", nil)\n \n \t_, err = c.Do(req)\n \tif err != nil {\n \t\tt.Fatalf(\"request to /transaction failed %v\", err)\n \t}\n \n-\treq, _ = http.NewRequest(http.MethodGet, fmt.Sprintf(\"http://localhost:%d/metrics\", metricsPort), nil)\n+\treq, _ = http.NewRequest(http.MethodGet, fmt.Sprintf(\"http://localhost:%d/metrics\", configs.MetricsPort), nil)\n \n \tresp, err := c.Do(req)\n \tif err != nil {\n-\t\tt.Fatalf(\"request to localhost:%d/metrics failed: %v\", metricsPort, err)\n+\t\tt.Fatalf(\"request to localhost:%d/metrics failed: %v\", configs.MetricsPort, err)\n \t}\n \n \tbody, _ := io.ReadAll(resp.Body)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/using-file-bind/main_test.go",
+   "new_path": "examples/using-file-bind/main_test.go",
+   "diff": "@@ -2,12 +2,10 @@ package main\n \n import (\n \t\"bytes\"\n-\t\"fmt\"\n \t\"io\"\n \t\"mime/multipart\"\n \t\"net/http\"\n \t\"os\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n@@ -18,27 +16,22 @@ import (\n )\n \n func TestMain_BindError(t *testing.T) {\n-\thttpPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n-\thost := fmt.Sprint(\"http://localhost:\", httpPort)\n-\n-\tport := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tgo main()\n \ttime.Sleep(100 * time.Millisecond)\n \n \tc := http.Client{}\n \n-\treq, _ := http.NewRequest(http.MethodPost, host+\"/upload\", http.NoBody)\n+\treq, _ := http.NewRequest(http.MethodPost, configs.HTTPHost+\"/upload\", http.NoBody)\n \treq.Header.Set(\"content-type\", \"multipart/form-data\")\n \tresp, err := c.Do(req)\n \n \tassert.Equal(t, http.StatusInternalServerError, resp.StatusCode)\n \trequire.NoError(t, err)\n \n \tbuf, contentType := generateMultiPartBody(t)\n-\treq, _ = http.NewRequest(http.MethodPost, host+\"/upload\", buf)\n+\treq, _ = http.NewRequest(http.MethodPost, configs.HTTPHost+\"/upload\", buf)\n \treq.Header.Set(\"content-type\", contentType)\n \treq.ContentLength = int64(buf.Len())\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/using-http-service/main_test.go",
+   "new_path": "examples/using-http-service/main_test.go",
+   "diff": "@@ -7,7 +7,6 @@ import (\n \t\"io\"\n \t\"net/http\"\n \t\"net/http/httptest\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n@@ -25,12 +24,7 @@ import (\n var port int\n \n func Test_main(t *testing.T) {\n-\tport = testutil.GetFreePort(t)\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(port))\n-\thost := fmt.Sprint(\"http://localhost:\", port)\n-\n-\tmetricsPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tc := &http.Client{}\n \n@@ -60,7 +54,7 @@ func Test_main(t *testing.T) {\n \t}\n \n \tfor i, tc := range testCases {\n-\t\treq, _ := http.NewRequest(http.MethodGet, host+tc.path, nil)\n+\t\treq, _ := http.NewRequest(http.MethodGet, configs.HTTPHost+tc.path, nil)\n \t\tresp, err := c.Do(req)\n \n \t\trequire.NoError(t, err, \"TEST[%d], Failed.\\n%s\", i, tc.desc)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/using-migrations/main_test.go",
+   "new_path": "examples/using-migrations/main_test.go",
+   "diff": "@@ -2,9 +2,7 @@ package main\n \n import (\n \t\"bytes\"\n-\t\"fmt\"\n \t\"net/http\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n@@ -15,12 +13,9 @@ import (\n )\n \n func TestExampleMigration(t *testing.T) {\n-\thttpPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n-\thost := fmt.Sprint(\"http://localhost:\", httpPort)\n+\tconfigs := testutil.NewServerConfigs(t)\n \n-\tport := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\thost := configs.HTTPHost\n \n \tgo main()\n \ttime.Sleep(100 * time.Millisecond) // Giving some time to start the server",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/using-publisher/main_test.go",
+   "new_path": "examples/using-publisher/main_test.go",
+   "diff": "@@ -4,7 +4,6 @@ import (\n \t\"bytes\"\n \t\"fmt\"\n \t\"net/http\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n@@ -15,12 +14,7 @@ import (\n )\n \n func TestExamplePublisher(t *testing.T) {\n-\thttpPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n-\thost := fmt.Sprint(\"http://localhost:\", httpPort)\n-\n-\tport := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tgo main()\n \ttime.Sleep(200 * time.Millisecond)\n@@ -61,7 +55,7 @@ func TestExamplePublisher(t *testing.T) {\n \tc := http.Client{}\n \n \tfor i, tc := range testCases {\n-\t\treq, _ := http.NewRequest(http.MethodPost, host+tc.path, bytes.NewBuffer(tc.body))\n+\t\treq, _ := http.NewRequest(http.MethodPost, configs.HTTPHost+tc.path, bytes.NewBuffer(tc.body))\n \t\treq.Header.Set(\"content-type\", \"application/json\")\n \t\tresp, err := c.Do(req)\n \t\tdefer resp.Body.Close()\n@@ -74,13 +68,9 @@ func TestExamplePublisher(t *testing.T) {\n func TestExamplePublisherError(t *testing.T) {\n \tt.Setenv(\"PUBSUB_BROKER\", \"localhost:1012\")\n \n-\thttpPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n-\n-\tmetricsPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n-\thost := fmt.Sprint(\"http://localhost:\", httpPort)\n+\thost := fmt.Sprint(\"http://localhost:\", configs.HTTPPort)\n \n \tgo main()\n \ttime.Sleep(200 * time.Millisecond)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/using-subscriber/main_test.go",
+   "new_path": "examples/using-subscriber/main_test.go",
+   "diff": "@@ -2,7 +2,6 @@ package main\n \n import (\n \t\"context\"\n-\t\"strconv\"\n \t\"strings\"\n \t\"testing\"\n \t\"time\"\n@@ -41,11 +40,7 @@ func initializeTest(t *testing.T) {\n \n func TestExampleSubscriber(t *testing.T) {\n \tlog := testutil.StdoutOutputForFunc(func() {\n-\t\thttpPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n-\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tgo main()\n \t\ttime.Sleep(time.Second * 1) // Giving some time to start the server",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "examples/using-web-socket/main_test.go",
+   "new_path": "examples/using-web-socket/main_test.go",
+   "diff": "@@ -2,7 +2,6 @@ package main\n \n import (\n \t\"fmt\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n@@ -13,12 +12,8 @@ import (\n )\n \n func Test_WebSocket_Success(t *testing.T) {\n-\tport := testutil.GetFreePort(t)\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(port))\n-\twsURL := fmt.Sprintf(\"ws://localhost:%d/ws\", port)\n-\n-\tmetricsPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n+\twsURL := fmt.Sprintf(\"ws://localhost:%d/ws\", configs.HTTPPort)\n \n \tgo main()\n \ttime.Sleep(100 * time.Millisecond)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "go.mod",
+   "new_path": "go.mod",
+   "diff": "@@ -1,7 +1,8 @@\n module gofr.dev\n \n-go 1.22\n-toolchain go1.22.10\n+go 1.22.7\n+\n+toolchain go1.23.4\n \n require (\n \tcloud.google.com/go/pubsub v1.45.3",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/context_test.go",
+   "new_path": "pkg/gofr/context_test.go",
+   "diff": "@@ -4,6 +4,7 @@ import (\n \t\"bytes\"\n \t\"context\"\n \t\"fmt\"\n+\t\"gofr.dev/pkg/gofr/testutil\"\n \t\"net/http\"\n \t\"net/http/httptest\"\n \t\"testing\"\n@@ -20,7 +21,6 @@ import (\n \tgofrHTTP \"gofr.dev/pkg/gofr/http\"\n \t\"gofr.dev/pkg/gofr/http/middleware\"\n \t\"gofr.dev/pkg/gofr/logging\"\n-\t\"gofr.dev/pkg/gofr/testutil\"\n \t\"gofr.dev/pkg/gofr/version\"\n )\n \n@@ -77,15 +77,10 @@ func TestContext_AddTrace(t *testing.T) {\n }\n \n func TestContext_WriteMessageToSocket(t *testing.T) {\n-\tport := testutil.GetFreePort(t)\n-\n-\tt.Setenv(\"HTTP_PORT\", fmt.Sprint(port))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tapp := New()\n \n-\tserver := httptest.NewServer(app.httpServer.router)\n-\tdefer server.Close()\n-\n \tapp.WebSocket(\"/ws\", func(ctx *Context) (interface{}, error) {\n \t\tsocketErr := ctx.WriteMessageToSocket(\"Hello! GoFr\")\n \t\tif socketErr != nil {\n@@ -100,7 +95,7 @@ func TestContext_WriteMessageToSocket(t *testing.T) {\n \n \tgo app.Run()\n \n-\twsURL := \"ws\" + server.URL[len(\"http\"):] + \"/ws\"\n+\twsURL := fmt.Sprintf(\"ws://localhost:%d/ws\", configs.HTTPPort)\n \n \t// Create a WebSocket client\n \tws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/datasource/file/ftp/go.mod",
+   "new_path": "pkg/gofr/datasource/file/ftp/go.mod",
+   "diff": "@@ -1,6 +1,8 @@\n module gofr.dev/pkg/gofr/datasource/file/ftp\n \n-go 1.22.3\n+go 1.22.7\n+\n+toolchain go1.23.4\n \n replace gofr.dev => ../../../../../../gofr\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/datasource/file/s3/go.mod",
+   "new_path": "pkg/gofr/datasource/file/s3/go.mod",
+   "diff": "@@ -1,6 +1,8 @@\n module gofr.dev/pkg/gofr/datasource/file/s3\n \n-go 1.22.4\n+go 1.22.7\n+\n+toolchain go1.23.4\n \n replace gofr.dev => ../../../../../../gofr\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/datasource/file/sftp/go.mod",
+   "new_path": "pkg/gofr/datasource/file/sftp/go.mod",
+   "diff": "@@ -1,25 +0,0 @@\n-module gofr.dev/pkg/gofr/datasource/file/sftp\n-\n-go 1.22.7\n-\n-toolchain go1.23.4\n-\n-replace gofr.dev => ../../../../../../gofr\n-\n-require (\n-\tgithub.com/pkg/sftp v1.13.6\n-\tgithub.com/stretchr/testify v1.10.0\n-\tgo.uber.org/mock v0.5.0\n-\tgofr.dev v0.19.0\n-\tgolang.org/x/crypto v0.32.0\n-)\n-\n-require (\n-\tgithub.com/davecgh/go-spew v1.1.1 // indirect\n-\tgithub.com/joho/godotenv v1.5.1 // indirect\n-\tgithub.com/kr/fs v0.1.0 // indirect\n-\tgithub.com/pkg/errors v0.9.1 // indirect\n-\tgithub.com/pmezard/go-difflib v1.0.0 // indirect\n-\tgolang.org/x/sys v0.29.0 // indirect\n-\tgopkg.in/yaml.v3 v3.0.1 // indirect\n-)",
+   "new_file": false,
+   "deleted_file": true,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/datasource/file/sftp/go.sum",
+   "new_path": "pkg/gofr/datasource/file/sftp/go.sum",
+   "diff": "@@ -1,60 +0,0 @@\n-github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=\n-github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=\n-github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=\n-github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=\n-github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=\n-github.com/kr/fs v0.1.0 h1:Jskdu9ieNAYnjxsi0LbQp1ulIKZV1LAFgK1tWhpZgl8=\n-github.com/kr/fs v0.1.0/go.mod h1:FFnZGqtBN9Gxj7eW1uZ42v5BccTP0vu6NEaFoC2HwRg=\n-github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=\n-github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=\n-github.com/pkg/sftp v1.13.6 h1:JFZT4XbOU7l77xGSpOdW+pwIMqP044IyjXX6FGyEKFo=\n-github.com/pkg/sftp v1.13.6/go.mod h1:tz1ryNURKu77RL+GuCzmoJYxQczL3wLNNpPWagdg4Qk=\n-github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=\n-github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=\n-github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=\n-github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=\n-github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=\n-github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=\n-github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=\n-github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=\n-github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=\n-go.uber.org/mock v0.5.0 h1:KAMbZvZPyBPWgD14IrIQ38QCyjwpvVVV6K/bHl1IwQU=\n-go.uber.org/mock v0.5.0/go.mod h1:ge71pBPLYDk7QIi1LupWxdAykm7KIEFchiOqd6z7qMM=\n-golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=\n-golang.org/x/crypto v0.0.0-20210921155107-089bfa567519/go.mod h1:GvvjBRRGRdwPK5ydBHafDWAxML/pGHZbMvKqRZ5+Abc=\n-golang.org/x/crypto v0.1.0/go.mod h1:RecgLatLF4+eUMCP1PoPZQb+cVrJcOPbHkTkbkB9sbw=\n-golang.org/x/crypto v0.32.0 h1:euUpcYgM8WcP71gNpTqQCn6rC2t6ULUPiOzfWaXVVfc=\n-golang.org/x/crypto v0.32.0/go.mod h1:ZnnJkOaASj8g0AjIduWNlq2NRxL0PlBrbKVyZ6V/Ugc=\n-golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4/go.mod h1:jJ57K6gSWd91VN4djpZkiMVwK6gcyfeH4XE8wZrZaV4=\n-golang.org/x/net v0.0.0-20190620200207-3b0461eec859/go.mod h1:z5CRVTTTmAJ677TzLLGU+0bjPO0LkuOLi4/5GtJWs/s=\n-golang.org/x/net v0.0.0-20210226172049-e18ecbb05110/go.mod h1:m0MpNAwzfU5UDzcl9v0D8zg8gWTRqZa9RBIspLL5mdg=\n-golang.org/x/net v0.0.0-20220722155237-a158d28d115b/go.mod h1:XRhObCWvk6IyKnWLug+ECip1KBveYUHfp+8e9klMJ9c=\n-golang.org/x/net v0.1.0/go.mod h1:Cx3nUiGt4eDBEyega/BKRp+/AlGL8hYe7U9odMt2Cco=\n-golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=\n-golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=\n-golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=\n-golang.org/x/sys v0.0.0-20201119102817-f84b799fce68/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=\n-golang.org/x/sys v0.0.0-20210615035016-665e8c7367d1/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=\n-golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=\n-golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=\n-golang.org/x/sys v0.1.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=\n-golang.org/x/sys v0.29.0 h1:TPYlXGxvx1MGTn2GiZDhnjPA9wZzZeGKHHmKhHYvgaU=\n-golang.org/x/sys v0.29.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=\n-golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1/go.mod h1:bj7SfCRtBDWHUb9snDiAeCFNEtKQo2Wmx5Cou7ajbmo=\n-golang.org/x/term v0.0.0-20210927222741-03fcf44c2211/go.mod h1:jbD1KX2456YbFQfuXm/mYQcufACuNUgVhRMnK/tPxf8=\n-golang.org/x/term v0.1.0/go.mod h1:jbD1KX2456YbFQfuXm/mYQcufACuNUgVhRMnK/tPxf8=\n-golang.org/x/term v0.28.0 h1:/Ts8HFuMR2E6IP/jlo7QVLZHggjKQbhu/7H0LJFr3Gg=\n-golang.org/x/term v0.28.0/go.mod h1:Sw/lC2IAUZ92udQNf3WodGtn4k/XoLyZoh8v/8uiwek=\n-golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=\n-golang.org/x/text v0.3.3/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=\n-golang.org/x/text v0.3.7/go.mod h1:u+2+/6zg+i71rQMx5EYifcz6MCKuco9NR6JIITiCfzQ=\n-golang.org/x/text v0.4.0/go.mod h1:mrYo+phRRbMaCq/xk9113O4dZlRixOauAjOtrjsXDZ8=\n-golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=\n-golang.org/x/tools v0.0.0-20191119224855-298f0cb1881e/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=\n-golang.org/x/tools v0.1.12/go.mod h1:hNGJHUnrk76NpqgfD5Aqm5Crs+Hm0VOH/i9J2+nxYbc=\n-golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=\n-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=\n-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=\n-gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=\n-gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=\n-gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=",
+   "new_file": false,
+   "deleted_file": true,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/external_db_test.go",
+   "new_path": "pkg/gofr/external_db_test.go",
+   "diff": "@@ -1,7 +1,6 @@\n package gofr\n \n import (\n-\t\"strconv\"\n \t\"testing\"\n \n \t\"github.com/stretchr/testify/assert\"\n@@ -15,8 +14,7 @@ import (\n \n func TestApp_AddKVStore(t *testing.T) {\n \tt.Run(\"Adding KV-Store\", func(t *testing.T) {\n-\t\tport := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -38,8 +36,7 @@ func TestApp_AddKVStore(t *testing.T) {\n \n func TestApp_AddMongo(t *testing.T) {\n \tt.Run(\"Adding MongoDB\", func(t *testing.T) {\n-\t\tport := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -61,8 +58,7 @@ func TestApp_AddMongo(t *testing.T) {\n \n func TestApp_AddCassandra(t *testing.T) {\n \tt.Run(\"Adding Cassandra\", func(t *testing.T) {\n-\t\tport := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -84,8 +80,7 @@ func TestApp_AddCassandra(t *testing.T) {\n \n func TestApp_AddClickhouse(t *testing.T) {\n \tt.Run(\"Adding Clickhouse\", func(t *testing.T) {\n-\t\tport := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -107,8 +102,7 @@ func TestApp_AddClickhouse(t *testing.T) {\n \n func TestApp_AddFTP(t *testing.T) {\n \tt.Run(\"Adding FTP\", func(t *testing.T) {\n-\t\tport := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -127,8 +121,7 @@ func TestApp_AddFTP(t *testing.T) {\n \t})\n \n \tt.Run(\"Adding FTP\", func(t *testing.T) {\n-\t\tport := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -149,8 +142,7 @@ func TestApp_AddFTP(t *testing.T) {\n \n func TestApp_AddS3(t *testing.T) {\n \tt.Run(\"Adding S3\", func(t *testing.T) {\n-\t\tport := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -171,8 +163,7 @@ func TestApp_AddS3(t *testing.T) {\n \n func TestApp_AddOpenTSDB(t *testing.T) {\n \tt.Run(\"Adding OpenTSDB\", func(t *testing.T) {\n-\t\tport := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(port))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/gofr_test.go",
+   "new_path": "pkg/gofr/gofr_test.go",
+   "diff": "@@ -46,8 +46,7 @@ func TestGofr_readConfig(t *testing.T) {\n }\n \n func TestGoFr_isPortAvailable(t *testing.T) {\n-\tport := testutil.GetFreePort(t)\n-\tmetricsPort := testutil.GetFreePort(t)\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \ttests := []struct {\n \t\tname        string\n@@ -60,27 +59,21 @@ func TestGoFr_isPortAvailable(t *testing.T) {\n \tfor _, tt := range tests {\n \t\tt.Run(tt.name, func(t *testing.T) {\n \t\t\tif !tt.isAvailable {\n-\t\t\t\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(port))\n-\t\t\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n \n \t\t\t\tg := New()\n \n \t\t\t\tgo g.Run()\n \t\t\t\ttime.Sleep(100 * time.Millisecond)\n \t\t\t}\n \n-\t\t\tisAvailable := isPortAvailable(port)\n+\t\t\tisAvailable := isPortAvailable(configs.HTTPPort)\n \t\t\trequire.Equal(t, tt.isAvailable, isAvailable)\n \t\t})\n \t}\n }\n \n func TestGofr_ServerRoutes(t *testing.T) {\n-\tport := testutil.GetFreePort(t)\n-\tmetricsPort := testutil.GetFreePort(t)\n-\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(port))\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t_ = testutil.NewServerConfigs(t)\n \n \ttype response struct {\n \t\tData interface{} `json:\"data\"`\n@@ -156,11 +149,7 @@ func TestGofr_ServerRoutes(t *testing.T) {\n }\n \n func TestGofr_ServerRun(t *testing.T) {\n-\tport := testutil.GetFreePort(t)\n-\tmetricsPort := testutil.GetFreePort(t)\n-\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(port))\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \tg := New()\n \n@@ -176,7 +165,7 @@ func TestGofr_ServerRun(t *testing.T) {\n \t}\n \n \tre, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,\n-\t\t\"http://localhost:\"+fmt.Sprint(port)+\"/hello\", http.NoBody)\n+\t\t\"http://localhost:\"+fmt.Sprint(configs.HTTPPort)+\"/hello\", http.NoBody)\n \tresp, err := netClient.Do(re)\n \n \trequire.NoError(t, err, \"TEST Failed.\\n\")\n@@ -187,11 +176,7 @@ func TestGofr_ServerRun(t *testing.T) {\n }\n \n func Test_AddHTTPService(t *testing.T) {\n-\tport := testutil.GetFreePort(t)\n-\tmetricsPort := testutil.GetFreePort(t)\n-\n-\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(port))\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t_ = testutil.NewServerConfigs(t)\n \n \tserver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n \t\tassert.Equal(t, \"/test\", r.URL.Path)\n@@ -215,8 +200,6 @@ func Test_AddDuplicateHTTPService(t *testing.T) {\n \tt.Setenv(\"LOG_LEVEL\", \"DEBUG\")\n \n \tlogs := testutil.StdoutOutputForFunc(func() {\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n \n \t\ta := New()\n \n@@ -228,17 +211,15 @@ func Test_AddDuplicateHTTPService(t *testing.T) {\n }\n \n func TestApp_Metrics(t *testing.T) {\n-\tmetricsPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\ttestutil.NewServerConfigs(t)\n \n \tapp := New()\n \n \tassert.NotNil(t, app.Metrics())\n }\n \n func TestApp_AddAndGetHTTPService(t *testing.T) {\n-\tmetricsPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\ttestutil.NewServerConfigs(t)\n \n \tapp := New()\n \n@@ -251,8 +232,7 @@ func TestApp_AddAndGetHTTPService(t *testing.T) {\n \n func TestApp_MigrateInvalidKeys(t *testing.T) {\n \tlogs := testutil.StderrOutputForFunc(func() {\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \t\tapp.Migrate(map[int64]migration.Migrate{1: {}})\n@@ -263,8 +243,7 @@ func TestApp_MigrateInvalidKeys(t *testing.T) {\n \n func TestApp_MigratePanicRecovery(t *testing.T) {\n \tlogs := testutil.StderrOutputForFunc(func() {\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -525,8 +504,7 @@ func Test_EnableBasicAuthWithValidator(t *testing.T) {\n }\n \n func Test_AddRESTHandlers(t *testing.T) {\n-\tmetricsPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\ttestutil.NewServerConfigs(t)\n \n \tapp := New()\n \n@@ -800,10 +778,7 @@ func Test_APIKeyAuthMiddleware(t *testing.T) {\n }\n \n func Test_SwaggerEndpoints(t *testing.T) {\n-\tport := testutil.GetFreePort(t)\n-\n-\tmetricsPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \t// Create the openapi.json file within the static directory\n \topenAPIFilePath := filepath.Join(\"static\", OpenAPIJSON)\n@@ -823,7 +798,7 @@ func Test_SwaggerEndpoints(t *testing.T) {\n \n \tapp := New()\n \tapp.httpRegistered = true\n-\tapp.httpServer.port = port\n+\tapp.httpServer.port = configs.HTTPPort\n \n \tgo app.Run()\n \ttime.Sleep(100 * time.Millisecond)\n@@ -833,7 +808,7 @@ func Test_SwaggerEndpoints(t *testing.T) {\n \t}\n \n \tre, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,\n-\t\tfmt.Sprintf(\"http://localhost:%d\", port)+\"/.well-known/swagger\", http.NoBody)\n+\t\tfmt.Sprintf(\"http://localhost:%d\", configs.HTTPPort)+\"/.well-known/swagger\", http.NoBody)\n \tresp, err := netClient.Do(re)\n \n \tdefer func() {\n@@ -885,12 +860,7 @@ func Test_AddCronJob_Success(t *testing.T) {\n }\n \n func setupTestEnvironment(t *testing.T) (host string, htmlContent []byte) {\n-\tt.Helper()\n-\n-\tport := testutil.GetFreePort(t)\n-\tmetricsPort := testutil.GetFreePort(t)\n-\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\tconfigs := testutil.NewServerConfigs(t)\n \n \t// Generating some files for testing\n \thtmlContent = []byte(\"<html><head><title>Test Static File</title></head><body><p>Testing Static File</p></body></html>\")\n@@ -904,12 +874,12 @@ func setupTestEnvironment(t *testing.T) (host string, htmlContent []byte) {\n \tapp.AddStaticFiles(\"gofrTest\", \"testdir\")\n \n \tapp.httpRegistered = true\n-\tapp.httpServer.port = port\n+\tapp.httpServer.port = configs.HTTPPort\n \n \tgo app.Run()\n \ttime.Sleep(100 * time.Millisecond)\n \n-\thost = fmt.Sprintf(\"http://localhost:%d\", port)\n+\thost = fmt.Sprintf(\"http://localhost:%d\", configs.HTTPPort)\n \n \treturn host, htmlContent\n }\n@@ -999,8 +969,7 @@ func TestStaticHandler(t *testing.T) {\n func TestStaticHandlerInvalidFilePath(t *testing.T) {\n \t// Generating some files for testing\n \tlogs := testutil.StderrOutputForFunc(func() {\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -1039,8 +1008,7 @@ func createPublicDirectory(t *testing.T, defaultPublicStaticDir string, htmlCont\n \n func Test_Shutdown(t *testing.T) {\n \tlogs := testutil.StdoutOutputForFunc(func() {\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tg := New()\n \n@@ -1061,9 +1029,7 @@ func Test_Shutdown(t *testing.T) {\n \n func TestApp_SubscriberInitialize(t *testing.T) {\n \tt.Run(\"subscriber is initialized\", func(t *testing.T) {\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n-\n+\t\ttestutil.NewServerConfigs(t)\n \t\tapp := New()\n \n \t\tmockContainer := container.Container{\n@@ -1084,8 +1050,7 @@ func TestApp_SubscriberInitialize(t *testing.T) {\n \t})\n \n \tt.Run(\"subscriber is not initialized\", func(t *testing.T) {\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \t\tapp.Subscribe(\"Hello\", func(*Context) error {\n@@ -1101,8 +1066,7 @@ func TestApp_SubscriberInitialize(t *testing.T) {\n \n func TestApp_Subscribe(t *testing.T) {\n \tt.Run(\"topic is empty\", func(t *testing.T) {\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n \n@@ -1121,8 +1085,7 @@ func TestApp_Subscribe(t *testing.T) {\n \t})\n \n \tt.Run(\"handler is nil\", func(t *testing.T) {\n-\t\tmetricsPort := testutil.GetFreePort(t)\n-\t\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\t\ttestutil.NewServerConfigs(t)\n \n \t\tapp := New()\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/handler_test.go",
+   "new_path": "pkg/gofr/handler_test.go",
+   "diff": "@@ -7,7 +7,6 @@ import (\n \t\"net/http\"\n \t\"net/http/httptest\"\n \t\"os\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n@@ -237,8 +236,7 @@ func TestHandler_livelinessHandler(t *testing.T) {\n }\n \n func TestHandler_healthHandler(t *testing.T) {\n-\tmetricsPort := testutil.GetFreePort(t)\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\ttestutil.NewServerConfigs(t)\n \n \ta := New()\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/testutil/port.go",
+   "new_path": "pkg/gofr/testutil/port.go",
+   "diff": "@@ -1,7 +1,9 @@\n package testutil\n \n import (\n+\t\"fmt\"\n \t\"net\"\n+\t\"strconv\"\n \t\"testing\"\n \n \t\"github.com/stretchr/testify/require\"\n@@ -21,3 +23,37 @@ func GetFreePort(t *testing.T) int {\n \n \treturn port\n }\n+\n+// ServiceConfigs holds the configuration details for different server components.\n+type ServiceConfigs struct {\n+\tHTTPPort    int\n+\tHTTPHost    string\n+\tMetricsPort int\n+\tMetricsHost string\n+\tGRPCPort    int\n+\tGRPCHost    string\n+}\n+\n+// ServerConfigsProvider sets up server configurations for testing and returns a ServiceConfigs struct.\n+// It dynamically assigns free ports for HTTP, Metrics, and gRPC services, sets up environment variables for them,\n+// and returns a struct with the configured values.\n+func NewServerConfigs(t *testing.T) *ServiceConfigs {\n+\tt.Helper()\n+\n+\thttpPort := GetFreePort(t)\n+\tmetricsPort := GetFreePort(t)\n+\tgrpcPort := GetFreePort(t)\n+\n+\tt.Setenv(\"HTTP_PORT\", strconv.Itoa(httpPort))\n+\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\tt.Setenv(\"GRPC_PORT\", strconv.Itoa(grpcPort))\n+\n+\treturn &ServiceConfigs{\n+\t\tHTTPPort:    httpPort,\n+\t\tHTTPHost:    fmt.Sprintf(\"http://localhost:%d\", httpPort),\n+\t\tMetricsPort: metricsPort,\n+\t\tMetricsHost: fmt.Sprintf(\"http://localhost:%d\", metricsPort),\n+\t\tGRPCPort:    grpcPort,\n+\t\tGRPCHost:    fmt.Sprintf(\"localhost:%d\", grpcPort),\n+\t}\n+}",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/testutil/port_test.go",
+   "new_path": "pkg/gofr/testutil/port_test.go",
+   "diff": "@@ -3,6 +3,8 @@ package testutil\n import (\n \t\"fmt\"\n \t\"net\"\n+\t\"os\"\n+\t\"strconv\"\n \t\"testing\"\n \n \t\"github.com/stretchr/testify/assert\"\n@@ -19,3 +21,28 @@ func TestGetFreePort(t *testing.T) {\n \n \t_ = listener.Close()\n }\n+\n+func TestNewServerConfigs(t *testing.T) {\n+\tenv := NewServerConfigs(t)\n+\n+\t// Check HTTP_PORT\n+\thttpPortEnv := os.Getenv(\"HTTP_PORT\")\n+\trequire.NotEmpty(t, httpPortEnv, \"HTTP_PORT environment variable should be set\")\n+\tassert.Equal(t, strconv.Itoa(env.HTTPPort), httpPortEnv, \"HTTP_PORT should match the configured HTTPPort\")\n+\tassert.NotZero(t, env.HTTPPort, \"HTTPPort should not be zero\")\n+\tassert.Equal(t, env.HTTPHost, \"http://localhost:\"+httpPortEnv, \"HTTPHost should match environment variable\")\n+\n+\t// Check METRICS_PORT\n+\tmetricsPortEnv := os.Getenv(\"METRICS_PORT\")\n+\trequire.NotEmpty(t, metricsPortEnv, \"METRICS_PORT environment variable should be set\")\n+\tassert.Equal(t, strconv.Itoa(env.MetricsPort), metricsPortEnv, \"METRICS_PORT should match the configured MetricsPort\")\n+\tassert.NotZero(t, env.MetricsPort, \"MetricsPort should not be zero\")\n+\tassert.Equal(t, env.MetricsHost, \"http://localhost:\"+metricsPortEnv, \"MetricsHost should match environment variable\")\n+\n+\t// Check GRPC_PORT\n+\tgrpcPortEnv := os.Getenv(\"GRPC_PORT\")\n+\trequire.NotEmpty(t, grpcPortEnv, \"GRPC_PORT environment variable should be set\")\n+\tassert.Equal(t, strconv.Itoa(env.GRPCPort), grpcPortEnv, \"GRPC_PORT should match the configured GRPCPort\")\n+\tassert.NotZero(t, env.GRPCPort, \"GRPCPort should not be zero\")\n+\tassert.Equal(t, env.GRPCHost, \"localhost:\"+grpcPortEnv, \"GRPCHost should match environment variable\")\n+}",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "pkg/gofr/websocket_test.go",
+   "new_path": "pkg/gofr/websocket_test.go",
+   "diff": "@@ -3,25 +3,19 @@ package gofr\n import (\n \t\"encoding/json\"\n \t\"fmt\"\n+\t\"gofr.dev/pkg/gofr/testutil\"\n \t\"net/http/httptest\"\n \t\"reflect\"\n-\t\"strconv\"\n \t\"testing\"\n \t\"time\"\n \n \t\"github.com/gorilla/websocket\"\n \t\"github.com/stretchr/testify/assert\"\n \t\"github.com/stretchr/testify/require\"\n-\n-\t\"gofr.dev/pkg/gofr/testutil\"\n )\n \n func Test_WebSocket_Success(t *testing.T) {\n-\tport := testutil.GetFreePort(t)\n-\tmetricsPort := testutil.GetFreePort(t)\n-\n-\tt.Setenv(\"HTTP_PORT\", fmt.Sprint(port))\n-\tt.Setenv(\"METRICS_PORT\", strconv.Itoa(metricsPort))\n+\ttestutil.NewServerConfigs(t)\n \n \tapp := New()\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "go.mod",
+   "side": "right",
+   "from_line": 3,
+   "to_line": 5,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Using toolchain go1.23.4 with go 1.22.7 is technically supported, but this is an unusual configuration. Using a toolchain from a newer minor version (1.23.x) with an older Go version (1.22.x) may lead to unexpected behavior or compatibility issues. Consider either:\n1. Using toolchain go1.22.x (matching the Go version)\n2. Or upgrading the Go version to 1.23.x to match the toolchain\n\nThis mismatch can cause issues with:\n- Standard library behavior differences\n- Compiler optimizations that may not be tested with the older Go version\n- Potential breaking changes in toolchain behavior\n\n```suggestion\ngo 1.23.4\n\ntoolchain go1.23.4\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "pkg/gofr/datasource/file/ftp/go.mod",
+   "side": "right",
+   "from_line": 3,
+   "to_line": 5,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Adding `toolchain go1.23.4` makes builds use Go 1.23 when available, which can be surprising if the repo (or other submodules) targets Go 1.22.x. Please confirm this is intended and consistent across all datasource submodules; otherwise consider omitting `toolchain` or aligning it with the repo’s chosen toolchain version.\n\nAlso note: `go 1.22.7` is fine, but the `go` directive usually tracks the minimum language version, not patch level; many projects use `go 1.22` to avoid unnecessary churn across patch updates. Align with the root `go.mod` convention if one exists.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "pkg/gofr/datasource/file/s3/go.mod",
+   "side": "right",
+   "from_line": 3,
+   "to_line": 3,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Bumping the `go` directive from 1.22.4 to 1.22.7 can change module semantics/tool behavior (e.g., minimal version selection details, stdlib changes) and may require CI/build image updates. Please ensure the root module and all submodules are aligned on the intended Go minor/patch level, and that this version is available in all supported environments.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "pkg/gofr/datasource/file/s3/go.mod",
+   "side": "right",
+   "from_line": 5,
+   "to_line": 5,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Adding a `toolchain` directive forces/requests a specific Go toolchain (here 1.23.4). This can break consumers or CI that build with older Go versions or without toolchain auto-download enabled, especially for a nested submodule. Confirm this repository intends to require Go 1.23.4 to build/test, and consider aligning toolchain directives across modules (root + all submodules) or omitting it if you only want to declare minimum language version via `go`.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "pkg/gofr/testutil/port.go",
+   "side": "right",
+   "from_line": 37,
+   "to_line": 40,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Documentation error: The comment refers to 'ServerConfigsProvider' but the actual function name is 'NewServerConfigs'. Please update the comment to match the function name.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "pkg/gofr/testutil/port.go",
+   "side": "right",
+   "from_line": 37,
+   "to_line": 40,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The documentation comment refers to `ServerConfigsProvider`, but the function name is `NewServerConfigs`. Please correct the comment to match the function name.\n\nAdditionally, there is a naming inconsistency between the function `NewServerConfigs` (Server) and the return type `ServiceConfigs` (Service). Consider renaming for consistency (e.g., `NewServiceConfigs`).\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "pkg/gofr/testutil/port.go",
+   "side": "right",
+   "from_line": 43,
+   "to_line": 45,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "`GetFreePort` is called three times independently; between calls another process/test can claim a previously-found free port, leading to flaky tests when a service actually binds later. If you need stability, consider reserving ports by keeping listeners open until the servers start (or allocate via `net.Listen(\"tcp\", \"127.0.0.1:0\")` and return the listener/address to the caller).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "pkg/gofr/testutil/port.go",
+   "side": "right",
+   "from_line": 51,
+   "to_line": 58,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Hosts are returned in mixed formats: HTTP/Metrics include scheme (`http://...`) while gRPC returns `host:port` without scheme. This inconsistency can cause subtle misuse by callers. Consider either returning just host:port for all, or separate fields like `HTTPAddr` vs `HTTPURL` to make intent explicit.",
+   "source": "GPT-5.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "pkg/gofr/testutil/port.go",
+   "side": "right",
+   "from_line": 47,
+   "to_line": 49,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Only ports are set as env vars. If production code also reads host vars (e.g., `HTTP_HOST`, `METRICS_HOST`, `GRPC_HOST`) tests may still depend on ambient environment. Consider setting the corresponding host env vars here as well, or ensure code under test only reads ports.",
+   "source": "GPT-5.2"
+  }
+ ]
+}

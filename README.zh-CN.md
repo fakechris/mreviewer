@@ -242,6 +242,7 @@ mreviewer review --target <pr-or-mr-url> --output both --publish artifact-only
 相关子命令：
 
 - `mreviewer structured-output-probe --route <configured-route> --mode tool --runs 10`：针对单条 route 的结构化输出 live probe
+- `mreviewer bench review --config config.bench.yaml --route <route> --judge-route <OpenAI 兼容路由>`：用 `testdata/review-bench/` 下的离线评测集（AACR-Bench 抽样、自建中文样本、对照组）给一条路由打分，输出 precision / recall / F1、每 case 的 finding 数与 token、对照组误报数和中文自然度；`--findings <json>` 可对其他工具的输出做同一评测集评分
 
 JSON 输出包含：
 - `review_brief`

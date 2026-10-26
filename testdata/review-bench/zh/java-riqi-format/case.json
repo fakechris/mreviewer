@@ -1,0 +1,42 @@
+{
+ "id": "zh/java-riqi-format",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/java-riqi-format",
+  "owner": "zh",
+  "repo": "java-riqi-format",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "报表导出：日期列格式化",
+  "description": "",
+  "language": "Java",
+  "category": "self-built",
+  "changed_lines": 10
+ },
+ "diffs": [
+  {
+   "old_path": "src/main/java/com/example/baobiao/RiQiGeShi.java",
+   "new_path": "src/main/java/com/example/baobiao/RiQiGeShi.java",
+   "diff": "@@ -1,8 +1,16 @@\n package com.example.baobiao;\n \n import java.text.SimpleDateFormat;\n import java.util.Date;\n \n public final class RiQiGeShi {\n-    private RiQiGeShi() {}\n+    // 报表里统一用这个格式，复用一个实例省得每次 new\n+    private static final SimpleDateFormat GE_SHI = new SimpleDateFormat(\"yyyy-MM-dd HH:mm\");\n+\n+    private RiQiGeShi() {}\n+\n+    /** 导出任务是多线程跑的，这里直接调用即可 */\n+    public static String geShiHua(Date riQi) {\n+        return GE_SHI.format(riQi);\n+    }\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/main/java/com/example/baobiao/RiQiGeShi.java",
+   "side": "right",
+   "from_line": 8,
+   "to_line": 15,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`SimpleDateFormat` 不是线程安全的，注释又明说导出任务是多线程的，共享一个 static 实例会出现日期串位甚至 `ArrayIndexOutOfBoundsException`。换成 `DateTimeFormatter`（线程安全）或者每次调用新建。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

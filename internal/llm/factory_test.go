@@ -502,3 +502,28 @@ func schemaTypeContains(value any, want string) bool {
 	}
 	return false
 }
+
+func TestNewProviderFromConfigWiresDeepSeekCompatMode(t *testing.T) {
+	p, err := NewProviderFromConfig(ProviderConfig{Kind: ProviderKindDeepSeek, BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKey: "k"})
+	if err != nil {
+		t.Fatalf("NewProviderFromConfig: %v", err)
+	}
+	op, ok := p.(*OpenAIProvider)
+	if !ok {
+		t.Fatalf("provider type = %T, want *OpenAIProvider", p)
+	}
+	if op.compat == nil || !op.compat.UseSystemRole || !op.compat.DropStrictSchema || !op.compat.DropReasoningEffort {
+		t.Fatalf("compat mode = %+v, want DeepSeekCompatMode", op.compat)
+	}
+	payload := op.RequestPayload(ctxpkg.ReviewRequest{})
+	thinking, ok := payload["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Fatalf("payload thinking = %#v, want disabled (forced tool_choice needs thinking off)", payload["thinking"])
+	}
+	if _, forced := payload["tool_choice"].(map[string]any); !forced {
+		t.Fatalf("tool_choice = %#v, want forced named function", payload["tool_choice"])
+	}
+	if payload["messages"].([]map[string]any)[0]["role"] != "system" {
+		t.Fatalf("first message role = %v, want system", payload["messages"].([]map[string]any)[0]["role"])
+	}
+}

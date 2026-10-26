@@ -1,0 +1,239 @@
+{
+ "id": "aacr/vllm-project__vllm__17425",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/vllm-project/vllm/pull/17425",
+  "owner": "vllm-project",
+  "repo": "vllm",
+  "number": 17425,
+  "base_sha": "d8037867313eef09779b265ea4bace76d2d118ba",
+  "head_sha": "134705b1474ddcfac234a0a01313874f7c8b59bc",
+  "title": "[Fix] Support passing args to logger",
+  "description": "This PR address #17416 where it should be passed *args accordingly to logger\n\nto format with `%s` instead of f-string\n\nSigned-off-by: Aaron Pham <contact@aarnphm.xyz>\n",
+  "language": "Python",
+  "category": "Bug Fix",
+  "changed_lines": 154
+ },
+ "diffs": [
+  {
+   "old_path": "vllm/config.py",
+   "new_path": "vllm/config.py",
+   "diff": "@@ -497,11 +497,11 @@ def __init__(\n                     self.hf_text_config.sliding_window)\n \n                 logger.warning_once(\n-                    f\"{self.hf_text_config.model_type} has interleaved \"\n-                    \"attention, which is currently not supported by the \"\n-                    f\"{backend} backend. Disabling sliding window and capping \"\n-                    \"the max length to the sliding window size \"\n-                    f\"({sliding_window_len_min}).\")\n+                    \"%s has interleaved attention, which is currently not supported by the %s backend. Disabling sliding window and capping the max length to the sliding window size (%s).\",  # noqa: E501\n+                    self.hf_text_config.model_type,\n+                    backend,\n+                    sliding_window_len_min,\n+                )\n                 self.disable_sliding_window = True\n             else:\n                 # for a model with interleaved attention,",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/logger.py",
+   "new_path": "vllm/logger.py",
+   "diff": "@@ -5,6 +5,7 @@\n import logging\n import os\n import sys\n+from collections.abc import Hashable\n from functools import lru_cache, partial\n from logging import Logger\n from logging.config import dictConfig\n@@ -52,15 +53,15 @@\n \n \n @lru_cache\n-def _print_info_once(logger: Logger, msg: str) -> None:\n+def _print_info_once(logger: Logger, msg: str, *args: Hashable) -> None:\n     # Set the stacklevel to 2 to print the original caller's line info\n-    logger.info(msg, stacklevel=2)\n+    logger.info(msg, *args, stacklevel=2)\n \n \n @lru_cache\n-def _print_warning_once(logger: Logger, msg: str) -> None:\n+def _print_warning_once(logger: Logger, msg: str, *args: Hashable) -> None:\n     # Set the stacklevel to 2 to print the original caller's line info\n-    logger.warning(msg, stacklevel=2)\n+    logger.warning(msg, *args, stacklevel=2)\n \n \n class _VllmLogger(Logger):\n@@ -72,19 +73,19 @@ class _VllmLogger(Logger):\n         `intel_extension_for_pytorch.utils._logger`.\n     \"\"\"\n \n-    def info_once(self, msg: str) -> None:\n+    def info_once(self, msg: str, *args: Hashable) -> None:\n         \"\"\"\n         As :meth:`info`, but subsequent calls with the same message\n         are silently dropped.\n         \"\"\"\n-        _print_info_once(self, msg)\n+        _print_info_once(self, msg, *args)\n \n-    def warning_once(self, msg: str) -> None:\n+    def warning_once(self, msg: str, *args: Hashable) -> None:\n         \"\"\"\n         As :meth:`warning`, but subsequent calls with the same message\n         are silently dropped.\n         \"\"\"\n-        _print_warning_once(self, msg)\n+        _print_warning_once(self, msg, *args)\n \n \n def _configure_vllm_root_logger() -> None:",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/lora/punica_wrapper/punica_selector.py",
+   "new_path": "vllm/lora/punica_wrapper/punica_selector.py",
+   "diff": "@@ -15,6 +15,5 @@ def get_punica_wrapper(*args, **kwargs) -> PunicaWrapperBase:\n     punica_wrapper = punica_wrapper_cls(*args, **kwargs)\n     assert punica_wrapper is not None, \\\n         \"the punica_wrapper_qualname(\" + punica_wrapper_qualname + \") is wrong.\"\n-    logger.info_once(\"Using \" + punica_wrapper_qualname.rsplit(\".\", 1)[1] +\n-                     \".\")\n+    logger.info_once(\"Using %s.\", punica_wrapper_qualname.rsplit(\".\", 1)[1])\n     return punica_wrapper",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/model_executor/custom_op.py",
+   "new_path": "vllm/model_executor/custom_op.py",
+   "diff": "@@ -107,9 +107,9 @@ def enabled(cls) -> bool:\n         custom_ops = compilation_config.custom_ops\n         if not hasattr(cls, \"name\"):\n             logger.warning_once(\n-                f\"Custom op {cls.__name__} was not registered, \"\n-                f\"which means it won't appear in the op registry. \"\n-                f\"It will be enabled/disabled based on the global settings.\")\n+                \"Custom op %s was not registered, which means it won't appear in the op registry. It will be enabled/disabled based on the global settings.\",  # noqa: E501\n+                cls.__name__,\n+            )\n             return CustomOp.default_on()\n \n         enabled = f\"+{cls.name}\" in custom_ops",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/model_executor/guided_decoding/xgrammar_decoding.py",
+   "new_path": "vllm/model_executor/guided_decoding/xgrammar_decoding.py",
+   "diff": "@@ -191,9 +191,9 @@ def from_guided_params(cls,\n \n             if model_with_warn is not None and any_whitespace:\n                 logger.info_once(\n-                    \"%s model detected, consider setting \"\n-                    \"`disable_any_whitespace` to prevent runaway generation \"\n-                    \"of whitespaces.\", model_with_warn)\n+                    \"%s model detected, consider setting `disable_any_whitespace` to prevent runaway generation of whitespaces.\",  # noqa: E501\n+                    model_with_warn,\n+                )\n             # Validate the schema and raise ValueError here if it is invalid.\n             # This is to avoid exceptions in model execution, which will crash\n             # the engine worker process.",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/model_executor/layers/quantization/awq_marlin.py",
+   "new_path": "vllm/model_executor/layers/quantization/awq_marlin.py",
+   "diff": "@@ -129,8 +129,8 @@ def get_quant_method(self, layer: torch.nn.Module,\n             # Check if the layer is supported by AWQMarlin.\n             if not check_marlin_supports_layer(layer, self.group_size):\n                 logger.warning_once(\n-                    f\"Layer '{prefix}' is not supported by AWQMarlin. \"\n-                    \"Falling back to unoptimized AWQ kernels.\")\n+                    \"Layer '%s' is not supported by AWQMarlin. \"\n+                    \"Falling back to unoptimized AWQ kernels.\", prefix)\n                 return AWQConfig.from_config(\n                     self.full_config).get_quant_method(layer, prefix)\n             return AWQMarlinLinearMethod(self)",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/model_executor/model_loader/weight_utils.py",
+   "new_path": "vllm/model_executor/model_loader/weight_utils.py",
+   "diff": "@@ -464,7 +464,7 @@ def fastsafetensors_weights_iterator(\n     hf_weights_files: List[str],\n     use_tqdm_on_load: bool,\n ) -> Generator[Tuple[str, torch.Tensor], None, None]:\n-    \"\"\"Iterate over the weights in the model safetensor files \n+    \"\"\"Iterate over the weights in the model safetensor files\n     using fastsafetensor library.\"\"\"\n     if torch.distributed.is_initialized():\n         pg = torch.distributed.group.WORLD\n@@ -716,10 +716,9 @@ def maybe_remap_kv_scale_name(name: str, params_dict: dict) -> Optional[str]:\n         remapped_name = name.replace(\".kv_scale\", \".attn.k_scale\")\n         if remapped_name not in params_dict:\n             logger.warning_once(\n-                f\"Found kv_scale in the checkpoint (e.g. {name}), \"\n-                \"but not found the expected name in the model \"\n-                f\"(e.g. {remapped_name}). kv_scale is \"\n-                \"not loaded.\")\n+                \"Found kv_scale in the checkpoint (e.g. %s), but not found the expected name in the model (e.g. %s). kv_scale is not loaded.\",  #  noqa: E501\n+                name,\n+                remapped_name)\n             return None\n         return remapped_name\n \n@@ -738,10 +737,11 @@ def maybe_remap_kv_scale_name(name: str, params_dict: dict) -> Optional[str]:\n                 remapped_name = name.replace(scale_name, f\".attn{scale_name}\")\n             if remapped_name not in params_dict:\n                 logger.warning_once(\n-                    f\"Found {scale_name} in the checkpoint (e.g. {name}), \"\n-                    \"but not found the expected name in the model \"\n-                    f\"(e.g. {remapped_name}). {scale_name} is \"\n-                    \"not loaded.\")\n+                    \"Found %s in the checkpoint (e.g. %s), but not found the expected name in the model (e.g. %s). %s is not loaded.\",  # noqa: E501\n+                    scale_name,\n+                    name,\n+                    remapped_name,\n+                    scale_name)\n                 return None\n             return remapped_name\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/model_executor/models/chameleon.py",
+   "new_path": "vllm/model_executor/models/chameleon.py",
+   "diff": "@@ -1111,10 +1111,10 @@ def load_weights(self, weights: Iterable[Tuple[str,\n                             \".kv_scale\", \".attn.kv_scale\")\n                         if remapped_kv_scale_name not in params_dict:\n                             logger.warning_once(\n-                                \"Found kv scale in the checkpoint (e.g. \"\n-                                f\"{name}), but not found the expected name in \"\n-                                f\"the model (e.g. {remapped_kv_scale_name}). \"\n-                                \"kv-scale is not loaded.\")\n+                                \"Found kv scale in the checkpoint (e.g. %s), but not found the expected name in the model (e.g. %s). kv-scale is not loaded.\",  # noqa: E501\n+                                name,\n+                                remapped_kv_scale_name,\n+                            )\n                             continue\n                         else:\n                             name = remapped_kv_scale_name",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/model_executor/models/olmoe.py",
+   "new_path": "vllm/model_executor/models/olmoe.py",
+   "diff": "@@ -385,11 +385,10 @@ def load_weights(self, weights: Iterable[Tuple[str,\n                             \".kv_scale\", \".attn.kv_scale\")\n                         if remapped_kv_scale_name not in params_dict:\n                             logger.warning_once(\n-                                \"Found kv scale in the checkpoint \"\n-                                f\"(e.g. {name}), but not found the expected \"\n-                                f\"name in the model \"\n-                                f\"(e.g. {remapped_kv_scale_name}). \"\n-                                \"kv-scale is not loaded.\")\n+                                \"Found kv scale in the checkpoint (e.g. %s), but not found the expected name in the model (e.g. %s). kv-scale is not loaded.\",  # noqa: E501\n+                                name,\n+                                remapped_kv_scale_name,\n+                            )\n                             continue\n                         else:\n                             name = remapped_kv_scale_name",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/model_executor/models/qwen2_moe.py",
+   "new_path": "vllm/model_executor/models/qwen2_moe.py",
+   "diff": "@@ -462,11 +462,10 @@ def load_weights(self, weights: Iterable[Tuple[str,\n                             \".kv_scale\", \".attn.kv_scale\")\n                         if remapped_kv_scale_name not in params_dict:\n                             logger.warning_once(\n-                                \"Found kv scale in the checkpoint \"\n-                                f\"(e.g. {name}), but not found the expected \"\n-                                f\"name in the model \"\n-                                f\"(e.g. {remapped_kv_scale_name}). \"\n-                                \"kv-scale is not loaded.\")\n+                                \"Found kv_scale in the checkpoint (e.g. %s), but not found the expected name in the model (e.g. %s). kv_scale is not loaded.\",  #  noqa: E501\n+                                name,\n+                                remapped_kv_scale_name,\n+                            )\n                             continue\n                         else:\n                             name = remapped_kv_scale_name",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/model_executor/models/qwen3_moe.py",
+   "new_path": "vllm/model_executor/models/qwen3_moe.py",
+   "diff": "@@ -459,11 +459,10 @@ def load_weights(self, weights: Iterable[Tuple[str,\n                             \".kv_scale\", \".attn.kv_scale\")\n                         if remapped_kv_scale_name not in params_dict:\n                             logger.warning_once(\n-                                \"Found kv scale in the checkpoint \"\n-                                f\"(e.g. {name}), but not found the expected \"\n-                                f\"name in the model \"\n-                                f\"(e.g. {remapped_kv_scale_name}). \"\n-                                \"kv-scale is not loaded.\")\n+                                \"Found kv scale in the checkpoint (e.g. %s), but not found the expected name in the model (e.g. %s). kv-scale is not loaded.\",  # noqa: E501\n+                                name,\n+                                remapped_kv_scale_name,\n+                            )\n                             continue\n                         else:\n                             name = remapped_kv_scale_name",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/multimodal/profiling.py",
+   "new_path": "vllm/multimodal/profiling.py",
+   "diff": "@@ -215,17 +215,14 @@ def get_encoder_dummy_data(\n         elif total_len > seq_len and not envs.VLLM_USE_V1:\n             # `max_num_batched_tokens` is defined by `SchedulerConfig`\n             logger.warning_once(\n-                \"The encoder sequence length used for profiling (\"\n-                f\"max_num_batched_tokens / max_num_seqs = {seq_len}) \"\n-                \" is too short \"\n-                \"to hold the multi-modal embeddings in the worst case \"\n-                f\"({total_len} tokens in total, out of which \"\n-                f\"{self._get_mm_num_tokens(mm_inputs)} are reserved for \"\n-                \"multi-modal embeddings). This may cause certain \"\n-                \"multi-modal inputs to fail during inference, even when \"\n-                \"the input text is short. To avoid this, you should \"\n-                \"increase `max_model_len`, reduce `max_num_seqs`, \"\n-                \"and/or reduce `mm_counts`.\")\n+                \"The encoder sequence length used for profiling (max_num_batched_tokens / max_num_seqs = %d) \"  # noqa: E501\n+                \"is too short to hold the multi-modal embeddings in the worst case (%d tokens in total, out of which %s are reserved for multi-modal embeddings). \"  # noqa: E501\n+                \"This may cause certain multi-modal inputs to fail during inference, even when the input text is short. \"  # noqa: E501\n+                \"To avoid this, you should increase `max_model_len`, reduce `max_num_seqs`, and/or reduce `mm_counts`.\",  # noqa: E501\n+                seq_len,\n+                total_len,\n+                self._get_mm_num_tokens(mm_inputs),\n+            )\n \n         return DummyEncoderData(encoder_prompt_token_ids)\n \n@@ -243,17 +240,14 @@ def get_decoder_dummy_data(\n         if total_len > seq_len and not envs.VLLM_USE_V1:\n             # `max_num_batched_tokens` is defined by `SchedulerConfig`\n             logger.warning_once(\n-                \"The sequence length used for profiling (\"\n-                f\"max_num_batched_tokens / max_num_seqs = {seq_len}) \"\n-                \"is too short \"\n-                \"to hold the multi-modal embeddings in the worst case \"\n-                f\"({total_len} tokens in total, out of which \"\n-                f\"{self._get_mm_num_tokens(mm_inputs)} are reserved for \"\n-                \"multi-modal embeddings). This may cause certain \"\n-                \"multi-modal inputs to fail during inference, even when \"\n-                \"the input text is short. To avoid this, you should \"\n-                \"increase `max_model_len`, reduce `max_num_seqs`, \"\n-                \"and/or reduce `mm_counts`.\")\n+                \"The sequence length used for profiling (max_num_batched_tokens / max_num_seqs = %d) \"  # noqa: E501\n+                \"is too short to hold the multi-modal embeddings in the worst case (%d tokens in total, out of which %s are reserved for multi-modal embeddings). \"  # noqa: E501\n+                \"This may cause certain multi-modal inputs to fail during inference, even when the input text is short. \"  # noqa: E501\n+                \"To avoid this, you should increase `max_model_len`, reduce `max_num_seqs`, and/or reduce `mm_counts`.\",  # noqa: E501\n+                seq_len,\n+                total_len,\n+                self._get_mm_num_tokens(mm_inputs),\n+            )\n \n         if total_len < seq_len:\n             prompt_token_ids.extend([0] * (seq_len - total_len))",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "vllm/multimodal/registry.py",
+   "new_path": "vllm/multimodal/registry.py",
+   "diff": "@@ -100,7 +100,7 @@ def get_max_tokens_per_item_by_modality(\n         model_config: \"ModelConfig\",\n     ) -> Mapping[str, int]:\n         \"\"\"\n-        Get the maximum number of tokens per data item from each modality based \n+        Get the maximum number of tokens per data item from each modality based\n         on underlying model configuration.\n         \"\"\"\n         if not model_config.is_multimodal_model:\n@@ -126,11 +126,11 @@ def get_max_tokens_per_item_by_nonzero_modality(\n     ) -> Mapping[str, int]:\n         \"\"\"\n         Get the maximum number of tokens per data item from each modality based\n-        on underlying model configuration, excluding modalities that user \n+        on underlying model configuration, excluding modalities that user\n         explicitly disabled via `limit_mm_per_prompt`.\n \n         Note:\n-            This is currently directly used only in V1 for profiling the memory \n+            This is currently directly used only in V1 for profiling the memory\n             usage of a model.\n         \"\"\"\n         mm_limits = self.get_mm_limits_per_prompt(model_config)\n@@ -316,7 +316,9 @@ def get_encoder_dummy_data(\n         token_ids = dummy_data.prompt_token_ids\n         if len(token_ids) < seq_len:\n             logger.warning_once(\n-                f\"Expected at least {seq_len} dummy encoder tokens for \"\n-                f\"profiling, but found {len(token_ids)} tokens instead.\")\n+                \"Expected at least %d dummy encoder tokens for profiling, but found %d tokens instead.\",  # noqa: E501\n+                seq_len,\n+                len(token_ids),\n+            )\n \n         return dummy_data",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "vllm/logger.py",
+   "side": "right",
+   "from_line": 55,
+   "to_line": 58,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Serious logic issue: The @lru_cache decorator caches based on ALL arguments including *args, which breaks the 'print once' semantics. When the same message format is logged with different argument values (e.g., logger.info_once('Value: %s', 1) then logger.info_once('Value: %s', 2)), both will be printed because they create different cache entries. The cache should only consider the message format string, not the formatting arguments. Consider using a different caching strategy that only caches based on (logger, msg) or implementing a custom cache that ignores the *args for cache key generation.\n",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "vllm/logger.py",
+   "side": "right",
+   "from_line": 55,
+   "to_line": 58,
+   "category": "Performance",
+   "context": "Diff Level",
+   "note": "Potential memory growth: these functions are decorated with @lru_cache and now include `*args` in the cache key. If call sites pass many distinct argument combinations (e.g., dynamic values), the cache can grow without bound over a long-running process. Consider setting `@lru_cache(maxsize=...)`, caching only on the formatted message key you intend to dedupe, or using a bounded set per logger.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "vllm/model_executor/model_loader/weight_utils.py",
+   "side": "right",
+   "from_line": 718,
+   "to_line": 721,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Potential issue: this change switches `warning_once` from f-string to %-style formatting with extra args. Please confirm `logger.warning_once` supports the standard logging signature `warning_once(msg, *args, **kwargs)` and forwards args to the logger. If `warning_once` only accepts a single pre-formatted string, this will raise `TypeError` at runtime and also break the intended message. If it doesn’t support args, keep f-strings or explicitly format via `msg % (..)` / `.format()` before passing.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "vllm/model_executor/model_loader/weight_utils.py",
+   "side": "right",
+   "from_line": 719,
+   "to_line": 719,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Formatting issue: There are two spaces before `noqa` instead of one. Should be `# noqa:` not `#  noqa:`.\n\n**Suggested Fix:**\n```python\n\"Found kv_scale in the checkpoint (e.g. %s), but not found the expected name in the model (e.g. %s). kv_scale is not loaded.\",  # noqa: E501\n```",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "vllm/model_executor/models/qwen2_moe.py",
+   "side": "right",
+   "from_line": 465,
+   "to_line": 465,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Formatting issue: There are two spaces before `noqa` instead of one. Should be `# noqa:` not `#  noqa:`.\n\n**Suggested Fix:**\n```python\n\"Found kv_scale in the checkpoint (e.g. %s), but not found the expected name in the model (e.g. %s). kv_scale is not loaded.\",  # noqa: E501\n```",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "vllm/multimodal/profiling.py",
+   "side": "right",
+   "from_line": 218,
+   "to_line": 224,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Potential formatting issue: the placeholder for `self._get_mm_num_tokens(mm_inputs)` is `%s`, but the value appears to be numeric (token count). Prefer `%d` to avoid accidental non-int formatting and to communicate intent; also consider casting to `int` if it can be a numpy scalar/torch scalar to avoid surprising output.\n\n```suggestion\n                \"The encoder sequence length used for profiling (max_num_batched_tokens / max_num_seqs = %d) \"  # noqa: E501\n                \"is too short to hold the multi-modal embeddings in the worst case (%d tokens in total, out of which %d are reserved for multi-modal embeddings). \"  # noqa: E501\n                \"This may cause certain multi-modal inputs to fail during inference, even when the input text is short. \"  # noqa: E501\n                \"To avoid this, you should increase `max_model_len`, reduce `max_num_seqs`, and/or reduce `mm_counts`.\",  # noqa: E501\n                seq_len,\n                total_len,\n                int(self._get_mm_num_tokens(mm_inputs)),\n            )\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "vllm/multimodal/profiling.py",
+   "side": "right",
+   "from_line": 243,
+   "to_line": 249,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "Same as above: use `%d` for token count placeholder (and possibly `int(...)`) to keep formatting consistent and avoid unexpected stringification if the return type is a scalar tensor/np scalar.\n\n```suggestion\n                \"The sequence length used for profiling (max_num_batched_tokens / max_num_seqs = %d) \"  # noqa: E501\n                \"is too short to hold the multi-modal embeddings in the worst case (%d tokens in total, out of which %d are reserved for multi-modal embeddings). \"  # noqa: E501\n                \"This may cause certain multi-modal inputs to fail during inference, even when the input text is short. \"  # noqa: E501\n                \"To avoid this, you should increase `max_model_len`, reduce `max_num_seqs`, and/or reduce `mm_counts`.\",  # noqa: E501\n                seq_len,\n                total_len,\n                int(self._get_mm_num_tokens(mm_inputs)),\n            )\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "vllm/multimodal/profiling.py",
+   "side": "right",
+   "from_line": 249,
+   "to_line": 249,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The change to % formatting passes unhashable objects as arguments to `logger.warning_once`, which is wrapped in `lru_cache` and requires hashable inputs for caching. This breaks when non-hashable values (e.g., complex objects from `self._get_mm_num_tokens()`) are logged.",
+   "source": "human"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "vllm/config.py",
+   "side": "right",
+   "from_line": 500,
+   "to_line": 504,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The argument order matches the format specifiers correctly (model_type -> %s, backend -> %s, sliding_window_len_min -> %s). However, there is a trailing comma after the last argument which, while not causing an error in multi-line function calls, is unnecessary and inconsistent with Python style guidelines. If this follows a project-specific style convention that always uses trailing commas in multi-line calls, it is acceptable to keep it.\n\n```suggestion\n                    \"%s has interleaved attention, which is currently not supported by the %s backend. Disabling sliding window and capping the max length to the sliding window size (%s).\",  # noqa: E501\n                        self.hf_text_config.model_type,\n                        backend,\n                        sliding_window_len_min\n                    )\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "vllm/logger.py",
+   "side": "right",
+   "from_line": 55,
+   "to_line": 58,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The `@lru_cache` decorator requires all arguments to be hashable. The `logger` parameter is a Logger instance, which is not hashable (doesn't implement `__hash__`). This will cause a `TypeError: unhashable type: 'Logger'` at runtime when `_print_info_once` or `_print_warning_once` is called. The lru_cache cannot work with non-hashable arguments like Logger instances.\n\n```suggestion\ndef _print_info_once(logger: Logger, msg: str, *args: Hashable) -> None:\n    # Set the stacklevel to 2 to print the original caller's line info\n    logger.info(msg, *args, stacklevel=2)\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "vllm/multimodal/profiling.py",
+   "side": "right",
+   "from_line": 224,
+   "to_line": 224,
+   "category": "Code Defect",
+   "context": "Repo Level",
+   "note": "The logger call was changed from f-string formatting to parameterized arguments to safely handle non-string return values from `self._get_mm_num_tokens(mm_inputs)`, addressing the issue where dictionary return values would cause logging failures due to improper string conversion.",
+   "source": "human"
+  }
+ ]
+}

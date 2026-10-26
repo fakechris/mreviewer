@@ -1,0 +1,247 @@
+{
+ "id": "aacr/sveltejs__svelte__15250",
+ "source": "aacr-bench",
+ "kind": "golden",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://github.com/sveltejs/svelte/pull/15250",
+  "owner": "sveltejs",
+  "repo": "svelte",
+  "number": 15250,
+  "base_sha": "e4987d2a9f36b33f3934725723f9c4cc998ef278",
+  "head_sha": "4bf1f915d3374721f8a1655b1a151c1c423b1a3c",
+  "title": "chore: Reduce hydration comment for {:else if}",
+  "description": "Using `{#if} {:else if} {/if}` in template can produce lots of hydration code, since each `{#if}` or `{:else if}` will use a new block (with 2 possible hydration comments).\r\n\r\nExample in this issue : https://github.com/sveltejs/svelte/issues/15200\r\n\r\n\r\nI modified `if_block()` in order to handle that differently, using a single block for all `if/else if`.\r\n\r\nTake example of this dummy code : \r\n```svelte\r\n{#if prop === 1}\r\n\t<div>one</div>\r\n{:else if prop === 2}\r\n\t<div>two</div>\r\n{:else if prop === 3}\r\n\t<div>three</div>\r\n{:else if prop === 4}\r\n\t<div>four</div>\r\n{:else if prop === 5}\r\n\t<div>five</div>\r\n{:else}\r\n\t<div>...</div>\r\n{/if}\r\n```\r\n\r\nCurrently, this can produces :\r\n* if prop === 1: `<!--[--><div>one</div><!--]-->`\r\n* if prop === 2: `<!--[!--><!--[--><div>two</div><!--]--><!--]-->`\r\n* if prop === 3: `<!--[!--><!--[!--><!--[--><div>three</div><!--]--><!--]--><!--]-->`\r\n* if prop === 4: `<!--[!--><!--[!--><!--[!--><!--[--><div>four</div><!--]--><!--]--><!--]--><!--]-->`\r\n* if prop === 5: `<!--[!--><!--[!--><!--[!--><!--[!--><!--[--><div>five</div><!--]--><!--]--><!--]--><!--]--><!--]-->`\r\n* else : `<!--[!--><!--[!--><!--[!--><!--[!--><!--[!--><!--[!--><div>...</div><!--]--><!--]--><!--]--><!--]--><!--]--><!--]-->`\r\n\r\nWith this change, it will produce only one hydration block in all case :\r\n* if prop === 1: `<!--[--><div>one</div><!--]-->`\r\n* if prop === 2: `<!--[1--><div>two</div><!--]-->`\r\n* if prop === 3: `<!--[2--><div>three</div><!--]-->`\r\n* if prop === 4: `<!--[3--><div>four</div><!--]-->`\r\n* if prop === 5: `<!--[4--><div>five</div><!--]-->`\r\n* if else : `<!--[!--><div>...</div><!--]-->`\r\n\r\n\r\nThe generated code is also reduced and simplified.\r\nOn client side the generated code is : \r\n```js\r\n{\r\n    var consequent = ($$anchor) => {\r\n      var div = root_1();\r\n\r\n      $.append($$anchor, div);\r\n    };\r\n\r\n    var alternate_4 = ($$anchor) => {\r\n      var fragment_1 = $.comment();\r\n      var node_1 = $.first_child(fragment_1);\r\n\r\n      {\r\n        var consequent_1 = (",
+  "language": "JavaScript",
+  "category": "Performance Optimizations",
+  "changed_lines": 105
+ },
+ "diffs": [
+  {
+   "old_path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/Fragment.js",
+   "new_path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/Fragment.js",
+   "diff": "@@ -48,7 +48,9 @@ export function Fragment(node, context) {\n \tconst is_single_element = trimmed.length === 1 && trimmed[0].type === 'RegularElement';\n \tconst is_single_child_not_needing_template =\n \t\ttrimmed.length === 1 &&\n-\t\t(trimmed[0].type === 'SvelteFragment' || trimmed[0].type === 'TitleElement');\n+\t\t(trimmed[0].type === 'SvelteFragment' ||\n+\t\t\ttrimmed[0].type === 'TitleElement' ||\n+\t\t\t(trimmed[0].type === 'IfBlock' && trimmed[0].elseif));\n \n \tconst template_name = context.state.scope.root.unique('root'); // TODO infer name from parent\n ",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+   "new_path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+   "diff": "@@ -1,4 +1,4 @@\n-/** @import { BlockStatement, Expression } from 'estree' */\n+/** @import { BlockStatement, Expression, Identifier } from 'estree' */\n /** @import { AST } from '#compiler' */\n /** @import { ComponentContext } from '../types' */\n import * as b from '../../../../utils/builders.js';\n@@ -19,28 +19,29 @@ export function IfBlock(node, context) {\n \tlet alternate_id;\n \n \tif (node.alternate) {\n-\t\tconst alternate = /** @type {BlockStatement} */ (context.visit(node.alternate));\n \t\talternate_id = context.state.scope.generate('alternate');\n-\t\tstatements.push(b.var(b.id(alternate_id), b.arrow([b.id('$$anchor')], alternate)));\n+\t\tconst alternate = /** @type {BlockStatement} */ (context.visit(node.alternate));\n+\t\tconst nodes = node.alternate.nodes;\n+\n+\t\tlet alternate_args = [b.id('$$anchor')];\n+\t\tif (nodes.length === 1 && nodes[0].type === 'IfBlock' && nodes[0].elseif) {\n+\t\t\talternate_args.push(b.id('$$elseif'));\n+\t\t}\n+\n+\t\tstatements.push(b.var(b.id(alternate_id), b.arrow(alternate_args, alternate)));\n \t}\n \n \t/** @type {Expression[]} */\n \tconst args = [\n-\t\tcontext.state.node,\n+\t\tnode.elseif ? b.id('$$anchor') : context.state.node,\n \t\tb.arrow(\n \t\t\t[b.id('$$render')],\n \t\t\tb.block([\n \t\t\t\tb.if(\n \t\t\t\t\t/** @type {Expression} */ (context.visit(node.test)),\n \t\t\t\t\tb.stmt(b.call(b.id('$$render'), b.id(consequent_id))),\n \t\t\t\t\talternate_id\n-\t\t\t\t\t\t? b.stmt(\n-\t\t\t\t\t\t\t\tb.call(\n-\t\t\t\t\t\t\t\t\tb.id('$$render'),\n-\t\t\t\t\t\t\t\t\tb.id(alternate_id),\n-\t\t\t\t\t\t\t\t\tnode.alternate ? b.literal(false) : undefined\n-\t\t\t\t\t\t\t\t)\n-\t\t\t\t\t\t\t)\n+\t\t\t\t\t\t? b.stmt(b.call(b.id('$$render'), b.id(alternate_id), b.literal(false)))\n \t\t\t\t\t\t: undefined\n \t\t\t\t)\n \t\t\t])\n@@ -69,10 +70,10 @@ export function IfBlock(node, context) {\n \t\t// ...even though they're logically equivalent. In the first case, the\n \t\t// transition will only play when `y` changes, but in the second it\n \t\t// should play when `x` or `y` change — both are considered 'local'\n-\t\targs.push(b.literal(true));\n+\t\targs.push(b.id('$$elseif'));\n \t}\n \n \tstatements.push(b.stmt(b.call('$.if', ...args)));\n \n-\tcontext.state.init.push(b.block(statements));\n+\tcontext.state.init.push(...statements);\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+   "new_path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+   "diff": "@@ -1,4 +1,4 @@\n-/** @import { BlockStatement, Expression } from 'estree' */\n+/** @import { BlockStatement, Expression, IfStatement } from 'estree' */\n /** @import { AST } from '#compiler' */\n /** @import { ComponentContext } from '../types.js' */\n import { BLOCK_OPEN_ELSE } from '../../../../../internal/server/hydration.js';\n@@ -10,19 +10,29 @@ import { block_close, block_open } from './shared/utils.js';\n  * @param {ComponentContext} context\n  */\n export function IfBlock(node, context) {\n-\tconst test = /** @type {Expression} */ (context.visit(node.test));\n-\n \tconst consequent = /** @type {BlockStatement} */ (context.visit(node.consequent));\n+\tconsequent.body.unshift(b.stmt(b.assignment('+=', b.id('$$payload.out'), block_open)));\n+\tlet if_statement = b.if(/** @type {Expression} */ (context.visit(node.test)), consequent);\n \n-\tconst alternate = node.alternate\n-\t\t? /** @type {BlockStatement} */ (context.visit(node.alternate))\n-\t\t: b.block([]);\n+\tcontext.state.template.push(if_statement, block_close);\n \n-\tconsequent.body.unshift(b.stmt(b.assignment('+=', b.id('$$payload.out'), block_open)));\n+\tlet index = 1;\n+\tlet alt = node.alternate;\n+\twhile (alt && alt.nodes.length === 1 && alt.nodes[0].type === 'IfBlock' && alt.nodes[0].elseif) {\n+\t\tconst elseif = alt.nodes[0];\n+\t\tconst alternate = /** @type {BlockStatement} */ (context.visit(elseif.consequent));\n+\t\talternate.body.unshift(\n+\t\t\tb.stmt(b.assignment('+=', b.id('$$payload.out'), b.literal(`<!--[${index++}-->`)))\n+\t\t);\n+\t\tif_statement = if_statement.alternate = b.if(\n+\t\t\t/** @type {Expression} */ (context.visit(elseif.test)),\n+\t\t\talternate\n+\t\t);\n+\t\talt = elseif.alternate;\n+\t}\n \n-\talternate.body.unshift(\n+\tif_statement.alternate = alt ? /** @type {BlockStatement} */ (context.visit(alt)) : b.block([]);\n+\tif_statement.alternate.body.unshift(\n \t\tb.stmt(b.assignment('+=', b.id('$$payload.out'), b.literal(BLOCK_OPEN_ELSE)))\n \t);\n-\n-\tcontext.state.template.push(b.if(test, consequent, alternate), block_close);\n }",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  },
+  {
+   "old_path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+   "new_path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+   "diff": "@@ -9,16 +9,16 @@ import {\n \tset_hydrating\n } from '../hydration.js';\n import { block, branch, pause_effect, resume_effect } from '../../reactivity/effects.js';\n-import { HYDRATION_START_ELSE, UNINITIALIZED } from '../../../../constants.js';\n+import { HYDRATION_START, HYDRATION_START_ELSE, UNINITIALIZED } from '../../../../constants.js';\n \n /**\n  * @param {TemplateNode} node\n- * @param {(branch: (fn: (anchor: Node) => void, flag?: boolean) => void) => void} fn\n- * @param {boolean} [elseif] True if this is an `{:else if ...}` block rather than an `{#if ...}`, as that affects which transitions are considered 'local'\n+ * @param {(branch: (fn: (anchor: Node, elseif?: [number,number]) => void, flag?: boolean) => void) => void} fn\n+ * @param {[number,number]} [elseif]\n  * @returns {void}\n  */\n-export function if_block(node, fn, elseif = false) {\n-\tif (hydrating) {\n+export function if_block(node, fn, [root_index, hydrate_index] = [0, 0]) {\n+\tif (hydrating && root_index === 0) {\n \t\thydrate_next();\n \t}\n \n@@ -33,35 +33,49 @@ export function if_block(node, fn, elseif = false) {\n \t/** @type {UNINITIALIZED | boolean | null} */\n \tvar condition = UNINITIALIZED;\n \n-\tvar flags = elseif ? EFFECT_TRANSPARENT : 0;\n+\tvar flags = root_index > 0 ? EFFECT_TRANSPARENT : 0;\n \n \tvar has_branch = false;\n \n-\tconst set_branch = (/** @type {(anchor: Node) => void} */ fn, flag = true) => {\n+\tconst set_branch = (\n+\t\t/** @type {(anchor: Node, elseif?: [number,number]) => void} */ fn,\n+\t\tflag = true\n+\t) => {\n \t\thas_branch = true;\n \t\tupdate_branch(flag, fn);\n \t};\n \n \tconst update_branch = (\n \t\t/** @type {boolean | null} */ new_condition,\n-\t\t/** @type {null | ((anchor: Node) => void)} */ fn\n+\t\t/** @type {null | ((anchor: Node, elseif?: [number,number]) => void)} */ fn\n \t) => {\n \t\tif (condition === (condition = new_condition)) return;\n \n \t\t/** Whether or not there was a hydration mismatch. Needs to be a `let` or else it isn't treeshaken out */\n \t\tlet mismatch = false;\n \n-\t\tif (hydrating) {\n-\t\t\tconst is_else = /** @type {Comment} */ (anchor).data === HYDRATION_START_ELSE;\n+\t\tif (hydrating && hydrate_index !== -1) {\n+\t\t\tif (root_index === 0) {\n+\t\t\t\tconst data = /** @type {Comment} */ (anchor).data;\n+\t\t\t\tif (data === HYDRATION_START) {\n+\t\t\t\t\thydrate_index = 0;\n+\t\t\t\t} else if (data === HYDRATION_START_ELSE) {\n+\t\t\t\t\thydrate_index = Infinity;\n+\t\t\t\t} else {\n+\t\t\t\t\thydrate_index = parseInt(data.substring(1));\n+\t\t\t\t}\n+\t\t\t}\n+\t\t\tconst is_else = hydrate_index > root_index;\n \n-\t\t\tif (!!condition === is_else) {\n+\t\t\tif (!!condition === is_else || isNaN(hydrate_index)) {\n \t\t\t\t// Hydration mismatch: remove everything inside the anchor and start fresh.\n \t\t\t\t// This could happen with `{#if browser}...{/if}`, for example\n \t\t\t\tanchor = remove_nodes();\n \n \t\t\t\tset_hydrate_node(anchor);\n \t\t\t\tset_hydrating(false);\n \t\t\t\tmismatch = true;\n+\t\t\t\thydrate_index = -1; // ignore hydration in next else if\n \t\t\t}\n \t\t}\n \n@@ -81,7 +95,7 @@ export function if_block(node, fn, elseif = false) {\n \t\t\tif (alternate_effect) {\n \t\t\t\tresume_effect(alternate_effect);\n \t\t\t} else if (fn) {\n-\t\t\t\talternate_effect = branch(() => fn(anchor));\n+\t\t\t\talternate_effect = branch(() => fn(anchor, [root_index + 1, hydrate_index]));\n \t\t\t}\n \n \t\t\tif (consequent_effect) {",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/Fragment.js",
+   "side": "right",
+   "from_line": 51,
+   "to_line": 53,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "`trimmed[0].elseif` relies on a non-obvious AST detail and uses truthiness. For robustness/clarity, prefer an explicit boolean check (or optional chaining if the property may be absent) so future AST changes don’t silently alter behavior. Also consider a brief inline comment explaining why an `elseif` `IfBlock` can be treated as “not needing template”, since this is not self-evident to readers.\n\n```suggestion\n\t\t(trimmed[0].type === 'SvelteFragment' ||\n\t\t\ttrimmed[0].type === 'TitleElement' ||\n\t\t\t(trimmed[0].type === 'IfBlock' && trimmed[0].elseif === true));\n```",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 26,
+   "to_line": 26,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "**Code Style**: Use `const` instead of `let` for arrays that are mutated but never reassigned.\n",
+   "source": "Gemini-3-Pro"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 27,
+   "to_line": 29,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The complex elseif handling logic would benefit from explanatory comments. Consider adding comments to explain: 1) Why we check for single IfBlock nodes with elseif, 2) The purpose of the $$elseif parameter, 3) How this coordinates with hydration logic in other files.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 44,
+   "to_line": 44,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Incorrect argument passed to $$render call for alternate branches. The runtime if_block function expects the third argument to be either a [number, number] tuple for elseif cases or omitted for regular cases. Passing b.literal(false) does not match the expected signature and may cause runtime issues.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 21,
+   "to_line": 21,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "Null/shape safety: loop condition assumes `alt.nodes` exists. If `node.alternate` can ever be a different node type (or null), `alt.nodes` access can throw. Consider guarding with `alt && 'nodes' in alt` (or checking `alt.type` if available) before reading `.nodes`.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 24,
+   "to_line": 26,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The template string format for elseif hydration markers appears incorrect. Based on the client-side parsing logic in if.js line 67, the format expects content like `[1]` inside the comment. The current format `<!--[${index++}-->` produces `<!--[1-->` which would cause `parseInt(data.substring(1))` to return NaN because `parseInt(\"[1-->\")` = NaN. The correct format should include the closing bracket before the HTML comment end: `<!--[${index++}]-->` which produces `<!--[1]-->`, allowing `parseInt(\"[1]-->\")` = 1 to work correctly.\n\n```suggestion\n\t\talternate.body.unshift(\n\t\t\tb.stmt(b.assignment('+=', b.id('$$payload.out'), b.literal(`<!--[${index++}]-->`)))\n\t\t);\n```",
+   "source": "GLM-4.7"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 25,
+   "to_line": 25,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Hardcoded template string detected. While acceptable for simple UI texts according to guidelines, complex business logic templates should ideally come from constants/configurations.\n",
+   "source": "Qwen-Coder-480B"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 34,
+   "to_line": 37,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Potential runtime/type issue: `context.visit(alt)` is cast to `BlockStatement` and then `.body.unshift(...)` is called unconditionally. If `alt` can be something that visits to a non-BlockStatement, this will throw. Safer: normalize to a block (`b.block([stmt])`) when the visited node is not a `BlockStatement`, or ensure upstream guarantees and add an assertion.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+   "side": "right",
+   "from_line": 25,
+   "to_line": 25,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Variable declaration should use 'let' or 'const' instead of 'var' for better scoping and modern JavaScript practices.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+   "side": "right",
+   "from_line": 31,
+   "to_line": 31,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Variable declaration should use 'let' or 'const' instead of 'var'\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+   "side": "right",
+   "from_line": 41,
+   "to_line": 41,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "**Type signature inconsistency**: The JSDoc comment at line 16 describes `elseif` as `[number,number]`, but here in the actual function signature, `fn` is typed to accept `elseif?: [number,number]` as an optional parameter. However, throughout the function body (e.g., line 95), you're passing `[root_index + 1, hydrate_index]` which could be computed incorrectly if `hydrate_index` is `-1` (as set on line 78). This could lead to incorrect hydration behavior in nested else-if chains after a hydration mismatch.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+   "side": "right",
+   "from_line": 62,
+   "to_line": 64,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "Using `Infinity` as a sentinel for the else branch makes comparison work, but it’s a magic value and can complicate reasoning/debugging. Consider using a dedicated sentinel constant (e.g., `const HYDRATE_ELSE_INDEX = Number.POSITIVE_INFINITY`) or an enum-like value, and document the invariant (\"else means any index greater than root\").",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+   "side": "right",
+   "from_line": 70,
+   "to_line": 70,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "The use of `isNaN` to validate `hydrate_index` after `parseInt` is a code smell; replace with `hydrate_index !== hydrate_index` for reliable NaN detection.",
+   "source": "human"
+  },
+  {
+   "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+   "side": "right",
+   "from_line": 70,
+   "to_line": 70,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "The condition 'isNaN(hydrate_index)' might not work as expected. Consider using Number.isNaN() for more reliable NaN checking, or validate the parsed value before using it.\n",
+   "source": "Deepseek-V3.2"
+  }
+ ],
+ "negatives": [
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 1,
+   "to_line": 1,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "`Identifier` is imported in the JSDoc types but not used in this file. Please remove it to avoid unused-type noise in tooling/linting.",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 70,
+   "to_line": 70,
+   "category": "Code Defect",
+   "context": "File Level",
+   "note": "**Critical change without clear semantics**: Changing from `b.literal(true)` to `b.id('$$elseif')` fundamentally changes how the elseif flag is passed. However, when `node.elseif` is false (the root if block), `$$elseif` is undefined in the scope. This means you're now passing `undefined` as the third argument to `$.if()` for root blocks, whereas before you were explicitly passing `true` for local transitions. Is this intentional? The comment above (lines 60-70) explains the importance of this flag for transition behavior, so this change needs careful verification.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 1,
+   "to_line": 1,
+   "category": "Maintainability and Readability",
+   "context": "File Level",
+   "note": "Unused JSDoc import: `IfStatement` is imported but never referenced in the file. This is dead code and may fail lint/type checks. Remove it, or actually use it for typing (e.g., cast `if_statement` to `IfStatement`).",
+   "source": "GPT-5.2"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 19,
+   "to_line": 32,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "Complex elseif chain logic needs explanatory comments. The while loop handles nested elseif blocks by building a chain of if statements, but this logic is not obvious without comments.\n",
+   "source": "Deepseek-V3.2"
+  },
+  {
+   "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+   "side": "right",
+   "from_line": 19,
+   "to_line": 19,
+   "category": "Maintainability and Readability",
+   "context": "Diff Level",
+   "note": "**Naming clarity**: The variable `alt` is used to track the alternate node while iterating through else-if chains. While concise, this name could be confused with the `alternate` variable used in the same scope (lines 21, 22, etc.). Consider using a more descriptive name like `current_alt` or `next_alt` to improve readability and reduce potential confusion.",
+   "source": "Claude-Code/Claude-4.5-Sonnet"
+  }
+ ]
+}

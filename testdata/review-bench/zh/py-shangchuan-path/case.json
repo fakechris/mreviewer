@@ -1,0 +1,42 @@
+{
+ "id": "zh/py-shangchuan-path",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/py-shangchuan-path",
+  "owner": "zh",
+  "repo": "py-shangchuan-path",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "文件上传：保存用户头像",
+  "description": "",
+  "language": "Python",
+  "category": "self-built",
+  "changed_lines": 10
+ },
+ "diffs": [
+  {
+   "old_path": "yonghu/touxiang.py",
+   "new_path": "yonghu/touxiang.py",
+   "diff": "@@ -3,6 +3,17 @@ import os\n \n TOUXIANG_DIR = \"/data/touxiang\"\n \n+\n+def baocun_touxiang(yonghu_id: int, wenjian_ming: str, neirong: bytes) -> str:\n+    \"\"\"把用户上传的头像保存到磁盘，返回保存路径。\"\"\"\n+    # 按用户 ID 分目录，避免单目录文件过多\n+    mulu = os.path.join(TOUXIANG_DIR, str(yonghu_id))\n+    os.makedirs(mulu, exist_ok=True)\n+    lujing = os.path.join(mulu, wenjian_ming)\n+    with open(lujing, \"wb\") as f:\n+        f.write(neirong)\n+    return lujing",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "yonghu/touxiang.py",
+   "side": "right",
+   "from_line": 11,
+   "to_line": 13,
+   "category": "Security Vulnerability",
+   "context": "Diff Level",
+   "note": "`wenjian_ming` 直接来自用户上传，传 `../../etc/cron.d/x` 这种名字就能写到任意目录，属于路径穿越。应该只取 `os.path.basename` 并校验扩展名，或者干脆用服务端生成的随机文件名。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}

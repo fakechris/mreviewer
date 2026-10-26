@@ -1,0 +1,52 @@
+{
+ "id": "zh/ts-fenye-offbyone",
+ "source": "self-built-zh",
+ "kind": "chinese",
+ "added_at": "2026-10-25",
+ "pr": {
+  "url": "https://example.invalid/zh/ts-fenye-offbyone",
+  "owner": "zh",
+  "repo": "ts-fenye-offbyone",
+  "number": 1,
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "title": "列表分页：计算总页数和当前页数据",
+  "description": "",
+  "language": "TypeScript",
+  "category": "self-built",
+  "changed_lines": 17
+ },
+ "diffs": [
+  {
+   "old_path": "src/utils/fenye.ts",
+   "new_path": "src/utils/fenye.ts",
+   "diff": "@@ -1,3 +1,19 @@\n+export interface FenYeJieGuo<T> {\n+  zongYeShu: number;\n+  dangQianYe: T[];\n+}\n+\n+/** 按每页 meiYe 条切分 shuJu，ye 从 1 开始 */\n+export function fenYe<T>(shuJu: T[], ye: number, meiYe: number): FenYeJieGuo<T> {\n+  if (meiYe <= 0) {\n+    throw new Error('每页条数必须大于 0');\n+  }\n+  const zongYeShu = Math.floor(shuJu.length / meiYe);\n+  const kaiShi = ye * meiYe;\n+  return {\n+    zongYeShu,\n+    dangQianYe: shuJu.slice(kaiShi, kaiShi + meiYe),\n+  };\n+}",
+   "new_file": false,
+   "deleted_file": false,
+   "renamed_file": false
+  }
+ ],
+ "golden": [
+  {
+   "path": "src/utils/fenye.ts",
+   "side": "right",
+   "from_line": 11,
+   "to_line": 11,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "总页数用 `Math.floor` 会把最后不满一页的数据吞掉，比如 10 条每页 3 条算出来是 3 页，第 10 条永远看不到，应该用 `Math.ceil`。",
+   "source": "human"
+  },
+  {
+   "path": "src/utils/fenye.ts",
+   "side": "right",
+   "from_line": 12,
+   "to_line": 12,
+   "category": "Code Defect",
+   "context": "Diff Level",
+   "note": "注释说 `ye` 从 1 开始，但 `kaiShi = ye * meiYe` 是按 0 开始算的，第 1 页会直接跳过前 meiYe 条，应为 `(ye - 1) * meiYe`。",
+   "source": "human"
+  }
+ ],
+ "negatives": []
+}
